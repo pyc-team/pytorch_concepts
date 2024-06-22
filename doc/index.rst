@@ -1,52 +1,67 @@
-.. project-template documentation master file, created by
-   sphinx-quickstart on Mon Jan 18 14:44:12 2016.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+PYTORCH CONCEPTS DOCUMENTATION
+===============================
 
-Welcome to sklearn-template's documentation!
-============================================
+PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train Concept-Based Deep Learning models.
 
-This project is a reference implementation to anyone who wishes to develop
-scikit-learn compatible classes.
 
-.. toctree::
-   :maxdepth: 2
-   :hidden:
-   :caption: Getting Started
+Quick start
+-----------
 
-   quick_start
+You can install ``torch_concepts`` along with all its dependencies from
+`PyPI <https://pypi.org/project/torch_concepts/>`__:
 
-.. toctree::
-   :maxdepth: 2
-   :hidden:
-   :caption: Documentation
+.. code:: bash
 
-   user_guide
-   api
+    pip install torch_concepts
+
+
+Source
+------
+
+The source code and minimal working examples can be found on
+`GitHub <https://github.com/pietrobarbiero/pytorch_concepts>`__.
+
 
 .. toctree::
-   :maxdepth: 2
-   :hidden:
-   :caption: Tutorial - Examples
+    :caption: API Reference
+    :maxdepth: 2
 
-   auto_examples/index
+    modules/data/toy
+    modules/nn/concept
 
-`Getting started <quick_start.html>`_
--------------------------------------
 
-Information regarding this template and how to modify it for your own project.
+.. toctree::
+    :caption: Copyright
+    :maxdepth: 1
 
-`User Guide <user_guide.html>`_
--------------------------------
+    user_guide/license
 
-An example of narrative documentation.
 
-`API Documentation <api.html>`_
--------------------------------
+Indices and tables
+~~~~~~~~~~~~~~~~~~
 
-An example of API documentation.
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
 
-`Examples <auto_examples/index.html>`_
---------------------------------------
 
-A set of examples. It complements the `User Guide <user_guide.html>`_.
+Authors
+-------
+
+* `Pietro Barbiero <http://www.pietrobarbiero.eu/>`__, Universita' della Svizzera Italiana (CH) and University of Cambridge (UK).
+
+Licence
+-------
+
+Copyright 2024 Pietro Barbiero.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this file except in compliance with the License. You may obtain
+a copy of the License at: http://www.apache.org/licenses/LICENSE-2.0.
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+See the License for the specific language governing permissions and
+limitations under the License.

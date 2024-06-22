@@ -13,16 +13,20 @@
 # import os
 # import sys
 # sys.path.insert(0, os.path.abspath('.'))
+import datetime
 import os
 import sys
-
 sys.path.insert(0, os.path.abspath('../'))
+import torch_concepts
 
 # -- Project information -----------------------------------------------------
 
-project = 'Project Template'
-copyright = '2020, Pietro Barbiero'
+project = 'pytorch_concepts'
 author = 'Pietro Barbiero'
+copyright = '{}, {}'.format(datetime.datetime.now().year, author)
+
+version = torch_concepts.__version__
+release = torch_concepts.__version__
 
 
 # -- General configuration ---------------------------------------------------
@@ -50,10 +54,11 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 #
 # html_theme = 'alabaster'
 html_theme = "sphinx_rtd_theme"
+html_logo = './_static/img/pye_logo_text.svg'
 
 html_theme_options = {
-    'canonical_url': 'https://dbgen.readthedocs.io/en/latest/',
-    'logo_only': False,
+    'canonical_url': 'https://pytorch_concepts.readthedocs.io/en/latest/',
+    'logo_only': True,
     'display_version': True,
     'prev_next_buttons_location': 'bottom',
     'style_external_links': False,
@@ -62,7 +67,7 @@ html_theme_options = {
     'sticky_navigation': True,
     'navigation_depth': 4,
     'includehidden': True,
-    'titles_only': False
+    'titles_only': False,
 }
 
 
