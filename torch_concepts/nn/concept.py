@@ -27,7 +27,7 @@ class BaseConcept(nn.Module):
 class ConceptLinear(BaseConcept):
     """
     ConceptLinear is a linear model for concept learning.
-    Main reference: `"Concept Bottleneck Models" <https://arxiv.org/abs/1901.11468>`_
+    Main reference: `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_
 
     Attributes:
         in_features (int): Number of input features.
