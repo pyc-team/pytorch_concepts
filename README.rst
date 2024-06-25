@@ -10,6 +10,11 @@ Implemented Modules
 **Concept-based layers**:
 
 - ConceptLinear: A linear layer to predict concepts from `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_ (ICML 2020).
+- ConceptEmbedding: A layer that generates concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
+
+**Metrics**:
+- completeness_score: A score measuring concept completeness from `"On Completeness-aware Concept-Based Explanations in Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_ (NeurIPS 2020).
+
 
 Contributing
 -------------------------
