@@ -1,3 +1,9 @@
+<p align="center">
+  <img height="150" src="https://github.com/pyc-team/pytorch_concepts/blob/dev/doc/_static/img/pyc_logo_text.svg?sanitize=true" />
+</p>
+
+----------------------
+
 PyTorch Concepts
 ======================
 
