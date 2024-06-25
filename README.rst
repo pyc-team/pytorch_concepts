@@ -13,7 +13,9 @@ Implemented Modules
 - ConceptEmbedding: A layer that generates concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
 
 **Metrics**:
+
 - completeness_score: A score measuring concept completeness from `"On Completeness-aware Concept-Based Explanations in Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_ (NeurIPS 2020).
+- cac_score: A score measuring causal concept effects (CaCE) from `"Explaining Classifiers with Causal Concept Effect (CaCE)" <https://arxiv.org/abs/1907.07165>`_.
 
 
 Contributing
