@@ -54,7 +54,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 #
 # html_theme = 'alabaster'
 html_theme = "sphinx_rtd_theme"
-html_logo = './_static/img/pye_logo_text.svg'
+html_logo = './_static/img/pyc_logo.png'
 
 html_theme_options = {
     'canonical_url': 'https://pytorch_concepts.readthedocs.io/en/latest/',
