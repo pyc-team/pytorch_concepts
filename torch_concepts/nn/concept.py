@@ -33,7 +33,6 @@ class ConceptLinear(BaseConcept):
     Attributes:
         in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
-        fc (nn.Linear): Fully connected linear layer for transforming input features to concepts.
     """
     def __init__(self, in_features, n_concepts):
         super().__init__(in_features, n_concepts)
@@ -58,12 +57,10 @@ class ConceptEmbedding(BaseConcept):
         in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
         emb_size (int): Size of the embedding vector.
-        intervention_idxs (list): Indices of the concepts to be intervened.
-        training_intervention_prob (float): Probability of intervention during training.
         active_intervention_values (torch.Tensor): Values used for active interventions.
         inactive_intervention_values (torch.Tensor): Values used for inactive interventions.
-        concept_context_generators (nn.ModuleList): List of context generators for each concept.
-        concept_prob_predictor (nn.Sequential): Model to predict concept probabilities.
+        intervention_idxs (list): Indices of the concepts to be intervened.
+        training_intervention_prob (float): Probability of intervention during training.
     """
     def __init__(
             self,
