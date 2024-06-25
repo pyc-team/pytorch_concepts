@@ -10,6 +10,7 @@ Implemented Modules
 **Concept-based layers**:
 
 - ConceptLinear: A linear layer to predict concepts from `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_ (ICML 2020).
+- ConceptEmbeddingResidual: A layer that generates a bottleneck composed of a set of supervised concepts and a residual unsupervised embedding: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_ (ICML 2021, workshop).
 - ConceptEmbedding: A layer that generates concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
 
 **Metrics**:

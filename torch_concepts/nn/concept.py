@@ -48,6 +48,41 @@ class ConceptLinear(BaseConcept):
         return c_pred
 
 
+class ConceptEmbeddingResidual(BaseConcept):
+    """
+    ConceptEmbeddingResidual is a layer where a first set of neurons is aligned with supervised concepts and
+    a second set of neurons is free to encode residual information.
+    Main reference: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_
+
+    Attributes:
+        in_features (int): Number of input features.
+        n_concepts (int): Number of concepts to be learned.
+        n_residuals (int): Number of residual neurons to encode additional information.
+    """
+    def __init__(self, in_features, n_concepts, n_residuals):
+        super().__init__(in_features, n_concepts)
+        self.fc_supervised = nn.Linear(in_features, n_concepts)
+        self.fc_residual = nn.Linear(in_features, n_residuals)
+
+    def forward(self, x):
+        c_pred = self.fc_supervised(x)
+        residuals = self.fc_residual(x)
+        return c_pred, residuals
+
+    def __call__(self, x):
+        c_pred, residuals = self.forward(x)
+        self.saved_c_pred = c_pred
+        return torch.cat((c_pred, residuals), axis=1)
+
+    def intervene(self, x, c=None, intervention_idxs=None):
+        if intervention_idxs.max() >= self.n_concepts:
+            raise ValueError("Intervention indices must be less than the number of concepts.")
+        c_pred = self.fc_supervised(x)
+        if c is not None and intervention_idxs is not None:
+            c_pred[:, intervention_idxs] = c[:, intervention_idxs]
+        return c_pred
+
+
 class ConceptEmbedding(BaseConcept):
     """
     ConceptEmbedding is a model for learning concept embeddings.

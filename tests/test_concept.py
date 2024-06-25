@@ -1,7 +1,7 @@
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn import BaseConcept, ConceptLinear, ConceptEmbedding
+from torch_concepts.nn import BaseConcept, ConceptLinear, ConceptEmbedding, ConceptEmbeddingResidual
 
 
 class TestBaseConcept(unittest.TestCase):
@@ -99,6 +99,54 @@ class TestConceptEmbedding(unittest.TestCase):
         self.assertEqual(self.model.saved_c_pred.shape, (42, self.n_concepts))
         self.assertEqual(self.model.saved_c_int.shape, (42, self.n_concepts))
         self.assertTrue(torch.all(self.model.saved_c_pred.ravel() == self.model.saved_c_int.ravel()))
+
+
+class TestConceptEmbeddingResidual(unittest.TestCase):
+    def setUp(self):
+        self.in_features = 10
+        self.n_concepts = 5
+        self.n_residuals = 3
+        self.model = ConceptEmbeddingResidual(
+            in_features=self.in_features,
+            n_concepts=self.n_concepts,
+            n_residuals=self.n_residuals
+        )
+
+    def test_initialization(self):
+        self.assertEqual(self.model.in_features, self.in_features)
+        self.assertEqual(self.model.n_concepts, self.n_concepts)
+        self.assertIsInstance(self.model.fc_supervised, nn.Linear)
+        self.assertIsInstance(self.model.fc_residual, nn.Linear)
+        self.assertEqual(self.model.fc_supervised.out_features, self.n_concepts)
+        self.assertEqual(self.model.fc_residual.out_features, self.n_residuals)
+
+    def test_forward_output_shapes(self):
+        x = torch.randn(1, self.in_features)
+        c_pred, residuals = self.model.forward(x)
+        self.assertEqual(c_pred.shape, (1, self.n_concepts))
+        self.assertEqual(residuals.shape, (1, self.n_residuals))
+
+    def test_call_method(self):
+        x = torch.randn(1, self.in_features)
+        output = self.model(x)
+        self.assertEqual(output.shape, (1, self.n_concepts + self.n_residuals))
+        self.assertIsNotNone(self.model.saved_c_pred)
+        self.assertEqual(self.model.saved_c_pred.shape, (1, self.n_concepts))
+
+    def test_intervene(self):
+        x = torch.randn(1, self.in_features)
+        c = torch.ones(1, self.n_concepts)
+        intervention_idxs = torch.tensor([0, 2, 4])
+        c_pred = self.model.intervene(x, c=c, intervention_idxs=intervention_idxs)
+        for idx in intervention_idxs:
+            self.assertTrue(torch.equal(c_pred[0, idx], torch.tensor(1.0)))
+
+    def test_intervene_invalid_index(self):
+        x = torch.randn(1, self.in_features)
+        c = torch.ones(1, self.n_concepts)
+        intervention_idxs = torch.tensor([0, 2, 5])  # Index 5 is invalid
+        with self.assertRaises(ValueError):
+            self.model.intervene(x, c=c, intervention_idxs=intervention_idxs)
 
 
 if __name__ == '__main__':
