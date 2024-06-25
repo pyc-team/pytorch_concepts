@@ -1,4 +1,4 @@
-APIs for concepts
+APIs for concept-based metrics
 ==============================================
 
 :mod:`torch_concepts.metrics`
