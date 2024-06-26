@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import xor
-from torch_concepts.nn import ConceptLinear
+from torch_concepts.nn import ConceptLinear, MLPReasoner
 
 
 def main():
@@ -14,13 +14,12 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    concept_encoder = torch.nn.Sequential(
+    model = torch.nn.Sequential(
         torch.nn.Linear(n_features, emb_size),
+        torch.nn.LeakyReLU(),
         ConceptLinear(emb_size, n_concepts),
-        torch.nn.Sigmoid()
+        MLPReasoner(n_concepts, n_classes, emb_size, 2),
     )
-    task_predictor = ConceptLinear(n_concepts, n_classes)
-    model = torch.nn.Sequential(concept_encoder, task_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_form_c = torch.nn.BCELoss()
@@ -30,8 +29,9 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        c_pred = concept_encoder(x_train)
-        y_pred = task_predictor(c_pred)
+        preds = model(x_train)
+        y_pred = preds["y_pred"]
+        c_pred = preds["c_pred"]
 
         # compute loss
         concept_loss = loss_form_c(c_pred, c_train)

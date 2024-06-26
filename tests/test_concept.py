@@ -1,152 +1,172 @@
 import unittest
 import torch
-from torch import nn
-from torch_concepts.nn import BaseConcept, ConceptLinear, ConceptEmbedding, ConceptEmbeddingResidual
-
-
-class TestBaseConcept(unittest.TestCase):
-    def test_base_concept_init(self):
-        in_features = 10
-        n_concepts = 5
-        base_concept = BaseConcept(in_features, n_concepts)
-        self.assertEqual(base_concept.in_features, in_features)
-        self.assertEqual(base_concept.n_concepts, n_concepts)
-
-    def test_base_concept_forward(self):
-        base_concept = BaseConcept(10, 5)
-        with self.assertRaises(NotImplementedError):
-            base_concept.forward(torch.randn(1, 10))
-
-    def test_base_concept_intervene(self):
-        base_concept = BaseConcept(10, 5)
-        with self.assertRaises(NotImplementedError):
-            base_concept.intervene(torch.randn(1, 10))
-
-    def test_base_concept_call(self):
-        base_concept = BaseConcept(10, 5)
-        with self.assertRaises(NotImplementedError):
-            base_concept(torch.randn(1, 10))
+from torch_concepts.nn import ConceptLinear, ConceptEmbedding, ConceptEmbeddingResidual
+from torch_concepts.nn import Sequential
 
 
 class TestConceptLinear(unittest.TestCase):
+
     def setUp(self):
         self.in_features = 10
         self.n_concepts = 5
-        self.model = ConceptLinear(self.in_features, self.n_concepts)
-        self.input = torch.randn(1, self.in_features)
+        self.emb_size = 8
+        self.model = ConceptLinear(self.in_features, self.n_concepts, emb_size=self.emb_size)
+        self.x = torch.randn(2, self.in_features)
+        self.c = torch.randn(2, self.n_concepts)
+        self.intervention_idxs = torch.LongTensor([0, 2])
 
-    def test_concept_linear_init(self):
-        self.assertIsInstance(self.model.fc, nn.Linear)
-        self.assertEqual(self.model.fc.in_features, self.in_features)
-        self.assertEqual(self.model.fc.out_features, self.n_concepts)
+    def test_forward_shape(self):
+        output = self.model(self.x)
+        self.assertIn('c_pred', output)
+        self.assertIn('c_int', output)
+        self.assertIn('emb_pre', output)
 
-    def test_concept_linear_forward(self):
-        output = self.model.forward(self.input)
-        self.assertEqual(output.shape, (1, self.n_concepts))
+        self.assertEqual(output['c_pred'].shape, (2, self.n_concepts))
+        self.assertEqual(output['c_int'].shape, (2, self.n_concepts))
+        self.assertEqual(output['emb_pre'].shape, (2, self.emb_size))
 
-    def test_concept_linear_intervene_no_intervention(self):
-        output = self.model.intervene(self.input)
-        self.assertEqual(output.shape, (1, self.n_concepts))
+    def test_forward_intervention(self):
+        output = self.model(self.x, self.c, self.intervention_idxs)
+        self.assertTrue(torch.equal(output['c_int'][:, self.intervention_idxs], self.c[:, self.intervention_idxs]))
 
-    def test_concept_linear_intervene_with_intervention(self):
-        c = torch.randn(1, self.n_concepts)
-        intervention_idxs = [0, 2, 4]
-        output = self.model.intervene(self.input, c, intervention_idxs)
-        self.assertTrue(torch.equal(output[:, intervention_idxs], c[:, intervention_idxs]))
+    def test_no_intervention(self):
+        output = self.model(self.x)
+        self.assertTrue(torch.equal(output['c_pred'], output['c_int']))
 
-    def test_concept_linear_call(self):
-        output = self.model(self.input)
-        self.assertEqual(output.shape, (1, self.n_concepts))
-
-
-class TestConceptEmbedding(unittest.TestCase):
-    def setUp(self):
-        self.in_features = 10
-        self.n_concepts = 5
-        self.emb_size = 20
-        self.model = ConceptEmbedding(
-            in_features=self.in_features,
-            n_concepts=self.n_concepts,
-            emb_size=self.emb_size
-        )
-
-    def test_initialization(self):
-        self.assertEqual(self.model.in_features, self.in_features)
-        self.assertEqual(self.model.n_concepts, self.n_concepts)
-        self.assertEqual(self.model.emb_size, self.emb_size)
-        self.assertEqual(len(self.model.concept_context_generators), self.n_concepts)
-        self.assertIsInstance(self.model.concept_prob_predictor, torch.nn.Sequential)
-
-    def test_forward_output_shapes(self):
-        x = torch.randn(42, self.in_features)
-        c_emb, c_pred, c_int = self.model.forward(x)
-        self.assertEqual(c_emb.shape, (42, self.n_concepts, self.emb_size))
-        self.assertEqual(c_pred.shape, (42, self.n_concepts))
-
-    def test_interventions(self):
-        x = torch.randn(1, self.in_features)
-        c = torch.ones(1, self.n_concepts)
-        intervention_idxs = [0, 2, 4]
-        c_emb, c_pred, c_int = self.model.forward(x, c=c, intervention_idxs=intervention_idxs, train=False)
-        for idx in intervention_idxs:
-            self.assertTrue(c_int[0, idx].item() == 1.0)
-
-    def test_call_method(self):
-        x = torch.randn(42, self.in_features)
-        c_emb = self.model(x)
-        self.assertEqual(c_emb.shape, (42, self.n_concepts, self.emb_size))
-        self.assertIsNotNone(self.model.saved_c_pred)
-        self.assertEqual(self.model.saved_c_pred.shape, (42, self.n_concepts))
-        self.assertEqual(self.model.saved_c_int.shape, (42, self.n_concepts))
-        self.assertTrue(torch.all(self.model.saved_c_pred.ravel() == self.model.saved_c_int.ravel()))
+    def test_intervention_rate(self):
+        # Assuming intervention_rate is not currently used in the model
+        output = self.model(self.x, self.c, self.intervention_idxs, intervention_rate=0.5)
+        self.assertTrue(torch.equal(output['c_int'][:, self.intervention_idxs], self.c[:, self.intervention_idxs]))
 
 
 class TestConceptEmbeddingResidual(unittest.TestCase):
+
     def setUp(self):
         self.in_features = 10
         self.n_concepts = 5
+        self.emb_size = 8
         self.n_residuals = 3
-        self.model = ConceptEmbeddingResidual(
-            in_features=self.in_features,
-            n_concepts=self.n_concepts,
-            n_residuals=self.n_residuals
+        self.model = ConceptEmbeddingResidual(self.in_features, self.n_concepts,
+                                              emb_size=self.emb_size, n_residuals=self.n_residuals)
+        self.x = torch.randn(2, self.in_features)
+        self.c = torch.randn(2, self.n_concepts)
+        self.intervention_idxs = [0, 2]
+
+    def test_forward_shape(self):
+        output = self.model(self.x)
+        self.assertIn('residuals', output)
+        self.assertEqual(output['residuals'].shape, (2, self.n_residuals))
+
+
+class TestConceptEmbedding(unittest.TestCase):
+
+    def setUp(self):
+        self.in_features = 10
+        self.n_concepts = 5
+        self.emb_size = 8
+        self.active_intervention_values = torch.tensor([1.0] * self.n_concepts)
+        self.inactive_intervention_values = torch.tensor([0.0] * self.n_concepts)
+        self.model = ConceptEmbedding(
+            self.in_features,
+            self.n_concepts,
+            torch.sigmoid,
+            self.emb_size,
+            self.active_intervention_values,
+            self.inactive_intervention_values
+        )
+        self.x = torch.randn(2, self.in_features)
+        self.c = torch.randn(2, self.n_concepts)
+        self.intervention_idxs = torch.LongTensor([0, 2])
+
+    def test_forward_shape(self):
+        output = self.model(self.x)
+        self.assertIn('c_emb', output)
+        self.assertIn('c_pred', output)
+        self.assertIn('c_int', output)
+        self.assertIn('emb_pre', output)
+
+        self.assertEqual(output['c_emb'].shape, (2, self.n_concepts, self.emb_size))
+        self.assertEqual(output['c_pred'].shape, (2, self.n_concepts))
+        self.assertEqual(output['c_int'].shape, (2, self.n_concepts))
+        self.assertEqual(output['emb_pre'].shape, (2, self.emb_size))
+
+    def test_forward_intervention(self):
+        output = self.model(self.x, self.c, self.intervention_idxs)
+        self.assertTrue(torch.equal(output['c_int'][:, self.intervention_idxs], self.c[:, self.intervention_idxs]))
+
+    def test_no_intervention(self):
+        output = self.model(self.x)
+        self.assertTrue(torch.equal(output['c_pred'], output['c_int']))
+
+    def test_intervention_rate(self):
+        # Assuming intervention_rate is not currently used in the model
+        output = self.model(self.x, self.c, self.intervention_idxs, intervention_rate=0.5, train=True)
+        self.assertTrue(torch.equal(output['c_int'][:, self.intervention_idxs], self.c[:, self.intervention_idxs]))
+
+    def test_invalid_intervention_index(self):
+        invalid_idxs = torch.LongTensor([0, self.n_concepts])  # This should raise an error
+        with self.assertRaises(ValueError):
+            self.model(self.x, self.c, invalid_idxs)
+
+    def test_after_interventions(self):
+        prob = torch.tensor([[0.5], [0.5]])
+        concept_idx = torch.LongTensor([0])
+        c_true = torch.tensor([[1.0], [0.0]])
+        output = self.model._after_interventions(prob, concept_idx, self.intervention_idxs, c_true)
+        expected = torch.tensor([[1.0], [0.0]])
+        self.assertTrue(torch.equal(output, expected))
+
+
+class TestSequential(unittest.TestCase):
+
+    def setUp(self):
+        self.in_features = 10
+        self.n_concepts = 5
+        self.emb_size = 8
+        self.n_residuals = 3
+        self.batch_size = 2
+
+        self.concept_linear = ConceptLinear(self.in_features, self.n_concepts, emb_size=self.emb_size)
+        self.concept_embedding = ConceptEmbedding(self.in_features, self.n_concepts, emb_size=self.emb_size)
+        self.concept_residual = ConceptEmbeddingResidual(self.in_features, self.n_concepts, torch.sigmoid,
+                                                         self.emb_size, self.n_residuals)
+
+    def test_sequential_with_concept_linear(self):
+        model = Sequential(
+            torch.nn.Linear(self.in_features, self.in_features),
+            self.concept_linear,
         )
 
-    def test_initialization(self):
-        self.assertEqual(self.model.in_features, self.in_features)
-        self.assertEqual(self.model.n_concepts, self.n_concepts)
-        self.assertIsInstance(self.model.fc_supervised, nn.Linear)
-        self.assertIsInstance(self.model.fc_residual, nn.Linear)
-        self.assertEqual(self.model.fc_supervised.out_features, self.n_concepts)
-        self.assertEqual(self.model.fc_residual.out_features, self.n_residuals)
+        x = torch.randn(self.batch_size, self.in_features)
+        output = model(x)
+        self.assertEqual(output['c_pred'].shape, (2, self.n_concepts))
+        self.assertEqual(output['c_int'].shape, (2, self.n_concepts))
+        self.assertEqual(output['emb_pre'].shape, (2, self.emb_size))
 
-    def test_forward_output_shapes(self):
-        x = torch.randn(1, self.in_features)
-        c_pred, residuals = self.model.forward(x)
-        self.assertEqual(c_pred.shape, (1, self.n_concepts))
-        self.assertEqual(residuals.shape, (1, self.n_residuals))
+    def test_sequential_with_concept_embedding(self):
+        model = Sequential(
+            torch.nn.Linear(self.in_features, self.in_features),
+            self.concept_embedding,
+        )
 
-    def test_call_method(self):
-        x = torch.randn(1, self.in_features)
-        output = self.model(x)
-        self.assertEqual(output.shape, (1, self.n_concepts + self.n_residuals))
-        self.assertIsNotNone(self.model.saved_c_pred)
-        self.assertEqual(self.model.saved_c_pred.shape, (1, self.n_concepts))
+        x = torch.randn(self.batch_size, self.in_features)
+        c = torch.randn(self.batch_size, self.n_concepts)
+        output = model(x, c)
+        self.assertEqual(output['c_emb'].shape, (2, self.n_concepts, self.emb_size))
+        self.assertEqual(output['c_pred'].shape, (2, self.n_concepts))
+        self.assertEqual(output['c_int'].shape, (2, self.n_concepts))
+        self.assertEqual(output['emb_pre'].shape, (2, self.emb_size))
 
-    def test_intervene(self):
-        x = torch.randn(1, self.in_features)
-        c = torch.ones(1, self.n_concepts)
-        intervention_idxs = torch.tensor([0, 2, 4])
-        c_pred = self.model.intervene(x, c=c, intervention_idxs=intervention_idxs)
-        for idx in intervention_idxs:
-            self.assertTrue(torch.equal(c_pred[0, idx], torch.tensor(1.0)))
+    def test_sequential_with_concept_residual(self):
+        model = Sequential(
+            torch.nn.Linear(self.in_features, self.in_features),
+            self.concept_residual,
+        )
 
-    def test_intervene_invalid_index(self):
-        x = torch.randn(1, self.in_features)
-        c = torch.ones(1, self.n_concepts)
-        intervention_idxs = torch.tensor([0, 2, 5])  # Index 5 is invalid
-        with self.assertRaises(ValueError):
-            self.model.intervene(x, c=c, intervention_idxs=intervention_idxs)
+        x = torch.randn(self.batch_size, self.in_features)
+        c = torch.randn(self.batch_size, self.n_concepts)
+        output = model(x, c)
+        self.assertEqual(output['residuals'].shape, (2, self.n_residuals))
 
 
 if __name__ == '__main__':

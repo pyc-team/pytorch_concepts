@@ -1,10 +1,11 @@
 import torch
 from collections import Counter
+from abc import ABC, abstractmethod
 
 from .semantics import Logic, GodelTNorm
 
 
-class BaseReasoner(torch.nn.Module):
+class BaseReasoner(ABC, torch.nn.Module):
     """
     BaseReasoner is an abstract base class for models that use concept to predict downstream tasks.
 
@@ -17,11 +18,74 @@ class BaseReasoner(torch.nn.Module):
         self.n_concepts = n_concepts
         self.n_classes = n_classes
 
-    def forward(self, x):
-        raise NotImplementedError
+    @abstractmethod
+    def forward(self, x, **kwargs):
+        pass
 
-    def __call__(self, x):
-        return self.forward(x)
+
+class MLPReasoner(BaseReasoner):
+    """
+    MLPReasoner is a multi-layer perceptron using concepts to predict downstream tasks.
+    Main reference: `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_
+
+    Attributes:
+        n_concepts (int): Number of concepts.
+        n_classes (int): Number of classes.
+        emb_size (int): Embedding size.
+        n_layers (int): Number of layers.
+    """
+    def __init__(self, n_concepts, n_classes, emb_size, n_layers):
+        super().__init__(n_concepts, n_classes)
+        self.emb_size = emb_size
+        self.n_layers = n_layers
+
+        if n_layers < 1:
+            layers = [torch.nn.Linear(n_concepts, n_classes)]
+        else:
+            layers = [torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU()]
+            for i in range(n_layers-1):
+                layers.extend([
+                    torch.nn.Linear(emb_size, emb_size),
+                    torch.nn.LeakyReLU(),
+                ])
+            layers.append(torch.nn.Linear(emb_size, n_classes))
+        self.reasoner = torch.nn.Sequential(*layers)
+
+    def forward(self, x, reason_with=None):
+        c = x['c_pred']
+        if reason_with == 'c_int':
+            c = x['c_int']
+
+        x['y_pred'] = self.reasoner(c)
+        return x
+
+
+class ResidualMLPReasoner(MLPReasoner):
+    """
+    ResidualMLPReasoner is a multi-layer perceptron using both concepts and residuals to predict downstream tasks.
+    Main reference: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_
+
+    Attributes:
+        n_concepts (int): Number of concepts.
+        n_classes (int): Number of classes.
+        emb_size (int): Embedding size.
+        n_layers (int): Number of layers.
+        n_residuals (int): Number of residual neurons to encode additional information.
+    """
+    def __init__(self, n_concepts, n_classes, emb_size, n_layers, n_residuals):
+        super().__init__(n_concepts+n_residuals, n_classes, emb_size, n_layers)
+        self.n_concepts = n_concepts
+        self.n_residuals = n_residuals
+        self.in_features = n_concepts + n_residuals
+
+    def forward(self, x, reason_with=None):
+        c = x['c_pred']
+        if reason_with == 'c_int':
+            c = x['c_int']
+
+        residuals = x['residuals']
+        x['y_pred'] = self.reasoner(torch.cat([c, residuals], dim=1))
+        return x
 
 
 class DeepConceptReasoner(BaseReasoner):
@@ -37,24 +101,34 @@ class DeepConceptReasoner(BaseReasoner):
         temperature (float): Temperature to be used to compute the attention scores.
         set_level_rules (bool): Whether to learn set-level rules or instance-level rules.
     """
-    def __init__(self, n_concepts, n_classes, emb_size, logic: Logic = GodelTNorm(), temperature: float = 1., set_level_rules: bool = False):
+    def __init__(self, n_concepts, n_classes, emb_size, n_residuals,
+                 logic: Logic = GodelTNorm(), temperature: float = 1., set_level_rules: bool = False):
         super().__init__(n_concepts, n_classes)
         self.emb_size = emb_size
         self.logic = logic
         self.set_level_rules = set_level_rules
-        self.emb_size_after_pool = emb_size
-        if self.set_level_rules:
-            self.emb_size_after_pool = emb_size * 4
+        self.n_residuals = n_residuals
+        if self.n_residuals > 0:
+            self.emb_size_after_pool = n_residuals
+            self.fc_out_features = n_concepts  * n_classes
+        else:
+            self.emb_size_after_pool = emb_size
+            self.fc_out_features = n_classes
+
         self.filter_nn = torch.nn.Sequential(
             torch.nn.Linear(self.emb_size_after_pool, emb_size),
             torch.nn.LeakyReLU(),
-            torch.nn.Linear(emb_size, n_concepts * n_classes),
+            torch.nn.Linear(emb_size, self.fc_out_features),
         )
         self.sign_nn = torch.nn.Sequential(
             torch.nn.Linear(self.emb_size_after_pool, emb_size),
             torch.nn.LeakyReLU(),
-            torch.nn.Linear(emb_size, n_concepts * n_classes),
+            torch.nn.Linear(emb_size, self.fc_out_features),
         )
+
+        if self.set_level_rules:
+            self.emb_size_after_pool = emb_size * 4
+
         self.filter_nn_before_pool = torch.nn.Sequential(
             torch.nn.Linear(emb_size, emb_size),
             torch.nn.LeakyReLU(),
@@ -72,20 +146,28 @@ class DeepConceptReasoner(BaseReasoner):
         softscores = torch.sigmoid(softmax_scores - temperature * softmax_scores.mean(dim=1, keepdim=True))
         return softscores
 
-    def forward(self, x, c, return_attn=False, sign_attn=None, filter_attn=None):
-        values = c.unsqueeze(-1).repeat(1, 1, self.n_classes)
+    def forward(self, x, reason_with=None, sign_attn=None, filter_attn=None):
+        c = x['c_pred']
+        if reason_with == 'c_int':
+            c = x['c_int']
 
-        sign_emb = filter_emb = x
+        if self.n_residuals:
+            c_emb = x['residuals']
+        else:
+            c_emb = x['c_emb']
+
+        values = c.unsqueeze(-1).repeat(1, 1, self.n_classes)
+        sign_emb = filter_emb = c_emb.clone()
         if sign_attn is None:
             if self.set_level_rules:
-                sign_emb = self.sign_nn_before_pool(x)
+                sign_emb = self.sign_nn_before_pool(c_emb)
                 sign_emb = torch.concat([
                     torch.sum(sign_emb, dim=0, keepdim=True),
                     torch.mean(sign_emb, dim=0, keepdim=True),
                     torch.std(sign_emb, dim=0, keepdim=True),
                     torch.max(sign_emb, dim=0, keepdim=True)[0],
                 ], dim=1)
-                filter_emb = self.filter_nn_before_pool(x)
+                filter_emb = self.filter_nn_before_pool(c_emb)
                 filter_emb = torch.concat([
                     torch.sum(filter_emb, dim=0, keepdim=True),
                     torch.mean(filter_emb, dim=0, keepdim=True),
@@ -119,15 +201,17 @@ class DeepConceptReasoner(BaseReasoner):
         filtered_values = self.logic.disj_pair(sign_terms, self.logic.neg(filter_attn))
 
         # generate minterm
-        preds = self.logic.conj(filtered_values, dim=1).squeeze(1).float()
+        x['y_pred'] = self.logic.conj(filtered_values, dim=1).squeeze(1).float()
+        x['sign_attn'] = sign_attn
+        x['filter_attn'] = filter_attn
+        return x
 
-        if return_attn:
-            return preds, sign_attn, filter_attn
-        else:
-            return preds
-
-    def explain(self, x, c, mode, concept_names=None, class_names=None, filter_attn=None, sign_attn=None):
+    def explain(self, x, reason_with=None, mode='global', concept_names=None, class_names=None, filter_attn=None, sign_attn=None):
         assert mode in ['local', 'global', 'exact']
+
+        c = x['c_pred']
+        if reason_with == 'c_int':
+            c = x['c_int']
 
         if concept_names is None:
             concept_names = [f'c_{i}' for i in range(c.shape[1])]
@@ -135,11 +219,14 @@ class DeepConceptReasoner(BaseReasoner):
             class_names = [f'y_{i}' for i in range(self.n_classes)]
 
         # make a forward pass to get predictions and attention weights
-        y_preds, sign_attn_mask, filter_attn_mask = self.forward(x, c, return_attn=True, filter_attn=filter_attn, sign_attn=sign_attn)
+        output = self.forward(x, reason_with=reason_with, filter_attn=filter_attn, sign_attn=sign_attn)
+        y_preds = output['y_pred']
+        sign_attn_mask = output['sign_attn']
+        filter_attn_mask = output['filter_attn']
 
         explanations = []
         all_class_explanations = {cn: [] for cn in class_names}
-        for sample_idx in range(len(x)):
+        for sample_idx in range(len(c)):
             prediction = y_preds[sample_idx] > 0.5
             active_classes = torch.argwhere(prediction).ravel()
 
@@ -205,6 +292,3 @@ class DeepConceptReasoner(BaseReasoner):
                     })
 
         return explanations
-
-    def __call__(self, x, c, return_attn=False, sign_attn=None, filter_attn=None):
-        return self.forward(x, c, return_attn, sign_attn, filter_attn)
