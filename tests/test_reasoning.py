@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.nn.semantics import GodelTNorm
-from torch_concepts.nn.reasoning import MLPReasoner, ResidualMLPReasoner, DeepConceptReasoner
+from torch_concepts.nn.task import MLPReasoner, ResidualMLPReasoner, DeepConceptReasoner
 
 
 class TestMLPReasoner(unittest.TestCase):

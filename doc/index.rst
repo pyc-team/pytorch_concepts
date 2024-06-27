@@ -28,8 +28,8 @@ The source code and minimal working examples can be found on
 
     modules/data/toy
     modules/nn/concept
-    modules/nn/reasoning
     modules/nn/semantics
+    modules/nn/task
     modules/metrics
 
 

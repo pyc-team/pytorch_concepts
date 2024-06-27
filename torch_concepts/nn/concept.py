@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 from abc import ABC, abstractmethod
 
-from .reasoning import BaseReasoner
+from .task import BaseReasoner
 
 
 class Sequential(nn.Sequential):
