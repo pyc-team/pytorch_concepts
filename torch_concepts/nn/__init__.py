@@ -1,5 +1,5 @@
 from .concept import Sequential, BaseConcept, ConceptLinear, ConceptEmbedding, ConceptEmbeddingResidual
-from .task import BaseReasoner, MLPReasoner, ResidualMLPReasoner, DeepConceptReasoner
+from .task import BaseClassifier, MLPClassifier, ResidualMLPClassifier, DCRClassifier
 from .semantics import Logic, GodelTNorm, ProductTNorm
 
 __all__ = [
@@ -9,10 +9,10 @@ __all__ = [
     'ConceptEmbedding',
     'ConceptEmbeddingResidual',
 
-    'BaseReasoner',
-    'MLPReasoner',
-    'ResidualMLPReasoner',
-    'DeepConceptReasoner',
+    'BaseClassifier',
+    'MLPClassifier',
+    'ResidualMLPClassifier',
+    'DCRClassifier',
 
     'Logic',
     'GodelTNorm',

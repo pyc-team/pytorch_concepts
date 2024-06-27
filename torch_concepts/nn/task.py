@@ -5,9 +5,9 @@ from abc import ABC, abstractmethod
 from .semantics import Logic, GodelTNorm
 
 
-class BaseReasoner(ABC, torch.nn.Module):
+class BaseClassifier(ABC, torch.nn.Module):
     """
-    BaseReasoner is an abstract base class for models that use concept to predict downstream tasks.
+    BaseClassifier is an abstract base class for models that use concept to predict downstream tasks.
 
     Attributes:
         n_concepts (int): Number of concepts.
@@ -23,9 +23,9 @@ class BaseReasoner(ABC, torch.nn.Module):
         pass
 
 
-class MLPReasoner(BaseReasoner):
+class MLPClassifier(BaseClassifier):
     """
-    MLPReasoner is a multi-layer perceptron using concepts to predict downstream tasks.
+    MLPClassifier is a multi-layer perceptron using concepts to predict downstream tasks.
     Main reference: `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_
 
     Attributes:
@@ -60,9 +60,9 @@ class MLPReasoner(BaseReasoner):
         return x
 
 
-class ResidualMLPReasoner(MLPReasoner):
+class ResidualMLPClassifier(MLPClassifier):
     """
-    ResidualMLPReasoner is a multi-layer perceptron using both concepts and residuals to predict downstream tasks.
+    ResidualMLPClassifier is a multi-layer perceptron using both concepts and residuals to predict downstream tasks.
     Main reference: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_
 
     Attributes:
@@ -88,9 +88,9 @@ class ResidualMLPReasoner(MLPReasoner):
         return x
 
 
-class DeepConceptReasoner(BaseReasoner):
+class DCRClassifier(BaseClassifier):
     """
-    DeepConceptReasoner is a reasoner that first learns a logic formula and then executes the formula using given concept activations to predict the downstream task.
+    DCRClassifier is a reasoner that first learns a logic formula and then executes the formula using given concept activations to predict the downstream task.
     Main reference: `"Interpretable Neural-Symbolic Concept Reasoning" <https://arxiv.org/abs/2304.14068>`_
 
     Attributes:

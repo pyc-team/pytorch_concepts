@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 from abc import ABC, abstractmethod
 
-from .task import BaseReasoner
+from .task import BaseClassifier
 
 
 class Sequential(nn.Sequential):
@@ -12,7 +12,7 @@ class Sequential(nn.Sequential):
     """
     def forward(self, x, *extra_params):
         for layer in self:
-            if isinstance(layer, BaseConcept) or isinstance(layer, BaseReasoner):
+            if isinstance(layer, BaseConcept) or isinstance(layer, BaseClassifier):
                 if extra_params:
                     x = layer(x, *extra_params)
                 else:
