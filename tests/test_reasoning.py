@@ -2,10 +2,10 @@ import unittest
 import torch
 
 from torch_concepts.nn.semantics import GodelTNorm
-from torch_concepts.nn.task import MLPReasoner, ResidualMLPReasoner, DeepConceptReasoner
+from torch_concepts.nn.task import MLPClassifier, ResidualMLPClassifier, DCRClassifier
 
 
-class TestMLPReasoner(unittest.TestCase):
+class TestMLPClassifier(unittest.TestCase):
 
     def setUp(self):
         self.n_concepts = 10
@@ -14,7 +14,7 @@ class TestMLPReasoner(unittest.TestCase):
         self.n_layers = 3
         self.batch_size = 2
 
-        self.model = MLPReasoner(self.n_concepts, self.n_classes, self.emb_size, self.n_layers)
+        self.model = MLPClassifier(self.n_concepts, self.n_classes, self.emb_size, self.n_layers)
         self.x = {
             'c_pred': torch.randn(self.batch_size, self.n_concepts),
             'c_int': torch.randn(self.batch_size, self.n_concepts)
@@ -38,7 +38,7 @@ class TestMLPReasoner(unittest.TestCase):
         self.assertTrue(torch.equal(output, expected_output))
 
     def test_linear_layer_configuration(self):
-        model = MLPReasoner(self.n_concepts, self.n_classes, self.emb_size, 0)
+        model = MLPClassifier(self.n_concepts, self.n_classes, self.emb_size, 0)
         layers = [layer for layer in model.reasoner]
         self.assertTrue(isinstance(layers[0], torch.nn.Linear))
         self.assertEqual(len(layers), 1)
@@ -46,7 +46,7 @@ class TestMLPReasoner(unittest.TestCase):
         self.assertEqual(layers[0].out_features, self.n_classes)
 
 
-class TestResidualMLPReasoner(unittest.TestCase):
+class TestResidualMLPClassifier(unittest.TestCase):
 
     def setUp(self):
         self.n_concepts = 10
@@ -56,7 +56,7 @@ class TestResidualMLPReasoner(unittest.TestCase):
         self.n_residuals = 2
         self.batch_size = 2
 
-        self.model = ResidualMLPReasoner(self.n_concepts, self.n_classes, self.emb_size, self.n_layers, self.n_residuals)
+        self.model = ResidualMLPClassifier(self.n_concepts, self.n_classes, self.emb_size, self.n_layers, self.n_residuals)
         self.x = {
             'c_pred': torch.randn(self.batch_size, self.n_concepts),
             'c_int': torch.randn(self.batch_size, self.n_concepts),
@@ -76,7 +76,7 @@ class TestResidualMLPReasoner(unittest.TestCase):
         self.assertTrue(torch.equal(output, expected_output))
 
     def test_linear_layer_configuration(self):
-        model = MLPReasoner(self.n_concepts, self.n_classes, self.emb_size, 0)
+        model = MLPClassifier(self.n_concepts, self.n_classes, self.emb_size, 0)
         layers = [layer for layer in model.reasoner]
         self.assertTrue(isinstance(layers[0], torch.nn.Linear))
         self.assertEqual(len(layers), 1)
@@ -84,7 +84,7 @@ class TestResidualMLPReasoner(unittest.TestCase):
         self.assertEqual(layers[0].out_features, self.n_classes)
 
 
-class TestDeepConceptReasoner(unittest.TestCase):
+class TestDCRClassifier(unittest.TestCase):
     def setUp(self):
         self.n_concepts = 5
         self.n_classes = 3
@@ -94,7 +94,7 @@ class TestDeepConceptReasoner(unittest.TestCase):
         self.set_level_rules = False
         self.batch_size = 19
         self.n_residuals = 7
-        self.model = DeepConceptReasoner(
+        self.model = DCRClassifier(
             n_concepts=self.n_concepts,
             n_classes=self.n_classes,
             emb_size=self.emb_size,
@@ -129,7 +129,7 @@ class TestDeepConceptReasoner(unittest.TestCase):
         self.assertEqual(preds.shape, (self.batch_size, self.n_classes))
 
     def test_forward_with_c_emb_shape(self):
-        model = DeepConceptReasoner(
+        model = DCRClassifier(
             n_concepts=self.n_concepts,
             n_classes=self.n_classes,
             emb_size=self.emb_size,

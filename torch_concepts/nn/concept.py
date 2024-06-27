@@ -10,15 +10,25 @@ class Sequential(nn.Sequential):
     """
     Sequential is a class that extends the PyTorch Sequential class to handle concept layers.
     """
-    def forward(self, x, *extra_params):
+
+    def forward(self, x, **kwargs):
+        base_concept_kwargs = {k[8:]: v for k, v in kwargs.items() if k.startswith('concept_')}
+        base_classifier_kwargs = {k[11:]: v for k, v in kwargs.items() if k.startswith('classifier_')}
+
         for layer in self:
-            if isinstance(layer, BaseConcept) or isinstance(layer, BaseClassifier):
-                if extra_params:
-                    x = layer(x, *extra_params)
+            if isinstance(layer, BaseConcept):
+                if base_concept_kwargs:
+                    x = layer(x, **base_concept_kwargs)
+                else:
+                    x = layer(x)
+            elif isinstance(layer, BaseClassifier):
+                if base_classifier_kwargs:
+                    x = layer(x, **base_classifier_kwargs)
                 else:
                     x = layer(x)
             else:
                 x = layer(x)
+
         return x
 
 

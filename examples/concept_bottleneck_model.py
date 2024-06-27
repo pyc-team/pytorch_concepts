@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import xor
-from torch_concepts.nn import ConceptLinear, MLPReasoner
+from torch_concepts.nn import Sequential, ConceptLinear, MLPClassifier
 
 
 def main():
@@ -14,11 +14,11 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    model = torch.nn.Sequential(
+    model = Sequential(
         torch.nn.Linear(n_features, emb_size),
         torch.nn.LeakyReLU(),
         ConceptLinear(emb_size, n_concepts),
-        MLPReasoner(n_concepts, n_classes, emb_size, 2),
+        MLPClassifier(n_concepts, n_classes, emb_size, 2),
     )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
@@ -29,7 +29,11 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        preds = model(x_train)
+        preds = model(x_train,
+                      concept_c=c_train,
+                      concept_intervention_idxs=torch.arange(c_train.shape[1]),
+                      concept_intervention_rate=1.0,
+                      classifier_reason_with="c_int")
         y_pred = preds["y_pred"]
         c_pred = preds["c_pred"]
 
@@ -41,10 +45,12 @@ def main():
         loss.backward()
         optimizer.step()
 
+    c_int = preds["c_int"]
     task_accuracy = accuracy_score(y_train, y_pred > 0)
     concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
+    print(f"Check intervened concepts == training labels: {torch.all(c_int == c_train).item()}")
 
     return
 

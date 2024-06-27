@@ -151,7 +151,7 @@ class TestSequential(unittest.TestCase):
 
         x = torch.randn(self.batch_size, self.in_features)
         c = torch.randn(self.batch_size, self.n_concepts)
-        output = model(x, c)
+        output = model(x, concept_c=c)
         self.assertEqual(output['c_emb'].shape, (2, self.n_concepts, self.emb_size))
         self.assertEqual(output['c_pred'].shape, (2, self.n_concepts))
         self.assertEqual(output['c_int'].shape, (2, self.n_concepts))
@@ -165,7 +165,7 @@ class TestSequential(unittest.TestCase):
 
         x = torch.randn(self.batch_size, self.in_features)
         c = torch.randn(self.batch_size, self.n_concepts)
-        output = model(x, c)
+        output = model(x, concept_c=c)
         self.assertEqual(output['residuals'].shape, (2, self.n_residuals))
 
 
