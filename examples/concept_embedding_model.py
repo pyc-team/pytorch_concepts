@@ -1,12 +1,14 @@
 import torch
 from sklearn.metrics import accuracy_score
 
+from torch_concepts.base import ConceptTensor
 from torch_concepts.data import xor
-from torch_concepts.nn import DenseConceptLayer, ConceptEncoder
+from torch_concepts.nn import ConceptScorer, DenseConceptLayer, ConceptEncoder
+import torch_concepts.nn.functional as CF
 
 
 def main():
-    emb_size = 5
+    emb_size = 6
     n_epochs = 500
     n_samples = 1000
     x_train, c_train, y_train = xor(n_samples)
@@ -14,10 +16,15 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
+    concepts_train = ConceptTensor.concept(c_train)
+    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool())
+
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(emb_size, n_concepts)
-    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU(), DenseConceptLayer(emb_size, n_classes))
-    model = torch.nn.Sequential(encoder, c_encoder, y_predictor)
+    c_encoder = ConceptEncoder(emb_size, n_concepts, 2*emb_size)
+    c_scorer = ConceptScorer(2*emb_size)
+    y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(emb_size*n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
+    y_predictor = torch.nn.Sequential(DenseConceptLayer(n_concepts, emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
+    model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_form = torch.nn.BCEWithLogitsLoss()
@@ -27,8 +34,11 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = c_encoder(emb)
-        y_pred = y_predictor(c_pred)
+        c_emb = c_encoder(emb)
+        c_pred = c_scorer(c_emb)
+        c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
+        c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
+        y_pred = y_predictor(c_mix)
 
         # compute loss
         concept_loss = loss_form(c_pred, c_train)

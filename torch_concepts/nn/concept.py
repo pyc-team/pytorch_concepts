@@ -1,224 +1,101 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
 from abc import ABC, abstractmethod
 
-from .task import BaseClassifier
+from torch_concepts.base import ConceptTensor
 
 
-class Sequential(nn.Sequential):
+class ConceptEncoder(nn.Module):
     """
-    Sequential is a class that extends the PyTorch Sequential class to handle concept layers.
-    """
-
-    def forward(self, x, **kwargs):
-        base_concept_kwargs = {k[8:]: v for k, v in kwargs.items() if k.startswith('concept_')}
-        base_classifier_kwargs = {k[11:]: v for k, v in kwargs.items() if k.startswith('classifier_')}
-
-        for layer in self:
-            if isinstance(layer, BaseConcept):
-                if base_concept_kwargs:
-                    x = layer(x, **base_concept_kwargs)
-                else:
-                    x = layer(x)
-            elif isinstance(layer, BaseClassifier):
-                if base_classifier_kwargs:
-                    x = layer(x, **base_classifier_kwargs)
-                else:
-                    x = layer(x)
-            else:
-                x = layer(x)
-
-        return x
-
-
-class BaseConcept(ABC, nn.Module):
-    """
-    BaseConcept is an abstract base class for models that handle concept layers.
+    ConceptEncoder generates concept embeddings.
 
     Attributes:
         in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
-        c_activation (function): Activation function for the concept layer.
+        emb_size (int): Size of concept embeddings.
     """
-    def __init__(self, in_features, n_concepts, c_activation=F.sigmoid):
+    def __init__(self, in_features, n_concepts, emb_size=1):
         super().__init__()
-        self.in_features = in_features
+        self.emb_size = emb_size
         self.n_concepts = n_concepts
-        self.c_activation = c_activation
+        self.in_features = in_features
+        self.encoder = nn.Linear(in_features, emb_size * n_concepts)
+
+    def forward(self, x: torch.Tensor) -> ConceptTensor:
+        """
+        Forward pass of the concept encoder.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            ConceptTensor: Concept embeddings. If emb_size is 1, the returned shape is (batch_size, n_concepts). Otherwise, the shape is (batch_size, n_concepts, emb_size).
+        """
+        emb = ConceptTensor.concept(self.encoder(x))
+        if self.emb_size > 1:
+            return emb.view(-1, self.n_concepts, self.emb_size)
+        return emb
+
+
+class BaseConceptLayer(ABC, nn.Module):
+    """
+    BaseConceptLayer is an abstract base class for concept layers.
+    """
+    def __init__(self):
+        super().__init__()
 
     @abstractmethod
-    def forward(self, x, **kwargs):
+    def forward(self, x: ConceptTensor) -> ConceptTensor:
         pass
 
 
-class ConceptLinear(BaseConcept):
+class ConceptScorer(BaseConceptLayer):
     """
-    ConceptLinear is a linear model for concept learning.
-    Main reference: `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_
+    ConceptScorer scores concept embeddings.
 
     Attributes:
-        in_features (int): Number of input features.
-        n_concepts (int): Number of concepts to be learned.
-        c_activation (function): Activation function for the concept layer.
-        emb_size (int): Size of the embedding vector.
+        emb_size (int): Size of concept embeddings.
     """
-    def __init__(self, in_features, n_concepts, c_activation=F.sigmoid, emb_size=10):
-        super().__init__(in_features, n_concepts, c_activation)
-        self.emb_size = emb_size
-        self.concept_embedder = nn.Linear(in_features, emb_size)
-        self.concept_predictor = nn.Linear(emb_size, n_concepts)
+    def __init__(self, emb_size):
+        super().__init__()
+        self.scorer = nn.Linear(emb_size, 1)
 
-    def forward(self, x, c=None, intervention_idxs=None, intervention_rate=0.0):
-        # predict concepts
-        emb = F.leaky_relu(self.concept_embedder(x))
-        c_pred = self.c_activation(self.concept_predictor(emb))
+    def forward(self, x: ConceptTensor) -> ConceptTensor:
+        """
+        Forward pass of the concept scorer.
 
-        # intervene
-        c_int = c_pred.clone()
-        if c is not None and intervention_idxs is not None:
-            if intervention_idxs.max() >= self.n_concepts:
-                raise ValueError("Intervention indices must be less than the number of concepts.")
+        Args:
+            x (ConceptTensor): Concept embeddings with shape (batch_size, n_concepts, emb_size).
 
-            c_int[:, intervention_idxs] = c[:, intervention_idxs]
-
-        return {'c_pred': c_pred, 'c_int': c_int, 'emb_pre': emb}
+        Returns:
+            ConceptTensor: Concept scores with shape (batch_size, n_concepts).
+        """
+        return self.scorer(x).squeeze(-1)
 
 
-class ConceptEmbeddingResidual(ConceptLinear):
+class DenseConceptLayer(BaseConceptLayer):
     """
-    ConceptEmbeddingResidual is a layer where a first set of neurons is aligned with supervised concepts and
-    a second set of neurons is free to encode residual information.
-    Main reference: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_
+    DenseConceptLayer is a simple concept layer.
 
     Attributes:
-        in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
-        c_activation (function): Activation function for the concept layer.
-        emb_size (int): Size of the embedding vector.
-        n_residuals (int): Number of residual neurons to encode additional information.
+        emb_size (int): Size of concept embeddings.
     """
-    def __init__(self, in_features, n_concepts, c_activation=F.sigmoid, emb_size=10, n_residuals=10):
-        super().__init__(in_features, n_concepts, c_activation, emb_size)
-        self.fc_residual = nn.Linear(emb_size, n_residuals)
+    def __init__(self, in_concepts, out_concepts, emb_size=1):
+        super().__init__()
+        self.out_concepts = out_concepts
+        self.scorer = nn.Linear(emb_size * in_concepts, out_concepts)
 
-    def forward(self, x, c=None, intervention_idxs=None, intervention_rate=0.0):
-        # predict concepts
-        emb = F.leaky_relu(self.concept_embedder(x))
-        c_pred = self.c_activation(self.concept_predictor(emb))
-        residuals = F.leaky_relu(self.fc_residual(emb))
+    def forward(self, x: ConceptTensor) -> ConceptTensor:
+        """
+        Forward pass of the dense concept layer.
 
-        # intervene
-        c_int = c_pred.clone()
-        if c is not None and intervention_idxs is not None:
-            if intervention_idxs.max() >= self.n_concepts:
-                raise ValueError("Intervention indices must be less than the number of concepts.")
+        Args:
+            x (ConceptTensor): Concept embeddings with shape (batch_size, in_concepts, emb_size) or (batch_size, in_concepts).
 
-            c_int[:, intervention_idxs] = c[:, intervention_idxs]
-
-        return {'c_pred': c_pred, 'c_int': c_int, 'emb_pre': emb, 'residuals': residuals}
-
-
-class ConceptEmbedding(BaseConcept):
-    """
-    ConceptEmbedding is a model for learning concept embeddings.
-    Main reference: `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
-
-    Attributes:
-        in_features (int): Number of input features.
-        n_concepts (int): Number of concepts to be learned.
-        c_activation (function): Activation function for the concept layer.
-        emb_size (int): Size of the embedding vector.
-        active_intervention_values (torch.Tensor): Values used for active interventions.
-        inactive_intervention_values (torch.Tensor): Values used for inactive interventions.
-    """
-    def __init__(
-            self,
-            in_features,
-            n_concepts,
-            c_activation=F.sigmoid,
-            emb_size=10,
-            active_intervention_values=None,
-            inactive_intervention_values=None,
-    ):
-        super().__init__(in_features, n_concepts, c_activation)
-        self.emb_size = emb_size
-        self.ones = torch.ones(self.n_concepts)
-
-        self.embedder = nn.Linear(in_features, emb_size)
-        self.concept_context_generators = torch.nn.ModuleList()
-        for i in range(n_concepts):
-            self.concept_context_generators.append(torch.nn.Sequential(
-                torch.nn.Linear(emb_size, 2 * emb_size),
-                torch.nn.LeakyReLU(),
-            ))
-        self.concept_prob_predictor = torch.nn.Sequential(
-            torch.nn.Linear(2 * emb_size, 1),
-        )
-
-        # And default values for interventions here
-        if active_intervention_values is not None:
-            self.active_intervention_values = torch.tensor(
-                active_intervention_values
-            )
-        else:
-            self.active_intervention_values = torch.ones(n_concepts)
-        if inactive_intervention_values is not None:
-            self.inactive_intervention_values = torch.tensor(
-                inactive_intervention_values
-            )
-        else:
-            self.inactive_intervention_values = torch.zeros(n_concepts)
-
-    def _after_interventions(
-            self,
-            prob,
-            concept_idx,
-            intervention_idxs=None,
-            c_true=None,
-            train=False,
-            intervention_rate=0.0,
-    ):
-        if train and (intervention_rate != 0) and (intervention_idxs is None):
-            # Then we will probabilistically intervene in some concepts
-            mask = torch.bernoulli(self.ones * intervention_rate)
-            intervention_idxs = torch.nonzero(mask).reshape(-1)
-        if (c_true is None) or (intervention_idxs is None):
-            return prob
-        if concept_idx not in intervention_idxs:
-            return prob
-        return (c_true[:, concept_idx:concept_idx + 1] * self.active_intervention_values[concept_idx]) + \
-            ((c_true[:, concept_idx:concept_idx + 1] - 1) * -self.inactive_intervention_values[concept_idx])
-
-    def forward(self, x, c=None, intervention_idxs=None, intervention_rate=0.0, train=False):
-        if c is not None and intervention_idxs is not None:
-            if intervention_idxs.max() >= self.n_concepts:
-                raise ValueError("Intervention indices must be less than the number of concepts.")
-
-        c_emb_list, c_pred_list, c_int_list = [], [], []
-        emb = F.leaky_relu(self.embedder(x))
-        for i, context_gen in enumerate(self.concept_context_generators):
-            context = context_gen(emb)
-            c_pred = self.c_activation(self.concept_prob_predictor(context))
-            c_pred_list.append(c_pred)
-
-            # Time to check for interventions
-            c_pred = self._after_interventions(
-                prob=c_pred,
-                concept_idx=i,
-                intervention_idxs=intervention_idxs,
-                c_true=c,
-                train=train,
-                intervention_rate=intervention_rate,
-            )
-            c_int_list.append(c_pred)
-
-            context_pos = context[:, :self.emb_size]
-            context_neg = context[:, self.emb_size:]
-            c_emb = context_pos * c_pred + context_neg * (1 - c_pred)
-            c_emb_list.append(c_emb.unsqueeze(1))
-
-        c_emb = torch.cat(c_emb_list, axis=1)
-        c_pred = torch.cat(c_pred_list, axis=1)
-        c_int = torch.cat(c_int_list, axis=1)
-        return {'c_emb': c_emb, 'c_pred': c_pred, 'c_int': c_int, 'emb_pre': emb}
+        Returns:
+            ConceptTensor: Concept scores with shape (batch_size, out_concepts).
+        """
+        if len(x.shape) > 2:
+            x = x.reshape(x.shape[0], -1)
+        return self.scorer(x)

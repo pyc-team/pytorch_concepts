@@ -66,5 +66,6 @@ class TestCaceScore(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             cace_score(y_pred_c0, y_pred_c1)
 
+
 if __name__ == '__main__':
     unittest.main()

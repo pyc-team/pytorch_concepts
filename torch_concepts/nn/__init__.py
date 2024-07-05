@@ -1,20 +1,12 @@
-from .concept import Sequential, BaseConcept, ConceptLinear, ConceptEmbedding, ConceptEmbeddingResidual
-from .task import BaseClassifier, MLPClassifier, ResidualMLPClassifier, DCRClassifier
-from .semantics import Logic, GodelTNorm, ProductTNorm
+from .concept import BaseConceptLayer, ConceptScorer, DenseConceptLayer, ConceptEncoder
+from .functional import intervene, concept_embedding_mixture
+
 
 __all__ = [
-    'Sequential',
-    'BaseConcept',
-    'ConceptLinear',
-    'ConceptEmbedding',
-    'ConceptEmbeddingResidual',
-
-    'BaseClassifier',
-    'MLPClassifier',
-    'ResidualMLPClassifier',
-    'DCRClassifier',
-
-    'Logic',
-    'GodelTNorm',
-    'ProductTNorm',
+    "BaseConceptLayer",
+    "ConceptScorer",
+    "DenseConceptLayer",
+    "ConceptEncoder",
+    "intervene",
+    "concept_embedding_mixture",
 ]

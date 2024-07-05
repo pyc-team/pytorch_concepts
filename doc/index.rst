@@ -26,11 +26,11 @@ The source code and minimal working examples can be found on
     :caption: API Reference
     :maxdepth: 2
 
+    modules/base
+    modules/metrics
     modules/data/toy
     modules/nn/concept
-    modules/nn/semantics
-    modules/nn/task
-    modules/metrics
+    modules/nn/functional
 
 
 .. toctree::

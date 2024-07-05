@@ -1,4 +1,4 @@
-APIs for concepts
+APIs for concept layers
 ==============================================
 
 :mod:`torch_concepts.nn.concept`
