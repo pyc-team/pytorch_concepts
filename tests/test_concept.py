@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer, DenseConceptLayer
+from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -32,20 +32,6 @@ class TestConceptClasses(unittest.TestCase):
         result = scorer(x)
 
         # Test output shape
-        self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
-
-    def test_dense_concept_layer(self):
-        dense_layer = DenseConceptLayer(self.n_concepts, self.n_concepts, self.emb_size)
-        x = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts, self.emb_size))
-        result = dense_layer(x)
-
-        # Test output shape
-        self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
-
-        # Test with emb_size=1
-        dense_layer = DenseConceptLayer(self.n_concepts, self.n_concepts, emb_size=1)
-        x = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts))
-        result = dense_layer(x)
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
 
 

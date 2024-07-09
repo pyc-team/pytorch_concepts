@@ -71,31 +71,3 @@ class ConceptScorer(BaseConceptLayer):
             ConceptTensor: Concept scores with shape (batch_size, n_concepts).
         """
         return self.scorer(x).squeeze(-1)
-
-
-class DenseConceptLayer(BaseConceptLayer):
-    """
-    DenseConceptLayer is a simple concept layer.
-
-    Attributes:
-        n_concepts (int): Number of concepts to be learned.
-        emb_size (int): Size of concept embeddings.
-    """
-    def __init__(self, in_concepts, out_concepts, emb_size=1):
-        super().__init__()
-        self.out_concepts = out_concepts
-        self.scorer = nn.Linear(emb_size * in_concepts, out_concepts)
-
-    def forward(self, x: ConceptTensor) -> ConceptTensor:
-        """
-        Forward pass of the dense concept layer.
-
-        Args:
-            x (ConceptTensor): Concept embeddings with shape (batch_size, in_concepts, emb_size) or (batch_size, in_concepts).
-
-        Returns:
-            ConceptTensor: Concept scores with shape (batch_size, out_concepts).
-        """
-        if len(x.shape) > 2:
-            x = x.reshape(x.shape[0], -1)
-        return self.scorer(x)

@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts.base import ConceptTensor
 from torch_concepts.data import xor
-from torch_concepts.nn import ConceptScorer, DenseConceptLayer, ConceptEncoder
+from torch_concepts.nn import ConceptScorer, ConceptEncoder
 import torch_concepts.nn.functional as CF
 
 
@@ -22,8 +22,8 @@ def main():
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
     c_encoder = ConceptEncoder(emb_size, n_concepts, 2*emb_size)
     c_scorer = ConceptScorer(2*emb_size)
-    y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(emb_size*n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
-    y_predictor = torch.nn.Sequential(DenseConceptLayer(n_concepts, emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
+    y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(emb_size*n_concepts, emb_size),
+                                      torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
     model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
