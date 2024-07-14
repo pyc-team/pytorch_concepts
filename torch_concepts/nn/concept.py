@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 
 from torch_concepts.base import ConceptTensor
 
+EPS = 1e-8
+
 
 class ConceptEncoder(nn.Module):
     """
@@ -36,6 +38,45 @@ class ConceptEncoder(nn.Module):
             ConceptTensor: Concept embeddings. If emb_size is 1, the returned shape is (batch_size, n_concepts). Otherwise, the shape is (batch_size, n_concepts, emb_size).
         """
         emb = self.encoder(x)
+        if self.emb_size > 1:
+            emb = emb.view(-1, self.n_concepts, self.emb_size)
+        return ConceptTensor.concept(emb, self.concept_names)
+
+
+class GenerativeConceptEncoder(ConceptEncoder):
+    """
+    GenerativeConceptEncoder generates concept context sampling from a normal distribution.
+
+    Attributes:
+        in_features (int): Number of input features.
+        n_concepts (int): Number of concepts to be learned.
+        emb_size (int): Size of concept embeddings.
+        concept_names (List[str]): Names of concepts.
+    """
+    def __init__(self, in_features, n_concepts, emb_size=1, concept_names: List[str] = None):
+        super().__init__(in_features, n_concepts, emb_size, concept_names)
+        self.concept_mean_predictor = nn.Linear(in_features, emb_size * n_concepts)
+        self.concept_var_predictor = nn.Linear(in_features, emb_size * n_concepts)
+        self.qz_x = None
+        self.p_z = None
+
+    def forward(self, x: torch.Tensor) -> ConceptTensor:
+        """
+        Forward pass of the concept encoder with sampling.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            ConceptTensor: Concept embeddings. If emb_size is 1, the returned shape is (batch_size, n_concepts). Otherwise, the shape is (batch_size, n_concepts, emb_size).
+        """
+        z_mu = self.concept_mean_predictor(x)
+        z_log_var = self.concept_var_predictor(x)
+        z_sigma = torch.exp(z_log_var / 2) + EPS
+        self.qz_x = torch.distributions.Normal(z_mu, z_sigma)
+        self.p_z = torch.distributions.Normal(torch.zeros_like(self.qz_x.mean), torch.ones_like(self.qz_x.mean))
+
+        emb = self.qz_x.rsample()
         if self.emb_size > 1:
             emb = emb.view(-1, self.n_concepts, self.emb_size)
         return ConceptTensor.concept(emb, self.concept_names)

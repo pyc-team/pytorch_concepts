@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer
+from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -26,6 +26,30 @@ class TestConceptClasses(unittest.TestCase):
         encoder = ConceptEncoder(self.in_features, self.n_concepts, emb_size=1)
         result = encoder(x)
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
+
+    def test_generative_concept_encoder(self):
+        encoder = GenerativeConceptEncoder(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        x = torch.randn(self.batch_size, self.in_features)
+        result = encoder(x)
+
+        # Test output type
+        self.assertIsInstance(result, ConceptTensor)
+
+        # Test output shape
+        self.assertEqual(result.shape, (self.batch_size, self.n_concepts, self.emb_size))
+
+        # Test concept names
+        self.assertEqual(result.concept_names, self.concept_names)
+
+        # Test sampling properties
+        self.assertIsNotNone(encoder.qz_x)
+        self.assertIsNotNone(encoder.p_z)
+
+        # Test emb_size=1 case
+        encoder = GenerativeConceptEncoder(self.in_features, self.n_concepts, emb_size=1, concept_names=self.concept_names)
+        result = encoder(x)
+        self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
+        self.assertEqual(result.concept_names, self.concept_names)
 
     def test_concept_scorer(self):
         scorer = ConceptScorer(self.emb_size)
