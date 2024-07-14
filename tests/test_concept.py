@@ -12,6 +12,7 @@ class TestConceptClasses(unittest.TestCase):
         self.n_concepts = 5
         self.emb_size = 4
         self.batch_size = 3
+        self.concept_names = ["A", "B", "C", "D", "E"]
 
     def test_concept_encoder(self):
         encoder = ConceptEncoder(self.in_features, self.n_concepts, self.emb_size)
@@ -28,11 +29,54 @@ class TestConceptClasses(unittest.TestCase):
 
     def test_concept_scorer(self):
         scorer = ConceptScorer(self.emb_size)
-        x = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts, self.emb_size))
+        x = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts, self.emb_size), concept_names=self.concept_names)
         result = scorer(x)
 
         # Test output shape
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
+
+    def test_concept_tensor_creation(self):
+        x = torch.randn(self.batch_size, self.n_concepts)
+        c = ConceptTensor.concept(x, concept_names=self.concept_names)
+
+        # Test concept names
+        self.assertEqual(c.concept_names, self.concept_names)
+
+        # Test default concept names
+        c_default = ConceptTensor.concept(x)
+        self.assertEqual(c_default.concept_names, [f"concept_{i}" for i in range(self.n_concepts)])
+
+        # Test mismatch in concept names length
+        with self.assertRaises(ValueError):
+            ConceptTensor.concept(x, concept_names=["A", "B"])
+
+    def test_assign_concept_names(self):
+        x = torch.randn(self.batch_size, self.n_concepts)
+        c = ConceptTensor.concept(x)
+
+        # Assign new concept names
+        new_concept_names = ["V", "W", "X", "Y", "Z"]
+        c.assign_concept_names(new_concept_names)
+
+        # Test new concept names
+        self.assertEqual(c.concept_names, new_concept_names)
+
+        # Test mismatch in concept names length
+        with self.assertRaises(ValueError):
+            c.assign_concept_names(["A", "B"])
+
+    def test_extract_by_concept_names(self):
+        x = torch.randn(self.batch_size, self.n_concepts)
+        c = ConceptTensor.concept(x, concept_names=self.concept_names)
+
+        # Extract by concept names
+        extracted_c = c.extract_by_concept_names(["A", "C", "E"])
+
+        # Test shape of extracted tensor
+        self.assertEqual(extracted_c.shape, (self.batch_size, 3))
+
+        # Test concept names of extracted tensor
+        self.assertEqual(extracted_c.concept_names, ["A", "C", "E"])
 
 
 if __name__ == '__main__':

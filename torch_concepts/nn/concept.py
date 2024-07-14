@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 from torch import nn
 from abc import ABC, abstractmethod
@@ -13,13 +15,15 @@ class ConceptEncoder(nn.Module):
         in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
         emb_size (int): Size of concept embeddings.
+        concept_names (List[str]): Names of concepts.
     """
-    def __init__(self, in_features, n_concepts, emb_size=1):
+    def __init__(self, in_features: int, n_concepts: int, emb_size: int = 1, concept_names: List[str] = None):
         super().__init__()
         self.emb_size = emb_size
         self.n_concepts = n_concepts
         self.in_features = in_features
         self.encoder = nn.Linear(in_features, emb_size * n_concepts)
+        self.concept_names = concept_names
 
     def forward(self, x: torch.Tensor) -> ConceptTensor:
         """
@@ -31,18 +35,22 @@ class ConceptEncoder(nn.Module):
         Returns:
             ConceptTensor: Concept embeddings. If emb_size is 1, the returned shape is (batch_size, n_concepts). Otherwise, the shape is (batch_size, n_concepts, emb_size).
         """
-        emb = ConceptTensor.concept(self.encoder(x))
+        emb = self.encoder(x)
         if self.emb_size > 1:
-            return emb.view(-1, self.n_concepts, self.emb_size)
-        return emb
+            emb = emb.view(-1, self.n_concepts, self.emb_size)
+        return ConceptTensor.concept(emb, self.concept_names)
 
 
 class BaseConceptLayer(ABC, nn.Module):
     """
     BaseConceptLayer is an abstract base class for concept layers.
+
+    Attributes:
+        concept_names (List[str]): Names of concepts.
     """
-    def __init__(self):
+    def __init__(self, concept_names: List[str] = None):
         super().__init__()
+        self.concept_names = concept_names
 
     @abstractmethod
     def forward(self, x: ConceptTensor) -> ConceptTensor:
@@ -55,9 +63,10 @@ class ConceptScorer(BaseConceptLayer):
 
     Attributes:
         emb_size (int): Size of concept embeddings.
+        concept_names (List[str]): Names of concepts.
     """
-    def __init__(self, emb_size):
-        super().__init__()
+    def __init__(self, emb_size: int, concept_names: List[str] = None):
+        super().__init__(concept_names)
         self.scorer = nn.Linear(emb_size, 1)
 
     def forward(self, x: ConceptTensor) -> ConceptTensor:
@@ -70,4 +79,4 @@ class ConceptScorer(BaseConceptLayer):
         Returns:
             ConceptTensor: Concept scores with shape (batch_size, n_concepts).
         """
-        return self.scorer(x).squeeze(-1)
+        return ConceptTensor.concept(self.scorer(x).squeeze(-1), self.concept_names)
