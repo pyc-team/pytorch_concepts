@@ -45,7 +45,7 @@ class ConceptEncoder(nn.Module):
 
 class GenerativeConceptEncoder(ConceptEncoder):
     """
-    GenerativeConceptEncoder generates concept context sampling from a normal distribution.
+    GenerativeConceptEncoder generates concept context sampling from independent normal distributions.
 
     Attributes:
         in_features (int): Number of input features.
@@ -53,7 +53,7 @@ class GenerativeConceptEncoder(ConceptEncoder):
         emb_size (int): Size of concept embeddings.
         concept_names (List[str]): Names of concepts.
     """
-    def __init__(self, in_features, n_concepts, emb_size=1, concept_names: List[str] = None):
+    def __init__(self, in_features: int, n_concepts: int, emb_size: int = 1, concept_names: List[str] = None):
         super().__init__(in_features, n_concepts, emb_size, concept_names)
         self.concept_mean_predictor = nn.Linear(in_features, emb_size * n_concepts)
         self.concept_var_predictor = nn.Linear(in_features, emb_size * n_concepts)
@@ -72,13 +72,15 @@ class GenerativeConceptEncoder(ConceptEncoder):
         """
         z_mu = self.concept_mean_predictor(x)
         z_log_var = self.concept_var_predictor(x)
+        if self.emb_size > 1:
+            z_mu = z_mu.view(-1, self.n_concepts, self.emb_size)
+            z_log_var = z_log_var.view(-1, self.n_concepts, self.emb_size)
+
         z_sigma = torch.exp(z_log_var / 2) + EPS
         self.qz_x = torch.distributions.Normal(z_mu, z_sigma)
         self.p_z = torch.distributions.Normal(torch.zeros_like(self.qz_x.mean), torch.ones_like(self.qz_x.mean))
 
         emb = self.qz_x.rsample()
-        if self.emb_size > 1:
-            emb = emb.view(-1, self.n_concepts, self.emb_size)
         return ConceptTensor.concept(emb, self.concept_names)
 
 
