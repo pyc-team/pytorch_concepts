@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from torch_concepts.base import ConceptTensor
 from torch_concepts.nn import ConceptEncoder, ConceptScorer
-from torch_concepts.nn.functional import intervene
+from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
 
 class BaseBottleneck(ABC, nn.Module):
@@ -35,6 +35,7 @@ class ConceptBottleneck(BaseBottleneck):
         in_features (int): Number of input features.
         n_concepts (int): Number of concepts to be learned.
         concept_names (List[str]): Names of concepts.
+        activation (Callable): Activation function of concept scores.
     """
     def __init__(self, in_features: int, n_concepts: int, concept_names: List[str] = None,
                  activation: Callable = F.sigmoid):
@@ -49,21 +50,16 @@ class ConceptBottleneck(BaseBottleneck):
 
         Args:
             x (torch.Tensor): Input tensor.
+            c_true (ConceptTensor): Ground truth concepts.
+            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating which concepts to intervene on.
+            intervention_rate (float): Rate at which perform interventions.
 
         Returns:
             Dict[ConceptTensor]: 'next': object to pass to the next layer, 'c_pred': concept scores with shape (batch_size, n_concepts), 'c_int': concept scores after interventions, 'emb': None.
         """
         c_logit = self.scorer(x)
-        c_pred = self.activation(c_logit)
-
-        # intervene
-        c_int = ConceptTensor.concept(c_pred.clone(), self.concept_names)
-        if c_true is not None and intervention_idxs is not None:
-            if intervention_idxs.min() >= 0 and intervention_idxs.max() >= self.n_concepts:
-                raise ValueError("Intervention indices must be less than the number of concepts.")
-
-            c_int = ConceptTensor.concept(intervene(c_pred, c_true, intervention_idxs))
-
+        c_pred = ConceptTensor.concept(self.activation(c_logit), self.concept_names)
+        c_int = intervene(c_pred, c_true, intervention_idxs)
         return {'next': c_int, 'c_pred': c_pred, 'c_int': c_int, 'emb': None}
 
 
@@ -78,6 +74,7 @@ class ConceptResidualBottleneck(BaseBottleneck):
         n_concepts (int): Number of concepts to be learned.
         emb_size (int): Size of concept embeddings.
         concept_names (List[str]): Names of concepts.
+        activation (Callable): Activation function of concept scores.
     """
     def __init__(self, in_features: int, n_concepts: int, emb_size: int, concept_names: List[str] = None,
                  activation: Callable = F.sigmoid):
@@ -93,6 +90,9 @@ class ConceptResidualBottleneck(BaseBottleneck):
 
         Args:
             x (torch.Tensor): Input tensor.
+            c_true (ConceptTensor): Ground truth concepts.
+            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating which concepts to intervene on.
+            intervention_rate (float): Rate at which perform interventions.
 
         Returns:
             Dict[ConceptTensor]: 'next': object to pass to the next layer, 'c_pred': concept scores with shape (batch_size, n_concepts), 'c_int': concept scores after interventions, 'emb': residual embedding.
@@ -100,14 +100,46 @@ class ConceptResidualBottleneck(BaseBottleneck):
         emb = self.residual_embedder(x)
         c_logit = self.scorer(x)
         c_pred = ConceptTensor.concept(self.activation(c_logit), self.concept_names)
-
-        # intervene
-        c_int = c_pred.clone()
-        if c_true is not None and intervention_idxs is not None:
-            if intervention_idxs.max() >= self.n_concepts:
-                raise ValueError("Intervention indices must be less than the number of concepts.")
-
-            c_int = intervene(c_pred, c_true, intervention_idxs)
-
+        c_int = intervene(c_pred, c_true, intervention_idxs)
         return {'next': torch.hstack((c_pred, emb)), 'c_pred': c_pred, 'c_int': c_int, 'emb': emb}
 
+
+class MixConceptEmbeddingBottleneck(BaseBottleneck):
+    """
+    MixConceptEmbeddingBottleneck creates supervised concept embeddings.
+    Main reference: `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
+
+    Attributes:
+        in_features (int): Number of input features.
+        n_concepts (int): Number of concepts to be learned.
+        emb_size (int): Size of concept embeddings.
+        concept_names (List[str]): Names of concepts.
+        activation (Callable): Activation function of concept scores.
+    """
+    def __init__(self, in_features: int, n_concepts: int, emb_size: int, concept_names: List[str] = None,
+                 activation: Callable = F.sigmoid):
+        super().__init__(concept_names)
+        self.encoder = ConceptEncoder(in_features, n_concepts, 2 * emb_size, concept_names=concept_names)
+        self.scorer = ConceptScorer(2 * emb_size, concept_names=concept_names)
+        self.activation = activation
+
+    def forward(self, x: ConceptTensor, c_true: ConceptTensor = None, intervention_idxs: ConceptTensor = None,
+                intervention_rate: float = 0.0) -> Dict[str, ConceptTensor]:
+        """
+        Forward pass of MixConceptEmbeddingBottleneck.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            c_true (ConceptTensor): Ground truth concepts.
+            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating which concepts to intervene on.
+            intervention_rate (float): Rate at which perform interventions.
+
+        Returns:
+            Dict[ConceptTensor]: 'next': object to pass to the next layer, 'c_pred': concept scores with shape (batch_size, n_concepts), 'c_int': concept scores after interventions, 'emb': residual embedding.
+        """
+        c_emb = self.encoder(x)
+        c_logit = self.scorer(c_emb)
+        c_pred = ConceptTensor.concept(self.activation(c_logit), self.concept_names)
+        c_int = intervene(c_pred, c_true, intervention_idxs)
+        c_mix = concept_embedding_mixture(c_emb, c_int)
+        return {'next': c_mix, 'c_pred': c_pred, 'c_int': c_int, 'emb': None, 'context': c_emb}
