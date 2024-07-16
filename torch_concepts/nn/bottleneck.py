@@ -54,7 +54,7 @@ class ConceptBottleneck(BaseBottleneck):
             Dict[ConceptTensor]: 'next': object to pass to the next layer, 'c_pred': concept scores with shape (batch_size, n_concepts), 'c_int': concept scores after interventions, 'emb': None.
         """
         c_logit = self.scorer(x)
-        c_pred = ConceptTensor.concept(self.activation(c_logit), self.concept_names)
+        c_pred = self.activation(c_logit)
 
         # intervene
         c_int = ConceptTensor.concept(c_pred.clone(), self.concept_names)

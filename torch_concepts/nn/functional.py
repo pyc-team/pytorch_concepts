@@ -15,7 +15,7 @@ def intervene(c_pred: ConceptTensor, c_true: ConceptTensor, indexes: ConceptTens
     Returns:
         ConceptTensor: Intervened concept scores.
     """
-    return ConceptTensor.concept(torch.where(indexes, c_true, c_pred))
+    return ConceptTensor.concept(torch.where(indexes, c_true, c_pred), c_true.concept_names)
 
 
 def concept_embedding_mixture(c_emb: ConceptTensor, c_scores: ConceptTensor):
@@ -32,4 +32,4 @@ def concept_embedding_mixture(c_emb: ConceptTensor, c_scores: ConceptTensor):
     """
     emb_size = c_emb[0].shape[1] // 2
     c_mix = c_scores.unsqueeze(-1) * c_emb[:, :, :emb_size] + (1 - c_scores.unsqueeze(-1)) * c_emb[:, :, emb_size:]
-    return c_mix
+    return ConceptTensor.concept(c_mix, c_scores.concept_names)
