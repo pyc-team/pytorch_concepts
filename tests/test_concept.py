@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder, \
+from torch_concepts.nn import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder, \
     AutoregressiveConceptEncoder
 
 

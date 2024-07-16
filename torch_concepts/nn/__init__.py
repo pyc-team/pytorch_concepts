@@ -1,5 +1,5 @@
-from .concept import (BaseConceptLayer, ConceptScorer, ConceptEncoder, GenerativeConceptEncoder,
-                      AutoregressiveConceptEncoder)
+from .base import (BaseConceptLayer, ConceptScorer, ConceptEncoder, GenerativeConceptEncoder,
+                   AutoregressiveConceptEncoder)
 from .functional import intervene, concept_embedding_mixture
 
 
