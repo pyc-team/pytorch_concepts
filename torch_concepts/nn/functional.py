@@ -15,6 +15,13 @@ def intervene(c_pred: ConceptTensor, c_true: ConceptTensor, indexes: ConceptTens
     Returns:
         ConceptTensor: Intervened concept scores.
     """
+    if c_true is None or indexes is None:
+        return c_pred
+
+    if c_true is not None and indexes is not None:
+        if indexes.max() >= c_pred.shape[1]:
+            raise ValueError("Intervention indices must be less than the number of concepts.")
+
     return ConceptTensor.concept(torch.where(indexes, c_true, c_pred), c_true.concept_names)
 
 
