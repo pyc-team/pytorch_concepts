@@ -84,6 +84,47 @@ class GenerativeConceptEncoder(ConceptEncoder):
         return ConceptTensor.concept(emb, self.concept_names)
 
 
+class AutoregressiveConceptEncoder(ConceptEncoder):
+    """
+    AutoregressiveConceptEncoder predicts each concept based on input and previous concepts.
+
+    Attributes:
+        in_features (int): Number of input features.
+        n_concepts (int): Number of concepts to be learned.
+        emb_size (int): Size of concept embeddings.
+        concept_names (List[str]): Names of concepts.
+    """
+
+    def __init__(self, in_features: int, n_concepts: int, emb_size: int, concept_names: List[str] = None):
+        super().__init__(in_features, n_concepts, emb_size, concept_names)
+        self.encoder = nn.Sequential(
+            nn.Linear(in_features + emb_size, emb_size),
+            nn.LeakyReLU(),
+            nn.Linear(emb_size, emb_size),
+        )
+
+    def forward(self, x: ConceptTensor) -> ConceptTensor:
+        """
+        Forward pass of the autoregressive concept scorer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            ConceptTensor: Concept embeddings. If emb_size is 1, the returned shape is (batch_size, n_concepts). Otherwise, the shape is (batch_size, n_concepts, emb_size).
+        """
+        outputs = []
+        prev_context = torch.zeros(x.shape[0], self.emb_size)
+        for i in range(self.n_concepts):
+            input_tensor = torch.cat((x, prev_context), dim=-1)
+            emb = self.encoder(input_tensor)
+            prev_context = emb.clone()
+            outputs.append(emb)
+
+        outputs = torch.stack(outputs, dim=1)
+        return ConceptTensor.concept(outputs.squeeze(-1), self.concept_names)
+
+
 class BaseConceptLayer(ABC, nn.Module):
     """
     BaseConceptLayer is an abstract base class for concept layers.

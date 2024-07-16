@@ -2,7 +2,8 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder
+from torch_concepts.nn.concept import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder, \
+    AutoregressiveConceptEncoder
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -50,6 +51,48 @@ class TestConceptClasses(unittest.TestCase):
         result = encoder(x)
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
         self.assertEqual(result.concept_names, self.concept_names)
+
+    def test_autoregressive_concept_encoder_creation(self):
+        encoder = AutoregressiveConceptEncoder(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        self.assertIsInstance(encoder, AutoregressiveConceptEncoder)
+        self.assertEqual(encoder.in_features, self.in_features)
+        self.assertEqual(encoder.n_concepts, self.n_concepts)
+        self.assertEqual(encoder.emb_size, self.emb_size)
+        self.assertEqual(encoder.concept_names, self.concept_names)
+
+    def test_autoregressive_concept_encoder_forward(self):
+        encoder = AutoregressiveConceptEncoder(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        x = torch.randn(self.batch_size, self.in_features)
+        result = encoder(x)
+
+        # Test output type
+        self.assertIsInstance(result, ConceptTensor)
+
+        # Test output shape
+        self.assertEqual(result.shape, (self.batch_size, self.n_concepts, self.emb_size))
+
+        # Test concept names
+        self.assertEqual(result.concept_names, self.concept_names)
+
+    def test_autoregressive_concept_encoder_forward_emb_size_1(self):
+        encoder = AutoregressiveConceptEncoder(self.in_features, self.n_concepts, emb_size=1, concept_names=self.concept_names)
+        x = torch.randn(self.batch_size, self.in_features)
+        result = encoder(x)
+
+        # Test output shape
+        self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
+
+        # Test concept names
+        self.assertEqual(result.concept_names, self.concept_names)
+
+    def test_autoregressive_concept_encoder_without_concept_names(self):
+        encoder = AutoregressiveConceptEncoder(self.in_features, self.n_concepts, self.emb_size)
+        x = torch.randn(self.batch_size, self.in_features)
+        result = encoder(x)
+
+        # Test default concept names
+        expected_concept_names = [f"concept_{i}" for i in range(self.n_concepts)]
+        self.assertEqual(result.concept_names, expected_concept_names)
 
     def test_concept_scorer(self):
         scorer = ConceptScorer(self.emb_size)
