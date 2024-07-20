@@ -1,5 +1,4 @@
-from .base import (BaseConceptLayer, ConceptScorer, ConceptEncoder, GenerativeConceptEncoder,
-                   AutoregressiveConceptEncoder)
+from .base import (BaseConceptLayer, ConceptScorer, ConceptEncoder, GenerativeConceptEncoder)
 from .bottleneck import BaseBottleneck, ConceptBottleneck, ConceptResidualBottleneck, MixConceptEmbeddingBottleneck
 from .functional import intervene, concept_embedding_mixture
 
@@ -9,7 +8,6 @@ __all__ = [
     "ConceptScorer",
     "ConceptEncoder",
     "GenerativeConceptEncoder",
-    "AutoregressiveConceptEncoder",
 
     "BaseBottleneck",
     "ConceptBottleneck",
