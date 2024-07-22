@@ -3,4 +3,3 @@ scipy
 scikit-learn
 pandas
 torch
-networkx
