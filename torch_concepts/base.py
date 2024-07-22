@@ -109,3 +109,27 @@ class ConceptTensor(torch.Tensor):
     #         raise ValueError("ConceptTensor must have at least two dimensions: batch size and number of concepts.")
     #
     #     return super().view(*shape).as_subclass(ConceptTensor)
+
+
+class ConceptDistribution(torch.distributions.Distribution):
+    """
+    ConceptDistribution is a subclass of torch.distributions.Distribution which ensures that the samples are ConceptTensors.
+    """
+
+    def __init__(self, base_dist: torch.distributions.Distribution, concept_names: List[str] = None):
+        self.base_dist = base_dist
+        self.concept_names = ConceptTensor._check_concept_names(base_dist.mean, concept_names)
+        super().__init__()
+
+    def rsample(self, sample_shape: torch.Size = torch.Size()) -> ConceptTensor:
+        """
+        Sample from the distribution.
+
+        Args:
+            sample_shape: Shape of the sample.
+
+        Returns:
+            ConceptTensor: Sampled ConceptTensor.
+        """
+        sample = self.base_dist.rsample(sample_shape)
+        return ConceptTensor.concept(sample, concept_names=self.concept_names)

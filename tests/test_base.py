@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn import ConceptEncoder, ConceptScorer, GenerativeConceptEncoder
+from torch_concepts.nn import ConceptEncoder, ConceptScorer, ProbabilisticConceptEncoder
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -28,9 +28,10 @@ class TestConceptClasses(unittest.TestCase):
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
 
     def test_generative_concept_encoder(self):
-        encoder = GenerativeConceptEncoder(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        encoder = ProbabilisticConceptEncoder(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
         x = torch.randn(self.batch_size, self.in_features)
-        result = encoder(x)
+        qz_x = encoder(x)
+        result = qz_x.rsample()
 
         # Test output type
         self.assertIsInstance(result, ConceptTensor)
@@ -42,12 +43,13 @@ class TestConceptClasses(unittest.TestCase):
         self.assertEqual(result.concept_names, self.concept_names)
 
         # Test sampling properties
-        self.assertIsNotNone(encoder.qz_x)
+        self.assertIsNotNone(qz_x)
         self.assertIsNotNone(encoder.p_z)
 
         # Test emb_size=1 case
-        encoder = GenerativeConceptEncoder(self.in_features, self.n_concepts, emb_size=1, concept_names=self.concept_names)
-        result = encoder(x)
+        encoder = ProbabilisticConceptEncoder(self.in_features, self.n_concepts, emb_size=1, concept_names=self.concept_names)
+        qz_x = encoder(x)
+        result = qz_x.rsample()
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
         self.assertEqual(result.concept_names, self.concept_names)
 

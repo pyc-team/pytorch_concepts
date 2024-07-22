@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from abc import ABC, abstractmethod
 
-from torch_concepts.base import ConceptTensor
+from torch_concepts.base import ConceptTensor, ConceptDistribution
 
 EPS = 1e-8
 
@@ -43,9 +43,9 @@ class ConceptEncoder(nn.Module):
         return ConceptTensor.concept(emb, self.concept_names)
 
 
-class GenerativeConceptEncoder(ConceptEncoder):
+class ProbabilisticConceptEncoder(ConceptEncoder):
     """
-    GenerativeConceptEncoder generates concept context sampling from independent normal distributions.
+    ProbabilisticConceptEncoder generates concept context sampling from independent normal distributions.
 
     Attributes:
         in_features (int): Number of input features.
@@ -57,10 +57,8 @@ class GenerativeConceptEncoder(ConceptEncoder):
         super().__init__(in_features, n_concepts, emb_size, concept_names)
         self.concept_mean_predictor = nn.Linear(in_features, emb_size * n_concepts)
         self.concept_var_predictor = nn.Linear(in_features, emb_size * n_concepts)
-        self.qz_x = None
-        self.p_z = None
 
-    def forward(self, x: torch.Tensor) -> ConceptTensor:
+    def forward(self, x: torch.Tensor) -> ConceptDistribution:
         """
         Forward pass of the concept encoder with sampling.
 
@@ -77,12 +75,10 @@ class GenerativeConceptEncoder(ConceptEncoder):
             z_log_var = z_log_var.view(-1, self.n_concepts, self.emb_size)
 
         z_sigma = torch.exp(z_log_var / 2) + EPS
-        self.qz_x = torch.distributions.Normal(z_mu, z_sigma)
-        # TODO: p_z where mu and sigma are learnable parameters
-        self.p_z = torch.distributions.Normal(torch.zeros_like(self.qz_x.mean), torch.ones_like(self.qz_x.mean))
-
-        emb = self.qz_x.rsample()
-        return ConceptTensor.concept(emb, self.concept_names)
+        qz_x = torch.distributions.Normal(z_mu, z_sigma)
+        p_z = torch.distributions.Normal(torch.zeros_like(qz_x.mean), torch.ones_like(qz_x.variance))
+        self.p_z = ConceptDistribution(p_z, self.concept_names)
+        return ConceptDistribution(qz_x, self.concept_names)
 
 
 class BaseConceptLayer(ABC, nn.Module):

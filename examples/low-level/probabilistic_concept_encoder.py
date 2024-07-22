@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts.base import ConceptTensor
 from torch_concepts.data import xor
-from torch_concepts.nn import ConceptScorer, ConceptEncoder, GenerativeConceptEncoder
+from torch_concepts.nn import ConceptScorer, ProbabilisticConceptEncoder
 import torch_concepts.nn.functional as CF
 
 
@@ -21,11 +21,11 @@ def main():
     intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names)
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_sampler = GenerativeConceptEncoder(emb_size, n_concepts, 2*emb_size, concept_names)
+    c_encoder = ProbabilisticConceptEncoder(emb_size, n_concepts, 2*emb_size, concept_names)
     c_scorer = ConceptScorer(2*emb_size, concept_names)
     y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(emb_size*n_concepts, emb_size),
                                       torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
-    model = torch.nn.Sequential(encoder, c_sampler, c_scorer, y_predictor)
+    model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_form = torch.nn.BCEWithLogitsLoss()
@@ -35,7 +35,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_emb = c_sampler(emb)
+        q_c_emb = c_encoder(emb)
+        c_emb = q_c_emb.rsample()
         c_pred = c_scorer(c_emb)
         c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
@@ -44,7 +45,7 @@ def main():
         # compute loss
         concept_loss = loss_form(c_pred, c_train)
         task_loss = loss_form(y_pred, y_train)
-        kl_loss = torch.distributions.kl_divergence(c_sampler.p_z, c_sampler.qz_x).mean()
+        kl_loss = torch.distributions.kl_divergence(c_encoder.p_z.base_dist, q_c_emb.base_dist).mean()
         loss = concept_loss + 0.5 * task_loss + 1 * kl_loss
 
         loss.backward()
@@ -57,7 +58,7 @@ def main():
     concept_accuracy = accuracy_score(c_train, c_pred > 0)
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
-    print(f"Concept names: {c_sampler.concept_names}")
+    print(f"Concept names: {c_encoder.concept_names}")
     print(f"Concept 1 (by name): {c_pred.extract_by_concept_names(['C0'])[:5]}")
     print(f"Concept 2 (by name): {c_pred.extract_by_concept_names(['C1'])[:5]}")
 
