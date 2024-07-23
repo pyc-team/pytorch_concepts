@@ -1,3 +1,5 @@
+from typing import List, Union
+
 import torch
 
 from torch_concepts.base import ConceptTensor
@@ -40,3 +42,34 @@ def concept_embedding_mixture(c_emb: ConceptTensor, c_scores: ConceptTensor):
     emb_size = c_emb[0].shape[1] // 2
     c_mix = c_scores.unsqueeze(-1) * c_emb[:, :, :emb_size] + (1 - c_scores.unsqueeze(-1)) * c_emb[:, :, emb_size:]
     return ConceptTensor.concept(c_mix, c_scores.concept_names)
+
+
+def intervene_on_concept_graph(c_adj: ConceptTensor, indexes: List[Union[int, str]]) -> ConceptTensor:
+    """
+    Intervene on a ConceptTensor adjacency matrix by zeroing out specified concepts representing parent nodes.
+
+    Args:
+        c_adj: ConceptTensor adjacency matrix.
+        indexes: List of concept names or indices to zero out.
+
+    Returns:
+        ConceptTensor: Intervened ConceptTensor adjacency matrix.
+    """
+    # Check if the tensor is a square matrix
+    if c_adj.shape[0] != c_adj.shape[1]:
+        raise ValueError("The ConceptTensor must be a square matrix (it represents an adjacency matrix).")
+
+    # Get indices for concepts to zero out
+    if isinstance(indexes[0], str):
+        indices = [c_adj.concept_names.index(name) for name in indexes if name in c_adj.concept_names]
+        if len(indices) != len(indexes):
+            raise ValueError("Some concept names are not found in the tensor's concept names.")
+    else:
+        indices = indexes
+
+    # Zero out specified columns
+    concept_names = c_adj.concept_names
+    c_adj = c_adj.clone()
+    c_adj[:, indices] = 0
+
+    return ConceptTensor.concept(c_adj, concept_names)

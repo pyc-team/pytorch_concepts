@@ -22,6 +22,29 @@ class TestConceptFunctions(unittest.TestCase):
         result = CF.concept_embedding_mixture(c_emb, c_scores)
         self.assertTrue(result.shape == (5, 4, 3), f"Expected shape (5, 4, 3), but got {result.shape}")
 
+    def test_intervene_on_concept_graph(self):
+        # Create a ConceptTensor adjacency matrix
+        adj_matrix_data = torch.tensor([[0, 1, 0],
+                                        [1, 0, 1],
+                                        [0, 1, 0]], dtype=torch.float)
+        concept_names = ["concept_1", "concept_2", "concept_3"]
+        c_adj = ConceptTensor(adj_matrix_data, concept_names)
+
+        # Intervene by zeroing out specific columns
+        intervened_c_adj = CF.intervene_on_concept_graph(c_adj, ["concept_2"])
+
+        # Verify the shape of the output
+        self.assertEqual(intervened_c_adj.shape, c_adj.shape)
+
+        # Verify that the specified columns are zeroed out
+        expected_data = torch.tensor([[0, 0, 0],
+                                      [1, 0, 1],
+                                      [0, 0, 0]], dtype=torch.float)
+        self.assertTrue(torch.equal(intervened_c_adj, expected_data))
+
+        # Verify that the concept names remain unchanged
+        self.assertEqual(intervened_c_adj.concept_names, concept_names)
+
 
 if __name__ == '__main__':
     unittest.main()
