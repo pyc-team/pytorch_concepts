@@ -28,6 +28,7 @@ The source code and minimal working examples can be found on
 
     modules/base
     modules/metrics
+    modules/utils
     modules/data/toy
     modules/nn/base
     modules/nn/bottleneck
