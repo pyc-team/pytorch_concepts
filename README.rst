@@ -11,25 +11,39 @@ PyTorch Concepts
 PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train Concept-Based Deep Learning models.
 
 
-Implemented Modules
+Low-level APIs
 -------------------------
 
-**Concept bottleneck layers**:
+**Concept data types** (``pyc.base``):
 
-- ConceptLinear: A linear layer to predict concepts from `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_ (ICML 2020).
-- ConceptEmbeddingResidual: A layer that generates a bottleneck composed of a set of supervised concepts and a residual unsupervised embedding: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_ (ICML 2021, workshop).
-- ConceptEmbedding: A layer that generates concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
+- ``ConceptTensor``: A subclass of ``torch.Tensor`` which ensures that the tensor has at least two dimensions: batch size and number of concepts. Additionally, it stores and retrieves concepts by name.
+- ``ConceptDistribution``: subclass of ``torch.distributions.Distribution`` which ensures that samples drawn from the distribution are ``ConceptTensors``.
 
-**Task predictor layers**:
+**Base concept layers** (``pyc.nn.base``):
 
-- MLPReasoner: A MLP predicting downstream tasks using concept activations from `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_ (ICML 2020).
-- ResidualMLPReasoner: A MLP predicting downstream tasks using concept activations together with a residual unsupervised embedding: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_ (ICML 2021, workshop).
-- DeepConceptReasoner: An interpretable layer that predicts downstream classes by executing learnt logic formulae from `"Interpretable Neural-Symbolic Concept Reasoning" <https://arxiv.org/abs/2304.14068>`_ (ICML 2023).
+- ``ConceptEncoder``: A layer taking as input a common ``tensor`` and producing a ``ConceptTensor`` as output.
+- ``ProbabilisticConceptEncoder``: A layer taking as input a common ``tensor`` and producing a (normal) ``ConceptDistribution`` as output.
+- ``ConceptScorer``: A layer taking as input a ``ConceptTensor`` with shape ``(batch_size, n_concepts, emb_size)`` and producing as output concept logits with shape ``(batch_size, n_concepts)``.
 
-**Metrics**:
+**Base functions** (``pyc.nn.functional``):
 
-- completeness_score: A score measuring concept completeness from `"On Completeness-aware Concept-Based Explanations in Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_ (NeurIPS 2020).
-- cac_score: A score measuring causal concept effects (CaCE) from `"Explaining Classifiers with Causal Concept Effect (CaCE)" <https://arxiv.org/abs/1907.07165>`_.
+- ``intervene``: A function to intervene on concept scores.
+- ``intervene_on_concept_graph``: A function to intervene on a concept adjacency matrix (it can be used to perform do-interventions).
+- ``concept_embedding_mixture``: A function to generate a mixture of concept embeddings and concept predictions.
+
+Mid-level APIs
+-------------------------
+
+**Concept bottleneck layers** (``torch.nn.bottleneck``):
+
+- ``ConceptBottleneck``: A vanilla concept bottleneck from `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_ (ICML 2020).
+- ``ConceptResidualBottleneck``: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_ (ICML 2021, workshop).
+- ``MixConceptEmbeddingBottleneck``: A bottleneck composed of supervised concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
+
+**Metrics** (``torch.metrics``):
+
+- ``completeness_score``: A score measuring concept completeness from `"On Completeness-aware Concept-Based Explanations in Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_ (NeurIPS 2020).
+- ``cace_score``: A score measuring causal concept effects (CaCE) from `"Explaining Classifiers with Causal Concept Effect (CaCE)" <https://arxiv.org/abs/1907.07165>`_.
 
 
 Contributing
