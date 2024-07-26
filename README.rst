@@ -40,6 +40,17 @@ Mid-level APIs
 - ``ConceptResidualBottleneck``: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_ (ICML 2021, workshop).
 - ``MixConceptEmbeddingBottleneck``: A bottleneck composed of supervised concept embeddings from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022).
 
+
+Evaluation APIs
+-------------------------
+
+**Datasets** (``torch.data``):
+
+- ``ToyDataset``: A toy dataset loader. XOR, Trigonometry, and Dot datasets are from `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_ (NeurIPS 2022). The Checkmark dataset is from `"Causal Concept Embedding Models: Beyond Causal Opacity in Deep Learning" <https://arxiv.org/abs/2405.16507>`_.
+- ``CompletenessDataset``: A dataset loader for the completeness score from `"Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?" <https://arxiv.org/abs/2401.13544>`_.
+- ``ColorMNISTDataset``: A dataset loader for MNIST Even/Odd where colors act as confounders inspired from `"Explaining Classifiers with Causal Concept Effect (CaCE)" <https://arxiv.org/abs/1907.07165>`_ and `"Interpretable Concept-Based Memory Reasoning" <https://arxiv.org/abs/2407.15527>`_.
+- ``CelebA``: A dataset loader for CelebA dataset with attributes as concepts from `"Deep Learning Face Attributes in the Wild" <https://arxiv.org/abs/1411.7766>`_ (ICCV 2015).
+
 **Metrics** (``torch.metrics``):
 
 - ``completeness_score``: A score measuring concept completeness from `"On Completeness-aware Concept-Based Explanations in Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_ (NeurIPS 2020).
