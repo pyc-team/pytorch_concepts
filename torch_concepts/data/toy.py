@@ -105,20 +105,20 @@ def _checkmark(n_samples: int = 10, seed: int =42, perturb: float = 0.1) -> [tor
 
 
 class ToyDataset(Dataset):
-    def __init__(self, dataset: str, size: int, random_state: int = 42):
-        """
-        This class loads a synthetic dataset.
-        Available datasets are:
-        - XOR: A simple XOR dataset. The input features are two random variables, the concepts are Boolean values of the input features, and the task is the XOR of the concepts.
-        - Trigonometry: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the input features, and the task is the sum of the input features being greater than 1.
-        - Dot: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the dot product of the input features with fixed vectors, and the task is the dot product of the input features being greater than 0.
-        - Checkmark: A dataset where the concepts A and B are random Boolean variables, the concept C is the negation of B, and the task is the logical AND of A and C.
+    """
+    This class loads a synthetic dataset.
+    Available datasets are:
+    - XOR: A simple XOR dataset. The input features are two random variables, the concepts are Boolean values of the input features, and the task is the XOR of the concepts.
+    - Trigonometry: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the input features, and the task is the sum of the input features being greater than 1.
+    - Dot: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the dot product of the input features with fixed vectors, and the task is the dot product of the input features being greater than 0.
+    - Checkmark: A dataset where the concepts A and B are random Boolean variables, the concept C is the negation of B, and the task is the logical AND of A and C.
 
-        Args:
-            dataset: The name of the dataset to load. Available datasets are 'xor', 'trigonometry', 'dot', and 'checkmark'.
-            size: The number of samples in the dataset.
-            random_state: The random seed for generating the data. Default is 42.
-        """
+    Attributes:
+        dataset: The name of the dataset to load. Available datasets are 'xor', 'trigonometry', 'dot', and 'checkmark'.
+        size: The number of samples in the dataset.
+        random_state: The random seed for generating the data. Default is 42.
+    """
+    def __init__(self, dataset: str, size: int, random_state: int = 42):
         self.size = size
         self.random_state = random_state
         self.data, self.concept_labels, self.target_labels, self.dag, self.concept_attr_names, self.task_attr_names = self._load_data(dataset)

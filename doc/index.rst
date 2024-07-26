@@ -29,7 +29,10 @@ The source code and minimal working examples can be found on
     modules/base
     modules/metrics
     modules/utils
+    modules/data/celeba
+    modules/data/mnist
     modules/data/toy
+    modules/data/utils
     modules/nn/base
     modules/nn/bottleneck
     modules/nn/encode

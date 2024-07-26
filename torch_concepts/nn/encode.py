@@ -2,13 +2,13 @@ import torch
 
 
 class InputImgEncoder(torch.nn.Module):
-    def __init__(self, original_model: torch.nn.Module):
-        """
-        Initialize the input image encoder.
+    """
+    Initialize the input image encoder.
 
-        Args:
-            original_model: The original model to extract features from.
-        """
+    Attributes:
+        original_model: The original model to extract features from.
+    """
+    def __init__(self, original_model: torch.nn.Module):
         super(InputImgEncoder, self).__init__()
         self.features = torch.nn.Sequential(*list(original_model.children())[:-1])
 
