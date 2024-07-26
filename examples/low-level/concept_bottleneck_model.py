@@ -1,7 +1,7 @@
 import torch
 from sklearn.metrics import accuracy_score
 
-from torch_concepts.data import xor
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptEncoder
 
 
@@ -9,11 +9,11 @@ def main():
     emb_size = 5
     n_epochs = 500
     n_samples = 1000
-    x_train, c_train, y_train = xor(n_samples)
+    data = ToyDataset('xor', size=n_samples, random_state=42)
+    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
-    concept_names = ["C1", "C2"]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
     c_encoder = ConceptEncoder(emb_size, n_concepts, concept_names=concept_names)

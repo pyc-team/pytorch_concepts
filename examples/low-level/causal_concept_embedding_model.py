@@ -4,7 +4,7 @@ from sklearn.metrics import accuracy_score
 import torch_geometric as pyg
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.data import checkmark
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptScorer, ConceptEncoder
 from torch_concepts.utils import prepare_pyg_data
 import torch_concepts.nn.functional as CF
@@ -17,11 +17,13 @@ def main():
     iterations = 100
 
     # load data
-    x_train, c_train, _ = checkmark(n_samples)
+    data = ToyDataset('checkmark', size=n_samples, random_state=42)
+    x_train, c_train, y_train, dag, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.dag, data.concept_attr_names, data.task_attr_names
+    c_train = torch.cat([c_train, y_train], dim=1)
+    concept_names += task_names
     y_train = c_train.clone()
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
-    concept_names = ["C1", "C2", "C3", "C4"]
     concepts_train = ConceptTensor.concept(c_train, concept_names=concept_names)
     intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names=concept_names)
 
@@ -83,7 +85,7 @@ def main():
 
     # at inference time, we can intervene on the causal graph by:
     # removing some edges and replacing concept values with ground truth
-    intervened_idxs = ['C1']
+    intervened_idxs = ['A']
     intervened_graph = CF.intervene_on_concept_graph(graph, indexes=intervened_idxs)
     c_pred[:, 0] = c_train[:, 0].clone()
 

@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.data import xor
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptScorer, ConceptEncoder
 import torch_concepts.nn.functional as CF
 
@@ -11,11 +11,11 @@ def main():
     emb_size = 6
     n_epochs = 500
     n_samples = 1000
-    x_train, c_train, y_train = xor(n_samples)
+    data = ToyDataset('xor', size=n_samples, random_state=42)
+    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
-    concept_names = ["C1", "C2"]
 
     concepts_train = ConceptTensor.concept(c_train, concept_names=concept_names)
     intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names=concept_names)

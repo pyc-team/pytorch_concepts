@@ -1,8 +1,5 @@
-from .toy import xor, trigonometry, dot, checkmark
+from .toy import ToyDataset
 
 __all__ = [
-    'xor',
-    'trigonometry',
-    'dot',
-    'checkmark',
+    'ToyDataset',
 ]

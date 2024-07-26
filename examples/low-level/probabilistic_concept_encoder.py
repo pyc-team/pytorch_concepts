@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.data import xor
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptScorer, ProbabilisticConceptEncoder
 import torch_concepts.nn.functional as CF
 
@@ -11,11 +11,11 @@ def main():
     emb_size = 20
     n_epochs = 500
     n_samples = 1000
-    x_train, c_train, y_train = xor(n_samples)
+    data = ToyDataset('xor', size=n_samples, random_state=42)
+    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
-    concept_names = [f"C{i}" for i in range(n_concepts)]
 
     concepts_train = ConceptTensor.concept(c_train, concept_names)
     intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names)
@@ -59,8 +59,8 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
     print(f"Concept names: {c_encoder.concept_names}")
-    print(f"Concept 1 (by name): {c_pred.extract_by_concept_names(['C0'])[:5]}")
-    print(f"Concept 2 (by name): {c_pred.extract_by_concept_names(['C1'])[:5]}")
+    print(f"Concept 1 (by name): {c_pred.extract_by_concept_names(['C1'])[:5]}")
+    print(f"Concept 2 (by name): {c_pred.extract_by_concept_names(['C2'])[:5]}")
 
     return
 
