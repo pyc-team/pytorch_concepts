@@ -32,6 +32,7 @@ The source code and minimal working examples can be found on
     modules/data/toy
     modules/nn/base
     modules/nn/bottleneck
+    modules/nn/encode
     modules/nn/functional
 
 
