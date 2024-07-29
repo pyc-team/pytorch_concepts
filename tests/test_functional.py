@@ -10,6 +10,9 @@ class TestConceptFunctions(unittest.TestCase):
         self.c_pred = ConceptTensor.concept(torch.tensor([[0.1, 0.2], [0.3, 0.4]]))
         self.c_true = ConceptTensor.concept(torch.tensor([[0.9, 0.8], [0.7, 0.6]]))
         self.indexes = ConceptTensor.concept(torch.tensor([[True, False], [False, True]]))
+        self.concept_names = ['concept1', 'concept2', 'concept3']
+        self.c_confidence = ConceptTensor(torch.tensor([[0.8, 0.1, 0.6], [0.9, 0.2, 0.4], [0.7, 0.3, 0.5]]), self.concept_names)
+        self.target_confidence = 0.5
 
     def test_intervene(self):
         result = CF.intervene(self.c_pred, self.c_true, self.indexes)
@@ -44,6 +47,21 @@ class TestConceptFunctions(unittest.TestCase):
 
         # Verify that the concept names remain unchanged
         self.assertEqual(intervened_c_adj.concept_names, concept_names)
+
+    def test_selective_calibration(self):
+        expected_theta = torch.tensor([[0.8, 0.2, 0.5]])
+        expected_result = ConceptTensor(expected_theta, self.concept_names)
+        result = CF.selective_calibration(self.c_confidence, self.target_confidence)
+        self.assertEqual(torch.all(result == expected_result).item(), True)
+
+    def test_confidence_selection(self):
+        theta = ConceptTensor(torch.tensor([[0.8, 0.3, 0.5]]), self.concept_names)
+        expected_mask = torch.tensor([[False, False, True],
+                                      [True, False, False],
+                                      [False, False, False]])
+        expected_result = ConceptTensor(expected_mask, self.concept_names)
+        result = CF.confidence_selection(self.c_confidence, theta)
+        self.assertEqual(torch.all(result == expected_result).item(), True)
 
 
 if __name__ == '__main__':
