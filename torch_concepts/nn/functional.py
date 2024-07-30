@@ -73,3 +73,28 @@ def intervene_on_concept_graph(c_adj: ConceptTensor, indexes: List[Union[int, st
     c_adj[:, indices] = 0
 
     return ConceptTensor.concept(c_adj, concept_names)
+
+
+def selection_eval(selection_weights: torch.Tensor, *predictions: torch.Tensor):
+    """
+    Evaluate predictions as a weighted product based on selection weights.
+
+    Args:
+        selection_weights (Tensor): Selection weights with at least two dimensions (D1, ..., Dn).
+        predictions (Tensor): Arbitrary number of prediction tensors, each with the same shape
+                              as selection_weights (D1, ..., Dn).
+
+    Returns:
+        Tensor: Weighted product sum with shape (D1, ...).
+    """
+    if len(predictions) == 0:
+        raise ValueError("At least one prediction tensor must be provided.")
+
+    product = selection_weights
+    for pred in predictions:
+        product = product * pred
+
+    result = product.sum(dim=-1)
+
+    return result
+
