@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn import ConceptEncoder, ConceptScorer, ProbabilisticConceptEncoder
+from torch_concepts.nn import ConceptEncoder, ConceptScorer, ProbabilisticConceptEncoder, LogicMemory
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -60,6 +60,27 @@ class TestConceptClasses(unittest.TestCase):
 
         # Test output shape
         self.assertEqual(result.shape, (self.batch_size, self.n_concepts))
+
+    def test_logic_memory(self):
+        n_rules, rule_emb_size, n_tasks = 2, 6, 7
+        memory = LogicMemory(self.n_concepts, n_tasks, memory_size=n_rules, rule_emb_size=rule_emb_size, concept_names=self.concept_names)
+
+        decoded_rules = memory._decode_rules()
+
+        # Test output shape
+        self.assertEqual(decoded_rules.shape, (n_tasks, n_rules, self.n_concepts, 3))
+
+        x = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts), concept_names=self.concept_names)
+        y_per_rule, c_reconstruction = memory(x)
+
+        # Test output shape
+        self.assertEqual(y_per_rule.shape, (self.batch_size, n_tasks, n_rules))
+        self.assertEqual(c_reconstruction.shape, (self.batch_size, n_tasks, n_rules, self.n_concepts))
+
+        # Test sampling case
+        y_per_rule, c_reconstruction = memory(x, idxs=torch.randint(0, n_rules, (self.batch_size, n_tasks,)).long())
+        self.assertEqual(y_per_rule.shape, (self.batch_size, n_tasks, 1))
+        self.assertEqual(c_reconstruction.shape, (self.batch_size, n_tasks, 1, self.n_concepts))
 
     def test_concept_tensor_creation(self):
         x = torch.randn(self.batch_size, self.n_concepts)
