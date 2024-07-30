@@ -95,6 +95,36 @@ class ConceptTensor(torch.Tensor):
         extracted_data = self[:, indices]
         return ConceptTensor(extracted_data, concept_names=target_concepts)
 
+    def new_empty(self, *shape):
+        """
+        Create a new empty ConceptTensor with the same concept names and given shape.
+
+        Attributes:
+            shape: Shape of the new tensor.
+
+        Returns:
+            ConceptTensor: A new empty ConceptTensor.
+        """
+
+        shape = self.shape
+
+        # Create a new empty tensor with the same shape
+        new_tensor = super().new_empty(*shape)
+
+        # Ensure concept names are set correctly
+        new_concept_names = self.concept_names[:shape[1]]
+
+        return ConceptTensor(new_tensor, concept_names=new_concept_names)
+
+    def to_standard_tensor(self) -> torch.Tensor:
+        """
+        Convert the ConceptTensor to a standard torch.Tensor while preserving gradients.
+
+        Returns:
+            torch.Tensor: Standard tensor with gradients.
+        """
+        return self.as_subclass(torch.Tensor)
+
     # TODO: check why the following fail
     # def reshape(self, *shape):
     #     # Ensure the reshaped tensor maintains the first two dimensions correctly
