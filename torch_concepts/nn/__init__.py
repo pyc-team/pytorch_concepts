@@ -1,6 +1,6 @@
 from .base import (BaseConceptLayer, ConceptScorer, ConceptEncoder, ProbabilisticConceptEncoder, LogicMemory)
 from .bottleneck import BaseBottleneck, ConceptBottleneck, ConceptResidualBottleneck, MixConceptEmbeddingBottleneck
-from .functional import intervene, concept_embedding_mixture
+from .functional import intervene, concept_embedding_mixture, confidence_selection, selective_calibration
 from .encode import InputImgEncoder
 
 
@@ -18,6 +18,8 @@ __all__ = [
 
     "intervene",
     "concept_embedding_mixture",
+    "confidence_selection",
+    "selective_calibration",
 
     "InputImgEncoder",
 ]

@@ -98,3 +98,32 @@ def selection_eval(selection_weights: torch.Tensor, *predictions: torch.Tensor):
 
     return result
 
+
+def selective_calibration(c_confidence: ConceptTensor, target_coverage: float) -> ConceptTensor:
+    """
+    Selects concepts based on confidence scores and target coverage.
+
+    Args:
+        c_confidence: Concept confidence scores.
+        target_coverage: Target coverage.
+
+    Returns:
+        ConceptTensor: Thresholds to select confident predictions.
+    """
+    theta = torch.quantile(c_confidence, 1 - target_coverage, dim=0, keepdim=True)
+    return ConceptTensor.concept(theta, c_confidence.concept_names)
+
+
+def confidence_selection(c_confidence: ConceptTensor, theta: ConceptTensor) -> ConceptTensor:
+    """
+    Selects concepts with confidence above a selected threshold.
+
+    Args:
+        c_confidence: Concept confidence scores.
+        theta: Threshold to select confident predictions.
+
+    Returns:
+        ConceptTensor: mask selecting confident predictions.
+    """
+    c_confident_mask = torch.where(c_confidence > theta, True, False)
+    return ConceptTensor.concept(c_confident_mask, c_confidence.concept_names)
