@@ -76,14 +76,13 @@ def intervene_on_concept_graph(c_adj: ConceptTensor, indexes: List[Union[int, st
     return ConceptTensor.concept(c_adj, concept_names)
 
 
-def selection_eval(selection_weights: torch.Tensor, *predictions: torch.Tensor):
+def selection_eval(selection_weights: torch.Tensor, *predictions: torch.Tensor) -> torch.Tensor:
     """
     Evaluate predictions as a weighted product based on selection weights.
 
     Args:
         selection_weights (Tensor): Selection weights with at least two dimensions (D1, ..., Dn).
-        predictions (Tensor): Arbitrary number of prediction tensors, each with the same shape
-                              as selection_weights (D1, ..., Dn).
+        predictions (Tensor): Arbitrary number of prediction tensors, each with the same shape as selection_weights (D1, ..., Dn).
 
     Returns:
         Tensor: Weighted product sum with shape (D1, ...).
