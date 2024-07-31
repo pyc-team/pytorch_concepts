@@ -16,9 +16,9 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(emb_size, n_concepts, concept_names=concept_names)
+    c_scorer = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names})
     y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
-    model = torch.nn.Sequential(encoder, c_encoder, y_predictor)
+    model = torch.nn.Sequential(encoder, c_scorer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_form = torch.nn.BCEWithLogitsLoss()
@@ -28,7 +28,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = c_encoder(emb)
+        c_pred = c_scorer(emb)
         y_pred = y_predictor(c_pred)
 
         # compute loss
@@ -46,10 +46,10 @@ def main():
     concept_accuracy = accuracy_score(c_train, c_pred > 0)
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
-    print(f"Concept names: {c_encoder.concept_names}")
-    print(f"Concept 1 (by name): {c_pred.extract_by_concept_names(['C1'])[:5]}")
-    print(f"Concept 2 (by name): {c_pred.extract_by_concept_names(['C2'])[:5]}")
-    print(f"Concepts (by name): {c_pred.extract_by_concept_names(['C1', 'C2'])[:5]}")
+    print(f"Concept names: {c_scorer.concept_names}")
+    print(f"Concept 1 (by name): {c_pred.extract_by_concept_names({1: ['C1']})[:5]}")
+    print(f"Concept 2 (by name): {c_pred.extract_by_concept_names({1: ['C2']})[:5]}")
+    print(f"Concepts (by name): {c_pred.describe()}")
 
     return
 

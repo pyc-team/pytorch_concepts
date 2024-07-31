@@ -5,7 +5,7 @@ import torch_geometric as pyg
 
 from torch_concepts.base import ConceptTensor
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptScorer, ConceptEncoder
+from torch_concepts.nn import ConceptEncoder
 from torch_concepts.utils import prepare_pyg_data
 import torch_concepts.nn.functional as CF
 
@@ -24,13 +24,13 @@ def main():
     y_train = c_train.clone()
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
-    concepts_train = ConceptTensor.concept(c_train, concept_names=concept_names)
-    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names=concept_names)
+    concepts_train = ConceptTensor.concept(c_train, {1: concept_names})
+    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), {1: concept_names})
 
     # define model
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(emb_size, n_concepts, 2*emb_size, concept_names=concept_names)
-    c_scorer = torch.nn.Sequential(ConceptScorer(2*emb_size, concept_names=concept_names), torch.nn.Sigmoid())
+    c_encoder = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names, 2: 2*emb_size})
+    c_scorer = ConceptEncoder(in_features=2*emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
     mpnn = pyg.nn.Sequential('x, edge_index', [
         (pyg.nn.GCNConv(emb_size, emb_size, add_self_loops=False, normalize=False), 'x, edge_index -> x'),
         torch.nn.LeakyReLU(inplace=True),
@@ -42,7 +42,7 @@ def main():
 
     # learn the causal graph structure (it could be replaced by a known graph or differentiable graph learning)
     G = grasp(c_train.numpy(), score_func='local_score_BDeu').graph
-    graph = ConceptTensor(torch.abs(torch.tensor(G)), concept_names)
+    graph = ConceptTensor(torch.abs(torch.tensor(G)), {0: concept_names, 1: concept_names})
     print(graph)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
@@ -54,13 +54,13 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         c_emb = c_encoder(emb)
-        c_pred = ConceptTensor.concept(c_scorer(c_emb), concept_names)
+        c_pred = ConceptTensor.concept(c_scorer(c_emb).sigmoid(), {1: concept_names})
         # concept interventions make training faster and reduce leakage
         c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
         # use the graph to make each concept dependent on parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, graph)
-        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size)
+        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size).to_standard_tensor()
         # update task predictions using the updated concept embeddings
         y_pred = torch.zeros_like(y_train)
         for node, concept_name in enumerate(concept_names):
@@ -93,15 +93,15 @@ def main():
     # we first generate initial concept embeddings/predictions
     emb = encoder(x_train)
     c_emb = c_encoder(emb)
-    y_pred = c_pred = ConceptTensor.concept(c_scorer(c_emb), concept_names)
+    y_pred = c_pred = ConceptTensor.concept(c_scorer(c_emb), {1: concept_names})
     # we then look for the fixed point of the graph convolutional network
     for epoch in range(iterations):
         # compute concept embeddings
-        c_mix = CF.concept_embedding_mixture(c_emb, ConceptTensor(y_pred, concept_names))
+        c_mix = CF.concept_embedding_mixture(c_emb, ConceptTensor(y_pred, {1: concept_names}))
 
         # use the graph to generate new concept embeddings using parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, intervened_graph)
-        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size)
+        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size).to_standard_tensor()
 
         # update concept predictions using the updated concept embeddings (for non-intervened concepts only)
         for node, concept_name in enumerate(concept_names):

@@ -14,12 +14,13 @@ class TestPreparePygData(unittest.TestCase):
         # Create a ConceptTensor
         tensor_data = torch.randn(batch_size, n_nodes, emb_size)
         concept_names = ["concept_1", "concept_2", "concept_3"]
-        concept_tensor = ConceptTensor(tensor_data, concept_names)
+        concept_tensor = ConceptTensor(tensor_data, {1: concept_names})
 
         # Create an adjacency matrix
         adjacency_matrix = torch.tensor([[0, 1, 0],
                                          [1, 0, 1],
                                          [0, 1, 0]], dtype=torch.float)
+        adjacency_matrix = ConceptTensor(adjacency_matrix, {0: concept_names, 1: concept_names})
 
         # Call the function
         node_features, edge_index, batch = prepare_pyg_data(concept_tensor, adjacency_matrix)

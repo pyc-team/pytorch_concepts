@@ -47,7 +47,7 @@ def main():
     concept_encoder = torch.nn.Sequential(
         torch.nn.Linear(emb_size, emb_size),
         torch.nn.LeakyReLU(),
-        ConceptEncoder(emb_size, n_concepts, concept_names=concept_names)
+        ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names}),
     )
     concept_decoder = torch.nn.Sequential(
         torch.nn.Linear(n_concepts, emb_size),

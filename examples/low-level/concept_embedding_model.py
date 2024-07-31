@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts.base import ConceptTensor
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptScorer, ConceptEncoder
+from torch_concepts.nn import ConceptEncoder
 import torch_concepts.nn.functional as CF
 
 
@@ -17,12 +17,12 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    concepts_train = ConceptTensor.concept(c_train, concept_names=concept_names)
-    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names=concept_names)
+    concepts_train = ConceptTensor.concept(c_train, concept_names={1: concept_names})
+    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names={1: concept_names})
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(emb_size, n_concepts, 2*emb_size, concept_names=concept_names)
-    c_scorer = ConceptScorer(2*emb_size, concept_names=concept_names)
+    c_encoder = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names, 2: 2*emb_size})
+    c_scorer = ConceptEncoder(in_features=2*emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
     y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(emb_size*n_concepts, emb_size),
                                       torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
     model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)
@@ -57,8 +57,7 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
     print(f"Concept names: {c_encoder.concept_names}")
-    print(f"Concept 1 (by name): {c_pred.extract_by_concept_names(['C1'])[:5]}")
-    print(f"Concept 2 (by name): {c_pred.extract_by_concept_names(['C2'])[:5]}")
+    print(f"Concepts: {c_pred.describe()}")
 
     return
 

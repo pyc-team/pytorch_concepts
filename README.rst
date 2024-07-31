@@ -16,14 +16,14 @@ Low-level APIs
 
 **Concept data types** (``pyc.base``):
 
-- ``ConceptTensor``: A subclass of ``torch.Tensor`` which ensures that the tensor has at least two dimensions: batch size and number of concepts. Additionally, it stores and retrieves concepts by name.
+- ``ConceptTensor``: A subclass of ``torch.Tensor`` which stores and retrieves concepts by name.
 - ``ConceptDistribution``: subclass of ``torch.distributions.Distribution`` which ensures that samples drawn from the distribution are ``ConceptTensors``.
 
 **Base concept layers** (``pyc.nn.base``):
 
 - ``ConceptEncoder``: A layer taking as input a common ``tensor`` and producing a ``ConceptTensor`` as output.
 - ``ProbabilisticConceptEncoder``: A layer taking as input a common ``tensor`` and producing a (normal) ``ConceptDistribution`` as output.
-- ``ConceptScorer``: A layer taking as input a ``ConceptTensor`` with shape ``(batch_size, n_concepts, emb_size)`` and producing as output concept logits with shape ``(batch_size, n_concepts)``.
+- ``ConceptMemory``: A layer with a set of embeddings which can be decoded into different concept states.
 
 **Base functions** (``pyc.nn.functional``):
 

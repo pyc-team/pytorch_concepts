@@ -16,7 +16,7 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    bottleneck = ConceptBottleneck(emb_size, n_concepts, concept_names)
+    bottleneck = ConceptBottleneck(in_features=emb_size, out_concept_dimensions={1: n_concepts})
     y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size),
                                       torch.nn.LeakyReLU(),
                                       torch.nn.Linear(emb_size, n_classes),

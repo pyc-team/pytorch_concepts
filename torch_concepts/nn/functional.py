@@ -25,7 +25,7 @@ def intervene(c_pred: ConceptTensor, c_true: ConceptTensor, indexes: ConceptTens
         if indexes.max() >= c_pred.shape[1]:
             raise ValueError("Intervention indices must be less than the number of concepts.")
 
-    return ConceptTensor.concept(torch.where(indexes, c_true, c_pred), c_true.concept_names)
+    return ConceptTensor.concept(torch.where(indexes, c_true, c_pred), c_true.concept_names.copy())
 
 
 def concept_embedding_mixture(c_emb: ConceptTensor, c_scores: ConceptTensor):
@@ -42,7 +42,7 @@ def concept_embedding_mixture(c_emb: ConceptTensor, c_scores: ConceptTensor):
     """
     emb_size = c_emb[0].shape[1] // 2
     c_mix = c_scores.unsqueeze(-1) * c_emb[:, :, :emb_size] + (1 - c_scores.unsqueeze(-1)) * c_emb[:, :, emb_size:]
-    return ConceptTensor.concept(c_mix, c_scores.concept_names)
+    return ConceptTensor.concept(c_mix, c_scores.concept_names.copy())
 
 
 def intervene_on_concept_graph(c_adj: ConceptTensor, indexes: List[Union[int, str]]) -> ConceptTensor:
@@ -62,7 +62,7 @@ def intervene_on_concept_graph(c_adj: ConceptTensor, indexes: List[Union[int, st
 
     # Get indices for concepts to zero out
     if isinstance(indexes[0], str):
-        indices = [c_adj.concept_names.index(name) for name in indexes if name in c_adj.concept_names]
+        indices = [c_adj.concept_names[1].index(name) for name in indexes if name in c_adj.concept_names[1]]
         if len(indices) != len(indexes):
             raise ValueError("Some concept names are not found in the tensor's concept names.")
     else:
@@ -125,6 +125,9 @@ def logic_memory_eval(concept_weights: ConceptTensor, c_pred: ConceptTensor, mem
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of rule predictions with shape (batch_size, n_tasks, memory_size) and concept reconstructions with shape (batch_size, n_tasks, memory_size, n_concepts).
     """
+    c_pred = c_pred.to_standard_tensor() if isinstance(c_pred, ConceptTensor) else c_pred
+    concept_weights = concept_weights.to_standard_tensor() if isinstance(concept_weights, ConceptTensor) else concept_weights
+
     memory_size = concept_weights.size(0)
     n_tasks = concept_weights.size(2)
     pos_polarity, neg_polarity, irrelevance = concept_weights[..., 0], concept_weights[..., 1], concept_weights[..., 2]
@@ -161,7 +164,7 @@ def logic_memory_reconstruction(c_rec_per_classifier: torch.Tensor, c_true: Conc
     return c_rec_per_classifier.permute(0, 2, 1)
 
 
-def logic_memory_explanations(concept_logic_weights: ConceptTensor, concept_names: List[str], task_names: List[str]) -> dict:
+def logic_memory_explanations(concept_logic_weights: ConceptTensor) -> dict:
     """
     Extracts rules from rule embeddings as strings.
 
@@ -176,8 +179,11 @@ def logic_memory_explanations(concept_logic_weights: ConceptTensor, concept_name
     memory_size = concept_logic_weights.size(0)
     n_concepts = concept_logic_weights.size(1)
     n_tasks = concept_logic_weights.size(2)
+    concept_names = concept_logic_weights.concept_names[1]
+    task_names = concept_logic_weights.concept_names[2]
     concept_logic_probs = torch.softmax(concept_logic_weights, dim=-1)  # memory_size, n_concepts, n_tasks, 3
     concept_roles = torch.argmax(concept_logic_probs, dim=-1)  # memory_size, n_concepts, n_tasks
+    concept_roles = concept_roles.to_standard_tensor()
     for task_idx in range(n_tasks):
         for mem_idx in range(memory_size):
             rule = [("~ " if concept_roles[mem_idx, concept_idx, task_idx] == 1 else "") + concept_names[concept_idx]
@@ -199,7 +205,7 @@ def selective_calibration(c_confidence: ConceptTensor, target_coverage: float) -
         ConceptTensor: Thresholds to select confident predictions.
     """
     theta = torch.quantile(c_confidence, 1 - target_coverage, dim=0, keepdim=True)
-    return ConceptTensor.concept(theta, c_confidence.concept_names)
+    return ConceptTensor.concept(theta, {1: c_confidence.concept_names[1]})
 
 
 def confidence_selection(c_confidence: ConceptTensor, theta: ConceptTensor) -> ConceptTensor:
@@ -214,4 +220,4 @@ def confidence_selection(c_confidence: ConceptTensor, theta: ConceptTensor) -> C
         ConceptTensor: mask selecting confident predictions.
     """
     c_confident_mask = torch.where(c_confidence > theta, True, False)
-    return ConceptTensor.concept(c_confident_mask, c_confidence.concept_names)
+    return ConceptTensor.concept(c_confident_mask, {1: c_confidence.concept_names[1]})

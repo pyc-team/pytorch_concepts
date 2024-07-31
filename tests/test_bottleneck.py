@@ -1,7 +1,7 @@
 import unittest
 import torch
 from torch.nn import functional as F
-from torch_concepts.nn import ConceptEncoder, ConceptScorer
+from torch_concepts.nn import ConceptEncoder
 from torch_concepts.base import ConceptTensor
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
@@ -17,12 +17,12 @@ class TestConceptBottlenecks(unittest.TestCase):
         self.batch_size = 3
         self.concept_names = ["A", "B", "C", "D", "E"]
         self.x = torch.randn(self.batch_size, self.in_features)
-        self.c_true = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts), self.concept_names)
-        self.intervention_idxs = ConceptTensor.concept(torch.randint(0, 2, (self.batch_size, self.n_concepts)).bool(), self.concept_names)
+        self.c_true = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts), {1: self.concept_names})
+        self.intervention_idxs = ConceptTensor.concept(torch.randint(0, 2, (self.batch_size, self.n_concepts)).bool(), {1: self.concept_names})
         self.intervention_rate = 0.1
 
     def test_concept_bottleneck_forward(self):
-        bottleneck = ConceptBottleneck(self.in_features, self.n_concepts, concept_names=self.concept_names)
+        bottleneck = ConceptBottleneck(self.in_features, {1: self.concept_names})
         result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
 
         # Test output keys
@@ -36,7 +36,7 @@ class TestConceptBottlenecks(unittest.TestCase):
         self.assertEqual(result['c_int'].shape, (self.batch_size, self.n_concepts))
 
     def test_concept_residual_bottleneck_forward(self):
-        bottleneck = ConceptResidualBottleneck(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        bottleneck = ConceptResidualBottleneck(self.in_features, {1: self.concept_names}, self.emb_size)
         result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
 
         # Test output keys
@@ -52,7 +52,7 @@ class TestConceptBottlenecks(unittest.TestCase):
         self.assertEqual(result['next'].shape, (self.batch_size, self.n_concepts + self.emb_size))
 
     def test_mix_concept_embedding_bottleneck_forward(self):
-        bottleneck = MixConceptEmbeddingBottleneck(self.in_features, self.n_concepts, self.emb_size, concept_names=self.concept_names)
+        bottleneck = MixConceptEmbeddingBottleneck(self.in_features, {1: self.concept_names, 2: 2 * self.emb_size})
         result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
 
         # Test output keys

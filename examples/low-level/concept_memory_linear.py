@@ -16,13 +16,14 @@ def main():
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
-    memory_size = 3
+    memory_size = 7
+    memory_concept_states = 3
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(in_features=emb_size, n_concepts=n_concepts, concept_names=concept_names)
-    classifier_selector = ConceptEncoder(in_features=emb_size, n_concepts=n_classes*memory_size, emb_size=1)
-    concept_memory = ConceptMemory(n_concepts=n_concepts, n_tasks=n_classes, memory_size=memory_size,
-                                   emb_size=emb_size, n_concept_states=1, concept_names=concept_names)
+    c_encoder = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: n_concepts})
+    classifier_selector = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: n_classes, 2: memory_size})
+    concept_memory = ConceptMemory(memory_size=memory_size, emb_size=emb_size,
+                                   out_concept_dimensions={1: n_concepts, 2: n_classes, 3: memory_concept_states})
     model = torch.nn.Sequential(encoder, c_encoder, classifier_selector, concept_memory)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
@@ -34,7 +35,7 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         c_pred = c_encoder(emb).sigmoid()
-        classifier_selector_logits = classifier_selector(emb).view(-1, n_classes, memory_size)
+        classifier_selector_logits = classifier_selector(emb)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
         concept_weights = concept_memory()
         y_per_classifier = linear_memory_eval(concept_weights, c_pred).sigmoid()

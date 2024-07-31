@@ -9,6 +9,7 @@ def main():
     emb_size = 6
     n_epochs = 500
     n_samples = 1000
+    residual_size = 4
     data = CompletenessDataset(n_samples=n_samples, n_features=100, n_concepts=4, n_tasks=2)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
@@ -16,8 +17,9 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    bottleneck = ConceptResidualBottleneck(emb_size, n_concepts, emb_size, concept_names)
-    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts + emb_size, emb_size),
+    bottleneck = ConceptResidualBottleneck(in_features=emb_size, out_concept_dimensions={1: n_concepts},
+                                           residual_size=residual_size)
+    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts + residual_size, emb_size),
                                       torch.nn.LeakyReLU(),
                                       torch.nn.Linear(emb_size, n_classes),
                                       torch.nn.Sigmoid())

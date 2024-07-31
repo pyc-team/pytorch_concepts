@@ -17,13 +17,15 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
     memory_size = 7
+    memory_concept_states = 3
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(in_features=emb_size, n_concepts=n_concepts, concept_names=concept_names)
-    classifier_selector = ConceptEncoder(in_features=emb_size, n_concepts=n_classes*memory_size, emb_size=1)
-    concept_memory = ConceptMemory(n_concepts=n_concepts, n_tasks=n_classes, memory_size=memory_size,
-                                   emb_size=emb_size, n_concept_states=3, concept_names=concept_names)
+    c_encoder = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names})
+    classifier_selector = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: task_names, 2: memory_size})
+    concept_memory = ConceptMemory(memory_size=memory_size, emb_size=emb_size,
+                                   out_concept_dimensions={1: concept_names, 2: task_names, 3: memory_concept_states})
     model = torch.nn.Sequential(encoder, c_encoder, classifier_selector, concept_memory)
+    softmax = torch.nn.Softmax(dim=-1)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_form = torch.nn.BCELoss()
@@ -34,9 +36,10 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         c_pred = c_encoder(emb).sigmoid()
-        classifier_selector_logits = classifier_selector(emb).view(-1, n_classes, memory_size)
+        classifier_selector_logits = classifier_selector(emb)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
-        concept_weights = concept_memory().softmax(dim=-1)
+        concept_weights = concept_memory()
+        concept_weights = concept_weights.softmax(dim=-1)
         y_per_classifier, c_rec_per_classifier = logic_memory_eval(concept_weights, c_pred)
         c_rec_per_classifier = logic_memory_reconstruction(c_rec_per_classifier, c_train, y_train)
         y_pred = selection_eval(prob_per_classifier, y_per_classifier, c_rec_per_classifier)
@@ -54,7 +57,8 @@ def main():
 
     task_accuracy = accuracy_score(y_train, y_pred > 0.5)
     concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
-    explanations = logic_memory_explanations(concept_weights, concept_names, task_names)
+    concept_weights = ConceptTensor(concept_weights, concept_memory.concept_names)
+    explanations = logic_memory_explanations(concept_weights)
 
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")

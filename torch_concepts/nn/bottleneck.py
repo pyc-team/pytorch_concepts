@@ -1,25 +1,37 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Union
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn import ConceptEncoder, ConceptScorer
+from torch_concepts.nn import ConceptEncoder
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
+from torch_concepts.utils import validate_and_generate_concept_names, compute_output_size
 
 
 class BaseBottleneck(ABC, nn.Module):
     """
     BaseBottleneck is an abstract base class for concept bottlenecks.
 
+    The concept dimension dictionary is structured as follows: keys are dimension indices and values
+    are either integers (indicating the size of the dimension) or lists of strings (concept names).
+    The output size is computed as the product of the sizes of all dimensions.
+    The only exception is the batch size dimension, which is expected to be empty.
+    Example: {1: ["concept_a", "concept_b"], 2: 3}
+    for 2 concepts in the first dimension and 3 concepts in the second dimension.
+    This produces concept names: {1: ["concept_a", "concept_b"], 2: ["concept_2_0", "concept_2_1", "concept_2_2"].
+    The output size is computed as the product of the sizes of all dimensions except the batch size dimension.
+    In this example, the output size is 6. The result of the forward is reshaped to match the concept names.
+    In this example, the output shape is (batch_size, 2, 3).
+
     Attributes:
-        concept_names (List[str]): Names of concepts.
+        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept dimensions.
     """
-    def __init__(self, concept_names: List[str] = None):
+    def __init__(self, out_concept_dimensions: Dict[int, List[str]]):
         super().__init__()
-        self.concept_names = concept_names
+        self.out_concept_dimensions = out_concept_dimensions
 
     @abstractmethod
     def forward(self, x: torch.Tensor) -> Dict[str, ConceptTensor]:
@@ -31,16 +43,19 @@ class ConceptBottleneck(BaseBottleneck):
     ConceptBottleneck creates a bottleneck of supervised concept embeddings.
     Main reference: `"Concept Bottleneck Models" <https://arxiv.org/pdf/2007.04612>`_
 
+    The concept dimension dictionary should be structred as {1: n_concepts} or {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"]}.
+
     Attributes:
         in_features (int): Number of input features.
-        n_concepts (int): Number of concepts to be learned.
-        concept_names (List[str]): Names of concepts.
+        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
-    def __init__(self, in_features: int, n_concepts: int, concept_names: List[str] = None,
+    def __init__(self, in_features: int, out_concept_dimensions: Dict[int, Union[int, List[str]]],
                  activation: Callable = F.sigmoid):
-        super().__init__(concept_names)
-        self.scorer = ConceptEncoder(in_features, n_concepts, 1, concept_names)
+        super().__init__(out_concept_dimensions)
+        self.scorer = ConceptEncoder(in_features, out_concept_dimensions)
+        self.concept_names = self.scorer.concept_names
+        self.output_size = self.scorer.output_size
         self.activation = activation
 
     def forward(self, x: ConceptTensor, c_true: ConceptTensor = None, intervention_idxs: ConceptTensor = None,
@@ -69,18 +84,22 @@ class ConceptResidualBottleneck(BaseBottleneck):
     a second set of neurons is free to encode residual information.
     Main reference: `"Promises and Pitfalls of Black-Box Concept Learning Models" <https://arxiv.org/abs/2106.13314>`_
 
+    The concept dimension dictionary should be structred as {1: n_concepts} or {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"]}.
+
     Attributes:
         in_features (int): Number of input features.
-        n_concepts (int): Number of concepts to be learned.
-        emb_size (int): Size of concept embeddings.
-        concept_names (List[str]): Names of concepts.
+        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept dimensions.
+        residual_size (int): Size of residual embedding.
         activation (Callable): Activation function of concept scores.
     """
-    def __init__(self, in_features: int, n_concepts: int, emb_size: int, concept_names: List[str] = None,
-                 activation: Callable = F.sigmoid):
-        super().__init__(concept_names)
-        self.scorer = ConceptEncoder(in_features, n_concepts, 1, concept_names)
-        self.residual_embedder = nn.Linear(in_features, emb_size)
+    def __init__(self, in_features: int, out_concept_dimensions: Dict[int, Union[int, List[str]]],
+                 residual_size: int, activation: Callable = F.sigmoid):
+        super().__init__(out_concept_dimensions)
+        self.scorer = ConceptEncoder(in_features, out_concept_dimensions)
+        self.concept_names = self.scorer.concept_names
+        self.output_size = self.scorer.output_size + residual_size
+        self.residual_size = residual_size
+        self.residual_embedder = nn.Linear(in_features, residual_size)
         self.activation = activation
 
     def forward(self, x: ConceptTensor, c_true: ConceptTensor = None, intervention_idxs: ConceptTensor = None,
@@ -109,19 +128,21 @@ class MixConceptEmbeddingBottleneck(BaseBottleneck):
     MixConceptEmbeddingBottleneck creates supervised concept embeddings.
     Main reference: `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
 
+    The concept dimension dictionary should be structred as {1: n_concepts, 2: c_emb_size} or {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"], 2: ["concept_2_0", "concept_2_1", ..., "concept_2_c_emb_size"]}.
+
     Attributes:
         in_features (int): Number of input features.
-        n_concepts (int): Number of concepts to be learned.
-        emb_size (int): Size of concept embeddings.
-        concept_names (List[str]): Names of concepts.
+        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
-    def __init__(self, in_features: int, n_concepts: int, emb_size: int, concept_names: List[str] = None,
+    def __init__(self, in_features: int, out_concept_dimensions: Dict[int, Union[int, List[str]]],
                  activation: Callable = F.sigmoid):
-        super().__init__(concept_names)
-        self.encoder = ConceptEncoder(in_features, n_concepts, 2 * emb_size, concept_names=concept_names)
-        self.scorer = ConceptScorer(2 * emb_size, concept_names=concept_names)
+        super().__init__(out_concept_dimensions)
+        self.encoder = ConceptEncoder(in_features=in_features, out_concept_dimensions=out_concept_dimensions)
+        self.scorer_in_size = out_concept_dimensions[2] if isinstance(out_concept_dimensions[2], int) else len(out_concept_dimensions[2])
+        self.scorer = ConceptEncoder(in_features=self.scorer_in_size, out_concept_dimensions={1: out_concept_dimensions[1]}, reduce_dim=2)
         self.activation = activation
+        self.concept_names = self.scorer.concept_names
 
     def forward(self, x: ConceptTensor, c_true: ConceptTensor = None, intervention_idxs: ConceptTensor = None,
                 intervention_rate: float = 0.0) -> Dict[str, ConceptTensor]:

@@ -20,8 +20,8 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU())
-    prob_encoder = ProbabilisticConceptEncoder(emb_size, emb_size, 1)
-    c_scorer = ConceptEncoder(emb_size, n_concepts, 1, concept_names)
+    prob_encoder = ProbabilisticConceptEncoder(in_features=emb_size, out_concept_dimensions={1: emb_size})
+    c_scorer = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names})
     y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
     model = torch.nn.Sequential(encoder, prob_encoder, c_scorer, y_predictor)
 
@@ -50,8 +50,8 @@ def main():
         if epoch % 100 == 0:
             print(f"Epoch {epoch}: Task Loss {task_loss.item():.2f}, Concept Loss {concept_loss.item():.2f}, KL Loss {kl_loss.item():.2f}")
 
-    c_abs_logits = ConceptTensor.concept(c_pred.abs().clone(), concept_names)
-    c_pred = ConceptTensor.concept(c_pred.sigmoid(), concept_names)
+    c_abs_logits = ConceptTensor.concept(c_pred.abs().clone(), {1: concept_names})
+    c_pred = ConceptTensor.concept(c_pred.sigmoid(), {1: concept_names})
 
     task_accuracy = accuracy_score(y_train.ravel(), y_pred.ravel() > 0)
     concept_accuracy = accuracy_score(c_train.ravel(), c_pred.ravel() > 0.5)
