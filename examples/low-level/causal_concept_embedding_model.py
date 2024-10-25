@@ -11,10 +11,12 @@ import torch_concepts.nn.functional as CF
 
 
 def main():
-    emb_size = 6
+    latent_dims = 6
+    concept_emb_size = 2*latent_dims
     n_epochs = 500
     n_samples = 1000
     iterations = 100
+    concept_reg = 0.5
 
     # load data
     data = ToyDataset('checkmark', size=n_samples, random_state=42)
@@ -28,15 +30,15 @@ def main():
     intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), {1: concept_names})
 
     # define model
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names, 2: 2*emb_size})
-    c_scorer = ConceptEncoder(in_features=2*emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
+    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
+    c_encoder = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
+    c_scorer = ConceptEncoder(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
     mpnn = pyg.nn.Sequential('x, edge_index', [
-        (pyg.nn.GCNConv(emb_size, emb_size, add_self_loops=False, normalize=False), 'x, edge_index -> x'),
+        (pyg.nn.GCNConv(latent_dims, latent_dims, add_self_loops=False, normalize=False), 'x, edge_index -> x'),
         torch.nn.LeakyReLU(inplace=True),
     ])
     y_predictors = torch.nn.ModuleList([
-        torch.nn.Sequential(torch.nn.Linear(emb_size, 1), torch.nn.Sigmoid())
+        torch.nn.Sequential(torch.nn.Linear(latent_dims, 1), torch.nn.Sigmoid())
     ] * n_concepts)
     model = torch.nn.Sequential(encoder, c_encoder, c_scorer, mpnn, y_predictors)
 
@@ -46,7 +48,7 @@ def main():
     print(graph)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    loss_form = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCELoss()
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -54,22 +56,22 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         c_emb = c_encoder(emb)
-        c_pred = ConceptTensor.concept(c_scorer(c_emb).sigmoid(), {1: concept_names})
+        c_pred = c_scorer(c_emb).sigmoid()
         # concept interventions make training faster and reduce leakage
         c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
         # use the graph to make each concept dependent on parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, graph)
-        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size).to_standard_tensor()
+        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, latent_dims)
         # update task predictions using the updated concept embeddings
         y_pred = torch.zeros_like(y_train)
         for node, concept_name in enumerate(concept_names):
             y_pred[:, node] = y_predictors[node](c_emb_post[:, node]).squeeze()
 
         # compute loss
-        concept_loss = loss_form(c_pred, c_train)
-        task_loss = loss_form(y_pred, y_train)
-        loss = concept_loss + 0.5 * task_loss
+        concept_loss = loss_fn(c_pred, c_train)
+        task_loss = loss_fn(y_pred, y_train)
+        loss = concept_loss + concept_reg * task_loss
 
         loss.backward()
         optimizer.step()
@@ -93,7 +95,7 @@ def main():
     # we first generate initial concept embeddings/predictions
     emb = encoder(x_train)
     c_emb = c_encoder(emb)
-    y_pred = c_pred = ConceptTensor.concept(c_scorer(c_emb), {1: concept_names})
+    y_pred = c_pred = c_scorer(c_emb)
     # we then look for the fixed point of the graph convolutional network
     for epoch in range(iterations):
         # compute concept embeddings
@@ -101,7 +103,7 @@ def main():
 
         # use the graph to generate new concept embeddings using parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, intervened_graph)
-        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, emb_size).to_standard_tensor()
+        c_emb_post = mpnn(node_features, edge_index).reshape(-1, n_concepts, latent_dims)
 
         # update concept predictions using the updated concept embeddings (for non-intervened concepts only)
         for node, concept_name in enumerate(concept_names):

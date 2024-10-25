@@ -183,7 +183,6 @@ def logic_memory_explanations(concept_logic_weights: ConceptTensor) -> dict:
     task_names = concept_logic_weights.concept_names[2]
     concept_logic_probs = torch.softmax(concept_logic_weights, dim=-1)  # memory_size, n_concepts, n_tasks, 3
     concept_roles = torch.argmax(concept_logic_probs, dim=-1)  # memory_size, n_concepts, n_tasks
-    concept_roles = concept_roles.to_standard_tensor()
     for task_idx in range(n_tasks):
         for mem_idx in range(memory_size):
             rule = [("~ " if concept_roles[mem_idx, concept_idx, task_idx] == 1 else "") + concept_names[concept_idx]

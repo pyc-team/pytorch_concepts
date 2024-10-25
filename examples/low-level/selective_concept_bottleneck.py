@@ -10,23 +10,25 @@ from torch_concepts.nn import functional as F
 
 def main():
     target_coverage = 0.5
-    emb_size = 5
+    latent_dims = 5
     n_epochs = 1000
     n_samples = 10000
-    data = CompletenessDataset(n_samples=n_samples, n_features=100, n_concepts=4, n_tasks=2)
+    task_reg = 0.5
+    kl_reg = 1
+    data = CompletenessDataset(n_samples=n_samples, n_hidden_concepts=0, n_concepts=4, n_tasks=2)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU())
-    prob_encoder = ProbabilisticConceptEncoder(in_features=emb_size, out_concept_dimensions={1: emb_size})
-    c_scorer = ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names})
-    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_classes))
+    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, latent_dims), torch.nn.LeakyReLU())
+    prob_encoder = ProbabilisticConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: latent_dims})
+    c_scorer = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names})
+    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, latent_dims), torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, n_classes))
     model = torch.nn.Sequential(encoder, prob_encoder, c_scorer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    y_loss = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -39,10 +41,10 @@ def main():
         y_pred = y_predictor(c_pred)
 
         # compute loss
-        concept_loss = y_loss(c_pred, c_train)
-        task_loss = y_loss(y_pred, y_train)
+        concept_loss = loss_fn(c_pred, c_train)
+        task_loss = loss_fn(y_pred, y_train)
         kl_loss = torch.distributions.kl_divergence(prob_encoder.p_z.base_dist, q_c_hidden.base_dist).mean()
-        loss = concept_loss + 0.5 * task_loss + 1 * kl_loss
+        loss = concept_loss + task_reg * task_loss + kl_reg * kl_loss
 
         loss.backward()
         optimizer.step()
@@ -50,8 +52,8 @@ def main():
         if epoch % 100 == 0:
             print(f"Epoch {epoch}: Task Loss {task_loss.item():.2f}, Concept Loss {concept_loss.item():.2f}, KL Loss {kl_loss.item():.2f}")
 
-    c_abs_logits = ConceptTensor.concept(c_pred.abs().clone(), {1: concept_names})
-    c_pred = ConceptTensor.concept(c_pred.sigmoid(), {1: concept_names})
+    c_abs_logits = c_pred.abs().clone()
+    c_pred = c_pred.sigmoid()
 
     task_accuracy = accuracy_score(y_train.ravel(), y_pred.ravel() > 0)
     concept_accuracy = accuracy_score(c_train.ravel(), c_pred.ravel() > 0.5)
@@ -76,8 +78,8 @@ def main():
     print(f"Coverage rates: {coverage_rates}")
 
     # find confident predictions
-    threshold = F.selective_calibration(c_abs_logits, target_coverage)
-    confident_preds = F.confidence_selection(c_abs_logits, threshold)
+    threshold = F.selective_calibration(ConceptTensor(c_abs_logits), target_coverage)
+    confident_preds = F.confidence_selection(ConceptTensor(c_abs_logits), threshold)
     print(f"The thresholds for rejection are {threshold}")
     coverage_rates = confident_preds.float().mean(dim=0)
     print(f"Coverage rates: {coverage_rates}")

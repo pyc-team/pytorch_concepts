@@ -1,4 +1,5 @@
 import torch
+from skimage.morphology import reconstruction
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
@@ -6,7 +7,7 @@ from torch_concepts.nn import ConceptEncoder
 
 
 def main():
-    emb_size = 20
+    latent_dims = 20
     n_epochs = 500
     n_samples = 1000
     data = ToyDataset('xor', size=n_samples, random_state=42)
@@ -15,13 +16,13 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU(),
-                                  torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU())
-    y_predictor = torch.nn.Sequential(torch.nn.Linear(emb_size, n_classes))
+    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU(),
+                                  torch.nn.Linear(latent_dims, latent_dims), torch.nn.LeakyReLU())
+    y_predictor = torch.nn.Sequential(torch.nn.Linear(latent_dims, n_classes))
     black_box = torch.nn.Sequential(encoder, y_predictor)
 
     optimizer = torch.optim.AdamW(black_box.parameters(), lr=0.01)
-    task_loss = torch.nn.BCEWithLogitsLoss()
+    task_loss_fn = torch.nn.BCEWithLogitsLoss()
     black_box.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -31,7 +32,7 @@ def main():
         y_pred = y_predictor(emb)
 
         # compute loss
-        loss = task_loss(y_pred, y_train)
+        loss = task_loss_fn(y_pred, y_train)
 
         loss.backward()
         optimizer.step()
@@ -45,20 +46,22 @@ def main():
     # once the model is trained, we create an autoencoder which maps
     # black-box embeddings to concepts and back
     concept_encoder = torch.nn.Sequential(
-        torch.nn.Linear(emb_size, emb_size),
+        torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
-        ConceptEncoder(in_features=emb_size, out_concept_dimensions={1: concept_names}),
+        ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names}),
     )
     concept_decoder = torch.nn.Sequential(
-        torch.nn.Linear(n_concepts, emb_size),
+        torch.nn.Linear(n_concepts, latent_dims),
         torch.nn.LeakyReLU(),
-        torch.nn.Linear(emb_size, emb_size),
+        torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
     concept_autoencoder = torch.nn.Sequential(concept_encoder, concept_decoder)
     optimizer = torch.optim.AdamW(concept_autoencoder.parameters(), lr=0.01)
-    concept_loss = torch.nn.BCEWithLogitsLoss()
-    reconstruction_loss = torch.nn.MSELoss()
+    concept_loss_fn = torch.nn.BCEWithLogitsLoss()
+    reconstruction_loss_fn = torch.nn.MSELoss()
+    task_reg = 0.5
+    reconstruction_reg = 1
     concept_autoencoder.train()
     black_box.eval() # we can freeze the black-box model!
     for epoch in range(3000):
@@ -71,10 +74,10 @@ def main():
         y_pred = y_predictor(emb_pred)
 
         # compute loss
-        concept_loss_value = concept_loss(c_pred, c_train)
-        reconstruction_loss_value = reconstruction_loss(emb_pred, emb)
-        task_loss_value = task_loss(y_pred, y_train)
-        loss = concept_loss_value + reconstruction_loss_value + 0.01*task_loss_value
+        concept_loss_value = concept_loss_fn(c_pred, c_train)
+        reconstruction_loss_value = reconstruction_loss_fn(emb_pred, emb)
+        task_loss_value = task_loss_fn(y_pred, y_train)
+        loss = concept_loss_value + reconstruction_reg*reconstruction_loss_value + task_reg*task_loss_value
 
         loss.backward()
         optimizer.step()

@@ -21,22 +21,12 @@ class ConceptTensor(torch.Tensor):
         if kwargs is None:
             kwargs = {}
 
-        # Extract the self argument
-        self = args[0] if len(args) > 0 else None
-
-        # Call the function and get the result
+        # Perform the torch function as usual
         result = super().__torch_function__(func, types, args, kwargs)
 
-        # If the result is a Tensor and not a ConceptTensor, convert it to ConceptTensor
-        if isinstance(result, torch.Tensor) and not isinstance(result, ConceptTensor):
-            result = result.as_subclass(ConceptTensor)
-
-            # If self has concept_names, preserve them in the result
-            if hasattr(self, 'concept_names'):
-                result.concept_names = self.concept_names
-            else:
-                # Otherwise, generate default concept names
-                result.concept_names = cls._generate_default_concept_names(result.shape)
+        # Convert the result to a standard torch.Tensor if it's a ConceptTensor
+        if isinstance(result, ConceptTensor):
+            return result.to_standard_tensor()
 
         return result
 
@@ -71,7 +61,7 @@ class ConceptTensor(torch.Tensor):
 
         return concept_names
 
-    def describe(self) -> str:
+    def __str__(self):
         """
         Returns a string representation of the ConceptTensor.
         """

@@ -1,6 +1,9 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from numpy.random import multivariate_normal, uniform
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import make_spd_matrix, make_low_rank_matrix
 
 
 def _xor(size, random_state=42):
@@ -147,57 +150,67 @@ class ToyDataset(Dataset):
         return data, concept_label, target_label
 
 
-def _complete(n_samples: int = 10, n_features: int = 2, n_concepts: int = 2, n_hidden_concepts: int = 0,
-              n_tasks: int = 1, emb_size: int = 10, seed: int = 42):
-    # Randomly sample μ ∈ Rp s.t.μj ∼ Uniform(−5, 5) for 1 ≤ j ≤ p
-    torch.manual_seed(seed)
-    mu = torch.rand(n_features) * 10 - 5
-    # Generate a random symmetric, positive-definite matrix Σ ∈ Rp×p
-    torch.manual_seed(seed + 1)
-    A = torch.rand(n_features, n_features)
-    Sigma = A @ A.T
-    # Randomly sample a design matrix X ∈ RN×p s.t. Xi,: ∼ Np(μ, Σ)
-    torch.manual_seed(seed + 2)
-    dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=Sigma)
-    X = dist.rsample((n_samples,))
+def _relu(x):
+    return x * (x > 0)
 
-    if n_hidden_concepts > 0:
-        # the bottleneck is incomplete
-        # Let h : Rp → R{K+J} and g : R{K+J} → R be randomly initialised multilayer perceptrons with ReLU nonlinearities.
-        torch.manual_seed(seed + 3)
-        h = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_concepts + n_hidden_concepts), torch.nn.LeakyReLU())
-        torch.manual_seed(seed + 4)
-        g = torch.nn.Sequential(torch.nn.Linear(n_concepts + n_hidden_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_tasks), torch.nn.LeakyReLU())
-        # Let ui,k+l = 1{[h(Xi,:)]k ≥mk }, where mk = median({[h(X_{l,:})]k}_{l=1}^N), for 1 ≤ i ≤ N and 1 ≤ k ≤ K
-        h_X = h(X)
-        m = torch.median(h_X, dim=0).values
-        u = (h_X >= m).float()
-        c = u[:, :n_concepts]
-        r = u[:, n_concepts:]
-        # Let yi = 1{g(ui)≥my }, where my = median({g(ui)}_{l=1}^N), for 1 ≤ i ≤ N
-        g_u = g(u)
-        my = torch.median(g_u, dim=0).values
-        y = (g_u >= my).float()
-        concept_attr_names = [f'C{i}' for i in range(n_concepts)] + [f'R{i}' for i in range(n_hidden_concepts)]
 
-    else:
-        # the bottleneck is complete
-        # Let h : Rp → RK and g : RK → R be randomly initialised multilayer perceptrons with ReLU nonlinearities.
-        torch.manual_seed(seed + 3)
-        h = torch.nn.Sequential(torch.nn.Linear(n_features, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_concepts), torch.nn.LeakyReLU())
-        torch.manual_seed(seed + 4)
-        g = torch.nn.Sequential(torch.nn.Linear(n_concepts, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, emb_size), torch.nn.LeakyReLU(), torch.nn.Linear(emb_size, n_tasks), torch.nn.LeakyReLU())
-        # Let ci,k = 1{[h(Xi,:)]k ≥mk }, where mk = median({[h(X_{l,:})]k}_{l=1}^N), for 1 ≤ i ≤ N and 1 ≤ k ≤ K
-        h_X = h(X)
-        m = torch.median(h_X, dim=0).values
-        u = c = (h_X >= m).float()
-        # Let yi = 1{g(ci)≥my }, where my = median({g(ci)}_{l=1}^N), for 1 ≤ i ≤ N
-        g_c = g(c)
-        my = torch.median(g_c, dim=0).values
-        y = (g_c >= my).float()
-        concept_attr_names = [f'C{i}' for i in range(n_concepts)]
+def _random_nonlin_map(n_in, n_out, n_hidden, rank=1000):
+    W_0 = make_low_rank_matrix(n_in, n_hidden, effective_rank=rank)
+    W_1 = make_low_rank_matrix(n_hidden, n_hidden, effective_rank=rank)
+    W_2 = make_low_rank_matrix(n_hidden, n_out, effective_rank=rank)
+    # No biases
+    b_0 = np.random.uniform(0, 0, (1, n_hidden))
+    b_1 = np.random.uniform(0, 0, (1, n_hidden))
+    b_2 = np.random.uniform(0, 0, (1, n_out))
 
-    return X, u, y, None, concept_attr_names, [f'y{i}' for i in range(n_tasks)]
+    nlin_map = lambda x: np.matmul(
+        _relu(np.matmul(_relu(np.matmul(x, W_0) + np.tile(b_0, (x.shape[0], 1))), W_1) +
+             np.tile(b_1, (x.shape[0], 1))), W_2) + np.tile(b_2, (x.shape[0], 1))
+
+    return nlin_map
+
+
+def _complete(n_samples: int = 10, p: int = 2, n_views: int = 10, n_concepts: int = 2, n_hidden_concepts: int = 0,
+              n_tasks: int = 1, seed: int = 42):
+    total_concepts = n_concepts + n_hidden_concepts
+
+    # Replicability
+    np.random.seed(seed)
+
+    # Generate covariates
+    mu = uniform(-5, 5, p * n_views)
+    sigma = make_spd_matrix(p * n_views, random_state=seed)
+    X = multivariate_normal(mean=mu, cov=sigma, size=n_samples)
+    ss = StandardScaler()
+    X = ss.fit_transform(X)
+    # Produce different views
+    X_views = np.zeros((n_samples, n_views, p))
+    for v in range(n_views):
+        X_views[:, v] = X[:, (v * p):(v * p + p)]
+
+    # Nonlinear maps
+    g = _random_nonlin_map(n_in=p * n_views, n_out=total_concepts, n_hidden=int((p * n_views + total_concepts) / 2))
+    f = _random_nonlin_map(n_in=total_concepts, n_out=n_tasks, n_hidden=int(total_concepts / 2))
+
+    # Generate concepts
+    c = g(X)
+    c = torch.sigmoid(torch.FloatTensor(c))
+    c = (c >= 0.5) * 1.0
+    # tmp = np.tile(np.median(c, 0), (X.shape[0], 1))
+    # c = (c >= tmp) * 1.0
+
+    # Generate labels
+    y = f(c.detach().numpy())
+    y = torch.sigmoid(torch.FloatTensor(y))
+    y = (y >= 0.5) * 1.0
+    # tmp = np.tile(np.median(y, 0), (X.shape[0], 1))
+    # y = (y >= tmp) * 1.0
+
+    u = c[:, :n_concepts]
+    X = torch.FloatTensor(X)
+    u = torch.FloatTensor(u)
+    y = torch.FloatTensor(y)
+    return X, u, y, None, [f'c{i}' for i in range(n_concepts)], [f'y{i}' for i in range(n_tasks)]
 
 
 class CompletenessDataset:
@@ -211,16 +224,17 @@ class CompletenessDataset:
 
     Attributes:
         n_samples: The number of samples in the dataset.
-        n_features: The number of input features.
+        p: The number of covariates per view.
+        n_views: The number of views in the dataset.
         n_concepts: The number of concepts to be learned.
         n_hidden_concepts: The number of hidden concepts to be learned.
         n_tasks: The number of tasks to be learned.
         emb_size: The size of concept embeddings.
         random_state: The random seed for generating the data. Default is 42.
     """
-    def __init__(self, n_samples: int = 10, n_features: int = 2, n_concepts: int = 2, n_hidden_concepts: int = 0,
-                 n_tasks: int = 1, emb_size: int = 10, random_state: int = 42):
-        self.data, self.concept_labels, self.target_labels, self.dag, self.concept_attr_names, self.task_attr_names = _complete(n_samples, n_features, n_concepts, n_hidden_concepts, n_tasks, emb_size, random_state)
+    def __init__(self, n_samples: int = 10, p: int = 2, n_views: int = 10,
+                 n_concepts: int = 2, n_hidden_concepts: int = 0, n_tasks: int = 1, random_state: int = 42):
+        self.data, self.concept_labels, self.target_labels, self.dag, self.concept_attr_names, self.task_attr_names = _complete(n_samples, p, n_views, n_concepts, n_hidden_concepts, n_tasks, random_state)
         self.dag = None
 
     def __len__(self):
@@ -231,3 +245,26 @@ class CompletenessDataset:
         concept_label = self.concept_labels[index]
         target_label = self.target_labels[index]
         return data, concept_label, target_label
+
+
+class TrafficLights(Dataset):
+    def __init__(self, n_samples):
+        self.n_samples = n_samples
+        self.x_train = torch.normal(0, 1, (n_samples, 10))
+
+        self.concept_names = ['traffic light green', 'ambulance crossing']
+        self.c_train = torch.zeros(n_samples, 2)
+        self.c_train[:, 0] = (self.x_train[:, 2] > 0) & (self.x_train[:, 3] > 0)
+        self.c_train[:, 1] = (self.x_train[:, 0] < 0) & (self.x_train[:, 4] < 0)
+
+        # you can cross iff the traffic light is green and there is no ambulance
+        self.y_train = (self.c_train[:, 0] == 1) & (self.c_train[:, 1] == 0)
+        self.y_train = self.y_train.float().view(-1, 1)
+
+        self.task_names = ['cross']
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        return self.x_train[idx], self.c_train[idx], self.y_train[idx], self.concept_names, self.task_names
