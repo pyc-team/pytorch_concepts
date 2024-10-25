@@ -58,15 +58,18 @@ Authors
 -------
 
 * `Pietro Barbiero <http://www.pietrobarbiero.eu/>`__, Universita' della Svizzera Italiana (CH) and University of Cambridge (UK).
+* `Gabriele Ciravegna <https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/>`__, Politecnico di Torino (IT).
 * `David Debot <https://www.kuleuven.be/wieiswie/en/person/00165387>`__, KU Leuven (BE).
+* `Michelangelo Diligenti <https://docenti.unisi.it/en/diligenti>`__, Università degli Studi di Siena (IT).
 * `Gabriele Dominici <https://pc.inf.usi.ch/team/gabriele-dominici/>`__, Universita' della Svizzera Italiana (CH).
 * `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`__, University of Cambridge (UK).
+* `Francesco Giannini <https://www.francescogiannini.eu/>`__, Scuola Normale Superiore di Pisa (IT).
 * `Giuseppe Marra <https://www.giuseppemarra.com/>`__, KU Leuven (BE).
 
 Licence
 -------
 
-Copyright 2024 Pietro Barbiero, David Debot, Gabriele Dominici, Mateo Espinosa Zarlenga, Giuseppe Marra.
+Copyright 2024 Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may
 not use this file except in compliance with the License. You may obtain

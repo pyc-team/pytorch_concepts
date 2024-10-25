@@ -65,3 +65,37 @@ Contributing
 - Make sure to write documentation and tests for your contributions.
 - Make sure all tests pass before submitting the pull request.
 - Submit a pull request to the ``main`` branch.
+
+
+PyC Book
+-------
+
+You can find further reading materials and tutorials in our book `Concept-based Interpretable Deep Learning in Python <https://pyc-team.github.io/pyc-book/>`_.
+
+
+Authors
+-------
+
+* `Pietro Barbiero <http://www.pietrobarbiero.eu/>`__, Universita' della Svizzera Italiana (CH) and University of Cambridge (UK).
+* `Gabriele Ciravegna <https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/>`__, Politecnico di Torino (IT).
+* `David Debot <https://www.kuleuven.be/wieiswie/en/person/00165387>`__, KU Leuven (BE).
+* `Michelangelo Diligenti <https://docenti.unisi.it/en/diligenti>`__, Università degli Studi di Siena (IT).
+* `Gabriele Dominici <https://pc.inf.usi.ch/team/gabriele-dominici/>`__, Universita' della Svizzera Italiana (CH).
+* `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`__, University of Cambridge (UK).
+* `Francesco Giannini <https://www.francescogiannini.eu/>`__, Scuola Normale Superiore di Pisa (IT).
+* `Giuseppe Marra <https://www.giuseppemarra.com/>`__, KU Leuven (BE).
+
+Licence
+-------
+Copyright 2024 Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this file except in compliance with the License. You may obtain
+a copy of the License at: http://www.apache.org/licenses/LICENSE-2.0.
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+See the License for the specific language governing permissions and
+limitations under the License.
