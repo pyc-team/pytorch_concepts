@@ -23,9 +23,8 @@ install:
   # create the testing environment
   - conda create -n testenv --yes python=$PYTHON_VERSION pip
   - source activate testenv
-  - conda install --yes numpy==$NUMPY_VERSION scipy==$SCIPY_VERSION pandas=$PANDAS_VERSION cython nose pytest pytest-cov
   - pip install codecov
-  - pip install .
+  - pip install -r requirements.txt .
 
 #script:
 #  - mkdir for_test

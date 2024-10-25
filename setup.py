@@ -17,7 +17,7 @@ URL = 'https://github.com/pietrobarbiero/pytorch_concepts'
 LICENSE = 'Apache 2.0'
 DOWNLOAD_URL = 'https://github.com/pietrobarbiero/pytorch_concepts'
 VERSION = __version__
-INSTALL_REQUIRES = ['numpy', 'scipy', 'scikit-learn', 'pandas', 'torch']
+INSTALL_REQUIRES = ['numpy', 'scipy', 'scikit-learn', 'pandas', 'torch', 'torch_geometric']
 CLASSIFIERS = ['Intended Audience :: Science/Research',
                'Intended Audience :: Developers',
                'License :: OSI Approved',
