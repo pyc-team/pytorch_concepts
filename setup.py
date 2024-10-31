@@ -9,13 +9,13 @@ from torch_concepts import __version__
 
 DISTNAME = 'pytorch_concepts'
 DESCRIPTION = ' Concept-Based Deep Learning Library for PyTorch.'
-with codecs.open('README.rst', encoding='utf-8-sig') as f:
+with codecs.open('README.md', encoding='utf-8-sig') as f:
     LONG_DESCRIPTION = f.read()
-MAINTAINER = 'P. Barbiero'
+MAINTAINER = 'PyC Team'
 MAINTAINER_EMAIL = 'barbiero@tutanota.com'
-URL = 'https://github.com/pietrobarbiero/pytorch_concepts'
+URL = 'https://github.com/pyc-team/pytorch_concepts'
 LICENSE = 'Apache 2.0'
-DOWNLOAD_URL = 'https://github.com/pietrobarbiero/pytorch_concepts'
+DOWNLOAD_URL = 'https://github.com/pyc-team/pytorch_concepts'
 VERSION = __version__
 INSTALL_REQUIRES = ['numpy', 'scipy', 'scikit-learn', 'pandas', 'torch', 'torch_geometric']
 CLASSIFIERS = ['Intended Audience :: Science/Research',
@@ -54,6 +54,7 @@ setup(name=DISTNAME,
       version=VERSION,
       download_url=DOWNLOAD_URL,
       long_description=LONG_DESCRIPTION,
+        long_description_content_type='text/markdown',
       zip_safe=False,  # the package can run out of an .egg file
       classifiers=CLASSIFIERS,
       packages=find_packages(),
