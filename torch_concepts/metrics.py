@@ -1,5 +1,6 @@
 import torch
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
+from typing import Callable, List, Union
 
 
 def completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score, average='macro'):
@@ -18,9 +19,9 @@ def completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score
         float: Completeness score.
     """
     # Convert to numpy for sklearn metrics
-    y_true_np = y_true.cpu().numpy()
-    y_pred_blackbox_np = y_pred_blackbox.cpu().numpy()
-    y_pred_whitebox_np = y_pred_whitebox.cpu().numpy()
+    y_true_np = y_true.cpu().detach().numpy()
+    y_pred_blackbox_np = y_pred_blackbox.cpu().detach().numpy()
+    y_pred_whitebox_np = y_pred_whitebox.cpu().detach().numpy()
 
     # Compute class frequencies in y_true
     class_frequencies = torch.bincount(y_true) / len(y_true)
@@ -32,6 +33,53 @@ def completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score
 
     completeness = (whitebox_score - random_accuracy) / (blackbox_score - random_accuracy)
     return completeness
+
+
+def intervention_score(y_predictor: torch.nn.Module, c_pred: torch.Tensor, c_true: torch.Tensor, y_true: torch.Tensor,
+                       intervention_groups: List[List[int]], activation: Callable = torch.sigmoid,
+                       scorer: Callable = roc_auc_score, average: str = 'macro',
+                       auc: bool = True) -> Union[float, List[float]]:
+    """
+    Compute the effect of concept interventions on downstream task predictions.
+
+    Given  set of intervention groups, the intervention score measures the effectiveness of each intervention group on the model's task predictions.
+
+    Main reference: `"Concept Bottleneck Models" <https://arxiv.org/abs/2007.04612>`_
+
+    Parameters:
+        y_predictor (torch.nn.Module): Model that predicts downstream task labels.
+        c_pred (torch.Tensor): Predicted concept values.
+        c_true (torch.Tensor): Ground truth concept values.
+        y_true (torch.Tensor): Ground truth task labels.
+        intervention_groups (List[List[int]]): List of intervention groups.
+        activation (Callable): Activation function to apply to the model's predictions. Default is torch.sigmoid.
+        scorer (Callable): Scoring function to evaluate predictions. Default is roc_auc_score.
+        average (str): Type of averaging to use. Default is 'macro'.
+        auc (bool): Whether to return the average score across all intervention groups. Default is True.
+
+    Returns:
+        Union[float, List[float]]: The intervention effectiveness for each intervention group or the average score across all groups.
+    """
+    # Convert to numpy for sklearn metrics
+    y_true_np = y_true.cpu().detach().numpy()
+
+    # Re-compute the model's predictions for each intervention group
+    intervention_effectiveness = []
+    for group in intervention_groups:
+        # Intervene on the concept values
+        c_pred_group = c_pred.clone()
+        c_pred_group[:, group] = c_true[:, group]
+
+        # Compute the new model's predictions
+        y_pred_group = activation(y_predictor(c_pred_group))
+
+        # Compute the new model's task performance
+        intervention_effectiveness.append(scorer(y_true_np, y_pred_group.cpu().detach().numpy(), average=average))
+
+    # Compute the area under the curve of the intervention curve
+    if auc:
+        intervention_effectiveness = sum(intervention_effectiveness) / len(intervention_groups)
+    return intervention_effectiveness
 
 
 def cace_score(y_pred_c0, y_pred_c1):
