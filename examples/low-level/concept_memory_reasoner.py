@@ -1,7 +1,6 @@
 import torch
 from sklearn.metrics import accuracy_score
 
-from torch_concepts.base import ConceptTensor
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptEncoder, ConceptMemory
 from torch_concepts.nn.functional import selection_eval, logic_memory_eval, logic_memory_reconstruction, logic_memory_explanations
@@ -58,8 +57,7 @@ def main():
 
     task_accuracy = accuracy_score(y_train, y_pred > 0.5)
     concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
-    concept_weights = ConceptTensor(concept_weights, concept_memory.concept_names)
-    explanations = logic_memory_explanations(concept_weights)
+    explanations = logic_memory_explanations(concept_weights, {1: concept_names, 2: task_names})
 
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")

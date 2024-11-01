@@ -1,7 +1,6 @@
 import torch
 from sklearn.metrics import accuracy_score
 
-from torch_concepts.base import ConceptTensor
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptEncoder
 import torch_concepts.nn.functional as CF
@@ -19,8 +18,7 @@ def main():
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    concepts_train = ConceptTensor.concept(c_train, concept_names={1: concept_names})
-    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), concept_names={1: concept_names})
+    intervention_indexes = torch.ones_like(c_train).bool()
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
     c_encoder = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
@@ -39,7 +37,7 @@ def main():
         emb = encoder(x_train)
         c_emb = c_encoder(emb)
         c_pred = c_scorer(c_emb)
-        c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
+        c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
         y_pred = y_predictor(c_mix)
 

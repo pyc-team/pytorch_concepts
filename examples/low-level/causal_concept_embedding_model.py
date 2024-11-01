@@ -3,7 +3,6 @@ from causallearn.search.PermutationBased.GRaSP import grasp
 from sklearn.metrics import accuracy_score
 import torch_geometric as pyg
 
-from torch_concepts.base import ConceptTensor
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import ConceptEncoder
 from torch_concepts.utils import prepare_pyg_data
@@ -26,8 +25,7 @@ def main():
     y_train = c_train.clone()
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
-    concepts_train = ConceptTensor.concept(c_train, {1: concept_names})
-    intervention_indexes = ConceptTensor.concept(torch.ones_like(c_train).bool(), {1: concept_names})
+    intervention_indexes = torch.ones_like(c_train).bool()
 
     # define model
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
@@ -44,7 +42,7 @@ def main():
 
     # learn the causal graph structure (it could be replaced by a known graph or differentiable graph learning)
     G = grasp(c_train.numpy(), score_func='local_score_BDeu').graph
-    graph = ConceptTensor(torch.abs(torch.tensor(G)), {0: concept_names, 1: concept_names})
+    graph = torch.abs(torch.tensor(G))
     print(graph)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
@@ -58,7 +56,7 @@ def main():
         c_emb = c_encoder(emb)
         c_pred = c_scorer(c_emb).sigmoid()
         # concept interventions make training faster and reduce leakage
-        c_intervened = CF.intervene(c_pred, concepts_train, intervention_indexes)
+        c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
         # use the graph to make each concept dependent on parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, graph)
@@ -88,7 +86,7 @@ def main():
     # at inference time, we can intervene on the causal graph by:
     # removing some edges and replacing concept values with ground truth
     intervened_idxs = ['A']
-    intervened_graph = CF.intervene_on_concept_graph(graph, indexes=intervened_idxs)
+    intervened_graph = CF.intervene_on_concept_graph(graph, indexes=intervened_idxs, concept_names={1: concept_names})
     c_pred[:, 0] = c_train[:, 0].clone()
 
     # at inference time, we can predict each concept using its parents only by propagating concepts through the graph
@@ -99,7 +97,7 @@ def main():
     # we then look for the fixed point of the graph convolutional network
     for epoch in range(iterations):
         # compute concept embeddings
-        c_mix = CF.concept_embedding_mixture(c_emb, ConceptTensor(y_pred, {1: concept_names}))
+        c_mix = CF.concept_embedding_mixture(c_emb, y_pred)
 
         # use the graph to generate new concept embeddings using parent concepts only
         node_features, edge_index, batch = prepare_pyg_data(c_mix, intervened_graph)

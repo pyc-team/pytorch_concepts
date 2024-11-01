@@ -1,5 +1,4 @@
 import torch
-from skimage.morphology import reconstruction
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
