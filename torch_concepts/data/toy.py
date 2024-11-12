@@ -38,8 +38,8 @@ def _trigonometry(size, random_state=42):
         x ** 2 + y ** 2 + z ** 2,
     ]).T
 
-    # concetps
-    concetps = np.stack([
+    # concepts
+    concepts = np.stack([
         x > 0,
         y > 0,
         z > 0,
@@ -49,9 +49,16 @@ def _trigonometry(size, random_state=42):
     downstream_task = (x + y + z) > 1
 
     input_features = torch.FloatTensor(input_features)
-    concetps = torch.FloatTensor(concetps)
+    concepts = torch.FloatTensor(concepts)
     downstream_task = torch.FloatTensor(downstream_task)
-    return input_features, concetps, downstream_task.unsqueeze(-1), None, ['C1', 'C2', 'C3'], ['sumGreaterThan1']
+    return (
+        input_features,
+        concepts,
+        downstream_task.unsqueeze(-1),
+        None,
+        ['C1', 'C2', 'C3'],
+        ['sumGreaterThan1'],
+    )
 
 
 def _dot(size, random_state=42):
@@ -73,7 +80,14 @@ def _dot(size, random_state=42):
     x = torch.FloatTensor(x)
     c = torch.FloatTensor(c)
     y = torch.Tensor(y)
-    return x, c, y.unsqueeze(-1), None, ['dotV1V2GreaterThan0', 'dotV3V4GreaterThan0'], ['dotV1V3GreaterThan0']
+    return (
+        x,
+        c,
+        y.unsqueeze(-1),
+        None,
+        ['dotV1V2GreaterThan0', 'dotV3V4GreaterThan0'],
+        ['dotV1V3GreaterThan0'],
+    )
 
 
 def _toy_problem(n_samples: int = 10, seed: int = 42) -> torch.Tensor:
@@ -92,7 +106,7 @@ def _toy_problem(n_samples: int = 10, seed: int = 42) -> torch.Tensor:
     return torch.stack((A, B, C, D), dim=1).float()
 
 
-def _checkmark(n_samples: int = 10, seed: int =42, perturb: float = 0.1) -> [torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def _checkmark(n_samples: int = 10, seed: int =42, perturb: float = 0.1):
     x = _toy_problem(n_samples, seed)
     c = x.clone()
     torch.manual_seed(seed)
@@ -104,29 +118,59 @@ def _checkmark(n_samples: int = 10, seed: int =42, perturb: float = 0.1) -> [tor
                             [0, 0, 0, 0],  # D doesn't influence others
                             ])
 
-    return x, c[:, [0, 1, 2]], c[:, 3].unsqueeze(1), dag, ['A', 'B', 'C'], ['D']
+    return (
+        x,
+        c[:, [0, 1, 2]],
+        c[:, 3].unsqueeze(1),
+        dag,
+        ['A', 'B', 'C'],
+        ['D'],
+    )
 
 
 class ToyDataset(Dataset):
     """
     This class loads a synthetic dataset.
     Available datasets are:
-    - XOR: A simple XOR dataset. The input features are two random variables, the concepts are Boolean values of the input features, and the task is the XOR of the concepts.
-    - Trigonometry: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the input features, and the task is the sum of the input features being greater than 1.
-    - Dot: A dataset where the input features are random variables sampled from a normal distribution, the concepts are the signs of the dot product of the input features with fixed vectors, and the task is the dot product of the input features being greater than 0.
-    - Checkmark: A dataset where the concepts A and B are random Boolean variables, the concept C is the negation of B, and the task is the logical AND of A and C.
-    Main references for XOR, Trigonometry, and Dot datasets: `"Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
-    Main reference for Checkmark dataset: `"Causal Concept Embedding Models: Beyond Causal Opacity in Deep Learning" <https://arxiv.org/abs/2405.16507>`_
+    - XOR: A simple XOR dataset. The input features are two random variables,
+        the concepts are Boolean values of the input features, and the task is
+        the XOR of the concepts.
+    - Trigonometry: A dataset where the input features are random variables
+        sampled from a normal distribution, the concepts are the signs of the
+        input features, and the task is the sum of the input features being
+        greater than 1.
+    - Dot: A dataset where the input features are random variables sampled from
+        a normal distribution, the concepts are the signs of the dot product of
+        the input features with fixed vectors, and the task is the dot product
+        of the input features being greater than 0.
+    - Checkmark: A dataset where the concepts A and B are random Boolean
+        variables, the concept C is the negation of B, and the task is the
+        logical AND of A and C.
+
+    Main references for XOR, Trigonometry, and Dot datasets: `"Concept
+    Embedding Models: Beyond the Accuracy-Explainability
+    Trade-Off" <https://arxiv.org/abs/2209.09056>`_
+
+    Main reference for Checkmark dataset: `"Causal Concept Embedding Models:
+    Beyond Causal Opacity in Deep Learning" <https://arxiv.org/abs/2405.16507>`_
 
     Attributes:
-        dataset: The name of the dataset to load. Available datasets are 'xor', 'trigonometry', 'dot', and 'checkmark'.
+        dataset: The name of the dataset to load. Available datasets are 'xor',
+            'trigonometry', 'dot', and 'checkmark'.
         size: The number of samples in the dataset.
         random_state: The random seed for generating the data. Default is 42.
     """
     def __init__(self, dataset: str, size: int, random_state: int = 42):
         self.size = size
         self.random_state = random_state
-        self.data, self.concept_labels, self.target_labels, self.dag, self.concept_attr_names, self.task_attr_names = self._load_data(dataset)
+        (
+            self.data,
+            self.concept_labels,
+            self.target_labels,
+            self.dag,
+            self.concept_attr_names,
+            self.task_attr_names
+        ) = self._load_data(dataset)
 
     def _load_data(self, dataset):
         if dataset == 'xor':
@@ -170,8 +214,15 @@ def _random_nonlin_map(n_in, n_out, n_hidden, rank=1000):
     return nlin_map
 
 
-def _complete(n_samples: int = 10, p: int = 2, n_views: int = 10, n_concepts: int = 2, n_hidden_concepts: int = 0,
-              n_tasks: int = 1, seed: int = 42):
+def _complete(
+    n_samples: int = 10,
+    p: int = 2,
+    n_views: int = 10,
+    n_concepts: int = 2,
+    n_hidden_concepts: int = 0,
+    n_tasks: int = 1,
+    seed: int = 42,
+):
     total_concepts = n_concepts + n_hidden_concepts
 
     # Replicability
@@ -189,8 +240,16 @@ def _complete(n_samples: int = 10, p: int = 2, n_views: int = 10, n_concepts: in
         X_views[:, v] = X[:, (v * p):(v * p + p)]
 
     # Nonlinear maps
-    g = _random_nonlin_map(n_in=p * n_views, n_out=total_concepts, n_hidden=int((p * n_views + total_concepts) / 2))
-    f = _random_nonlin_map(n_in=total_concepts, n_out=n_tasks, n_hidden=int(total_concepts / 2))
+    g = _random_nonlin_map(
+        n_in=p * n_views,
+        n_out=total_concepts,
+        n_hidden=int((p * n_views + total_concepts) / 2),
+    )
+    f = _random_nonlin_map(
+        n_in=total_concepts,
+        n_out=n_tasks,
+        n_hidden=int(total_concepts / 2),
+    )
 
     # Generate concepts
     c = g(X)
@@ -215,12 +274,16 @@ def _complete(n_samples: int = 10, p: int = 2, n_views: int = 10, n_concepts: in
 
 class CompletenessDataset:
     """
-    This class loads a synthetic dataset where the bottleneck is complete or incomplete.
-    The dataset is generated using the activations of randomly initialised multilayer perceptrons with ReLU nonlinearities.
-    The input features are sampled from a multivariate normal distribution.
-    The concepts correspond to the median activations of the hidden layers of the bottleneck.
-    The tasks correspond to the median activations of the output layer of the bottleneck.
-    Main reference: `"Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?" <https://arxiv.org/abs/2401.13544>`_
+    This class loads a synthetic dataset where the bottleneck is complete or
+    incomplete. The dataset is generated using the activations of randomly
+    initialised multilayer perceptrons with ReLU nonlinearities. The input
+    features are sampled from a multivariate normal distribution. The concepts
+    correspond to the median activations of the hidden layers of the bottleneck.
+    The tasks correspond to the median activations of the output layer of the
+    bottleneck.
+
+    Main reference: `"Beyond Concept Bottleneck Models: How to Make Black Boxes
+    Intervenable?" <https://arxiv.org/abs/2401.13544>`_
 
     Attributes:
         n_samples: The number of samples in the dataset.
@@ -232,9 +295,32 @@ class CompletenessDataset:
         emb_size: The size of concept embeddings.
         random_state: The random seed for generating the data. Default is 42.
     """
-    def __init__(self, n_samples: int = 10, p: int = 2, n_views: int = 10,
-                 n_concepts: int = 2, n_hidden_concepts: int = 0, n_tasks: int = 1, random_state: int = 42):
-        self.data, self.concept_labels, self.target_labels, self.dag, self.concept_attr_names, self.task_attr_names = _complete(n_samples, p, n_views, n_concepts, n_hidden_concepts, n_tasks, random_state)
+    def __init__(
+        self,
+        n_samples: int = 10,
+        p: int = 2,
+        n_views: int = 10,
+        n_concepts: int = 2,
+        n_hidden_concepts: int = 0,
+        n_tasks: int = 1,
+        random_state: int = 42,
+    ):
+        (
+            self.data,
+            self.concept_labels,
+            self.target_labels,
+            self.dag,
+            self.concept_attr_names,
+            self.task_attr_names,
+        ) = _complete(
+            n_samples,
+            p,
+            n_views,
+            n_concepts,
+            n_hidden_concepts,
+            n_tasks,
+            random_state,
+        )
         self.dag = None
 
     def __len__(self):
@@ -267,4 +353,10 @@ class TrafficLights(Dataset):
         return self.n_samples
 
     def __getitem__(self, idx):
-        return self.x_train[idx], self.c_train[idx], self.y_train[idx], self.concept_names, self.task_names
+        return (
+            self.x_train[idx],
+            self.c_train[idx],
+            self.y_train[idx],
+            self.concept_names,
+            self.task_names,
+        )

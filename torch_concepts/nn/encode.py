@@ -10,7 +10,9 @@ class InputImgEncoder(torch.nn.Module):
     """
     def __init__(self, original_model: torch.nn.Module):
         super(InputImgEncoder, self).__init__()
-        self.features = torch.nn.Sequential(*list(original_model.children())[:-1])
+        self.features = torch.nn.Sequential(
+            *list(original_model.children())[:-1]
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
