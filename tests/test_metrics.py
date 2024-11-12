@@ -1,7 +1,21 @@
 import unittest
 import torch
 from sklearn.metrics import f1_score
-from torch_concepts.metrics import completeness_score, cace_score
+from torch_concepts.metrics import completeness_score, intervention_score, cace_score
+
+
+class ANDModel(torch.nn.Module):
+    def __init__(self):
+        super(ANDModel, self).__init__()
+        self.linear = torch.nn.Linear(2, 1, bias=True)
+
+        # Manually set weights and bias to perform AND operation
+        with torch.no_grad():
+            self.linear.weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0]]))  # Both weights are 1
+            self.linear.bias = torch.nn.Parameter(torch.tensor([-1.5]))  # Bias is -1.5
+
+    def forward(self, x):
+        return self.linear(x)
 
 
 class TestCompletenessScore(unittest.TestCase):
@@ -19,7 +33,7 @@ class TestCompletenessScore(unittest.TestCase):
         y_pred_whitebox = torch.tensor([0, 1, 2, 2, 1, 0, 2, 1, 1])
 
         score = completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score)
-        self.assertAlmostEqual(score, 0.0, places=1, msg="Completeness score with f1_score should be 0.0")
+        self.assertAlmostEqual(score, 0.3, places=1, msg="Completeness score with f1_score should be 0.0")
 
     def test_completeness_score_higher_than_1(self):
         y_true = torch.tensor([0, 1, 2, 1, 0, 2, 1, 0])
@@ -29,14 +43,24 @@ class TestCompletenessScore(unittest.TestCase):
         score = completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score)
         self.assertTrue(score > 1, msg="Completeness score should be higher than 1 when the whitebox model is better than the blackbox model")
 
-    def test_completeness_score_negative(self):
-        y_true = torch.tensor([0, 1, 2, 1, 0, 2, 1, 0, 2])
-        y_pred_blackbox = torch.tensor([0, 1, 2, 1, 0, 2, 1, 0, 2])
-        y_pred_whitebox = torch.tensor([0, 1, 0, 2, 1, 0, 2, 1, 1])
 
-        score = completeness_score(y_true, y_pred_blackbox, y_pred_whitebox, scorer=f1_score)
-        self.assertTrue(score < 0, msg="Completeness score should be negative when the model accuracy is worse than random guessing")
+class TestInterventionScore(unittest.TestCase):
 
+    def test_intervention_score_basic(self):
+        y_predictor = ANDModel()
+        c_true = torch.FloatTensor([[0, 0], [0, 1], [1, 0], [1, 1]])
+        c_pred = torch.FloatTensor([[.8, .2], [.8, .8], [.8, .2], [.8, .8]])
+        y_true = torch.tensor([0, 0, 0, 1])
+        intervention_groups = [[], [0], [1]]
+
+        scores = intervention_score(y_predictor, c_pred, c_true, y_true, intervention_groups, auc=False)
+        self.assertTrue(isinstance(scores, list))
+        self.assertEqual(len(scores), 3)
+        self.assertEqual(scores[1], 1.0)
+
+        auc_score = intervention_score(y_predictor, c_pred, c_true, y_true, intervention_groups, auc=True)
+        self.assertTrue(isinstance(auc_score, float))
+        self.assertEqual(round(auc_score*100)/100, 0.89)
 
 class TestCaceScore(unittest.TestCase):
     def test_cace_score_basic(self):

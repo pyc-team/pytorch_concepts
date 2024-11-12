@@ -2,7 +2,6 @@ import torch
 from sklearn.metrics import accuracy_score
 from sklearn.tree import DecisionTreeClassifier
 
-from torch_concepts.base import ConceptTensor
 from torch_concepts.data import CompletenessDataset
 from torch_concepts.nn import ProbabilisticConceptEncoder, ConceptEncoder
 from torch_concepts.nn import functional as F
@@ -71,15 +70,15 @@ def main():
     # compute mahalanobis distance of training data to q_c_hidden.base_dist
     diff = c_hidden - q_c_hidden.base_dist.mean
     distance = torch.sqrt((diff ** 2) / (q_c_hidden.base_dist.scale ** 2))
-    distance = ConceptTensor.concept(-distance.mean(dim=1).unsqueeze(1))
+    distance = -distance.mean(dim=1).unsqueeze(1)
     threshold = F.selective_calibration(distance, target_coverage)
     confident_indist = F.confidence_selection(distance, threshold).squeeze()
     coverage_rates = confident_indist.float().mean(dim=0)
     print(f"Coverage rates: {coverage_rates}")
 
     # find confident predictions
-    threshold = F.selective_calibration(ConceptTensor(c_abs_logits), target_coverage)
-    confident_preds = F.confidence_selection(ConceptTensor(c_abs_logits), threshold)
+    threshold = F.selective_calibration(c_abs_logits, target_coverage)
+    confident_preds = F.confidence_selection(c_abs_logits, threshold)
     print(f"The thresholds for rejection are {threshold}")
     coverage_rates = confident_preds.float().mean(dim=0)
     print(f"Coverage rates: {coverage_rates}")
