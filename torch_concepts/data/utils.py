@@ -1,16 +1,19 @@
 import os
 import torch
+
 from torch.utils.data import DataLoader
 
 from torch_concepts.nn import InputImgEncoder
 
 
-def preprocess_img_data(dataset: torch.utils.data.Dataset,
-                        dataset_root: str,
-                        input_encoder: torch.nn.Module,
-                        split: str = 'test',
-                        batch_size: int = 32,
-                        n_batches: int = None) -> None:
+def preprocess_img_data(
+    dataset: torch.utils.data.Dataset,
+    dataset_root: str,
+    input_encoder: torch.nn.Module,
+    split: str = 'test',
+    batch_size: int = 32,
+    n_batches: int = None,
+) -> None:
     """
     Preprocess an image dataset using a given input encoder.
 
@@ -50,13 +53,20 @@ def preprocess_img_data(dataset: torch.utils.data.Dataset,
     torch.save(embeddings, os.path.join(dataset_root, f'{split}_embeddings.pt'))
     torch.save(c, os.path.join(dataset_root, f'{split}_concepts.pt'))
     torch.save(y, os.path.join(dataset_root, f'{split}_tasks.pt'))
-    torch.save(dataset.concept_attr_names, os.path.join(dataset_root, f'{split}_concept_names.pt'))
-    torch.save(dataset.task_attr_names, os.path.join(dataset_root, f'{split}_task_names.pt'))
+    torch.save(
+        dataset.concept_attr_names,
+        os.path.join(dataset_root, f'{split}_concept_names.pt'),
+    )
+    torch.save(
+        dataset.task_attr_names,
+        os.path.join(dataset_root, f'{split}_task_names.pt'),
+    )
 
 
 def load_preprocessed_data(dataset_root: str, split: str = 'test') -> tuple:
     """
-    Load preprocessed embeddings, concepts, tasks, concept names and task names from a dataset.
+    Load preprocessed embeddings, concepts, tasks, concept names and task names
+    from a dataset.
 
     Args:
         dataset_root: dataset root directory.
