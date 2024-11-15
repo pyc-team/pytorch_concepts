@@ -9,7 +9,7 @@ from torch_concepts.nn import ConceptEncoder
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
 
-class BaseBottleneck(ABC, torch.Tensornn.Module):
+class BaseBottleneck(ABC, torch.nn.Module):
     """
     BaseBottleneck is an abstract base class for concept bottlenecks.
 
@@ -142,7 +142,7 @@ class ConceptResidualBottleneck(BaseBottleneck):
         self.concept_names = self.scorer.concept_names
         self.output_size = self.scorer.output_size + residual_size
         self.residual_size = residual_size
-        self.residual_embedder = torch.Tensornn.Linear(
+        self.residual_embedder = torch.nn.Linear(
             in_features,
             residual_size,
         )
