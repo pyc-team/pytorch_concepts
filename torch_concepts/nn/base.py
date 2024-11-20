@@ -55,9 +55,9 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         pass
 
 
-class ConceptEncoder(BaseConceptLayer):
+class ConceptLayer(BaseConceptLayer):
     """
-    ConceptEncoder generates concept embeddings with shape
+    ConceptLayer generates concept embeddings with shape
     (batch_size, concept_dim1, ..., concept_dimN).
 
     The concept dimension dictionary is structured as follows: keys are
@@ -121,9 +121,9 @@ class ConceptEncoder(BaseConceptLayer):
         return ConceptTensor.concept(emb, self.concept_names.copy())
 
 
-class ProbabilisticConceptEncoder(BaseConceptLayer):
+class ProbabilisticConceptLayer(BaseConceptLayer):
     """
-    ProbabilisticConceptEncoder generates concept context sampling from
+    ProbabilisticConceptLayer generates concept context sampling from
     independent normal distributions. Samples are concept embeddings with shape
     (batch_size, concept_dim1, ..., concept_dimN).
 

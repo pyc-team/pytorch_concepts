@@ -13,8 +13,8 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 
 **Base concept layers** (`pyc.nn.base`):
 
-- `ConceptEncoder`: A layer taking as input a common `tensor` and producing a `ConceptTensor` as output.
-- `ProbabilisticConceptEncoder`: A layer taking as input a common `tensor` and producing a (normal) `ConceptDistribution` as output.
+- `ConceptLayer`: A layer taking as input a common `tensor` and producing a `ConceptTensor` as output.
+- `ProbabilisticConceptLayer`: A layer taking as input a common `tensor` and producing a (normal) `ConceptDistribution` as output.
 - `ConceptMemory`: A layer with a set of embeddings which can be decoded into different concept states.
 
 **Base functions** (`pyc.nn.functional`):
@@ -29,7 +29,7 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 
 - `ConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
 - `ConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
-- `MixConceptEmbeddingBottleneck`: A bottleneck composed of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
+- `ConceptEmbeddingBottleneck`: A bottleneck composed of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
 
 ## Evaluation APIs
 

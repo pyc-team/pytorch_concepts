@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptEncoder
+from torch_concepts.nn import ConceptLayer
 
 
 def main():
@@ -47,7 +47,7 @@ def main():
     concept_encoder = torch.nn.Sequential(
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
-        ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names}),
+        ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names}),
     )
     concept_decoder = torch.nn.Sequential(
         torch.nn.Linear(n_concepts, latent_dims),

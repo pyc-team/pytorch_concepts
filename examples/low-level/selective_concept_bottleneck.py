@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.tree import DecisionTreeClassifier
 
 from torch_concepts.data import CompletenessDataset
-from torch_concepts.nn import ProbabilisticConceptEncoder, ConceptEncoder
+from torch_concepts.nn import ProbabilisticConceptLayer, ConceptLayer
 from torch_concepts.nn import functional as F
 
 
@@ -21,8 +21,8 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, latent_dims), torch.nn.LeakyReLU())
-    prob_encoder = ProbabilisticConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: latent_dims})
-    c_scorer = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names})
+    prob_encoder = ProbabilisticConceptLayer(in_features=latent_dims, out_concept_dimensions={1: latent_dims})
+    c_scorer = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names})
     y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts, latent_dims), torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, n_classes))
     model = torch.nn.Sequential(encoder, prob_encoder, c_scorer, y_predictor)
 

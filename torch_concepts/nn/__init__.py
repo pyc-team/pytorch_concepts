@@ -1,14 +1,14 @@
 from .base import (
     BaseConceptLayer,
-    ConceptEncoder,
+    ConceptLayer,
     ConceptMemory,
-    ProbabilisticConceptEncoder,
+    ProbabilisticConceptLayer,
 )
 from .bottleneck import (
     BaseBottleneck,
     ConceptBottleneck,
     ConceptResidualBottleneck,
-    MixConceptEmbeddingBottleneck,
+    ConceptEmbeddingBottleneck,
 )
 from .functional import (
     concept_embedding_mixture,
@@ -25,14 +25,14 @@ from .encode import InputImgEncoder
 
 __all__ = [
     "BaseConceptLayer",
-    "ConceptEncoder",
-    "ProbabilisticConceptEncoder",
+    "ConceptLayer",
+    "ProbabilisticConceptLayer",
     "ConceptMemory",
 
     "BaseBottleneck",
     "ConceptBottleneck",
     "ConceptResidualBottleneck",
-    "MixConceptEmbeddingBottleneck",
+    "ConceptEmbeddingBottleneck",
 
     "intervene",
     "concept_embedding_mixture",

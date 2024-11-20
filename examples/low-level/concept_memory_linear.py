@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptEncoder, ConceptMemory
+from torch_concepts.nn import ConceptLayer, ConceptMemory
 from torch_concepts.nn.functional import selection_eval, linear_memory_eval
 
 
@@ -20,8 +20,8 @@ def main():
     memory_concept_states = 3
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: n_concepts})
-    classifier_selector = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: n_classes, 2: memory_size})
+    c_encoder = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: n_concepts})
+    classifier_selector = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: n_classes, 2: memory_size})
     concept_memory = ConceptMemory(memory_size=memory_size, emb_size=latent_dims,
                                    out_concept_dimensions={1: n_concepts, 2: n_classes, 3: memory_concept_states})
     model = torch.nn.Sequential(encoder, c_encoder, classifier_selector, concept_memory)

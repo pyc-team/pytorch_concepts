@@ -4,7 +4,7 @@ from sklearn.metrics import accuracy_score
 import torch_geometric as pyg
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptEncoder
+from torch_concepts.nn import ConceptLayer
 from torch_concepts.utils import prepare_pyg_data
 import torch_concepts.nn.functional as CF
 
@@ -29,8 +29,8 @@ def main():
 
     # define model
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    c_encoder = ConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
-    c_scorer = ConceptEncoder(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
+    c_encoder = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
+    c_scorer = ConceptLayer(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
     mpnn = pyg.nn.Sequential('x, edge_index', [
         (pyg.nn.GCNConv(latent_dims, latent_dims, add_self_loops=False, normalize=False), 'x, edge_index -> x'),
         torch.nn.LeakyReLU(inplace=True),
