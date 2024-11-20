@@ -285,7 +285,7 @@ def logic_memory_reconstruction(
         1 - c_rec_per_classifier,
     )
     c_rec_per_classifier = reconstruction_mask.prod(dim=2).pow(
-        y_true[:, :, None]
+        y_true[:, None, :]
     )
     return c_rec_per_classifier.permute(0, 2, 1)
 
