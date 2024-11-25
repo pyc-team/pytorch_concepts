@@ -1,11 +1,11 @@
 import unittest
 import torch
 from torch.nn import functional as F
-from torch_concepts.nn import ConceptEncoder
+from torch_concepts.nn import ConceptLayer
 from torch_concepts.base import ConceptTensor
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
-from torch_concepts.nn import BaseBottleneck, ConceptBottleneck, ConceptResidualBottleneck, MixConceptEmbeddingBottleneck
+from torch_concepts.nn import BaseBottleneck, ConceptBottleneck, ConceptResidualBottleneck, ConceptEmbeddingBottleneck
 
 
 class TestConceptBottlenecks(unittest.TestCase):
@@ -52,7 +52,7 @@ class TestConceptBottlenecks(unittest.TestCase):
         self.assertEqual(result['next'].shape, (self.batch_size, self.n_concepts + self.emb_size))
 
     def test_mix_concept_embedding_bottleneck_forward(self):
-        bottleneck = MixConceptEmbeddingBottleneck(self.in_features, {1: self.concept_names, 2: 2 * self.emb_size})
+        bottleneck = ConceptEmbeddingBottleneck(self.in_features, {1: self.concept_names, 2: 2 * self.emb_size})
         result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
 
         # Test output keys

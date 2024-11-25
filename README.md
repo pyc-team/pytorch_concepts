@@ -13,8 +13,8 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 
 **Base concept layers** (`pyc.nn.base`):
 
-- `ConceptEncoder`: A layer taking as input a common `tensor` and producing a `ConceptTensor` as output.
-- `ProbabilisticConceptEncoder`: A layer taking as input a common `tensor` and producing a (normal) `ConceptDistribution` as output.
+- `ConceptLayer`: A layer taking as input a common `tensor` and producing a `ConceptTensor` as output.
+- `ProbabilisticConceptLayer`: A layer taking as input a common `tensor` and producing a (normal) `ConceptDistribution` as output.
 - `ConceptMemory`: A layer with a set of embeddings which can be decoded into different concept states.
 
 **Base functions** (`pyc.nn.functional`):
@@ -29,7 +29,7 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 
 - `ConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
 - `ConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
-- `MixConceptEmbeddingBottleneck`: A bottleneck composed of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
+- `ConceptEmbeddingBottleneck`: A bottleneck composed of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
 
 ## Evaluation APIs
 
@@ -78,3 +78,26 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
 See the License for the specific language governing permissions and limitations under the License.
+
+
+## Cite this library
+
+If you found this library useful for your blog post, research article or product, we would be grateful if you would cite it like this:
+
+```
+Barbiero P., Ciravegna G., Debot D., Diligenti M., 
+Dominici G., Espinosa Zarlenga M., Giannini F., Marra G. (2024).
+Concept-based Interpretable Deep Learning in Python.
+https://pyc-team.github.io/pyc-book/intro.html
+```
+
+Or use the following bibtex entry:
+
+```
+@book{pycteam2024concept,
+  title      = {Concept-based Interpretable Deep Learning in Python},
+  author     = {Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra},
+  year       = {2024},
+  url        = {https://pyc-team.github.io/pyc-book/intro.html}
+}
+```

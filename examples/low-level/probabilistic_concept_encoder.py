@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptEncoder, ProbabilisticConceptEncoder
+from torch_concepts.nn import ConceptLayer, ProbabilisticConceptLayer
 import torch_concepts.nn.functional as CF
 
 
@@ -22,8 +22,8 @@ def main():
     intervention_indexes = torch.ones_like(c_train).bool()
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    c_encoder = ProbabilisticConceptEncoder(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
-    c_scorer = ConceptEncoder(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
+    c_encoder = ProbabilisticConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
+    c_scorer = ConceptLayer(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
     y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(latent_dims*n_concepts, latent_dims),
                                       torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, n_classes))
     model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)

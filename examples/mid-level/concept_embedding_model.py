@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import CompletenessDataset
-from torch_concepts.nn import MixConceptEmbeddingBottleneck, concept_embedding_mixture
+from torch_concepts.nn import ConceptEmbeddingBottleneck, concept_embedding_mixture
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    bottleneck = MixConceptEmbeddingBottleneck(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
+    bottleneck = ConceptEmbeddingBottleneck(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
     y_predictor = torch.nn.Sequential(torch.nn.Flatten(),
                                       torch.nn.Linear(n_concepts * latent_dims, latent_dims),
                                       torch.nn.LeakyReLU(),

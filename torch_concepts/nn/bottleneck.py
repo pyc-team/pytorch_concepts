@@ -5,11 +5,11 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Callable, Union
 
 from torch_concepts.base import ConceptTensor
-from torch_concepts.nn import ConceptEncoder
+from torch_concepts.nn import ConceptLayer
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
 
-class BaseBottleneck(ABC, torch.Tensornn.Module):
+class BaseBottleneck(ABC, torch.nn.Module):
     """
     BaseBottleneck is an abstract base class for concept bottlenecks.
 
@@ -71,7 +71,7 @@ class ConceptBottleneck(BaseBottleneck):
         activation: Callable = F.sigmoid,
     ):
         super().__init__(out_concept_dimensions)
-        self.scorer = ConceptEncoder(in_features, out_concept_dimensions)
+        self.scorer = ConceptLayer(in_features, out_concept_dimensions)
         self.concept_names = self.scorer.concept_names
         self.output_size = self.scorer.output_size
         self.activation = activation
@@ -138,11 +138,11 @@ class ConceptResidualBottleneck(BaseBottleneck):
         activation: Callable = F.sigmoid,
     ):
         super().__init__(out_concept_dimensions)
-        self.scorer = ConceptEncoder(in_features, out_concept_dimensions)
+        self.scorer = ConceptLayer(in_features, out_concept_dimensions)
         self.concept_names = self.scorer.concept_names
         self.output_size = self.scorer.output_size + residual_size
         self.residual_size = residual_size
-        self.residual_embedder = torch.Tensornn.Linear(
+        self.residual_embedder = torch.nn.Linear(
             in_features,
             residual_size,
         )
@@ -183,9 +183,9 @@ class ConceptResidualBottleneck(BaseBottleneck):
         )
 
 
-class MixConceptEmbeddingBottleneck(BaseBottleneck):
+class ConceptEmbeddingBottleneck(BaseBottleneck):
     """
-    MixConceptEmbeddingBottleneck creates supervised concept embeddings.
+    ConceptEmbeddingBottleneck creates supervised concept embeddings.
     Main reference: `"Concept Embedding Models: Beyond the
     Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
 
@@ -206,7 +206,7 @@ class MixConceptEmbeddingBottleneck(BaseBottleneck):
         activation: Callable = F.sigmoid,
     ):
         super().__init__(out_concept_dimensions)
-        self.encoder = ConceptEncoder(
+        self.encoder = ConceptLayer(
             in_features=in_features,
             out_concept_dimensions=out_concept_dimensions,
         )
@@ -215,7 +215,7 @@ class MixConceptEmbeddingBottleneck(BaseBottleneck):
             if isinstance(out_concept_dimensions[2], int)
             else len(out_concept_dimensions[2])
         )
-        self.scorer = ConceptEncoder(
+        self.scorer = ConceptLayer(
             in_features=self.scorer_in_size,
             out_concept_dimensions={1: out_concept_dimensions[1]},
             reduce_dim=2,
@@ -231,7 +231,7 @@ class MixConceptEmbeddingBottleneck(BaseBottleneck):
         intervention_rate: float = 0.0,
     ) -> Dict[str, ConceptTensor]:
         """
-        Forward pass of MixConceptEmbeddingBottleneck.
+        Forward pass of ConceptEmbeddingBottleneck.
 
         Args:
             x (torch.Tensor): Input tensor.
@@ -252,7 +252,10 @@ class MixConceptEmbeddingBottleneck(BaseBottleneck):
             self.activation(c_logit),
             self.concept_names,
         )
-        c_int = intervene(c_pred, c_true, intervention_idxs)
+        c_int = c_pred.clone()
+        if c_true is not None:
+            c_int = intervene(c_pred, c_true, intervention_idxs)
+
         c_mix = concept_embedding_mixture(c_emb, c_int)
         return dict(next=c_mix,
             c_pred=c_pred,

@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from torch_concepts.base import ConceptTensor, ConceptDistribution
-from torch_concepts.nn import ConceptEncoder, ProbabilisticConceptEncoder, ConceptMemory
+from torch_concepts.nn import ConceptLayer, ProbabilisticConceptLayer, ConceptMemory
 
 
 class TestConceptClasses(unittest.TestCase):
@@ -13,8 +13,8 @@ class TestConceptClasses(unittest.TestCase):
             2: 3  # This should create 3 default concept names
         }
         self.input_tensor = torch.randn(5, self.in_features)
-        self.encoder = ConceptEncoder(self.in_features, self.concept_dimensions)
-        self.prob_encoder = ProbabilisticConceptEncoder(self.in_features, self.concept_dimensions)
+        self.encoder = ConceptLayer(self.in_features, self.concept_dimensions)
+        self.prob_encoder = ProbabilisticConceptLayer(self.in_features, self.concept_dimensions)
         self.memory_size = 10
         self.emb_size = 5
         self.memory = ConceptMemory(self.memory_size, self.emb_size, self.concept_dimensions)
