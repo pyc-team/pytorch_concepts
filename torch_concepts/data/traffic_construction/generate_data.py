@@ -118,16 +118,16 @@ def make_intersection_sample(
     position_para_noise=50,
     position_perp_noise=20,
     error_probability=0.1,
-    p_ambulance=0.1,
+    p_ambulance=0.2,
     min_num_cars=0,
     max_num_cars=7,
-    resize_final_image=0.25,
+    resize_final_image=0.15,
     cars=CAR_SPRITES,
     available_lanes=AVAILABLE_LANES,
     possible_starting_directions=None,
     thickness=15,
     inplace=True,
-    light_scale=1,
+    light_scale=1.5,
     ambulance_sprite=AMBULANCE,
     use_lights_sprites=False,
 ):
@@ -533,10 +533,46 @@ def create_sample(in_multi, as_arrays=None, seed=None):
     )
     return None
 
+def construct_samples(
+    config,
+    records_dir,
+    indices,
+    dataset_name="",
+    num_threads=1,
+    verbose=False,
+):
+
+    if num_threads > 1:
+        if verbose:
+            print(
+                f"Using {args.num_threads} threads to generate a "
+                f"{dataset_name} dataset with {len(indices)} samples..."
+            )
+        with ProcessPoolExecutor(max_workers=args.num_threads) as executor:
+            list(tqdm(
+                executor.map(
+                    create_sample,
+                    [
+                        (idx, config, records_dir)
+                        for idx in indices
+                    ],
+                ),
+                total=len(indices),
+            ))
+
+    else:
+        # Else we proceed to do everything within this same process
+        if verbose:
+            print(
+                f"Generating a dataset with {len(indices)} "
+                f"{dataset_name} samples using a single thread..."
+            )
+            for idx in tqdm(indices):
+                create_sample((idx, config, RECORD_DIR))
 
 
 ################################################################################
-## Wrapper for multiprocessing!
+## Arg parser
 ################################################################################
 
 
@@ -568,7 +604,7 @@ def parse_args():
     parser.add_argument(
         "--n_samples",
         type=int,
-        default=10000,
+        default=1000,
         help="Number of samples to generate",
     )
     parser.add_argument(
@@ -601,7 +637,7 @@ def parse_args():
     parser.add_argument(
         "--p_ambulance",
         type=float,
-        default=0.1,
+        default=0.2,
         help="Probability of an ambulance being in the sample",
     )
     parser.add_argument(
@@ -625,7 +661,7 @@ def parse_args():
     parser.add_argument(
         "--resize_final_image",
         type=float,
-        default=0.2,
+        default=0.15,
         help="Downsampling factor for the final image",
     )
     parser.add_argument(
@@ -661,7 +697,7 @@ def parse_args():
     parser.add_argument(
         "--light_scale",
         type=float,
-        default=1,
+        default=1.5,
         help="Scaling for size of traffic lights (can be less or more than 1).",
     )
     parser.add_argument(
@@ -821,8 +857,7 @@ if __name__ == "__main__":
             'We found a dataset previously generated with the same config that '
             'has been cached.'
         )
-        print('\tIf you wish to re-geneate it, please use --rerun.')
-
+        print('\tIf you wish to re-generate it, please use --rerun.')
 
     else:
         ## Fix Random Seeds
@@ -938,80 +973,30 @@ if __name__ == "__main__":
             args.test_param,
         )
 
-        if args.num_threads > 1:
-            print(
-                f"Using {args.num_threads} threads to generate a training "
-                f"dataset with {len(train_indices)} samples..."
-            )
-            with ProcessPoolExecutor(max_workers=args.num_threads) as executor:
-                list(tqdm(
-                    executor.map(
-                        create_sample,
-                        [
-                            (idx, config, RECORD_DIR)
-                            for idx in train_indices
-                        ],
-                    ),
-                    total=len(train_indices),
-                ))
-
-
-            print(
-                f"Using {args.num_threads} threads to generate a validation "
-                f"dataset with {len(val_indices)} samples..."
-            )
-            with ProcessPoolExecutor(max_workers=args.num_threads) as executor:
-                list(tqdm(
-                    executor.map(
-                        create_sample,
-                        [
-                            (idx, val_config, RECORD_DIR)
-                            for idx in val_indices
-                        ],
-                    ),
-                    total=len(val_indices),
-                ))
-
-            print(
-                f"Using {args.num_threads} threads to generate a testing "
-                f"dataset with {len(test_indices)} samples..."
-            )
-            with ProcessPoolExecutor(max_workers=args.num_threads) as executor:
-                list(tqdm(
-                    executor.map(
-                        create_sample,
-                        [
-                            (idx, test_config, RECORD_DIR)
-                            for idx in test_indices
-                        ],
-                    ),
-                    total=len(test_indices),
-                ))
-
-        else:
-            # Else we proceed to do everything within this same process
-            print(
-                f"Generating a dataset with {len(train_indices)} training "
-                f"samples using a single thread..."
-            )
-            for idx in tqdm(train_indices):
-                create_sample((idx, config, RECORD_DIR))
-
-            print(
-                f"Generating a dataset with {len(val_indices)} validation "
-                f"samples using a single thread..."
-            )
-            for idx in tqdm(val_indices):
-                create_sample((idx, val_config, RECORD_DIR))
-
-            print(
-                f"Generating a dataset with {len(test_indices)} testing "
-                f"samples using a single thread..."
-            )
-            for idx in tqdm(test_indices):
-                create_sample((idx, test_config, RECORD_DIR))
-
-        ##  Serialize it
+        construct_samples(
+            config=config,
+            records_dir=RECORD_DIR,
+            indices=train_indices,
+            dataset_name="training",
+            num_threads=args.num_threads,
+            verbose=True,
+        )
+        construct_samples(
+            config=val_config,
+            records_dir=RECORD_DIR,
+            indices=val_indices,
+            dataset_name="validation",
+            num_threads=args.num_threads,
+            verbose=True,
+        )
+        construct_samples(
+            config=test_config,
+            records_dir=RECORD_DIR,
+            indices=test_indices,
+            dataset_name="test",
+            num_threads=args.num_threads,
+            verbose=True,
+        )
         with open(os.path.join(FINAL_DATA_DIR, 'completed.txt'), "w") as file:
             file.write("1")
 
