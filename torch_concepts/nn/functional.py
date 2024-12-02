@@ -55,7 +55,10 @@ def intervene(
                 "Intervention indices must be less than the number of concepts."
             )
 
-    return ConceptTensor.concept(torch.where(indexes, c_true, c_pred), concept_names)
+    return ConceptTensor.concept(
+        torch.where(indexes, c_true, c_pred),
+        concept_names,
+    )
 
 
 def concept_embedding_mixture(

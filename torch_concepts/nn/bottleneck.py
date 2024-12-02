@@ -13,12 +13,13 @@ class BaseBottleneck(ABC, torch.nn.Module):
     """
     BaseBottleneck is an abstract base class for concept bottlenecks.
 
-    The concept dimension dictionary is structured as follows: keys are dimension
-    indices and values are either integers (indicating the size of the
+    The concept dimension dictionary is structured as follows: keys are
+    dimension indices and values are either integers (indicating the size of the
     dimension) or lists of strings (concept names).
 
     The output size is computed as the product of the sizes of all dimensions.
-    The only exception is the batch size dimension, which is expected to be empty.
+    The only exception is the batch size dimension, which is expected to be
+    empty.
 
     Example:
         {
@@ -173,7 +174,10 @@ class ConceptResidualBottleneck(BaseBottleneck):
         """
         emb = self.residual_embedder(x)
         c_logit = self.scorer(x)
-        c_pred = ConceptTensor.concept(self.activation(c_logit), self.concept_names)
+        c_pred = ConceptTensor.concept(
+            self.activation(c_logit),
+            self.concept_names,
+        )
         c_int = intervene(c_pred, c_true, intervention_idxs)
         return dict(
             next=torch.hstack((c_pred, emb)),
@@ -196,7 +200,8 @@ class ConceptEmbeddingBottleneck(BaseBottleneck):
 
     Attributes:
         in_features (int): Number of input features.
-        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept dimensions.
+        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept
+            dimensions.
         activation (Callable): Activation function of concept scores.
     """
     def __init__(
