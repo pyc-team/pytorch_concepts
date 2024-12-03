@@ -79,5 +79,17 @@ setup(
     include_package_data=True,  # We need this to include static assets (images)
     package_data={
         "torch_concepts.assets": ["*"],
-    }
+    },
+    data_files=[
+        (
+            "torch_concepts/assets",
+            [
+                "torch_concepts/assets/ambulance.png",
+                "torch_concepts/assets/lights.png",
+                "torch_concepts/assets/single_lane_road_intersection.png",
+                "torch_concepts/assets/white_black_car.png",
+                "torch_concepts/assets/white_car.png",
+            ]
+        ),
+    ],
 )
