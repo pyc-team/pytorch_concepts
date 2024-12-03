@@ -76,6 +76,6 @@ setup(
     setup_requires=["setuptools_scm"],
     include_package_data=True,  # We need this to include static assets (images)
     package_data={
-        "pytorch_concepts": ["data/traffic_construction/assets/*"],
+        "torch_concepts.assets": ["*"],
     }
 )

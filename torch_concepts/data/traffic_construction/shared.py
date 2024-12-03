@@ -6,5 +6,5 @@ import pkg_resources
 # Directory where all the useful sprites are stored
 SPRITES_DIRECTORY = lambda x: pkg_resources.resource_filename(
     'torch_concepts',
-    f'data/traffic_construction/assets/{x}',
+    f'assets/{x}',
 )
