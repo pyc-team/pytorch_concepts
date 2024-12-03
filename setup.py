@@ -74,6 +74,6 @@ setup(
     extras_require=EXTRAS_REQUIRE,
     include_package_data=True,  # We need this to include static assets (images)
     package_data={
-        "torch_concepts": ["data/traffic_construction/assets/*"],
+        "pytorch_concepts": ["data/traffic_construction/assets/*"],
     }
 )
