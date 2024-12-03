@@ -3,7 +3,7 @@ import matplotlib.image as mpimg
 import numpy as np
 import os
 
-import utils
+import torch_concepts.data.traffic_construction.utils as utils
 
 from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 
