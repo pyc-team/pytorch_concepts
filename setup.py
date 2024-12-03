@@ -60,6 +60,8 @@ setup(
     name=DISTNAME,
     maintainer=MAINTAINER,
     maintainer_email=MAINTAINER_EMAIL,
+    author=MAINTAINER,
+    author_email=MAINTAINER_EMAIL,
     description=DESCRIPTION,
     license=LICENSE,
     url=URL,
@@ -69,7 +71,7 @@ setup(
     long_description_content_type='text/markdown',
     zip_safe=False,  # the package can run out of an .egg file
     classifiers=CLASSIFIERS,
-    packages=find_packages(),
+    packages=find_packages(include=["torch_concepts", "torch_concepts.*"]),
     install_requires=INSTALL_REQUIRES,
     extras_require=EXTRAS_REQUIRE,
     use_scm_version=True,  # Adding so that package data is respected

@@ -1,2 +1,2 @@
 include requirements.txt
-include torch_concepts/assets/*
+recursive-include torch_concepts/assets *
