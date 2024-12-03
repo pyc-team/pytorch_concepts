@@ -72,6 +72,7 @@ setup(
     packages=find_packages(),
     install_requires=INSTALL_REQUIRES,
     extras_require=EXTRAS_REQUIRE,
+    include_package_data=True,  # We need this to include static assets (images)
     package_data={
         "torch_concepts": ["data/traffic_construction/assets/*"],
     }
