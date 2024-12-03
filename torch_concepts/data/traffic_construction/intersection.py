@@ -1,5 +1,4 @@
 import matplotlib.image as mpimg
-import os
 
 from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 
@@ -7,10 +6,7 @@ from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 ## Load the sprites to memory
 ################################################################################
 
-_INTERSECTION_FILE = os.path.join(
-    SPRITES_DIRECTORY,
-    'single_lane_road_intersection.png',
-)
+_INTERSECTION_FILE = SPRITES_DIRECTORY('single_lane_road_intersection.png')
 
 
 ################################################################################

@@ -4,7 +4,7 @@ Shared global variables for this dataset generation.
 import pkg_resources
 
 # Directory where all the useful sprites are stored
-SPRITES_DIRECTORY = pkg_resources.resource_filename(
+SPRITES_DIRECTORY = lambda x: pkg_resources.resource_filename(
     'torch_concepts',
-    'data/traffic_construction/assets/',
+    f'data/traffic_construction/assets/{x}',
 )

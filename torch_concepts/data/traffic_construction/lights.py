@@ -1,7 +1,6 @@
 import cv2
 import matplotlib.image as mpimg
 import numpy as np
-import os
 
 import torch_concepts.data.traffic_construction.utils as utils
 
@@ -11,7 +10,7 @@ from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 ## Load the sprites to memory
 ################################################################################
 
-LIGHTS_FILE = os.path.join(SPRITES_DIRECTORY, 'lights.png')
+LIGHTS_FILE = SPRITES_DIRECTORY('lights.png')
 
 ################################################################################
 ## Construct Light Sprites

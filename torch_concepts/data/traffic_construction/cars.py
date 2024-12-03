@@ -1,6 +1,5 @@
 import matplotlib.image as mpimg
 import numpy as np
-import os
 
 from scipy.ndimage import rotate
 
@@ -10,8 +9,8 @@ from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 ## Load the sprites to memory
 ################################################################################
 
-CARS_FILE = os.path.join(SPRITES_DIRECTORY, 'white_car.png')
-AMBULANCE_FILE = os.path.join(SPRITES_DIRECTORY, 'ambulance.png')
+CARS_FILE = SPRITES_DIRECTORY('white_car.png')
+AMBULANCE_FILE = SPRITES_DIRECTORY('ambulance.png')
 
 
 ################################################################################
