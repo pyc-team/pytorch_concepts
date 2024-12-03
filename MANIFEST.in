@@ -1,1 +1,2 @@
 include requirements.txt
+include torch_concepts/data/traffic_construction/assets/*

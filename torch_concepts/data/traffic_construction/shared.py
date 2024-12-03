@@ -1,10 +1,10 @@
 """
 Shared global variables for this dataset generation.
 """
-import os
+import pkg_resources
 
 # Directory where all the useful sprites are stored
-SPRITES_DIRECTORY = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "assets/"
+SPRITES_DIRECTORY = pkg_resources.resource_filename(
+    'torch_concepts',
+    'data/traffic_construction/assets/',
 )
