@@ -72,7 +72,8 @@ setup(
     packages=find_packages(),
     install_requires=INSTALL_REQUIRES,
     extras_require=EXTRAS_REQUIRE,
-    setup_requires=["setuptools_scm"],  # Adding so that package data is respected
+    use_scm_version=True,  # Adding so that package data is respected
+    setup_requires=["setuptools_scm"],
     include_package_data=True,  # We need this to include static assets (images)
     package_data={
         "pytorch_concepts": ["data/traffic_construction/assets/*"],
