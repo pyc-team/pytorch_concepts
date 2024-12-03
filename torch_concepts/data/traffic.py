@@ -3,15 +3,12 @@ Synthetic traffic intersection dataset.
 """
 
 import copy
-import copy
 import hashlib
 import json
+import logging
 import numpy as np
-import numpy as np
-import os
 import os
 import pickle
-import torch
 import torch
 
 from torch.utils.data import Dataset
@@ -26,9 +23,8 @@ class TrafficLights(Dataset):
 
     def __init__(
         self,
-        root_dir,
+        root_dir="./data_cache/",
         split='train',
-        image_size=256,
         concept_transform=None,
         class_dtype=float,
         img_transform=None,
@@ -95,6 +91,12 @@ class TrafficLights(Dataset):
         # Generate a hash for the config so that we can determine if this dataset
         # has been previously generated
         self.root_dir = root_dir
+        if not os.path.exists(self.root_dir):
+            logging.warning(
+                "Root directory '{self.root_dir}' TrafficLights does not "
+                "exist. We will generate it and dump the new dataset in there."
+            )
+            os.makedirs(self.root_dir)
 
         has_key = copy.deepcopy(train_config)
         has_key['test_config_override_values'] = test_config_override_values
@@ -173,11 +175,11 @@ class TrafficLights(Dataset):
             not regenerate
         ):
             if verbose:
-                print(
+                logging.info(
                     'We found a dataset previously generated with the same '
                     'config that has been cached.'
                 )
-                print(
+                logging.info(
                     '\tIf you wish to re-generate it, please use '
                     'regenerate=True.'
                 )

@@ -208,8 +208,15 @@ def _random_nonlin_map(n_in, n_out, n_hidden, rank=1000):
     b_2 = np.random.uniform(0, 0, (1, n_out))
 
     nlin_map = lambda x: np.matmul(
-        _relu(np.matmul(_relu(np.matmul(x, W_0) + np.tile(b_0, (x.shape[0], 1))), W_1) +
-             np.tile(b_1, (x.shape[0], 1))), W_2) + np.tile(b_2, (x.shape[0], 1))
+        _relu(
+            np.matmul(
+                _relu(np.matmul(x, W_0) + np.tile(b_0, (x.shape[0], 1))),
+                W_1,
+            ) +
+            np.tile(b_1, (x.shape[0], 1))
+        ),
+        W_2,
+    ) + np.tile(b_2, (x.shape[0], 1))
 
     return nlin_map
 
@@ -269,7 +276,14 @@ def _complete(
     X = torch.FloatTensor(X)
     u = torch.FloatTensor(u)
     y = torch.FloatTensor(y)
-    return X, u, y, None, [f'c{i}' for i in range(n_concepts)], [f'y{i}' for i in range(n_tasks)]
+    return (
+        X,
+        u,
+        y,
+        None,
+        [f'c{i}' for i in range(n_concepts)],
+        [f'y{i}' for i in range(n_tasks)],
+    )
 
 
 class CompletenessDataset:
@@ -331,32 +345,3 @@ class CompletenessDataset:
         concept_label = self.concept_labels[index]
         target_label = self.target_labels[index]
         return data, concept_label, target_label
-
-
-class TrafficLights(Dataset):
-    def __init__(self, n_samples):
-        self.n_samples = n_samples
-        self.x_train = torch.normal(0, 1, (n_samples, 10))
-
-        self.concept_names = ['traffic light green', 'ambulance crossing']
-        self.c_train = torch.zeros(n_samples, 2)
-        self.c_train[:, 0] = (self.x_train[:, 2] > 0) & (self.x_train[:, 3] > 0)
-        self.c_train[:, 1] = (self.x_train[:, 0] < 0) & (self.x_train[:, 4] < 0)
-
-        # you can cross iff the traffic light is green and there is no ambulance
-        self.y_train = (self.c_train[:, 0] == 1) & (self.c_train[:, 1] == 0)
-        self.y_train = self.y_train.float().view(-1, 1)
-
-        self.task_names = ['cross']
-
-    def __len__(self):
-        return self.n_samples
-
-    def __getitem__(self, idx):
-        return (
-            self.x_train[idx],
-            self.c_train[idx],
-            self.y_train[idx],
-            self.concept_names,
-            self.task_names,
-        )
