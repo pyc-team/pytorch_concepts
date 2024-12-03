@@ -81,6 +81,20 @@ their corresponding licenses:
 If you use this dataset as part of your work, we would appreciate it if you could
 cite us as follows:
 
-```latex
-TODO
+```
+Barbiero P., Ciravegna G., Debot D., Diligenti M.,
+Dominici G., Espinosa Zarlenga M., Giannini F., Marra G. (2024).
+Concept-based Interpretable Deep Learning in Python.
+https://pyc-team.github.io/pyc-book/intro.html
+```
+
+Or with the following bibtex entry:
+
+```
+@book{pycteam2024concept,
+  title      = {Concept-based Interpretable Deep Learning in Python},
+  author     = {Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra},
+  year       = {2024},
+  url        = {https://pyc-team.github.io/pyc-book/intro.html}
+}
 ```
