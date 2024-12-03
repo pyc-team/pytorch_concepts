@@ -1,28 +1,42 @@
+import copy
+import numpy as np
 import torch
 
-from typing import List, Dict, Union
+from typing import List, Union, Tuple
 
 
-class ConceptTensor(torch.Tensor):
+class AnnotatedTensor(torch.Tensor):
     """
-    ConceptTensor is a subclass of torch.Tensor which ensures that the tensor
-    has at least two dimensions: batch size and number of concepts.
-    Additionally, it can store concept names.
+    AnnotatedTensor is a subclass of torch.Tensor which ensures that the tensor
+    has at least two dimensions: batch size and at least one
+    possibly-semantically annotated dimension at index annotated_axis.
 
     Attributes:
         data (torch.Tensor): Data tensor.
-        concept_names (Dict[int, List[str]]): Names of concepts for each
-            dimension.
+        annotations (Union[List[str], List[List[str]]): Semantic names for
+            each annotated entry/dimension. If this argument is a list of lists,
+            then it is expected to have as many elements as annotated_axis.
+            Otherwise, if it is a single list of strings, then we will assume
+            that only a single dimension is annotated and annotated_axis is
+            expected to be a single integer.
+        annotated_axis (Union[list[int], int]): Dimension(s) that will be
+            annotated using the provided semantics.
+            If not provided, it defaults to the last dimension.
     """
     def __new__(
         cls,
         data: torch.Tensor,
-        concept_names: Dict[int, List[str]] = None,
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
         *args,
         **kwargs,
-    ) -> 'ConceptTensor':
+    ) -> 'AnnotatedTensor':
         instance = super().__new__(cls, data, *args, **kwargs)
-        instance.concept_names = cls._check_concept_names(data, concept_names)
+        instance.annotations = cls._check_annotations(
+            tensor=data,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
         return instance
 
     @classmethod
@@ -33,205 +47,306 @@ class ConceptTensor(torch.Tensor):
         # Perform the torch function as usual
         result = super().__torch_function__(func, types, args, kwargs)
 
-        # Convert the result to a standard torch.Tensor if it's a ConceptTensor
-        if isinstance(result, ConceptTensor):
+        # Convert the result to a standard torch.Tensor if it's a AnnotatedTensor
+        if isinstance(result, AnnotatedTensor):
             return result.to_standard_tensor()
 
         return result
 
     @staticmethod
-    def _generate_default_concept_names(shape):
-        concept_names = {}
-        for dim in range(len(shape)):
-            concept_names[dim] = [
-                f"concept_{dim}_{i}" for i in range(shape[dim])
-            ]
-        return concept_names
+    def _generate_default_annotations(shape, annotated_axis=-1):
+        return [
+            f"dim_{i}" for i in range(shape[annotated_axis])
+        ]
 
     @staticmethod
-    def _check_concept_names(
+    def _standarize_arguments(
         tensor: torch.Tensor,
-        concept_names: Dict[int, List[str]],
-    ) -> Dict[int, List[str]]:
-        # Initialize concept_names if None
-        if concept_names is None:
-            concept_names = {}
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ) -> Tuple[List[List[str]], List[int]]:
+        if annotations is None:
+            annotations = []
+        if annotated_axis is None:
+            annotated_axis = [i for i in range(len(annotations))]
 
-        # Ensure concept_names is a dictionary
-        if not isinstance(concept_names, dict):
+        if not isinstance(annotations, (list, tuple)):
             raise ValueError(
-                "concept_names must be a dictionary with dimension indices as "
-                "keys and lists of names as values."
+                f'Expected annotations to be a list of string lists or a '
+                f'single list of strings. Instead, we were given '
+                f'{annotations}.'
             )
-
-        # Check that the concept dictionary IDs are within the range of the
-        # tensor's dimensions
-        for dim in concept_names.keys():
-            if dim < 0 or dim >= len(tensor.shape):
+        if len(annotations) and (
+            not isinstance(annotations[0], (list, tuple))
+        ):
+            if not isinstance(annotations[0], str):
                 raise ValueError(
-                    f"Dimension {dim} is out of range for the tensor with "
-                    f"shape {tensor.shape}."
+                    f'Expected annotations to be a list of string lists or a '
+                    f'single list of strings. Instead, we were given '
+                    f'{annotations}.'
+                )
+            # Then this is a single list of annotations, so let's wrap it up
+            # to be a list of lists
+            annotations = [annotations]
+
+        if not isinstance(annotated_axis, (list, tuple, int)):
+            raise ValueError(
+                f'Expected annotated_axis to be a list of integers or a '
+                f'single integer. Instead, we were given '
+                f'{annotated_axis}.'
+            )
+        if not isinstance(annotated_axis, (list, tuple)):
+            annotated_axis = [annotated_axis]
+
+        if len(annotations) != len(annotated_axis):
+                raise ValueError(
+                    f'We expected to be provided as many sets of axis '
+                    f'annotations as annotated axii. Instead, we got '
+                    f'{len(annotations)} sets of annotations and '
+                    f'{len(annotated_axis)} sets of annotated axii.'
                 )
 
-        # Create default concept names for each dimension if not provided
-        for dim in range(len(tensor.shape)):
-            if dim not in concept_names:
-                concept_names[dim] = [
-                    f"concept_{dim}_{i}" for i in range(tensor.shape[dim])
+        # Now, let's sort things out so that things are ordered correctly
+        permutation = [
+            x[0] for x in sorted(enumerate(annotated_axis), key=lambda x: x[1])
+        ]
+        annotations = [
+            annotations[x] for x in permutation
+        ]
+        annotated_axis = [
+            annotated_axis[x] for x in permutation
+        ]
+
+        for annotation_idx in annotated_axis:
+            if annotation_idx < 0 or annotation_idx >= len(tensor.shape):
+                raise ValueError(
+                    f"Annotation axis {annotation_idx} is out of range for "
+                    f"tensor with shape {tensor.shape}."
+                )
+
+        # Finally make it so that all dimensions are provied with annotations (empty)
+        # for those dimensions whose annotations we were not provided
+        if annotated_axis == []:
+            annotations = [[] for _ in tensor.shape]
+        else:
+            annotations = [[] for _ in range(annotated_axis[0])] + annotations
+            annotations =  annotations + [
+                [] for _ in range(annotated_axis[-1] + 1, len(tensor.shape))
+            ]
+        return annotations
+
+    @staticmethod
+    def _check_annotations(
+        tensor: torch.Tensor,
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ) -> Tuple[List[List[str]], List[int]]:
+
+        # First standarize the arguments
+        annotations = AnnotatedTensor._standarize_arguments(
+            tensor=tensor,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
+        new_annotations = [
+            [] for _ in tensor.shape
+        ]
+        # At this point we know we have as many sets of annotations as
+        # provided indices
+        for annotation_idx, annotation_set in enumerate(annotations):
+            if annotation_set is None:
+                current_annotations = [
+                    f"dim_{annotated_axis}_{i}"
+                    for i in range(tensor.shape[annotation_idx])
                 ]
-            elif len(concept_names[dim]) != tensor.shape[dim]:
+            elif annotation_set == []:
+                current_annotations = None
+            elif (len(annotation_set) != tensor.shape[annotation_idx]):
                 raise ValueError(
-                    f"Number of concept names for dimension {dim} must match "
-                    f"the size of that dimension in the tensor."
+                    f'For dimension at axis {annotation_idx} we were given an '
+                    f'annotation set with {len(annotation_set)} entries. '
+                    f'However, we expected an annotation set with '
+                    f'{tensor.shape[annotation_idx]} elements as the tensor to '
+                    f'be annotated has shape {tensor.shape}.'
                 )
-
-        return concept_names
+            else:
+                # Copy the list so that we can do manipulation without affecting
+                # previous pointers to this array
+                current_annotations = annotations[:]
+            new_annotations[annotation_idx] = current_annotations
+        return new_annotations
 
     def __str__(self):
         """
-        Returns a string representation of the ConceptTensor.
+        Returns a string representation of the AnnotatedTensor.
         """
         return (
-            f"ConceptTensor of shape {self.shape}, dtype {self.dtype}, "
-            f"concepts {self.concept_names}"
+            f"AnnotatedTensor of shape {self.shape}, dtype {self.dtype}, and "
+            f"annotations {self.annotations} for each dimension."
         )
 
     @classmethod
-    def concept(
+    def tensor(
         cls,
         tensor: torch.Tensor,
-        concept_names: Dict[int, List[str]] = None,
-    ) -> 'ConceptTensor':
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ) -> 'AnnotatedTensor':
         """
-        Create a ConceptTensor from a torch.Tensor.
+        Create a AnnotatedTensor from a torch.Tensor.
 
         Attributes:
             tensor: Input tensor.
-            concept_names: Names of concepts.
-
+            annotations: Names of dimensions.
+            annotated_axis: dimension of tensor which indexes concepts.
         Returns:
-            ConceptTensor: ConceptTensor instance.
+            AnnotatedTensor: AnnotatedTensor instance.
         """
         # Ensure the tensor has the correct shape
         if not isinstance(tensor, torch.Tensor):
             raise ValueError("Input must be a torch.Tensor.")
         if len(tensor.shape) < 2:
             raise ValueError(
-                "ConceptTensor must have at least two dimensions: batch size "
+                "AnnotatedTensor must have at least two dimensions: batch size "
                 "and number of concepts."
             )
 
-        # Convert the existing tensor to ConceptTensor
+        # Convert the existing tensor to AnnotatedTensor
         instance = tensor.as_subclass(cls)
-        instance.concept_names = cls._check_concept_names(tensor, concept_names)
+        instance.annotations = cls._check_annotations(
+            tensor=tensor,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
         return instance
 
-    def assign_concept_names(self, concept_names: Dict[int, List[str]]):
+    def assign_annotations(
+        self,
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ):
         """
-        Assign new concept names to the ConceptTensor.
+        Assign new concept names to the AnnotatedTensor.
 
         Attributes:
-            concept_names: Dictionary of concept names.
+            annotations: Dictionary of concept names.
+            annotated_axis: dimension of tensor which indexes concepts.
         """
-        self.concept_names = self._check_concept_names(self, concept_names)
+        self.annotations = self._check_annotations(
+            tensor=self,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
 
-    def update_concept_names(self, new_concept_names: Dict[int, List[str]]):
+    def update_annotations(
+        self,
+        new_annotations: List[List[str]],
+        annotated_axis:  int,
+    ):
         """
         Update the concept names for specified dimensions.
 
         Attributes:
-            new_concept_names: Dictionary with dimension indices as keys and
+            new_annotations: Dictionary with dimension indices as keys and
                 lists of new concept names as values.
         """
-        for dim, names in new_concept_names.items():
-            if dim not in self.concept_names:
-                raise ValueError(
-                    f"Dimension {dim} is not present in the current concept "
-                    f"names."
-                )
-            if len(names) != len(self.concept_names[dim]):
-                raise ValueError(
-                    f"Number of new concept names for dimension {dim} must "
-                    f"match the size of that dimension."
-                )
-            self.concept_names[dim] = names
+        if len(new_annotations) != self.shape()[annotated_axis]:
+            raise ValueError(
+                f"When updating the annotations of tensor with "
+                f"shape {self.shape} and annotation axis {annotated_axis}, "
+                f"we expected the new names to "
+                f"have {self.shape[annotated_axis]} elements in it. "
+                f"Instead, the list has {len(new_annotations)} entries in it."
+            )
+        self.annotations[annotated_axis] = new_annotations[:]
 
-    def extract_by_concept_names(
+    def annotated_axis(self) -> List[int]:
+        return [
+            idx for idx, annotations in enumerate(self.annotations)
+            if (annotations is not None) and len(annotations)
+        ]
+
+    def extract_by_annotations(
         self,
-        target_concepts: Dict[int, List[Union[int, str]]],
-    ) -> 'ConceptTensor':
+        target_annotations: List[Union[int, str]],
+        target_axis: int = None,
+    ) -> 'AnnotatedTensor':
         """
-        Extract a subset of concepts from the ConceptTensor.
+        Extract a subset of concepts from the AnnotatedTensor.
 
         Attributes:
-            target_concepts: Dictionary where keys are dimensions and values are
-                lists of concept names or indices to extract.
+            target_annotations: List of concept names or indices to extract.
 
         Returns:
-            ConceptTensor: Extracted ConceptTensor.
+            AnnotatedTensor: Extracted AnnotatedTensor.
         """
-        if self.concept_names is None:
+        if self.annotations is None:
             raise ValueError(
-                "Concept names are not set for this ConceptTensor."
+                "Annotations names are not set for this AnnotatedTensor."
             )
-
-        extracted_data = self
-        new_concept_names = self.concept_names.copy()
-
-        for dim, concepts in target_concepts.items():
-            if dim not in self.concept_names:
+        if target_axis is not None:
+            # Then we take this to be the last annotated axis
+            annotated_dims = self.annotated_axis()
+            if len(annotated_dims) == 0:
                 raise ValueError(
-                    f"Concept names are not set for dimension {dim}."
+                    f'We cannot access any axis through annotations for '
+                    f'AnnotatedTensor without any dimensions annotated.'
                 )
 
-            if isinstance(concepts[0], str):
-                indices = [
-                    self.concept_names[dim].index(name) for name in concepts
-                    if name in self.concept_names[dim]
-                ]
-                if len(indices) != len(concepts):
+            target_axis = annotated_dims[-1]
+
+        indices = []
+        for annotation_name in target_annotations:
+            if isinstance(annotation_name, str):
+                if annotation_name not in self.annotations[target_axis]:
                     raise ValueError(
-                        "Some concept names are not found in the tensor's "
-                        "concept names."
+                        f"Annotation {annotation_name} was not found amongst "
+                        f"annotations {self.annotations[target_axis]} of "
+                        f"axis {target_axis} in AnnotatedTensor."
                     )
+                indices.append(self.annotations.index(annotation_name))
             else:
-                indices = concepts
+                # Else this is a numerical index
+                indices.append(annotation_name)
 
-            extracted_data = extracted_data.index_select(
-                dim,
-                torch.tensor(indices, device=self.device),
-            )
-            new_concept_names[dim] = [
-                self.concept_names[dim][i] for i in indices
-            ]
+        extracted_data = self.index_select(
+            self.tensor,
+            torch.tensor(indices, device=self.device),
+        )
+        new_annotations = copy.deepcopy(self.annotations)
+        new_annotations[target_axis] = [
+            self.annotations[target_axis][i] for i in indices
+        ]
 
-        return ConceptTensor(extracted_data, concept_names=new_concept_names)
+        return AnnotatedTensor(
+            extracted_data,
+            annotations=new_annotations,
+            annotated_axis=self.annotated_axis(),
+        )
 
     def new_empty(self, *shape):
         """
-        Create a new empty ConceptTensor with the same concept names and given
-        shape.
+        Create a new empty AnnotatedTensor with the same concept names,
+        shape, and concept axis.
 
         Attributes:
             shape: Shape of the new tensor.
 
         Returns:
-            ConceptTensor: A new empty ConceptTensor.
+            AnnotatedTensor: A new empty AnnotatedTensor.
         """
         # Create a new empty tensor with the specified shape
         new_tensor = super().new_empty(*shape, device=self.device)
 
-        # Ensure concept names are set correctly
-        new_concept_names = {
-            dim: self.concept_names[dim][:shape[dim]]
-            for dim in range(len(shape))
-        }
-
-        return ConceptTensor(new_tensor, concept_names=new_concept_names)
+        return AnnotatedTensor(
+            new_tensor,
+            # No need to provide indices as the annotations are complete
+            annotations=self.annotations,
+        )
 
     def to_standard_tensor(self) -> torch.Tensor:
         """
-        Convert the ConceptTensor to a standard torch.Tensor while preserving
+        Convert the AnnotatedTensor to a standard torch.Tensor while preserving
         gradients.
 
         Returns:
@@ -239,45 +354,41 @@ class ConceptTensor(torch.Tensor):
         """
         return self.as_subclass(torch.Tensor)
 
-    def _update_concept_names_for_new_shape(self, new_shape):
-        """
-        Update the concept names dictionary for the new tensor shape.
-        """
-        new_concept_names = {}
-        for dim, size in enumerate(new_shape):
-            if dim in self.concept_names and (
-                len(self.concept_names[dim]) == size
-            ):
-                new_concept_names[dim] = self.concept_names[dim]
-            else:
-                new_concept_names[dim] = [
-                    f"concept_{dim}_{i}" for i in range(size)
-                ]
-        return new_concept_names
-
-    def view(self, *shape):
+    def view(
+        self,
+        *shape,
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ):
         """
         View the tensor with a new shape and update concept names accordingly.
         """
         new_tensor = super().view(*shape)
-        new_tensor = new_tensor.as_subclass(ConceptTensor)
-        if hasattr(self, 'concept_names'):
-            new_tensor.concept_names = self._update_concept_names_for_new_shape(
-                new_tensor.shape
-            )
+        new_tensor = new_tensor.as_subclass(AnnotatedTensor)
+        new_tensor.assign_annotations(
+            tensor=new_tensor,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
         return new_tensor
 
-    def reshape(self, *shape):
+    def reshape(
+        self,
+        *shape,
+        annotations: Union[List[List[str]], List[str]] = None,
+        annotated_axis: Union[List[int], int] = None,
+    ):
         """
         Reshape the tensor to the specified shape and update concept names
         accordingly.
         """
         new_tensor = super().reshape(*shape)
-        new_tensor = new_tensor.as_subclass(ConceptTensor)
-        if hasattr(self, 'concept_names'):
-            new_tensor.concept_names = self._update_concept_names_for_new_shape(
-                new_tensor.shape
-            )
+        new_tensor = new_tensor.as_subclass(AnnotatedTensor)
+        new_tensor.assign_annotations(
+            tensor=new_tensor,
+            annotations=annotations,
+            annotated_axis=annotated_axis,
+        )
         return new_tensor
 
     def transpose(self, dim0, dim1):
@@ -286,20 +397,13 @@ class ConceptTensor(torch.Tensor):
         accordingly.
         """
         new_tensor = super().transpose(dim0, dim1)
-        new_concept_names = self.concept_names.copy()
-
-        # Swap the concept names for the transposed dimensions
-        if dim0 in self.concept_names and dim1 in self.concept_names:
-            new_concept_names[dim0], new_concept_names[dim1] = (
-                self.concept_names[dim1],
-                self.concept_names[dim0],
-            )
-        elif dim0 in self.concept_names:
-            new_concept_names[dim1] = self.concept_names.pop(dim0)
-        elif dim1 in self.concept_names:
-            new_concept_names[dim0] = self.concept_names.pop(dim1)
-
-        return ConceptTensor(new_tensor, concept_names=new_concept_names)
+        return AnnotatedTensor(
+            new_tensor,
+            annotations=list(np.transpose(
+                np.array(self.annotations),
+                (dim0, dim1),
+            )),
+        )
 
     def permute(self, *dims):
         """
@@ -307,14 +411,13 @@ class ConceptTensor(torch.Tensor):
         accordingly.
         """
         new_tensor = super().permute(*dims)
-        new_concept_names = {}
-
-        # Reassign concept names based on the new permutation
-        for new_dim, old_dim in enumerate(dims):
-            if old_dim in self.concept_names:
-                new_concept_names[new_dim] = self.concept_names[old_dim]
-
-        return ConceptTensor(new_tensor, concept_names=new_concept_names)
+        return AnnotatedTensor(
+            new_tensor,
+            annotations=list(np.transpose(
+                np.array(self.annotations),
+                dims,
+            )),
+        )
 
     def squeeze(self, dim=None):
         """
@@ -325,22 +428,11 @@ class ConceptTensor(torch.Tensor):
         else:
             new_tensor = super().squeeze()
 
-        new_tensor = new_tensor.as_subclass(ConceptTensor)
-        if hasattr(self, 'concept_names'):
-            new_concept_names = {}
-            if dim is not None:
-                for d, names in self.concept_names.items():
-                    if d < dim:
-                        new_concept_names[d] = names
-                    elif d > dim:
-                        new_concept_names[d - 1] = names
-            else:
-                new_dim = 0
-                for d, names in self.concept_names.items():
-                    if self.shape[d] != 1:
-                        new_concept_names[new_dim] = names
-                        new_dim += 1
-            new_tensor.concept_names = new_concept_names
+        new_tensor = new_tensor.as_subclass(AnnotatedTensor)
+        if hasattr(self, 'annotations'):
+            new_tensor.annotations = (
+                self.annotations[:dim] + self.annotations[dim+1:]
+            )
         return new_tensor
 
     def unsqueeze(self, dim):
@@ -348,48 +440,115 @@ class ConceptTensor(torch.Tensor):
         Unsqueeze the tensor and update concept names accordingly.
         """
         new_tensor = super().unsqueeze(dim)
-        new_tensor = new_tensor.as_subclass(ConceptTensor)
-        if hasattr(self, 'concept_names'):
-            new_concept_names = {
-                i + 1 if i >= dim else i: v
-                for i, v in self.concept_names.items()
-            }
-            new_concept_names[dim] = [f"concept_{dim}_0"]
-            new_tensor.concept_names = new_concept_names
+        new_tensor = new_tensor.as_subclass(AnnotatedTensor)
+        if hasattr(self, 'annotations'):
+            new_tensor.annotations = (
+                self.annotations[:dim] + [None] + self.annotations[dim:]
+            )
         return new_tensor
 
     def __getitem__(self, key):
         sliced_tensor = super().__getitem__(key)
         if isinstance(sliced_tensor, torch.Tensor) and (
-            not isinstance(sliced_tensor, ConceptTensor)
+            not isinstance(sliced_tensor, AnnotatedTensor)
         ):
-            sliced_tensor = sliced_tensor.as_subclass(ConceptTensor)
+            sliced_tensor = sliced_tensor.as_subclass(AnnotatedTensor)
 
-        new_concept_names = {}
-        for dim, names in self.concept_names.items():
-            if dim < len(sliced_tensor.shape):
-                if isinstance(key, tuple):
-                    index = key[dim] if dim < len(key) else slice(None)
-                else:
-                    index = key if dim == 0 else slice(None)
+        if not isinstance(key, (list, tuple)):
+            key = [key]
 
-                if isinstance(index, slice):
-                    new_concept_names[dim] = names[index]
-                elif isinstance(index, int):
-                    if index < len(names):
-                        new_concept_names[dim] = [names[index]]
-                    else:
-                        new_concept_names[dim] = [f"concept_{dim}_{index}"]
-                elif isinstance(index, list):
-                    new_concept_names[dim] = [
-                        names[i] for i in index if i < len(names)
-                    ]
-        sliced_tensor.concept_names = new_concept_names
+        # TODO: check that this works for slice ranges!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        sliced_tensor.annotations = []
+        for axis, idx in enumerate(key):
+            if self.anotations[axis] is not None and len(
+                self.annotations[axis]
+            ):
+                sliced_tensor.annotations.append(
+                    [self.annotations[axis][idx]]
+                )
+
+        # And let's fill up any leftover elements
+        for axis in range(len(key), len(self.annotations)):
+            sliced_tensor.annotations.append(
+                self.annotations[axis][:]
+            )
         return sliced_tensor
 
     def ravel(self):
         new_tensor = super().ravel()
         return new_tensor.as_subclass(torch.Tensor)
+
+
+class ConceptTensor(AnnotatedTensor):
+    def __new__(
+        cls,
+        data: torch.Tensor,
+        concept_names: List[str] = None,
+        concept_axis: int = 1,
+        *args,
+        **kwargs,
+    ) -> 'ConceptTensor':
+        if len(data.shape) < 2:
+            raise ValueError(
+                f'A ConceptTensor must have at least two dimensions, where '
+                f'the first dimension will be the batch dimension a second '
+                f'dimension (that at concept_axis) will be the concept '
+                f'dimension.'
+            )
+        instance = super().__new__(
+            cls,
+            data,
+            annotations=[
+                None if idx != concept_axis else (concept_names or [])
+                for idx in range(data.shape)
+            ],
+            *args,
+            **kwargs,
+        )
+        instance.concept_axis = concept_axis
+        return instance
+
+    @staticmethod
+    def _generate_default_annotations(shape, annotated_axis=-1):
+        return [
+            f"concept_{i}" for i in range(shape[annotated_axis])
+        ]
+
+    def __str__(self):
+        """
+        Returns a string representation of the AnnotatedTensor.
+        """
+        return (
+            f"ConceptTensor with {self.shape}, dtype {self.dtype}, and "
+            f"concepts {self.annotations[self.concept_dim]} at "
+            f"dimension {self.concept_dim}."
+        )
+
+    @classmethod
+    def tensor(
+        cls,
+        tensor: torch.Tensor,
+        concept_names: List[str] = None,
+        concept_axis: int = 1,
+    ) -> 'ConceptTensor':
+        """
+        Create a concept_axis from a torch.Tensor.
+
+        Attributes:
+            tensor: Input tensor.
+            concept_names: Names of dimensions.
+            annotated_axis: dimension of tensor which indexes concepts.
+        Returns:
+            concept_axis: concept_axis instance.
+        """
+        return super().tensor(
+            cls=cls,
+            tensor=tensor,
+            annotations=[
+                None if idx != concept_axis else (concept_names or [])
+                for idx in range(tensor.shape)
+            ],
+        )
 
 
 class ConceptDistribution(torch.distributions.Distribution):
@@ -401,13 +560,12 @@ class ConceptDistribution(torch.distributions.Distribution):
     def __init__(
         self,
         base_dist: torch.distributions.Distribution,
-        concept_names: Dict[int, List[str]] = None,
+        concept_names: List[str] = None,
+        concept_dimension: int = 1,
     ):
         self.base_dist = base_dist
-        self.concept_names = ConceptTensor._check_concept_names(
-            base_dist.mean,
-            concept_names.copy(),
-        )
+        self.concept_names = concept_names
+        self.concept_dimension = concept_dimension
         super().__init__()
 
     def rsample(self, sample_shape: torch.Size = torch.Size()) -> ConceptTensor:
@@ -421,7 +579,8 @@ class ConceptDistribution(torch.distributions.Distribution):
             ConceptTensor: Sampled ConceptTensor.
         """
         sample = self.base_dist.rsample(sample_shape)
-        return ConceptTensor.concept(
-            sample,
-            concept_names=self.concept_names.copy(),
+        return ConceptTensor.tensor(
+            tensor=sample,
+            concept_names=self.concept_names,
+            concept_axis=self.concept_dimension,
         )
