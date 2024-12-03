@@ -5,7 +5,7 @@ import os
 
 import utils
 
-from shared import SPRITES_DIRECTORY
+from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 
 ################################################################################
 ## Load the sprites to memory

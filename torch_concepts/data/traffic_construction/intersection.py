@@ -1,7 +1,7 @@
 import matplotlib.image as mpimg
 import os
 
-from shared import SPRITES_DIRECTORY
+from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
 
 ################################################################################
 ## Load the sprites to memory
