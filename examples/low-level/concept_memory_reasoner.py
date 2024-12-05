@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptLayer, ConceptMemory
+from torch_concepts.nn import Annotate
 from torch_concepts.nn.functional import selection_eval, logic_memory_eval, logic_memory_reconstruction, logic_memory_explanations
 
 
@@ -12,20 +12,31 @@ def main():
     n_samples = 1000
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    x_train, c_train, y_train, concept_names, class_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
     memory_size = 7
     memory_concept_states = 3
+    memory_states = ["positive", "negative", "irrelevant"]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    c_encoder = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names})
-    classifier_selector = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: task_names, 2: memory_size})
-    concept_memory = ConceptMemory(memory_size=memory_size, emb_size=latent_dims,
-                                   out_concept_dimensions={1: concept_names, 2: task_names, 3: memory_concept_states})
-    model = torch.nn.Sequential(encoder, c_encoder, classifier_selector, concept_memory)
-    softmax = torch.nn.Softmax(dim=-1)
+    concept_bottleneck = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, n_concepts),
+        Annotate(concept_names, 1),
+    )
+    classifier_selector = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, n_classes*memory_size),
+        torch.nn.Unflatten(-1, (n_classes, memory_size)),
+        Annotate(class_names, 1),
+    )
+    latent_concept_memory = torch.nn.Embedding(memory_size, latent_dims)
+    concept_memory_decoder = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, n_concepts*n_classes*memory_concept_states),
+        torch.nn.Unflatten(-1, (n_concepts, n_classes, memory_concept_states)),
+        Annotate([concept_names, class_names, memory_states], [1, 2, 3]),
+    )
+    model = torch.nn.Sequential(encoder, concept_bottleneck, classifier_selector, latent_concept_memory, concept_memory_decoder)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
@@ -35,11 +46,10 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = c_encoder(emb).sigmoid()
+        c_pred = concept_bottleneck(emb).sigmoid()
         classifier_selector_logits = classifier_selector(emb)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
-        concept_weights = concept_memory()
-        concept_weights = concept_weights.softmax(dim=-1)
+        concept_weights = concept_memory_decoder(latent_concept_memory.weight).softmax(dim=-1)
         y_per_classifier, c_rec_per_classifier = logic_memory_eval(concept_weights, c_pred)
         c_rec_per_classifier = logic_memory_reconstruction(c_rec_per_classifier, c_train, y_train)
         y_pred = selection_eval(prob_per_classifier, y_per_classifier, c_rec_per_classifier)
@@ -57,11 +67,10 @@ def main():
 
     task_accuracy = accuracy_score(y_train, y_pred > 0.5)
     concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
-    explanations = logic_memory_explanations(concept_weights, {1: concept_names, 2: task_names})
-
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
-    print(f"Concept names: {c_encoder.concept_names}")
+
+    explanations = logic_memory_explanations(concept_weights, {1: concept_names, 2: class_names})
     print(f"Learned rules: {explanations}")
 
     return

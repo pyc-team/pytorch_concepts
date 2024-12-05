@@ -172,7 +172,7 @@ class AnnotatedTensor(torch.Tensor):
             else:
                 # Copy the list so that we can do manipulation without affecting
                 # previous pointers to this array
-                current_annotations = annotations[:]
+                current_annotations = annotations[annotation_idx][:]
             new_annotations[annotation_idx] = current_annotations
         return new_annotations
 
@@ -241,7 +241,7 @@ class AnnotatedTensor(torch.Tensor):
     def update_annotations(
         self,
         new_annotations: List[List[str]],
-        annotated_axis:  int,
+        annotated_axis: int,
     ):
         """
         Update the concept names for specified dimensions.
@@ -250,7 +250,7 @@ class AnnotatedTensor(torch.Tensor):
             new_annotations: Dictionary with dimension indices as keys and
                 lists of new concept names as values.
         """
-        if len(new_annotations) != self.shape()[annotated_axis]:
+        if len(new_annotations) != self.shape[annotated_axis]:
             raise ValueError(
                 f"When updating the annotations of tensor with "
                 f"shape {self.shape} and annotation axis {annotated_axis}, "
@@ -304,18 +304,22 @@ class AnnotatedTensor(torch.Tensor):
                         f"annotations {self.annotations[target_axis]} of "
                         f"axis {target_axis} in AnnotatedTensor."
                     )
-                indices.append(self.annotations.index(annotation_name))
+                indices.append(self.annotations[target_axis].index(annotation_name))
             else:
                 # Else this is a numerical index
                 indices.append(annotation_name)
 
         extracted_data = self.index_select(
-            self.tensor,
-            torch.tensor(indices, device=self.device),
+            dim=target_axis,
+            index=torch.tensor(indices, device=self.device),
         )
         new_annotations = copy.deepcopy(self.annotations)
         new_annotations[target_axis] = [
             self.annotations[target_axis][i] for i in indices
+        ]
+        # replace None with empty list
+        new_annotations = [
+            annotation for annotation in new_annotations if annotation is not None
         ]
 
         return AnnotatedTensor(
@@ -338,10 +342,13 @@ class AnnotatedTensor(torch.Tensor):
         # Create a new empty tensor with the specified shape
         new_tensor = super().new_empty(*shape, device=self.device)
 
+        new_annotations = [
+            annotation for annotation in self.annotations if annotation is not None
+        ]
         return AnnotatedTensor(
             new_tensor,
-            # No need to provide indices as the annotations are complete
-            annotations=self.annotations,
+            annotations=new_annotations,
+            annotated_axis=self.annotated_axis()
         )
 
     def to_standard_tensor(self) -> torch.Tensor:
@@ -366,7 +373,6 @@ class AnnotatedTensor(torch.Tensor):
         new_tensor = super().view(*shape)
         new_tensor = new_tensor.as_subclass(AnnotatedTensor)
         new_tensor.assign_annotations(
-            tensor=new_tensor,
             annotations=annotations,
             annotated_axis=annotated_axis,
         )
@@ -385,7 +391,6 @@ class AnnotatedTensor(torch.Tensor):
         new_tensor = super().reshape(*shape)
         new_tensor = new_tensor.as_subclass(AnnotatedTensor)
         new_tensor.assign_annotations(
-            tensor=new_tensor,
             annotations=annotations,
             annotated_axis=annotated_axis,
         )
@@ -457,130 +462,15 @@ class AnnotatedTensor(torch.Tensor):
         if not isinstance(key, (list, tuple)):
             key = [key]
 
-        # TODO: check that this works for slice ranges!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         sliced_tensor.annotations = []
-        for axis, idx in enumerate(key):
-            if self.anotations[axis] is not None and len(
-                self.annotations[axis]
-            ):
-                sliced_tensor.annotations.append(
-                    [self.annotations[axis][idx]]
-                )
+        for axis, idx in enumerate(range(len(self.annotations))):
+            if idx < len(key) and self.annotations[axis] is not None and len(self.annotations[axis]):
+                sliced_tensor.annotations.append(self.annotations[axis].__getitem__(key[idx]))
+            else:
+                sliced_tensor.annotations.append(None)
 
-        # And let's fill up any leftover elements
-        for axis in range(len(key), len(self.annotations)):
-            sliced_tensor.annotations.append(
-                self.annotations[axis][:]
-            )
         return sliced_tensor
 
     def ravel(self):
         new_tensor = super().ravel()
         return new_tensor.as_subclass(torch.Tensor)
-
-
-class ConceptTensor(AnnotatedTensor):
-    def __new__(
-        cls,
-        data: torch.Tensor,
-        concept_names: List[str] = None,
-        concept_axis: int = 1,
-        *args,
-        **kwargs,
-    ) -> 'ConceptTensor':
-        if len(data.shape) < 2:
-            raise ValueError(
-                f'A ConceptTensor must have at least two dimensions, where '
-                f'the first dimension will be the batch dimension a second '
-                f'dimension (that at concept_axis) will be the concept '
-                f'dimension.'
-            )
-        instance = super().__new__(
-            cls,
-            data,
-            annotations=[
-                None if idx != concept_axis else (concept_names or [])
-                for idx in range(data.shape)
-            ],
-            *args,
-            **kwargs,
-        )
-        instance.concept_axis = concept_axis
-        return instance
-
-    @staticmethod
-    def _generate_default_annotations(shape, annotated_axis=-1):
-        return [
-            f"concept_{i}" for i in range(shape[annotated_axis])
-        ]
-
-    def __str__(self):
-        """
-        Returns a string representation of the AnnotatedTensor.
-        """
-        return (
-            f"ConceptTensor with {self.shape}, dtype {self.dtype}, and "
-            f"concepts {self.annotations[self.concept_dim]} at "
-            f"dimension {self.concept_dim}."
-        )
-
-    @classmethod
-    def tensor(
-        cls,
-        tensor: torch.Tensor,
-        concept_names: List[str] = None,
-        concept_axis: int = 1,
-    ) -> 'ConceptTensor':
-        """
-        Create a concept_axis from a torch.Tensor.
-
-        Attributes:
-            tensor: Input tensor.
-            concept_names: Names of dimensions.
-            annotated_axis: dimension of tensor which indexes concepts.
-        Returns:
-            concept_axis: concept_axis instance.
-        """
-        return super().tensor(
-            cls=cls,
-            tensor=tensor,
-            annotations=[
-                None if idx != concept_axis else (concept_names or [])
-                for idx in range(tensor.shape)
-            ],
-        )
-
-
-class ConceptDistribution(torch.distributions.Distribution):
-    """
-    ConceptDistribution is a subclass of torch.distributions.Distribution which
-    ensures that the samples are ConceptTensors.
-    """
-
-    def __init__(
-        self,
-        base_dist: torch.distributions.Distribution,
-        concept_names: List[str] = None,
-        concept_dimension: int = 1,
-    ):
-        self.base_dist = base_dist
-        self.concept_names = concept_names
-        self.concept_dimension = concept_dimension
-        super().__init__()
-
-    def rsample(self, sample_shape: torch.Size = torch.Size()) -> ConceptTensor:
-        """
-        Sample from the distribution.
-
-        Args:
-            sample_shape: Shape of the sample.
-
-        Returns:
-            ConceptTensor: Sampled ConceptTensor.
-        """
-        sample = self.base_dist.rsample(sample_shape)
-        return ConceptTensor.tensor(
-            tensor=sample,
-            concept_names=self.concept_names,
-            concept_axis=self.concept_dimension,
-        )

@@ -1,7 +1,8 @@
 import torchvision.models as models
 from torchvision import transforms
 
-from torch_concepts.data import CelebADataset, load_preprocessed_data, preprocess_img_data
+from torch_concepts.data import CelebADataset
+from .utils import preprocess_img_data, load_preprocessed_data
 
 
 def main():

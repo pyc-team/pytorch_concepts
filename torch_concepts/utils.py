@@ -1,5 +1,6 @@
 from typing import Dict, Union, List
 
+
 def validate_and_generate_concept_names(
     concept_names: Dict[int, Union[int, List[str]]]
 ) -> Dict[int, List[str]]:

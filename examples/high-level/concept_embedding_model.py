@@ -2,14 +2,14 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import CompletenessDataset
-from torch_concepts.nn import ConceptResidualBottleneck
+from torch_concepts.nn import ConceptEmbeddingBottleneck
 
 
 def main():
-    latent_dims = 6
+    latent_dims = 20
+    concept_emb_size = 7
     n_epochs = 500
     n_samples = 1000
-    residual_size = 20
     concept_reg = 0.5
     data = CompletenessDataset(n_samples=n_samples, n_hidden_concepts=20, n_concepts=4, n_tasks=2)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
@@ -18,9 +18,9 @@ def main():
     n_classes = y_train.shape[1]
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    bottleneck = ConceptResidualBottleneck(in_features=latent_dims, out_concept_dimensions={1: n_concepts},
-                                           residual_size=residual_size)
-    y_predictor = torch.nn.Sequential(torch.nn.Linear(n_concepts + residual_size, latent_dims),
+    bottleneck = ConceptEmbeddingBottleneck(latent_dims, concept_names, concept_emb_size)
+    y_predictor = torch.nn.Sequential(torch.nn.Flatten(),
+                                      torch.nn.Linear(n_concepts * concept_emb_size, latent_dims),
                                       torch.nn.LeakyReLU(),
                                       torch.nn.Linear(latent_dims, n_classes),
                                       torch.nn.Sigmoid())
@@ -34,12 +34,11 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        preds = bottleneck(emb)
-        c_next = preds['next']
-        c_pred = preds['c_pred']
-        y_pred = y_predictor(c_next)
+        c_mix, concept_vals = bottleneck(emb)
+        y_pred = y_predictor(c_mix)
 
         # compute loss
+        c_pred = concept_vals["c_pred"]
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
         loss = concept_reg*concept_loss + task_loss
@@ -54,8 +53,6 @@ def main():
     concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
-    print(f"Concept names: {bottleneck.concept_names}")
-    print(f"Concepts: {c_pred}")
 
     return
 

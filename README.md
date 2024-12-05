@@ -8,14 +8,12 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 
 **Concept data types** (`pyc.base`):
 
-- `ConceptTensor`: A subclass of `torch.Tensor` which stores and retrieves concepts by name.
-- `ConceptDistribution`: Subclass of `torch.distributions.Distribution` which ensures that samples drawn from the distribution are `ConceptTensors`.
+- `AnnotatedTensor`: A subclass of `torch.Tensor` which assigns names to individual elements of each tensor dimension.
 
 **Base concept layers** (`pyc.nn.base`):
 
-- `ConceptLayer`: A layer taking as input a common `tensor` and producing a `ConceptTensor` as output.
-- `ProbabilisticConceptLayer`: A layer taking as input a common `tensor` and producing a (normal) `ConceptDistribution` as output.
-- `ConceptMemory`: A layer with a set of embeddings which can be decoded into different concept states.
+- `Annotate`: A layer taking as input a common `tensor` and producing an `AnnotatedTensor` as output.
+- `LinearConceptLayer`: A layer which first applies a linear transformation to the input tensor, then it reshapes and annotates the output tensor.
 
 **Base functions** (`pyc.nn.functional`):
 
@@ -23,18 +21,19 @@ PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train
 - `intervene_on_concept_graph`: A function to intervene on a concept adjacency matrix (it can be used to perform do-interventions).
 - `concept_embedding_mixture`: A function to generate a mixture of concept embeddings and concept predictions.
 
-## Mid-level APIs
+## High-level APIs
 
 **Concept bottleneck layers** (`pyc.nn.bottleneck`):
 
-- `ConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
-- `ConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
+- `LinearConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
+- `LinearConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
 - `ConceptEmbeddingBottleneck`: A bottleneck composed of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
 
 ## Evaluation APIs
 
 **Datasets** (`pyc.data`):
 
+- `TrafficLights`: A dataset loader for traffic scenarios representing road intersections.
 - `ToyDataset`: A toy dataset loader. XOR, Trigonometry, and Dot datasets are from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022). The Checkmark dataset is from ["Causal Concept Embedding Models: Beyond Causal Opacity in Deep Learning"](https://arxiv.org/abs/2405.16507).
 - `CompletenessDataset`: A dataset loader for the completeness score from ["Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?"](https://arxiv.org/abs/2401.13544).
 - `ColorMNISTDataset`: A dataset loader for MNIST Even/Odd where colors act as confounders inspired from ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165) and ["Interpretable Concept-Based Memory Reasoning"](https://arxiv.org/abs/2407.15527).

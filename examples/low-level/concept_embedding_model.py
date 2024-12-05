@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ConceptLayer
+from torch_concepts.nn import Annotate
 import torch_concepts.nn.functional as CF
 
 
@@ -21,11 +21,23 @@ def main():
     intervention_indexes = torch.ones_like(c_train).bool()
 
     encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    c_encoder = ConceptLayer(in_features=latent_dims, out_concept_dimensions={1: concept_names, 2: concept_emb_size})
-    c_scorer = ConceptLayer(in_features=concept_emb_size, out_concept_dimensions={1: concept_names}, reduce_dim=2)
-    y_predictor = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(latent_dims*n_concepts, latent_dims),
-                                      torch.nn.LeakyReLU(), torch.nn.Linear(latent_dims, n_classes))
-    model = torch.nn.Sequential(encoder, c_encoder, c_scorer, y_predictor)
+    concept_emb_bottleneck = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, n_concepts*concept_emb_size),
+        torch.nn.Unflatten(-1, (n_concepts, concept_emb_size)),
+        Annotate(concept_names, 1),
+    )
+    concept_score_bottleneck = torch.nn.Sequential(
+        torch.nn.Linear(concept_emb_size, 1),
+        torch.nn.Flatten(),
+        Annotate(concept_names, 1),
+    )
+    y_predictor = torch.nn.Sequential(
+        torch.nn.Flatten(),
+        torch.nn.Linear(latent_dims*n_concepts, latent_dims),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(latent_dims, n_classes)
+    )
+    model = torch.nn.Sequential(encoder, concept_emb_bottleneck, concept_score_bottleneck, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -35,8 +47,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_emb = c_encoder(emb)
-        c_pred = c_scorer(c_emb)
+        c_emb = concept_emb_bottleneck(emb)
+        c_pred = concept_score_bottleneck(c_emb)
         c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
         y_pred = y_predictor(c_mix)
@@ -56,7 +68,6 @@ def main():
     concept_accuracy = accuracy_score(c_train, c_pred > 0)
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
-    print(f"Concept names: {c_encoder.concept_names}")
     print(f"Concepts: {c_pred}")
 
     return

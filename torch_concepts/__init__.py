@@ -4,13 +4,11 @@ from .data import (
     celeba,
     mnist,
     toy,
-    utils,
 )
 
 from .nn import (
     base,
     bottleneck,
-    encode,
     functional,
 )
 

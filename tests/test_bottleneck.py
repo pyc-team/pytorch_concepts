@@ -1,73 +1,74 @@
 import unittest
 import torch
-from torch.nn import functional as F
-from torch_concepts.nn import ConceptLayer
-from torch_concepts.base import ConceptTensor
-from torch_concepts.nn.functional import intervene, concept_embedding_mixture
+import torch.nn.functional as F
+from torch_concepts.nn.bottleneck import LinearConceptBottleneck, LinearConceptResidualBottleneck, ConceptEmbeddingBottleneck
+from torch_concepts.base import AnnotatedTensor
 
-from torch_concepts.nn import BaseBottleneck, ConceptBottleneck, ConceptResidualBottleneck, ConceptEmbeddingBottleneck
-
-
-class TestConceptBottlenecks(unittest.TestCase):
-
+class TestLinearConceptBottleneck(unittest.TestCase):
     def setUp(self):
         self.in_features = 10
-        self.n_concepts = 5
-        self.emb_size = 4
-        self.batch_size = 3
-        self.concept_names = ["A", "B", "C", "D", "E"]
-        self.x = torch.randn(self.batch_size, self.in_features)
-        self.c_true = ConceptTensor.concept(torch.randn(self.batch_size, self.n_concepts), {1: self.concept_names})
-        self.intervention_idxs = ConceptTensor.concept(torch.randint(0, 2, (self.batch_size, self.n_concepts)).bool(), {1: self.concept_names})
-        self.intervention_rate = 0.1
+        self.annotations = ["concept1", "concept2"]
+        self.activation = F.sigmoid
+        self.bottleneck = LinearConceptBottleneck(self.in_features, self.annotations, self.activation)
+        self.input_tensor = torch.randn(5, self.in_features)
 
-    def test_concept_bottleneck_forward(self):
-        bottleneck = ConceptBottleneck(self.in_features, {1: self.concept_names})
-        result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
+    def test_predict(self):
+        output = self.bottleneck.predict(self.input_tensor)
+        self.assertEqual(output.shape, (5, len(self.annotations)))
+        self.assertTrue(torch.all(output >= 0) and torch.all(output <= 1))
 
-        # Test output keys
-        self.assertIn('next', result)
-        self.assertIn('c_pred', result)
-        self.assertIn('c_int', result)
-        self.assertIn('emb', result)
+    def test_transform(self):
+        c_int, intermediate = self.bottleneck.transform(self.input_tensor)
+        self.assertIsInstance(c_int, AnnotatedTensor)
+        self.assertIn('c_pred', intermediate)
+        self.assertIn('c_int', intermediate)
 
-        # Test output shapes
-        self.assertEqual(result['c_pred'].shape, (self.batch_size, self.n_concepts))
-        self.assertEqual(result['c_int'].shape, (self.batch_size, self.n_concepts))
+    def test_annotations(self):
+        # throw error if annotations is not a list
+        with self.assertRaises(AssertionError):
+            LinearConceptBottleneck(self.in_features, [self.annotations, 3], self.activation)
 
-    def test_concept_residual_bottleneck_forward(self):
-        bottleneck = ConceptResidualBottleneck(self.in_features, {1: self.concept_names}, self.emb_size)
-        result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
+class TestLinearConceptResidualBottleneck(unittest.TestCase):
+    def setUp(self):
+        self.in_features = 10
+        self.annotations = ["concept1", "concept2"]
+        self.residual_size = 5
+        self.activation = F.sigmoid
+        self.bottleneck = LinearConceptResidualBottleneck(self.in_features, self.annotations, self.residual_size, self.activation)
+        self.input_tensor = torch.randn(5, self.in_features)
 
-        # Test output keys
-        self.assertIn('next', result)
-        self.assertIn('c_pred', result)
-        self.assertIn('c_int', result)
-        self.assertIn('emb', result)
+    def test_predict(self):
+        output = self.bottleneck.predict(self.input_tensor)
+        self.assertEqual(output.shape, (5, len(self.annotations)))
+        self.assertTrue(torch.all(output >= 0) and torch.all(output <= 1))
 
-        # Test output shapes
-        self.assertEqual(result['c_pred'].shape, (self.batch_size, self.n_concepts))
-        self.assertEqual(result['c_int'].shape, (self.batch_size, self.n_concepts))
-        self.assertEqual(result['emb'].shape, (self.batch_size, self.emb_size))
-        self.assertEqual(result['next'].shape, (self.batch_size, self.n_concepts + self.emb_size))
+    def test_transform(self):
+        c_new, intermediate = self.bottleneck.transform(self.input_tensor)
+        self.assertIsInstance(c_new, AnnotatedTensor)
+        self.assertIn('c_pred', intermediate)
+        self.assertIn('c_int', intermediate)
+        self.assertEqual(c_new.shape[-1], len(self.annotations) + self.residual_size)
 
-    def test_mix_concept_embedding_bottleneck_forward(self):
-        bottleneck = ConceptEmbeddingBottleneck(self.in_features, {1: self.concept_names, 2: 2 * self.emb_size})
-        result = bottleneck(self.x, self.c_true, self.intervention_idxs, self.intervention_rate)
+class TestConceptEmbeddingBottleneck(unittest.TestCase):
+    def setUp(self):
+        self.in_features = 10
+        self.annotations = ["concept1", "concept2"]
+        self.concept_embedding_size = 7
+        self.activation = F.sigmoid
+        self.bottleneck = ConceptEmbeddingBottleneck(self.in_features, self.annotations,
+                                                     self.concept_embedding_size, self.activation)
+        self.input_tensor = torch.randn(5, self.in_features)
 
-        # Test output keys
-        self.assertIn('next', result)
-        self.assertIn('c_pred', result)
-        self.assertIn('c_int', result)
-        self.assertIn('emb', result)
-        self.assertIn('context', result)
+    def test_predict(self):
+        output = self.bottleneck.predict(self.input_tensor)
+        self.assertEqual(output.shape, (5, 2))
 
-        # Test output shapes
-        self.assertEqual(result['c_pred'].shape, (self.batch_size, self.n_concepts))
-        self.assertEqual(result['c_int'].shape, (self.batch_size, self.n_concepts))
-        self.assertIsNone(result['emb'])
-        self.assertEqual(result['context'].shape, (self.batch_size, self.n_concepts, 2 * self.emb_size))
-
+    def test_transform(self):
+        c_mix, intermediate = self.bottleneck.transform(self.input_tensor)
+        self.assertIsInstance(c_mix, AnnotatedTensor)
+        self.assertEqual(c_mix.shape[-1], 7)
+        self.assertIn('c_pred', intermediate)
+        self.assertIn('c_int', intermediate)
 
 if __name__ == "__main__":
     unittest.main()

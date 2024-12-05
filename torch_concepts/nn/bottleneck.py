@@ -1,119 +1,254 @@
+import copy
+from abc import ABC, abstractmethod
+
+import numpy as np
 import torch
 import torch.nn.functional as F
+from typing import List, Dict, Callable, Union, Tuple
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Callable, Union
-
-from torch_concepts.base import ConceptTensor
-from torch_concepts.nn import ConceptLayer
+from torch_concepts.base import AnnotatedTensor
+from torch_concepts.nn import Annotate
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 
 
-class BaseBottleneck(ABC, torch.nn.Module):
+def _check_annotations(annotations: Union[List[str], int]):
+    assert isinstance(annotations, (list, int)), \
+        "annotations must be either a single list of str or a single int"
+    if isinstance(annotations, list):
+        assert all(isinstance(a, str) for a in annotations), \
+            "all elements in the annotations list must be of type str"
+
+
+class BaseConceptBottleneck(ABC, torch.nn.Module):
     """
-    BaseBottleneck is an abstract base class for concept bottlenecks.
-
-    The concept dimension dictionary is structured as follows: keys are
-    dimension indices and values are either integers (indicating the size of the
-    dimension) or lists of strings (concept names).
-
-    The output size is computed as the product of the sizes of all dimensions.
-    The only exception is the batch size dimension, which is expected to be
-    empty.
-
-    Example:
-        {
-            1: ["concept_a", "concept_b"],
-            2: 3,
-        }
-    For 2 concepts in the first dimension and 3 concepts in the second
-    dimension. This produces concept names:
-        {
-            1: ["concept_a", "concept_b"],
-            2: ["concept_2_0", "concept_2_1", "concept_2_2"],
-        }
-    The output size is computed as the product of the sizes of all dimensions
-    except the batch size dimension. In this example, the output size is 6. The
-    result of the forward is reshaped to match the concept names. Moreover, in
-    this example the output shape is (batch_size, 2, 3).
-
-    Attributes:
-        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept
-            dimensions.
+    BaseConceptLayer is an abstract base class for concept layers.
+    The output objects are annotated tensors.
     """
-    def __init__(self, out_concept_dimensions: Dict[int, List[str]]):
+    def __init__(
+        self,
+        in_features: int,
+        annotations: List[Union[List[str], int]],
+        *args,
+        **kwargs,
+    ):
         super().__init__()
-        self.out_concept_dimensions = out_concept_dimensions
+        self.in_features = in_features
+
+        self.annotations = []
+        shape = []
+        self.annotated_axes = []
+        for dim, annotation in enumerate(annotations):
+            if isinstance(annotation, int):
+                shape.append(annotation)
+            else:
+                self.annotations.append(annotation)
+                shape.append(len(annotation))
+                self.annotated_axes.append(dim+1)
+
+        self.concept_axis = 1
+        self._shape = shape
+        self.output_size = np.prod(self.shape())
+
+        self.annotator = Annotate(self.annotations, self.annotated_axes)
+
+    def shape(self):
+        return self._shape
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> Dict[str, ConceptTensor]:
-        pass
+    def predict(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Predict concept scores.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Predicted concept scores.
+        """
+        raise NotImplementedError('predict')
+
+    @abstractmethod
+    def intervene(
+        self,
+        x: torch.Tensor,
+        c_true: torch.Tensor = None,
+        intervention_idxs: torch.Tensor = None,
+        intervention_rate: float = 0.0,
+    ) -> torch.Tensor:
+        """
+        Intervene on concept scores.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            c_true (torch.Tensor): Ground truth concepts.
+            intervention_idxs (torch.Tensor): Boolean Tensor indicating
+                which concepts to intervene on.
+            intervention_rate (float): Rate at which perform interventions.
+
+        Returns:
+            torch.Tensor: Intervened concept scores.
+        """
+        raise NotImplementedError('intervene')
+
+    @abstractmethod
+    def transform(
+        self,
+        x: torch.Tensor,
+        *args,
+        **kwargs
+    ) -> Tuple[AnnotatedTensor, Dict]:
+        """
+        Transform input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            Tuple[AnnotatedTensor, Dict]: Transformed tensor and dictionary with
+                intermediate concepts tensors.
+        """
+        raise NotImplementedError('transform')
+
+    def annotate(
+        self,
+        x: torch.Tensor,
+    ) -> AnnotatedTensor:
+        """
+        Annotate tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            AnnotatedTensor: Annotated tensor.
+        """
+        return self.annotator(x)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *args,
+        **kwargs,
+    ) -> Tuple[AnnotatedTensor, Dict]:
+        """
+        Forward pass of a ConceptBottleneck.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor
+                and dictionary with intermediate concepts tensors.
+        """
+        x_new, val_dict = self.transform(x, *args, **kwargs)
+        return x_new, val_dict
 
 
-class ConceptBottleneck(BaseBottleneck):
+class LinearConceptBottleneck(BaseConceptBottleneck):
     """
-    ConceptBottleneck creates a bottleneck of supervised concept embeddings.
+    ConceptBottleneck creates a bottleneck of supervised concepts.
     Main reference: `"Concept Bottleneck
     Models" <https://arxiv.org/pdf/2007.04612>`_
 
-    The concept dimension dictionary should be structured as {1: n_concepts} or
-    {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"]}.
-
     Attributes:
         in_features (int): Number of input features.
-        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept
-            dimensions.
+        annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
     def __init__(
         self,
         in_features: int,
-        out_concept_dimensions: Dict[int, Union[int, List[str]]],
+        annotations: Union[List[str], int],
         activation: Callable = F.sigmoid,
+        *args,
+        **kwargs,
     ):
-        super().__init__(out_concept_dimensions)
-        self.scorer = ConceptLayer(in_features, out_concept_dimensions)
-        self.concept_names = self.scorer.concept_names
-        self.output_size = self.scorer.output_size
-        self.activation = activation
+        _check_annotations(annotations)
 
-    def forward(
+        if isinstance(annotations, int):
+            annotations = [annotations]
+
+        super().__init__(
+            in_features=in_features,
+            annotations=[annotations],
+        )
+        self.activation = activation
+        self.linear = torch.nn.Sequential(
+            torch.nn.Linear(
+                in_features,
+                self.output_size,
+                *args,
+                **kwargs,
+            ),
+            torch.nn.Unflatten(-1, self.shape()),
+        )
+
+    def predict(
         self,
-        x: ConceptTensor,
-        c_true: ConceptTensor = None,
-        intervention_idxs: ConceptTensor = None,
-        intervention_rate: float = 0.0,
-    ) -> Dict[str, ConceptTensor]:
+        x: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Forward pass of ConceptBottleneck.
+        Predict concept scores.
 
         Args:
             x (torch.Tensor): Input tensor.
-            c_true (ConceptTensor): Ground truth concepts.
-            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating
+
+        Returns:
+            torch.Tensor: Predicted concept scores.
+        """
+        c_emb = self.linear(x)
+        return self.activation(c_emb)
+
+    def intervene(
+        self,
+        x: torch.Tensor,
+        c_true: torch.Tensor = None,
+        intervention_idxs: torch.Tensor = None,
+        intervention_rate: float = 0.0,
+    ) -> torch.Tensor:
+        """
+        Intervene on concept scores.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            c_true (torch.Tensor): Ground truth concepts.
+            intervention_idxs (torch.Tensor): Boolean Tensor indicating
                 which concepts to intervene on.
             intervention_rate (float): Rate at which perform interventions.
 
         Returns:
-            Dict[ConceptTensor]: 'next': object to pass to the next layer,
-                'c_pred': concept scores with shape (batch_size, n_concepts),
-                'c_int': concept scores after interventions, 'emb': None.
+            torch.Tensor: Intervened concept scores.
         """
-        c_logit = self.scorer(x)
-        c_pred = ConceptTensor.concept(
-            self.activation(c_logit),
-            self.concept_names,
-        )
-        c_int = intervene(c_pred, c_true, intervention_idxs)
-        return dict(
-            next=c_int,
-            c_pred=c_pred,
-            c_int=c_int,
-            emb=None,
-        )
+        return intervene(x, c_true, intervention_idxs)
+
+    def transform(
+        self,
+        x: torch.Tensor,
+        *args,
+        **kwargs
+    ) -> Tuple[AnnotatedTensor, Dict]:
+        """
+        Transform input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
+                intermediate concepts tensors.
+        """
+        c_pred = c_int = self.predict(x)
+        if 'c_true' in kwargs:
+            c_int = self.intervene(c_pred, *args, **kwargs)
+        c_int = self.annotate(c_int)
+        c_pred = self.annotate(c_pred)
+        return c_int, dict(c_pred=c_pred, c_int=c_int)
 
 
-class ConceptResidualBottleneck(BaseBottleneck):
+class LinearConceptResidualBottleneck(LinearConceptBottleneck):
     """
     ConceptResidualBottleneck is a layer where a first set of neurons is aligned
     with supervised concepts and a second set of neurons is free to encode
@@ -121,151 +256,170 @@ class ConceptResidualBottleneck(BaseBottleneck):
     Main reference: `"Promises and Pitfalls of Black-Box Concept Learning
     Models" <https://arxiv.org/abs/2106.13314>`_
 
-    The concept dimension dictionary should be structured as {1: n_concepts} or
-    {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"]}.
-
     Attributes:
         in_features (int): Number of input features.
-        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept
-            dimensions.
-        residual_size (int): Size of residual embedding.
+        annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
     def __init__(
         self,
         in_features: int,
-        out_concept_dimensions: Dict[int, Union[int, List[str]]],
+        annotations: Union[List[str], int],
         residual_size: int,
         activation: Callable = F.sigmoid,
+        *args,
+        **kwargs,
     ):
-        super().__init__(out_concept_dimensions)
-        self.scorer = ConceptLayer(in_features, out_concept_dimensions)
-        self.concept_names = self.scorer.concept_names
-        self.output_size = self.scorer.output_size + residual_size
-        self.residual_size = residual_size
-        self.residual_embedder = torch.nn.Linear(
-            in_features,
-            residual_size,
+        super().__init__(
+            in_features=in_features,
+            annotations=annotations,
+            activation=activation,
+            *args,
+            **kwargs,
         )
-        self.activation = activation
+        self.residual = torch.nn.Sequential(
+            torch.nn.Linear(in_features, residual_size),
+            torch.nn.LeakyReLU()
+        )
+        self.annotations_extended = copy.deepcopy(self.annotations)
+        self.annotations_extended[0].extend([f"residual_{i}" for i in range(residual_size)])
+        self.annotator_extended = Annotate(self.annotations_extended, self.annotated_axes)
 
-    def forward(
+    def transform(
         self,
-        x: ConceptTensor,
-        c_true: ConceptTensor = None,
-        intervention_idxs: ConceptTensor = None,
-        intervention_rate: float = 0.0,
-    ) -> Dict[str, ConceptTensor]:
+        x: torch.Tensor,
+        *args,
+        **kwargs
+    ) -> Tuple[AnnotatedTensor, Dict]:
         """
-        Forward pass of ConceptResidualBottleneck.
+        Transform input tensor.
 
         Args:
             x (torch.Tensor): Input tensor.
-            c_true (ConceptTensor): Ground truth concepts.
-            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating
-                which concepts to intervene on.
-            intervention_rate (float): Rate at which perform interventions.
 
         Returns:
-            Dict[ConceptTensor]: 'next': object to pass to the next layer,
-                'c_pred': concept scores with shape (batch_size, n_concepts),
-                'c_int': concept scores after interventions, 'emb': residual
-                embedding.
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
+                intermediate concepts tensors.
         """
-        emb = self.residual_embedder(x)
-        c_logit = self.scorer(x)
-        c_pred = ConceptTensor.concept(
-            self.activation(c_logit),
-            self.concept_names,
-        )
-        c_int = intervene(c_pred, c_true, intervention_idxs)
-        return dict(
-            next=torch.hstack((c_pred, emb)),
-            c_pred=c_pred,
-            c_int=c_int,
-            emb=emb,
-        )
+        c_pred = c_int = self.predict(x)
+        emb = self.residual(x)
+        if 'c_true' in kwargs:
+            c_int = self.intervene(c_pred, *args, **kwargs)
+        c_int = self.annotate(c_int)
+        c_pred = self.annotate(c_pred)
+        c_new = torch.hstack((c_pred, emb))
+        c_new = self.annotator_extended(c_new)
+        return c_new, dict(c_pred=c_pred, c_int=c_int)
 
 
-class ConceptEmbeddingBottleneck(BaseBottleneck):
+class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
     """
     ConceptEmbeddingBottleneck creates supervised concept embeddings.
     Main reference: `"Concept Embedding Models: Beyond the
     Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
 
-    The concept dimension dictionary should be structured as
-    {1: n_concepts, 2: c_emb_size} or
-    {1: ["concept_1_0", "concept_1_1", ..., "concept_1_n_concepts"],
-    2: ["concept_2_0", "concept_2_1", ..., "concept_2_c_emb_size"]}.
-
     Attributes:
         in_features (int): Number of input features.
-        out_concept_dimensions (Dict[int, Union[int, List[str]]]): Concept
-            dimensions.
+        annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
     def __init__(
         self,
         in_features: int,
-        out_concept_dimensions: Dict[int, Union[int, List[str]]],
+        annotations: Union[List[str], int],
+        embedding_size: int,
         activation: Callable = F.sigmoid,
+        *args,
+        **kwargs,
     ):
-        super().__init__(out_concept_dimensions)
-        self.encoder = ConceptLayer(
-            in_features=in_features,
-            out_concept_dimensions=out_concept_dimensions,
-        )
-        self.scorer_in_size = (
-            out_concept_dimensions[2]
-            if isinstance(out_concept_dimensions[2], int)
-            else len(out_concept_dimensions[2])
-        )
-        self.scorer = ConceptLayer(
-            in_features=self.scorer_in_size,
-            out_concept_dimensions={1: out_concept_dimensions[1]},
-            reduce_dim=2,
-        )
-        self.activation = activation
-        self.concept_names = self.scorer.concept_names
+        _check_annotations(annotations)
+        annotations = [annotations, embedding_size]
+        n_concepts = len(annotations[0]) if isinstance(annotations[0], list) else annotations[0]
 
-    def forward(
+        super().__init__(
+            in_features=in_features,
+            annotations=annotations,
+        )
+
+        self._shape = [n_concepts, embedding_size * 2]
+        self.output_size = np.prod(self.shape())
+
+        self.activation = activation
+        self.linear = torch.nn.Sequential(
+            torch.nn.Linear(
+                in_features,
+                self.output_size,
+                *args,
+                **kwargs,
+            ),
+            torch.nn.Unflatten(-1, self.shape()),
+            torch.nn.LeakyReLU(),
+        )
+        self.concept_score_bottleneck = torch.nn.Sequential(
+            torch.nn.Linear(self.shape()[-1], 1),
+            torch.nn.Flatten(),
+        )
+
+    def predict(
         self,
-        x: ConceptTensor,
-        c_true: ConceptTensor = None,
-        intervention_idxs: ConceptTensor = None,
-        intervention_rate: float = 0.0,
-    ) -> Dict[str, ConceptTensor]:
+        x: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Forward pass of ConceptEmbeddingBottleneck.
+        Predict concept scores.
 
         Args:
             x (torch.Tensor): Input tensor.
-            c_true (ConceptTensor): Ground truth concepts.
-            intervention_idxs (ConceptTensor): Boolean ConceptTensor indicating
+
+        Returns:
+            torch.Tensor: Predicted concept scores.
+        """
+        c_emb = self.linear(x)
+        return self.activation(self.concept_score_bottleneck(c_emb))
+
+    def intervene(
+        self,
+        x: torch.Tensor,
+        c_true: torch.Tensor = None,
+        intervention_idxs: torch.Tensor = None,
+        intervention_rate: float = 0.0,
+    ) -> torch.Tensor:
+        """
+        Intervene on concept scores.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            c_true (torch.Tensor): Ground truth concepts.
+            intervention_idxs (torch.Tensor): Boolean Tensor indicating
                 which concepts to intervene on.
             intervention_rate (float): Rate at which perform interventions.
 
         Returns:
-            Dict[ConceptTensor]: 'next': object to pass to the next layer,
-                'c_pred': concept scores with shape (batch_size, n_concepts),
-                'c_int': concept scores after interventions, 'emb': residual
-                embedding.
+            torch.Tensor: Intervened concept scores.
         """
-        c_emb = self.encoder(x)
-        c_logit = self.scorer(c_emb)
-        c_pred = ConceptTensor.concept(
-            self.activation(c_logit),
-            self.concept_names,
-        )
-        c_int = c_pred.clone()
-        if c_true is not None:
-            c_int = intervene(c_pred, c_true, intervention_idxs)
+        return intervene(x, c_true, intervention_idxs)
 
+    def transform(
+        self,
+        x: torch.Tensor,
+        *args,
+        **kwargs
+    ) -> Tuple[AnnotatedTensor, Dict]:
+        """
+        Transform input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
+                intermediate concepts tensors.
+        """
+        c_emb = self.linear(x)
+        c_pred = c_int = self.activation(self.concept_score_bottleneck(c_emb))
+        if 'c_true' in kwargs:
+            c_int = self.intervene(c_pred, *args, **kwargs)
         c_mix = concept_embedding_mixture(c_emb, c_int)
-        return dict(next=c_mix,
-            c_pred=c_pred,
-            c_int=c_int,
-            emb=None,
-            context=c_emb,
-        )
-
+        c_mix = self.annotate(c_mix)
+        c_int = self.annotate(c_int)
+        c_pred = self.annotate(c_pred)
+        return c_mix, dict(c_pred=c_pred, c_int=c_int)

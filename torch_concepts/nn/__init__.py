@@ -1,13 +1,11 @@
 from .base import (
-    BaseConceptLayer,
-    ConceptLayer,
-    ConceptMemory,
-    ProbabilisticConceptLayer,
+    Annotate,
+    LinearConceptLayer,
 )
 from .bottleneck import (
-    BaseBottleneck,
-    ConceptBottleneck,
-    ConceptResidualBottleneck,
+    BaseConceptBottleneck,
+    LinearConceptBottleneck,
+    LinearConceptResidualBottleneck,
     ConceptEmbeddingBottleneck,
 )
 from .functional import (
@@ -20,18 +18,15 @@ from .functional import (
     logic_memory_reconstruction,
     selective_calibration,
 )
-from .encode import InputImgEncoder
 
 
 __all__ = [
-    "BaseConceptLayer",
-    "ConceptLayer",
-    "ProbabilisticConceptLayer",
-    "ConceptMemory",
+    "Annotate",
+    "LinearConceptLayer",
 
-    "BaseBottleneck",
-    "ConceptBottleneck",
-    "ConceptResidualBottleneck",
+    "BaseConceptBottleneck",
+    "LinearConceptBottleneck",
+    "LinearConceptResidualBottleneck",
     "ConceptEmbeddingBottleneck",
 
     "intervene",
@@ -44,6 +39,4 @@ __all__ = [
 
     "confidence_selection",
     "selective_calibration",
-
-    "InputImgEncoder",
 ]
