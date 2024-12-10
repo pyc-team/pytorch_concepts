@@ -16,6 +16,21 @@ from torch.utils.data import Dataset
 from .traffic_construction.cars import AVAILABLE_CAR_COLORS
 from .traffic_construction.generate_data import construct_samples, fix_seeds
 
+STANDARD_CONCEPT_NAMES = [
+    'green x-axis',
+    'green y-axis',
+    'ambulance seen',
+    'car in intersection',
+    'other cars visible',
+    'selected car in north lanes',
+    'selected car in east lanes',
+    'selected car in south lanes',
+    'selected car in west lanes',
+    'green light on selected lane',
+    'car in intersection perpendicular to selected car',
+    'ambulance approaching perpendicular to selected car',
+]
+
 class TrafficLights(Dataset):
     """
     Synthetic traffic dataset
@@ -28,7 +43,6 @@ class TrafficLights(Dataset):
         concept_transform=None,
         class_dtype=float,
         img_transform=None,
-        verbose_generation=True,
         regenerate=False,
         sym_link=None,
         use_absolute_path=False,
@@ -51,7 +65,7 @@ class TrafficLights(Dataset):
             'south',
             'west',
         ],
-        thickness=15,
+        thickness=100,
         light_scale=1.5,
         use_lights_sprites=False,
         train_ratio=0.6,
@@ -62,6 +76,7 @@ class TrafficLights(Dataset):
             error_probability=0.5,
         ),
         val_config_override_values=None,
+        selected_concepts=None,
     ):
         self.n_samples = n_samples
         self.train_ratio = train_ratio
@@ -88,13 +103,24 @@ class TrafficLights(Dataset):
             val_ratio=val_ratio,
             test_ratio=test_ratio,
         )
+
+        # Standarize concept names in case they were provided
+        if selected_concepts is not None:
+            selected_concepts = selected_concepts[:]
+            for idx, concept_name in enumerate(selected_concepts):
+                if isinstance(concept_name, str):
+                    selected_concepts[idx] = STANDARD_CONCEPT_NAMES.index(
+                        concept_name
+                    )
+        self.selected_concepts = selected_concepts
+
         # Generate a hash for the config so that we can determine if this dataset
         # has been previously generated
         self.root_dir = root_dir
         if not os.path.exists(self.root_dir):
             logging.warning(
-                "Root directory '{self.root_dir}' TrafficLights does not "
-                "exist. We will generate it and dump the new dataset in there."
+                f"Root directory '{self.root_dir}' TrafficLights does not "
+                f"exist. We will generate it and dump the new dataset in there."
             )
             os.makedirs(self.root_dir)
 
@@ -108,56 +134,43 @@ class TrafficLights(Dataset):
         os.makedirs(self.real_data_dir, exist_ok=True)
 
         # Generate the dataset, if needed
+        self.records_dir =  os.path.join(
+            self.real_data_dir,
+            f'records/',
+        )
+        os.makedirs(self.records_dir, exist_ok=True)
         self._construct_dataset(
             train_config,
             num_threads=num_threads,
             test_config_override_values=test_config_override_values,
             val_config_override_values=val_config_override_values,
             use_absolute_path=use_absolute_path,
-            verbose=verbose_generation,
             regenerate=regenerate,
         )
 
         # At this point, we can assume that the dataset has been fully generated!
         self.split = split
-        self.records_dir =  os.path.join(
-            self.real_data_dir,
-            f'records/',
-        )
-        os.makedirs(self.records_dir, exist_ok=True)
+
 
         assert split in ['train', 'test', 'val']
 
-        self.concept_names = [
-            'green x-axis',
-            'green y-axis',
-            'ambulance seen',
-            'car in intersection',
-            'other cars visible',
-            'selected car in north lanes',
-            'selected car in east lanes',
-            'selected car in south lanes',
-            'selected car in west lanes',
-            'green light on selected lane',
-            'car in intersection perpendicular to selected car',
-            'ambulance approaching perpendicular to selected car',
-        ]
+        self.concept_names = STANDARD_CONCEPT_NAMES
+        if self.selected_concepts is not None:
+            self.concept_names = list(
+                np.array(self.concept_names)[self.selected_concepts]
+            )
         self.task_names = ['continue']
 
         self.class_dtype = class_dtype
-        if concept_transform is None:
-            concept_transform = lambda x: x
         self.concept_transform = concept_transform
-
 
         self.split_array_map = np.load(
             os.path.join(self.real_data_dir, f'{split}_indices.npy')
         )
 
-        self.transform = (
-            img_transform if img_transform is not None
-            else lambda x: x
-        )
+        self.transform = img_transform
+        img, _, _, _, _ = self[0]
+        self.input_shape = tuple(img.shape)
 
     def _construct_dataset(
         self,
@@ -166,7 +179,6 @@ class TrafficLights(Dataset):
         test_config_override_values=None,
         val_config_override_values=None,
         use_absolute_path=False,
-        verbose=True,
         regenerate=False,
     ):
         if os.path.exists(
@@ -174,16 +186,15 @@ class TrafficLights(Dataset):
         ) and (
             not regenerate
         ):
-            if verbose:
-                logging.info(
-                    'We found a dataset previously generated with the same '
-                    'config that has been cached.'
-                )
-                logging.info(
-                    '\tIf you wish to re-generate it, please use '
-                    'regenerate=True.'
-                )
-                return
+            logging.info(
+                'We found a dataset previously generated with the same '
+                'config that has been cached.'
+            )
+            logging.info(
+                '\tIf you wish to re-generate it, please use '
+                'regenerate=True.'
+            )
+            return
 
         ## Fix Random Seeds
         fix_seeds(config.get('seed', self.seed))
@@ -230,7 +241,6 @@ class TrafficLights(Dataset):
             indices=train_indices,
             dataset_name="training",
             num_threads=num_threads,
-            verbose=True,
         )
 
         val_config = copy.deepcopy(config)
@@ -246,7 +256,6 @@ class TrafficLights(Dataset):
             indices=val_indices,
             dataset_name="validation",
             num_threads=num_threads,
-            verbose=True,
         )
 
         test_config = copy.deepcopy(config)
@@ -262,7 +271,6 @@ class TrafficLights(Dataset):
             indices=test_indices,
             dataset_name="test",
             num_threads=num_threads,
-            verbose=True,
         )
 
         # And mark the dataset as complete
@@ -325,7 +333,11 @@ class TrafficLights(Dataset):
             float(sample_meta['perp_incoming_ambulance']), # [11]
 
         ])
-        return self.concept_transform(torch.FloatTensor(c))
+        if self.selected_concepts is not None:
+            c = c[self.selected_concepts]
+        if self.concept_transform is not None:
+            return self.concept_transform(torch.FloatTensor(c))
+        return torch.FloatTensor(c)
 
     def _from_meta_to_label(self, sample_meta):
         y = self.class_dtype(sample_meta['action'] == 'continue')
@@ -347,7 +359,8 @@ class TrafficLights(Dataset):
             #       [0, 1]
             np.transpose(img, [2, 0, 1])
         )
-        img = self.transform(img)
+        if self.transform is not None:
+            img = self.transform(img)
         return img, metadata
 
     def __len__(self):
@@ -358,10 +371,13 @@ class TrafficLights(Dataset):
         img, sample_meta = self.sample_array(real_idx)
         y = self._from_meta_to_label(sample_meta)
         c = self._from_meta_to_concepts(sample_meta)
+        c_names = self.concept_names
+        if self.concept_transform is not None:
+            c_names = self.concept_transform(c_names)
         return (
             img,
             y,
             c,
-            self.concept_transform(self.concept_names),
+            c_names,
             self.task_names,
         )

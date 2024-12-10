@@ -77,10 +77,10 @@ def extend_with_global_params(config, global_params):
     return config
 
 def fix_seeds(seed):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -132,7 +132,7 @@ def make_intersection_sample(
     cars=CAR_SPRITES,
     available_lanes=AVAILABLE_LANES,
     possible_starting_directions=None,
-    thickness=15,
+    thickness=100,
     inplace=True,
     light_scale=1.5,
     ambulance_sprite=AMBULANCE,
@@ -171,6 +171,7 @@ def make_intersection_sample(
     sample_meta['selected_car'] = selected_car
 
     # Clearly highlight the selected sample!
+    thickness = int(np.ceil(thickness * resize_final_image))
     cross_car = utils.highlight_edges(selected_car['img'], thickness=thickness)
     selected_lane = crossing_lanes[cross_idx]
     cross_lane, cross_rot, cross_x_off, cross_y_off = \
@@ -552,10 +553,10 @@ def construct_samples(
     if num_threads > 1:
         if verbose:
             print(
-                f"Using {args.num_threads} threads to generate a "
+                f"Using {num_threads} threads to generate a "
                 f"{dataset_name} dataset with {len(indices)} samples..."
             )
-        with ProcessPoolExecutor(max_workers=args.num_threads) as executor:
+        with ProcessPoolExecutor(max_workers=num_threads) as executor:
             list(tqdm(
                 executor.map(
                     create_sample,
@@ -650,7 +651,7 @@ def parse_args():
     parser.add_argument(
         "--thickness",
         type=int,
-        default=50,
+        default=100,
         help="Thickness of marker edge for the target car",
     )
     parser.add_argument(

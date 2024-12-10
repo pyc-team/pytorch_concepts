@@ -168,7 +168,7 @@ def add_light_x_axis(
         color=color,
         inplace=inplace,
         vector_angle=0,
-        thickness=int(thickness * ratio),
+        thickness=max(1, int(thickness * ratio)),
     )
 
     x_offset, y_offset = _RIGHT_TOP_CORNER
@@ -185,7 +185,7 @@ def add_light_x_axis(
         color=color,
         inplace=inplace,
         vector_angle=180,
-        thickness=int(thickness * ratio),
+        thickness=max(1, int(thickness * ratio)),
     )
     return img
 
@@ -271,7 +271,7 @@ def add_light_y_axis(
         color=color,
         inplace=inplace,
         vector_angle=270,
-        thickness=int(thickness * ratio),
+        thickness=max(1, int(thickness * ratio)),
     )
 
     x_offset, y_offset = _RIGHT_BOTTOM_CORNER
@@ -288,6 +288,6 @@ def add_light_y_axis(
         color=color,
         inplace=inplace,
         vector_angle=90,
-        thickness=int(thickness * ratio),
+        thickness=max(1, int(thickness * ratio)),
     )
     return img

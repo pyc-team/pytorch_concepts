@@ -22,6 +22,7 @@ INSTALL_REQUIRES = [
     'numpy',
     'opencv-python',
     'pandas',
+    'Pillow==9.5.0',
     'scikit-learn',
     'scipy',
     'torch',
