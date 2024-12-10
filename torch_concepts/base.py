@@ -124,8 +124,8 @@ class AnnotatedTensor(torch.Tensor):
                     f"tensor with shape {tensor.shape}."
                 )
 
-        # Finally make it so that all dimensions are provied with annotations (empty)
-        # for those dimensions whose annotations we were not provided
+        # Finally make it so that all dimensions are provied with annotations
+        # (empty) for those dimensions whose annotations we were not provided
         if annotated_axis == []:
             annotations = [[] for _ in tensor.shape]
         else:
@@ -284,7 +284,7 @@ class AnnotatedTensor(torch.Tensor):
             raise ValueError(
                 "Annotations names are not set for this AnnotatedTensor."
             )
-        if target_axis is not None:
+        if target_axis is None:
             # Then we take this to be the last annotated axis
             annotated_dims = self.annotated_axis()
             if len(annotated_dims) == 0:
@@ -304,7 +304,9 @@ class AnnotatedTensor(torch.Tensor):
                         f"annotations {self.annotations[target_axis]} of "
                         f"axis {target_axis} in AnnotatedTensor."
                     )
-                indices.append(self.annotations[target_axis].index(annotation_name))
+                indices.append(
+                    self.annotations[target_axis].index(annotation_name)
+                )
             else:
                 # Else this is a numerical index
                 indices.append(annotation_name)
@@ -319,7 +321,8 @@ class AnnotatedTensor(torch.Tensor):
         ]
         # replace None with empty list
         new_annotations = [
-            annotation for annotation in new_annotations if annotation is not None
+            annotation for annotation in new_annotations
+            if annotation is not None
         ]
 
         return AnnotatedTensor(
@@ -343,7 +346,8 @@ class AnnotatedTensor(torch.Tensor):
         new_tensor = super().new_empty(*shape, device=self.device)
 
         new_annotations = [
-            annotation for annotation in self.annotations if annotation is not None
+            annotation for annotation in self.annotations
+            if annotation is not None
         ]
         return AnnotatedTensor(
             new_tensor,
@@ -464,8 +468,12 @@ class AnnotatedTensor(torch.Tensor):
 
         sliced_tensor.annotations = []
         for axis, idx in enumerate(range(len(self.annotations))):
-            if idx < len(key) and self.annotations[axis] is not None and len(self.annotations[axis]):
-                sliced_tensor.annotations.append(self.annotations[axis].__getitem__(key[idx]))
+            if (idx < len(key) and self.annotations[axis] is not None) and (
+                len(self.annotations[axis])
+            ):
+                sliced_tensor.annotations.append(
+                    self.annotations[axis].__getitem__(key[idx])
+                )
             else:
                 sliced_tensor.annotations.append(None)
 

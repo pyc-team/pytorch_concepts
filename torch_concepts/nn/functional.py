@@ -24,7 +24,8 @@ def intervene(
     Args:
         c_pred (Tensor): Predicted concepts.
         c_true (Tensor): Ground truth concepts.
-        indexes (Tensor): Boolean Tensor indicating which concepts to intervene on.
+        indexes (Tensor): Boolean Tensor indicating which concepts to intervene
+            on.
 
     Returns:
         Tensor: Intervened concepts.
@@ -169,14 +170,6 @@ def logic_memory_eval(
             (batch_size, n_tasks, memory_size) and concept reconstructions with
             shape (batch_size, n_tasks, memory_size, n_concepts).
     """
-    # c_pred = (
-    #     c_pred.to_standard_tensor()
-    #     if isinstance(c_pred, AnnotatedTensor) else c_pred
-    # )
-    # concept_weights = (
-    #     concept_weights.to_standard_tensor()
-    #     if isinstance(concept_weights, AnnotatedTensor) else concept_weights
-    # )
 
     memory_size = concept_weights.size(0)
     n_tasks = concept_weights.size(2)

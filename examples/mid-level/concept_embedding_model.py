@@ -13,15 +13,27 @@ def main():
     n_samples = 1000
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    x_train, c_train, y_train, concept_names, task_names = (
+        data.data,
+        data.concept_labels,
+        data.target_labels,
+        data.concept_attr_names,
+        data.task_attr_names,
+    )
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
     intervention_indexes = torch.ones_like(c_train).bool()
 
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    concept_emb_bottleneck = LinearConceptLayer(latent_dims, [concept_names, concept_emb_size])
+    encoder = torch.nn.Sequential(
+        torch.nn.Linear(n_features, latent_dims),
+        torch.nn.LeakyReLU(),
+    )
+    concept_emb_bottleneck = LinearConceptLayer(
+        latent_dims,
+        [concept_names, concept_emb_size],
+    )
     concept_score_bottleneck = torch.nn.Sequential(
         torch.nn.Linear(concept_emb_size, 1),
         torch.nn.Flatten(),
@@ -33,7 +45,12 @@ def main():
         torch.nn.LeakyReLU(),
         LinearConceptLayer(latent_dims, [task_names]),
     )
-    model = torch.nn.Sequential(encoder, concept_emb_bottleneck, concept_score_bottleneck, y_predictor)
+    model = torch.nn.Sequential(
+        encoder,
+        concept_emb_bottleneck,
+        concept_score_bottleneck,
+        y_predictor,
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()

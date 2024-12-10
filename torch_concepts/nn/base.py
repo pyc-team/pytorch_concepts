@@ -1,24 +1,48 @@
-from abc import ABC, abstractmethod
-
-import torch
 import numpy as np
+import torch
 
+from abc import ABC, abstractmethod
 from typing import List, Union, Dict, Tuple
 
 from torch_concepts.base import AnnotatedTensor
 
 
+def _standarize_annotations(
+    annotations: Union[List[Union[List[str], int]], List[str], int]
+) -> List[Union[List[str], int]]:
+    """
+    Helper function to standarize the annotations arguments so that we can
+    support singleton arguments (e.g., a single axis is being annotated), as
+    well as axis-specific annotations.
+    """
+    if annotations is None:
+        return None
+
+    if isinstance(annotations, int):
+        # Then this is a singleton annotation. We will wrap it up to
+        # standarize on always using lists
+        annotations = [annotations]
+    elif isinstance(annotations, list) and len(annotations) and (
+        isinstance(annotations[0], str)
+    ):
+        # Then this is a singleton annotation with named dimensions. We will
+        # wrap it up to standarize on always using lists
+        annotations = [annotations]
+    return annotations
+
 class Annotate(torch.nn.Module):
     """
     Annotate is a class for annotation layers.
-    The output objects are annotated tensors with the same shape of the input tensors.
+    The output objects are annotated tensors with the same shape of the input
+    tensors.
     """
     def __init__(
         self,
-        annotations: Union[List[List[str]], List[str]] = None,
+        annotations: Union[List[Union[List[str], int]], List[str], int] = None,
         annotated_axis: Union[List[int], int] = None,
     ):
         super().__init__()
+        annotations = _standarize_annotations(annotations)
         self.annotated_axis = annotated_axis
         self.annotations = annotations
 
@@ -42,17 +66,18 @@ class LinearConceptLayer(torch.nn.Module):
     def __init__(
         self,
         in_features: int,
-        annotations: List[Union[List[str], int]],
+        out_annotations: Union[List[Union[List[str], int]], List[str], int],
         *args,
         **kwargs,
     ):
         super().__init__()
         self.in_features = in_features
+        out_annotations = _standarize_annotations(out_annotations)
 
         self.annotations = []
         shape = []
         self.annotated_axes = []
-        for dim, annotation in enumerate(annotations):
+        for dim, annotation in enumerate(out_annotations):
             if isinstance(annotation, int):
                 self.annotations.append([])
                 shape.append(annotation)

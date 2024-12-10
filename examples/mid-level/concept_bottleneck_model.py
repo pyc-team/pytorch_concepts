@@ -11,7 +11,13 @@ def main():
     n_samples = 1000
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    x_train, c_train, y_train, concept_names, task_names = (
+        data.data,
+        data.concept_labels,
+        data.target_labels,
+        data.concept_attr_names,
+        data.task_attr_names,
+    )
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]

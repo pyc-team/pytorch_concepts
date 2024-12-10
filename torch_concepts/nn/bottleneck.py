@@ -237,8 +237,8 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
             x (torch.Tensor): Input tensor.
 
         Returns:
-            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
-                intermediate concepts tensors.
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and
+                dictionary with intermediate concepts tensors.
         """
         c_pred = c_int = self.predict(x)
         if 'c_true' in kwargs:
@@ -282,8 +282,13 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
             torch.nn.LeakyReLU()
         )
         self.annotations_extended = copy.deepcopy(self.annotations)
-        self.annotations_extended[0].extend([f"residual_{i}" for i in range(residual_size)])
-        self.annotator_extended = Annotate(self.annotations_extended, self.annotated_axes)
+        self.annotations_extended[0].extend(
+            [f"residual_{i}" for i in range(residual_size)]
+        )
+        self.annotator_extended = Annotate(
+            self.annotations_extended,
+            self.annotated_axes,
+        )
 
     def transform(
         self,
@@ -298,8 +303,8 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
             x (torch.Tensor): Input tensor.
 
         Returns:
-            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
-                intermediate concepts tensors.
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and
+                dictionary with intermediate concepts tensors.
         """
         c_pred = c_int = self.predict(x)
         emb = self.residual(x)
@@ -334,7 +339,10 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
     ):
         _check_annotations(annotations)
         annotations = [annotations, embedding_size]
-        n_concepts = len(annotations[0]) if isinstance(annotations[0], list) else annotations[0]
+        n_concepts = (
+            len(annotations[0]) if isinstance(annotations[0], list)
+            else annotations[0]
+        )
 
         super().__init__(
             in_features=in_features,
@@ -411,8 +419,8 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
             x (torch.Tensor): Input tensor.
 
         Returns:
-            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and dictionary with
-                intermediate concepts tensors.
+            Tuple[AnnotatedTensor, Dict]: Transformed AnnotatedTensor and
+                dictionary with intermediate concepts tensors.
         """
         c_emb = self.linear(x)
         c_pred = c_int = self.activation(self.concept_score_bottleneck(c_emb))
