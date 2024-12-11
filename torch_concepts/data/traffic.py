@@ -71,10 +71,7 @@ class TrafficLights(Dataset):
         train_ratio=0.6,
         val_ratio=0.2,
         test_ratio=0.2,
-        test_config_override_values=dict(
-            p_ambulance=0.5,
-            error_probability=0.5,
-        ),
+        test_config_override_values=None,
         val_config_override_values=None,
         selected_concepts=None,
     ):
