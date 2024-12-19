@@ -131,23 +131,89 @@ def selection_eval(
     return result
 
 
+def linear_equation_eval(
+    concept_weights: torch.Tensor,
+    c_pred: torch.Tensor,
+    bias: torch.Tensor = None,
+) -> torch.Tensor:
+    """
+    Function to evaluate a set of linear equations with concept predictions.
+    In this case we have one equation (concept_weights) for each sample in the batch.
+
+    Args:
+        concept_weights: Parameters representing the weights of multiple
+            linear models with shape (batch_size, n_concepts, n_classes).
+        c_pred: Concept predictions with shape (batch_size, n_concepts).
+        bias: Bias term to add to the linear models.
+
+    Returns:
+        Tensor: Predictions made by the linear models with shape (batch_size,
+            n_classes).
+    """
+    assert concept_weights.shape[1] == c_pred.shape[1]
+    assert bias.shape[1] == concept_weights.shape[2]
+    y_pred = torch.einsum('bcy,bc->by', concept_weights, c_pred)
+    if bias is not None:
+        y_pred += bias
+    return y_pred
+
+
 def linear_memory_eval(
+        concept_weights: torch.Tensor,
+        c_pred: torch.Tensor,
+        bias: torch.Tensor = None,
+) -> torch.Tensor:
+    """
+    Function to evaluate a memory of linear equations with concept predictions.
+    The number of equation correspond to the memory size, and it is
+    not the same as the number of sample in the batch here.
+
+    Args:
+        concept_weights: parameters representing the weights of multiple linear
+            models with shape (memory_size, n_concepts, n_classes)
+        c_pred: concept predictions with shape (batch_size, n_concepts).
+        bias: Bias term to add to the linear models (memory_size, n_classes).
+    Returns:
+        Tensor: Predictions made by the linear models with shape (batch_size,
+                n_classes, memory_size)
+    """
+    assert concept_weights.shape[0] == bias.shape[0] and concept_weights.shape[2] == bias.shape[1]
+    assert c_pred.shape[1] == concept_weights.shape[1]
+    y_pred = torch.einsum('mcy,bc->bym', concept_weights, c_pred)
+    if bias is not None:
+        y_pred += bias
+    return y_pred
+
+def logic_rule_eval(
     concept_weights: torch.Tensor,
     c_pred: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Use concept weights to make predictions.
+    Use concept weights to make predictions based on logic rules. In this case we
+    have that the concept weights are the parameters of the logic rules. Also, we
+    have one rule for each sample in the batch.
 
     Args:
-        concept_weights: parameters representing the weights of multiple linear
-            models with shape (memory_size, n_concepts, n_classes, 1).
+        concept_weights: concept weights with shape (batch_size, n_concepts, n_tasks, n_roles)
+            with n_roles=3.
         c_pred: concept predictions with shape (batch_size, n_concepts).
 
     Returns:
-        Tensor: Predictions made by the linear models with shape (batch_size,
-            n_classes, memory_size).
+        torch.Tensor: Rule predictions with shape (batch_size, n_tasks).
     """
-    return torch.einsum('mcys,bc->bym', concept_weights, c_pred)
+    pos_polarity, neg_polarity, irrelevance = (
+        concept_weights[..., 0],
+        concept_weights[..., 1],
+        concept_weights[..., 2],
+    )
+    x = c_pred.unsqueeze(-1)
+    # batch_size, n_tasks
+    y_per_rule = (
+        irrelevance + (1 - x) * neg_polarity + x * pos_polarity
+    ).prod(dim=1)
+
+    c_rec_per_classifier = 0.5 * irrelevance + pos_polarity
+    return y_per_rule, c_rec_per_classifier
 
 
 def logic_memory_eval(
@@ -190,7 +256,7 @@ def logic_memory_eval(
         pos_polarity = pos_polarity.unsqueeze(0).expand(x.size(0), -1, -1, -1)
         neg_polarity = neg_polarity.unsqueeze(0).expand(x.size(0), -1, -1, -1)
         irrelevance = irrelevance.unsqueeze(0).expand(x.size(0), -1, -1, -1)
-    else:  # cast all to (batch_size, n_tasks, 1, n_concepts)
+    else:  # cast all to (batch_size, n_tasks, 1, n_concepts) # TODO: check
         x = c_pred.unsqueeze(1).unsqueeze(-1).expand(-1, 1, -1, n_tasks)
 
     # TODO: incorporate t-norms?
@@ -330,3 +396,4 @@ def confidence_selection(
         Tensor: mask selecting confident predictions.
     """
     return torch.where(c_confidence > theta, True, False)
+
