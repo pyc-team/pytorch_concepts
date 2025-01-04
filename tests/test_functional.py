@@ -53,6 +53,28 @@ class TestConceptFunctions(unittest.TestCase):
         result = CF.confidence_selection(self.c_confidence, theta)
         self.assertEqual(torch.all(result == expected_result).item(), True)
 
+    def test_linear_eq_eval(self):
+        c_imp = torch.tensor([[
+            [-1.2225],
+            [ 2.4864]
+        ],
+            [[-1.4750],
+             [-4.6783]]
+        ])
+        c_pred = torch.tensor([
+            [-12.0959,  65.5273],
+            [ 25.7822,  14.1576]
+        ])
+        y_bias = torch.tensor([
+            [ -1.1082],
+            [-15.6084]
+        ])
+        expected_result = torch.tensor([[True],
+            [False]]
+        )
+        result = CF.linear_equation_eval(c_imp, c_pred, y_bias) > 0
+        self.assertEqual(torch.all(result == expected_result).item(), True)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,11 +7,11 @@ from typing import List, Union, Dict, Tuple
 from torch_concepts.base import AnnotatedTensor
 
 
-def _standarize_annotations(
+def _standardize_annotations(
     annotations: Union[List[Union[List[str], int]], List[str], int]
 ) -> List[Union[List[str], int]]:
     """
-    Helper function to standarize the annotations arguments so that we can
+    Helper function to standardize the annotations arguments so that we can
     support singleton arguments (e.g., a single axis is being annotated), as
     well as axis-specific annotations.
     """
@@ -20,13 +20,13 @@ def _standarize_annotations(
 
     if isinstance(annotations, int):
         # Then this is a singleton annotation. We will wrap it up to
-        # standarize on always using lists
+        # standardize on always using lists
         annotations = [annotations]
     elif isinstance(annotations, list) and len(annotations) and (
         isinstance(annotations[0], str)
     ):
         # Then this is a singleton annotation with named dimensions. We will
-        # wrap it up to standarize on always using lists
+        # wrap it up to standardize on always using lists
         annotations = [annotations]
     return annotations
 
@@ -42,7 +42,7 @@ class Annotate(torch.nn.Module):
         annotated_axis: Union[List[int], int] = None,
     ):
         super().__init__()
-        annotations = _standarize_annotations(annotations)
+        annotations = _standardize_annotations(annotations)
         self.annotated_axis = annotated_axis
         self.annotations = annotations
 
@@ -72,7 +72,7 @@ class LinearConceptLayer(torch.nn.Module):
     ):
         super().__init__()
         self.in_features = in_features
-        out_annotations = _standarize_annotations(out_annotations)
+        out_annotations = _standardize_annotations(out_annotations)
 
         self.annotations = []
         shape = []

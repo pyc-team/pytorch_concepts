@@ -8,18 +8,18 @@ class TestAnnotatedTensor(unittest.TestCase):
         self.data = torch.randn(5, 4)
         self.annotations = ["annotation_a", "annotation_b", "annotation_c", "annotation_d"]
 
-    def test_standarize_arguments(self):
-        annotations = AnnotatedTensor._standarize_arguments(tensor=self.data, annotations=self.annotations, annotated_axis=1)
+    def test_standardize_arguments(self):
+        annotations = AnnotatedTensor._standardize_arguments(tensor=self.data, annotations=self.annotations, annotated_axis=1)
         self.assertEqual(annotations, [[], self.annotations])
 
-        annotations = AnnotatedTensor._standarize_arguments(tensor=self.data, annotations=self.annotations, annotated_axis=0)
+        annotations = AnnotatedTensor._standardize_arguments(tensor=self.data, annotations=self.annotations, annotated_axis=0)
         self.assertEqual(annotations, [self.annotations, []])
 
         first_dim_annotations = ["annotation_0", "annotation_1", "annotation_2", "annotation_3", "annotation_4"]
-        annotations = AnnotatedTensor._standarize_arguments(tensor=self.data, annotations=[first_dim_annotations, self.annotations], annotated_axis=[0, 1])
+        annotations = AnnotatedTensor._standardize_arguments(tensor=self.data, annotations=[first_dim_annotations, self.annotations], annotated_axis=[0, 1])
         self.assertEqual(annotations, [first_dim_annotations, self.annotations])
 
-        annotations = AnnotatedTensor._standarize_arguments(tensor=self.data, annotations=None, annotated_axis=None)
+        annotations = AnnotatedTensor._standardize_arguments(tensor=self.data, annotations=None, annotated_axis=None)
         self.assertEqual(annotations, [[], []])
 
     def test_check_annotations(self):

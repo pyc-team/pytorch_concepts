@@ -60,7 +60,7 @@ class AnnotatedTensor(torch.Tensor):
         ]
 
     @staticmethod
-    def _standarize_arguments(
+    def _standardize_arguments(
         tensor: torch.Tensor,
         annotations: Union[List[List[str]], List[str]] = None,
         annotated_axis: Union[List[int], int] = None,
@@ -142,8 +142,8 @@ class AnnotatedTensor(torch.Tensor):
         annotated_axis: Union[List[int], int] = None,
     ) -> Tuple[List[List[str]], List[int]]:
 
-        # First standarize the arguments
-        annotations = AnnotatedTensor._standarize_arguments(
+        # First standardize the arguments
+        annotations = AnnotatedTensor._standardize_arguments(
             tensor=tensor,
             annotations=annotations,
             annotated_axis=annotated_axis,

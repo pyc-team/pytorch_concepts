@@ -101,7 +101,7 @@ class TrafficLights(Dataset):
             test_ratio=test_ratio,
         )
 
-        # Standarize concept names in case they were provided
+        # standardize concept names in case they were provided
         if selected_concepts is not None:
             selected_concepts = selected_concepts[:]
             for idx, concept_name in enumerate(selected_concepts):
