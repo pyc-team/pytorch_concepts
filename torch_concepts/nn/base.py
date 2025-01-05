@@ -60,7 +60,7 @@ class Annotate(torch.nn.Module):
 class LinearConceptLayer(torch.nn.Module):
     """
     LinearConceptLayer is a class which first applies a linear
-        tranformation to the input tensor, then it reshapes and
+        transformation to the input tensor, then it reshapes and
         annotates the output tensor.
     """
     def __init__(
