@@ -177,12 +177,15 @@ def linear_memory_eval(
         Tensor: Predictions made by the linear models with shape (batch_size,
                 n_classes, memory_size)
     """
-    assert concept_weights.shape[0] == bias.shape[0] and concept_weights.shape[2] == bias.shape[1]
+    if bias is not None:
+        assert concept_weights.shape[0] == bias.shape[0] and concept_weights.shape[2] == bias.shape[1]
     assert c_pred.shape[1] == concept_weights.shape[1]
     y_pred = torch.einsum('mcy,bc->bym', concept_weights, c_pred)
     if bias is not None:
-        y_pred += bias
+        # the bias is (m,y) while y_pred is (bym) so we invert bias dimension
+        y_pred += bias.T
     return y_pred
+
 
 def logic_rule_eval(
     concept_weights: torch.Tensor,
