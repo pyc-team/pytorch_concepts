@@ -56,8 +56,8 @@ def main():
         c_pred = concept_score_bottleneck(c_emb)
         c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
-        c_imp = concept_importance_predictor(c_mix)
-        y_pred, _ = CF.logic_rule_eval(c_imp, c_pred)
+        c_weights = concept_importance_predictor(c_mix)
+        y_pred, _ = CF.logic_rule_eval(c_weights, c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -75,6 +75,9 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
     print(f"Concepts: {c_pred}")
+
+    explanations = CF.logic_memory_explanations(c_weights, {1: concept_names, 2: task_names})
+    print(f"Learned rules: {explanations}")
 
     return
 
