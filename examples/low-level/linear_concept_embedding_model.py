@@ -37,6 +37,7 @@ def main():
     # its output is B x C x T, where T is the number of tasks
     concept_importance_predictor = torch.nn.Sequential(
         torch.nn.Linear(concept_emb_size//2, n_classes),
+        Annotate([concept_names, task_names], [1, 2])
     )
     # it is the module predicting the class bias for each class
     # its input is B x C x E, where B is the batch size, C is the number of concepts, and E is the embedding size
@@ -44,6 +45,7 @@ def main():
     class_bias_predictor = torch.nn.Sequential(
         torch.nn.Flatten(),
         torch.nn.Linear(n_concepts * concept_emb_size//2, n_classes),
+        Annotate([task_names], 1)
     )
 
     model = torch.nn.Sequential(encoder, concept_emb_bottleneck, concept_score_bottleneck,

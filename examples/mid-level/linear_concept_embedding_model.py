@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import Annotate
+from torch_concepts.nn import LinearConceptLayer
 import torch_concepts.nn.functional as CF
 
 
@@ -13,32 +13,55 @@ def main():
     n_samples = 1000
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    x_train, c_train, y_train, concept_names, task_names = (
+        data.data,
+        data.concept_labels,
+        data.target_labels,
+        data.concept_attr_names,
+        data.task_attr_names,
+    )
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
     intervention_indexes = torch.ones_like(c_train).bool()
 
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
-    concept_emb_bottleneck = torch.nn.Sequential(
-        torch.nn.Linear(latent_dims, n_concepts*concept_emb_size),
-        torch.nn.Unflatten(-1, (n_concepts, concept_emb_size)),
-        Annotate(concept_names, 1),
+    encoder = torch.nn.Sequential(
+        torch.nn.Linear(n_features, latent_dims),
+        torch.nn.LeakyReLU(),
+    )
+    concept_emb_bottleneck = LinearConceptLayer(
+        latent_dims,
+        [concept_names, concept_emb_size],
     )
     concept_score_bottleneck = torch.nn.Sequential(
         torch.nn.Linear(concept_emb_size, 1),
         torch.nn.Flatten(),
-        Annotate(concept_names, 1),
+        LinearConceptLayer(n_concepts, [concept_names])
     )
-    y_predictor = torch.nn.Sequential(
+    # it is the module predicting the concept importance for each concept for all classes
+    # its input is B x C x E, where B is the batch size, C is the number of concepts,
+    # and E is the embedding size
+    # its output is B x C x T, where T is the number of tasks
+    concept_importance_predictor = torch.nn.Sequential(
         torch.nn.Flatten(),
-        torch.nn.Linear(latent_dims*n_concepts, latent_dims),
-        torch.nn.LeakyReLU(),
-        torch.nn.Linear(latent_dims, n_classes),
-        Annotate(task_names, 1),
+        LinearConceptLayer(n_concepts * concept_emb_size//2, [concept_names, task_names]),
     )
-    model = torch.nn.Sequential(encoder, concept_emb_bottleneck, concept_score_bottleneck, y_predictor)
+    # it is the module predicting the class bias for each class
+    # its input is B x C x E, where B is the batch size, C is the number of concepts,
+    # and E is the embedding size
+    # its output is B x T, where T is the number of tasks
+    class_bias_predictor = torch.nn.Sequential(
+        torch.nn.Flatten(),
+        LinearConceptLayer(n_concepts * concept_emb_size//2, [task_names]),
+    )
+    model = torch.nn.Sequential(
+        encoder,
+        concept_emb_bottleneck,
+        concept_score_bottleneck,
+        concept_importance_predictor,
+        class_bias_predictor
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -52,7 +75,9 @@ def main():
         c_pred = concept_score_bottleneck(c_emb)
         c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
         c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
-        y_pred = y_predictor(c_mix)
+        c_imp = concept_importance_predictor(c_mix)
+        y_bias = class_bias_predictor(c_mix)
+        y_pred = CF.linear_equation_eval(c_imp, c_pred, y_bias)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
