@@ -1,7 +1,10 @@
+import numpy as np
 import torch
 
-from collections import defaultdict
+from collections import defaultdict, Counter
 from typing import List, Union, Tuple, Dict
+
+from torch_concepts.semantic import CMRSemantic, Semantic, ProductTNorm
 
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
@@ -178,7 +181,8 @@ def linear_memory_eval(
                 n_classes, memory_size)
     """
     if bias is not None:
-        assert concept_weights.shape[0] == bias.shape[0] and concept_weights.shape[2] == bias.shape[1]
+        assert (concept_weights.shape[0] == bias.shape[0]
+                and concept_weights.shape[2] == bias.shape[1])
     assert c_pred.shape[1] == concept_weights.shape[1]
     y_pred = torch.einsum('mcy,bc->bym', concept_weights, c_pred)
     if bias is not None:
@@ -187,61 +191,82 @@ def linear_memory_eval(
     return y_pred
 
 
+def linear_memory_explanations(
+    concept_weights: torch.Tensor,
+    concept_names: Dict[int, List[str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Extract linear equations from decoded equations embeddings as strings.
+    Args:
+        concept_weights: Rule embeddings with shape (memory_size, n_concepts,
+            n_tasks). It also has the bias term as last concept
+        concept_names: Concept and task names.
+    Returns:
+        Dict[str, Dict[str, str]]: Equations as strings.
+    """
+    if len(concept_weights.shape) != 3:
+        raise ValueError(
+            "The concept weights must have 3 dimensions (memory_size, "
+            "n_concepts, n_tasks)."
+        )
+
+    if hasattr(concept_weights, 'concept_names'):
+        names = concept_weights.concept_names.copy()
+        c_names = names[1]
+        t_names = names[2]
+
+    else:
+        names = _default_concept_names(concept_weights.shape[1:3])
+        if concept_names is None:
+            c_names = names[1]
+            t_names = names[2]
+        else:
+            c_names = concept_names[1]
+            t_names = concept_names[2]
+
+    equations_str = defaultdict(dict)  # task, memory_size
+    memory_size = concept_weights.size(0)
+    n_concepts = concept_weights.size(1)
+    n_tasks = concept_weights.size(2)
+    for task_idx in range(n_tasks):
+        for mem_idx in range(memory_size):
+            rule = [
+                f"{c_names[concept_idx]} * {concept_weights[mem_idx, concept_idx, task_idx]:.2f}"
+                for concept_idx in range(n_concepts)
+            ]
+            equations_str[t_names[task_idx]][f"Equation {mem_idx}"] = " + ".join(rule)
+    return dict(equations_str)
+
+
 def logic_rule_eval(
     concept_weights: torch.Tensor,
     c_pred: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Use concept weights to make predictions based on logic rules. In this case we
-    have that the concept weights are the parameters of the logic rules. Also, we
-    have one rule for each sample in the batch.
-
-    Args:
-        concept_weights: concept weights with shape (batch_size, n_concepts, n_tasks, n_roles)
-            with n_roles=3.
-        c_pred: concept predictions with shape (batch_size, n_concepts).
-
-    Returns:
-        torch.Tensor: Rule predictions with shape (batch_size, n_tasks).
-    """
-    pos_polarity, neg_polarity, irrelevance = (
-        concept_weights[..., 0],
-        concept_weights[..., 1],
-        concept_weights[..., 2],
-    )
-    x = c_pred.unsqueeze(-1)
-    # batch_size, n_tasks
-    y_per_rule = (
-        irrelevance + (1 - x) * neg_polarity + x * pos_polarity
-    ).prod(dim=1)
-
-    c_rec_per_classifier = 0.5 * irrelevance + pos_polarity
-    return y_per_rule, c_rec_per_classifier
-
-
-def logic_memory_eval(
-    concept_weights: torch.Tensor,
-    c_pred: torch.Tensor,
     memory_idxs: torch.Tensor = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    semantic = CMRSemantic()
+) -> torch.Tensor:
     """
     Use concept weights to make predictions based on logic rules.
 
     Args:
-        concept_weights: concept weights with shape (memory_size, n_concepts,
-            n_tasks, n_roles) with n_roles=3.
+        concept_weights: concept weights with shape (batch_size,
+            memory_size, n_concepts, n_tasks, n_roles) with n_roles=3.
         c_pred: concept predictions with shape (batch_size, n_concepts).
         memory_idxs: Indices of rules to evaluate with shape (batch_size,
             n_tasks). Default is None (evaluate all).
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Tuple of rule predictions with shape
-            (batch_size, n_tasks, memory_size) and concept reconstructions with
-            shape (batch_size, n_tasks, memory_size, n_concepts).
+        torch.Tensor: Rule predictions with shape (batch_size, n_tasks, memory_size)
     """
 
-    memory_size = concept_weights.size(0)
-    n_tasks = concept_weights.size(2)
+    assert len(concept_weights.shape) == 5, \
+        ("Size error, concept weights should be batch_size x memory_size "
+         f"x n_concepts x n_tasks x n_roles. Received {concept_weights.shape}")
+    memory_size = concept_weights.size(1)
+    n_tasks = concept_weights.size(3)
+
+    # to avoid numerical problem
+    concept_weights = concept_weights * 0.999
+
     pos_polarity, neg_polarity, irrelevance = (
         concept_weights[..., 0],
         concept_weights[..., 1],
@@ -256,25 +281,26 @@ def logic_memory_eval(
             -1,
             n_tasks,
         )
-        pos_polarity = pos_polarity.unsqueeze(0).expand(x.size(0), -1, -1, -1)
-        neg_polarity = neg_polarity.unsqueeze(0).expand(x.size(0), -1, -1, -1)
-        irrelevance = irrelevance.unsqueeze(0).expand(x.size(0), -1, -1, -1)
-    else:  # cast all to (batch_size, n_tasks, 1, n_concepts) # TODO: check
+    else:  # cast all to (batch_size, memory_size=1, n_concepts, n_tasks)
+        # TODO: memory_idxs never used!
         x = c_pred.unsqueeze(1).unsqueeze(-1).expand(-1, 1, -1, n_tasks)
 
-    # TODO: incorporate t-norms?
     # batch_size, mem_size, n_tasks
-    y_per_rule = (
-        irrelevance + (1 - x) * neg_polarity + x * pos_polarity
-    ).prod(dim=2)
+    y_per_rule = semantic.disj(
+        irrelevance,
+        semantic.conj((1 - x), neg_polarity),
+        semantic.conj(x, pos_polarity)
+    )
+    assert (y_per_rule < 1.0).all(), "y_per_rule should be in [0, 1]"
 
-    # batch_size, mem_size, n_tasks, n_concepts
-    c_rec_per_classifier = 0.5 * irrelevance + pos_polarity
-    return y_per_rule.permute(0, 2, 1), c_rec_per_classifier
+    # performing a conj while iterating over concepts of y_per_rule
+    y_per_rule = semantic.conj(*[y for y in y_per_rule.split(1, dim=2)]).squeeze(dim=2)
+
+    return y_per_rule.permute(0, 2, 1)
 
 
 def logic_memory_reconstruction(
-    c_rec_per_classifier: torch.Tensor,
+    concept_weights: torch.Tensor,
     c_true: torch.Tensor,
     y_true: torch.Tensor,
 ) -> torch.Tensor:
@@ -283,8 +309,8 @@ def logic_memory_reconstruction(
     and ground truth tasks.
 
     Args:
-        c_rec_per_classifier: concept reconstructions with shape (batch_size,
-            memory_size, n_tasks, n_concepts).
+        concept_weights: concept reconstructions with shape (batch_size,
+            memory_size, n_concepts, n_tasks).
         c_true: concept ground truth with shape (batch_size, n_concepts).
         y_true: task ground truth with shape (batch_size, n_tasks).
 
@@ -292,6 +318,15 @@ def logic_memory_reconstruction(
         torch.Tensor: Reconstructed tasks with shape (batch_size, n_tasks,
             memory_size).
     """
+    pos_polarity, neg_polarity, irrelevance = (
+        concept_weights[..., 0],
+        concept_weights[..., 1],
+        concept_weights[..., 2],
+    )
+
+    # batch_size, mem_size, n_tasks, n_concepts
+    c_rec_per_classifier = 0.5 * irrelevance + pos_polarity
+
     reconstruction_mask = torch.where(
         c_true[:, None, :, None] == 1,
         c_rec_per_classifier,
@@ -303,12 +338,12 @@ def logic_memory_reconstruction(
     return c_rec_per_classifier.permute(0, 2, 1)
 
 
-def logic_memory_explanations(
+def logic_rule_explanations(
     concept_logic_weights: torch.Tensor,
     concept_names: Dict[int, List[str]] = None,
-) -> Dict[str, Dict[str, str]]:
+) -> List[Dict[str, Dict[str, str]]]:
     """
-    Extracts rules from rule embeddings as strings.
+    Extracts rules from rule concept weights as strings.
 
     Args:
         concept_logic_weights: Rule embeddings with shape (memory_size,
@@ -316,21 +351,20 @@ def logic_memory_explanations(
         concept_names: Concept and task names.
 
     Returns:
-        Dict[str, Dict[str, str]]: Rules as strings.
+        List[Dict[str, Dict[str, str]]]: Rules as strings.
     """
-    if len(concept_logic_weights.shape) != 4 or (
-        concept_logic_weights.shape[3] != 3
+    if len(concept_logic_weights.shape) != 5 or (
+        concept_logic_weights.shape[-1] != 3
     ):
         raise ValueError(
-            "The concept logic weights must have 4 dimensions (memory_size, "
-            "n_concepts, n_tasks, 3)."
+            "The concept logic weights must have 4 dimensions "
+            "(batch_size, memory_size, n_concepts, n_tasks, 3)."
         )
 
     if hasattr(concept_logic_weights, 'concept_names'):
         names = concept_logic_weights.concept_names.copy()
         c_names = names[1]
         t_names = names[2]
-
     else:
         names = _default_concept_names(concept_logic_weights.shape[1:3])
         if concept_names is None:
@@ -340,26 +374,29 @@ def logic_memory_explanations(
             c_names = concept_names[1]
             t_names = concept_names[2]
 
-    rules_str = defaultdict(dict)  # task, memory_size
-    memory_size = concept_logic_weights.size(0)
-    n_concepts = concept_logic_weights.size(1)
-    n_tasks = concept_logic_weights.size(2)
-    # memory_size, n_concepts, n_tasks, 3
-    concept_logic_probs = torch.softmax(concept_logic_weights, dim=-1)
+    batch_size = concept_logic_weights.size(0)
+    memory_size = concept_logic_weights.size(1)
+    n_concepts = concept_logic_weights.size(2)
+    n_tasks = concept_logic_weights.size(3)
     # memory_size, n_concepts, n_tasks
-    concept_roles = torch.argmax(concept_logic_probs, dim=-1)
-    for task_idx in range(n_tasks):
-        for mem_idx in range(memory_size):
-            rule = [
-                (
-                    "~ " if concept_roles[mem_idx, concept_idx, task_idx] == 1
-                    else ""
-                ) + c_names[concept_idx]
-                for concept_idx in range(n_concepts)
-                if concept_roles[mem_idx, concept_idx, task_idx] != 2
-            ]
-            rules_str[t_names[task_idx]][f"Rule {mem_idx}"] = " & ".join(rule)
-    return dict(rules_str)
+    concept_roles = torch.argmax(concept_logic_weights, dim=-1)
+    rule_list = []
+    for sample_id in range(batch_size):
+        rules_str = defaultdict(dict)  # task, memory_size
+        for task_id in range(n_tasks):
+            for mem_id in range(memory_size):
+                rule = []
+                for concept_id in range(n_concepts):
+                    role = concept_roles[sample_id, mem_id, concept_id, task_id]
+                    if role == 0:
+                        rule.append(c_names[concept_id])
+                    if role == 1:
+                        rule.append(f"~ {c_names[concept_id]}")
+                    else:
+                        continue
+                rules_str[t_names[task_id]][f"Rule {mem_id}"] = " & ".join(rule)
+        rule_list.append(dict(rules_str))
+    return rule_list
 
 
 def selective_calibration(
@@ -400,3 +437,9 @@ def confidence_selection(
     """
     return torch.where(c_confidence > theta, True, False)
 
+
+def soft_select(values, temperature, dim=1):
+    softmax_scores = torch.log_softmax(values, dim=dim)
+    soft_scores = torch.sigmoid(softmax_scores - temperature *
+                               softmax_scores.mean(dim=dim, keepdim=True))
+    return soft_scores

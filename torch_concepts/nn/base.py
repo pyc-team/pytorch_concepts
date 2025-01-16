@@ -8,7 +8,7 @@ from torch_concepts.base import AnnotatedTensor
 
 
 def _standardize_annotations(
-    annotations: Union[List[Union[List[str], int]], List[str], int]
+        annotations: Union[List[Union[List[str], int]], List[str], int]
 ) -> List[Union[List[str], int]]:
     """
     Helper function to standardize the annotations arguments so that we can
@@ -23,12 +23,13 @@ def _standardize_annotations(
         # standardize on always using lists
         annotations = [annotations]
     elif isinstance(annotations, list) and len(annotations) and (
-        isinstance(annotations[0], str)
+            isinstance(annotations[0], str)
     ):
         # Then this is a singleton annotation with named dimensions. We will
         # wrap it up to standardize on always using lists
         annotations = [annotations]
     return annotations
+
 
 class Annotate(torch.nn.Module):
     """
@@ -36,10 +37,11 @@ class Annotate(torch.nn.Module):
     The output objects are annotated tensors with the same shape of the input
     tensors.
     """
+
     def __init__(
-        self,
-        annotations: Union[List[Union[List[str], int]], List[str], int] = None,
-        annotated_axis: Union[List[int], int] = None,
+            self,
+            annotations: Union[List[Union[List[str], int]], List[str], int] = None,
+            annotated_axis: Union[List[int], int] = None,
     ):
         super().__init__()
         annotations = _standardize_annotations(annotations)
@@ -47,8 +49,8 @@ class Annotate(torch.nn.Module):
         self.annotations = annotations
 
     def forward(
-        self,
-        x: torch.Tensor,
+            self,
+            x: torch.Tensor,
     ) -> AnnotatedTensor:
         return AnnotatedTensor.tensor(
             tensor=x,
@@ -63,12 +65,13 @@ class LinearConceptLayer(torch.nn.Module):
         transformation to the input tensor, then it reshapes and
         annotates the output tensor.
     """
+
     def __init__(
-        self,
-        in_features: int,
-        out_annotations: Union[List[Union[List[str], int]], List[str], int],
-        *args,
-        **kwargs,
+            self,
+            in_features: int,
+            out_annotations: Union[List[Union[List[str], int]], List[str], int],
+            *args,
+            **kwargs,
     ):
         super().__init__()
         self.in_features = in_features
@@ -84,7 +87,7 @@ class LinearConceptLayer(torch.nn.Module):
             else:
                 self.annotations.append(annotation)
                 shape.append(len(annotation))
-            self.annotated_axes.append(dim+1)
+            self.annotated_axes.append(dim + 1)
 
         self._shape = shape
         self.output_size = np.prod(self.shape())
@@ -104,10 +107,10 @@ class LinearConceptLayer(torch.nn.Module):
         return self._shape
 
     def forward(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs,
+            self,
+            x: torch.Tensor,
+            *args,
+            **kwargs,
     ) -> AnnotatedTensor:
         """
         Forward pass of a LinearConceptLayer.

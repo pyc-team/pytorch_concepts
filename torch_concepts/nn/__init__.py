@@ -13,8 +13,8 @@ from .functional import (
     confidence_selection,
     intervene,
     linear_memory_eval,
-    logic_memory_eval,
-    logic_memory_explanations,
+    logic_rule_eval,
+    logic_rule_explanations,
     logic_memory_reconstruction,
     selective_calibration,
 )
@@ -33,9 +33,9 @@ __all__ = [
     "concept_embedding_mixture",
 
     "linear_memory_eval",
-    "logic_memory_eval",
+    "logic_rule_eval",
     "logic_memory_reconstruction",
-    "logic_memory_explanations",
+    "logic_rule_explanations",
 
     "confidence_selection",
     "selective_calibration",

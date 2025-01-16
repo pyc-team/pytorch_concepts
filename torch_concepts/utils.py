@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import Dict, Union, List
 
 
@@ -54,3 +55,18 @@ def compute_output_size(concept_names: Dict[int, Union[int, List[str]]]) -> int:
             elif isinstance(value, list):
                 output_size *= len(value)
     return output_size
+
+
+def get_global_explanations(
+        explanations,
+        y_pred,
+        class_names
+):
+    global_expl = {}
+    for j in range(y_pred.shape[1]):
+        global_expl[class_names[j]] = dict(Counter([
+            expl[class_names[j]]["Rule 0"]
+            for i, expl in enumerate(explanations)
+            if y_pred[i, j] > 0.5
+        ]))
+    return global_expl

@@ -4,8 +4,8 @@ from sklearn.metrics import accuracy_score
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearConceptLayer
 from torch_concepts.nn.functional import (
-    selection_eval, logic_memory_eval, logic_memory_reconstruction,
-    logic_memory_explanations
+    selection_eval, logic_rule_eval, logic_memory_reconstruction,
+    logic_rule_explanations
 )
 
 
@@ -62,10 +62,14 @@ def main():
         c_pred = concept_bottleneck(emb).sigmoid()
         classifier_selector_logits = classifier_selector(emb)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
-        concept_weights = concept_memory_decoder(latent_concept_memory.weight).softmax(dim=-1)
-        y_per_classifier, c_rec_per_classifier = logic_memory_eval(concept_weights, c_pred)
-        c_rec_per_classifier = logic_memory_reconstruction(c_rec_per_classifier, c_train, y_train)
-        y_pred = selection_eval(prob_per_classifier, y_per_classifier, c_rec_per_classifier)
+        concept_weights = concept_memory_decoder(latent_concept_memory.weight)
+        # softmax among roles and adding batch dimension
+        concept_weights = concept_weights.softmax(dim=-1).unsqueeze(dim=0)
+        y_per_classifier = logic_rule_eval(concept_weights, c_pred)
+        c_rec_per_classifier = logic_memory_reconstruction(concept_weights,
+                                                           c_train, y_train)
+        y_pred = selection_eval(prob_per_classifier,
+                                y_per_classifier, c_rec_per_classifier)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -83,7 +87,8 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
 
-    explanations = logic_memory_explanations(concept_weights, {1: concept_names, 2: class_names})
+    explanations = logic_rule_explanations(concept_weights,
+                                           {1: concept_names, 2: class_names})
     print(f"Learned rules: {explanations}")
 
     return
