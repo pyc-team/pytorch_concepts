@@ -12,7 +12,7 @@ from .functional import (
     concept_embedding_mixture,
     confidence_selection,
     intervene,
-    linear_memory_eval,
+    linear_equation_eval,
     logic_rule_eval,
     logic_rule_explanations,
     logic_memory_reconstruction,
@@ -32,7 +32,7 @@ __all__ = [
     "intervene",
     "concept_embedding_mixture",
 
-    "linear_memory_eval",
+    "linear_equation_eval",
     "logic_rule_eval",
     "logic_memory_reconstruction",
     "logic_rule_explanations",

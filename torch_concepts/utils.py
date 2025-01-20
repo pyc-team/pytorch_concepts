@@ -60,13 +60,19 @@ def compute_output_size(concept_names: Dict[int, Union[int, List[str]]]) -> int:
 def get_global_explanations(
         explanations,
         y_pred,
-        class_names
+        class_names,
+        n=10
 ):
-    global_expl = {}
+    most_common_global_expl = {}
     for j in range(y_pred.shape[1]):
-        global_expl[class_names[j]] = dict(Counter([
+        gloabl_expl = [
+            # we do not consider the memory dimension in this case
             expl[class_names[j]]["Rule 0"]
+            if "Rule 0" in expl[class_names[j]]
+            else expl[class_names[j]]["Equation 0"]
             for i, expl in enumerate(explanations)
             if y_pred[i, j] > 0.5
-        ]))
-    return global_expl
+        ]
+        most_common_global_expl[class_names[j]] = dict(Counter(gloabl_expl)
+                                                       .most_common(n))
+    return most_common_global_expl

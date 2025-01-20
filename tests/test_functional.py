@@ -59,12 +59,13 @@ class TestConceptFunctions(unittest.TestCase):
         self.assertEqual(torch.all(result == expected_result).item(), True)
 
     def test_linear_eq_eval(self):
+        # batch_size x memory_size x n_concepts x n_classes
         c_imp = torch.tensor([
-            [[0.], [10.]],
-            [[0.], [-10]],
-            [[0.], [-10]],
-            [[0.], [0.]],
-            [[0.], [0.]],
+            [[[0.], [10.]]],
+            [[[0.], [-10]]],
+            [[[0.], [-10]]],
+            [[[0.], [0.]]],
+            [[[0.], [0.]]],
         ])
         c_pred = torch.tensor([
             [0., 1.],
@@ -74,11 +75,11 @@ class TestConceptFunctions(unittest.TestCase):
             [0., 0.],
         ])
         y_bias = torch.tensor([
-            [.0],
-            [.0],
-            [.0],
-            [0.0],
-            [1.0],
+            [[.0]],
+            [[.0]],
+            [[.0]],
+            [[.0]],
+            [[1.0]],
         ])
         expected_result = torch.tensor([
             [True],
@@ -87,10 +88,60 @@ class TestConceptFunctions(unittest.TestCase):
             [False],
             [True],
         ])
-        result = CF.linear_equation_eval(c_imp, c_pred, y_bias)
-        # print(result)
+        result = CF.linear_equation_eval(c_imp, c_pred, y_bias)[:, 0]
+        print(result)
+        print((result > 0) == expected_result)
         self.assertEqual(torch.all((result > 0) == expected_result).item(),
                          True)
+
+    def test_linear_eq_explanations(self):
+        c_imp = torch.tensor([
+            [[[0.], [10.]]],
+            [[[0.], [-10]]],
+            [[[0.], [-10]]],
+            [[[0.], [0.]]],
+            [[[0.], [0.]]],
+        ])
+        c_pred = torch.tensor([
+            [0., 1.],
+            [0., 1.],
+            [0., -1.],
+            [0., 0.],
+            [0., 0.],
+        ])
+        y_bias = torch.tensor([
+            [[.0]],
+            [[.0]],
+            [[.0]],
+            [[.0]],
+            [[1.0]],
+        ])
+        y_pred = CF.linear_equation_eval(c_imp, c_pred, y_bias)[:, 0]
+
+        concept_names = ['C1', 'C2', 'bias']
+        class_names = ['Y1']
+
+        expected_result = [{'Y1': {'Equation 0': '10.0 * C2'}},
+                           {'Y1': {'Equation 0': '-10.0 * C2'}},
+                           {'Y1': {'Equation 0': '-10.0 * C2'}},
+                           {'Y1': {'Equation 0': ''}},
+                           {'Y1': {'Equation 0': '1.0 * bias'}},
+                           ]
+        c_imp = torch.concat((c_imp, y_bias.unsqueeze(-2)), dim=-2)
+        result = CF.linear_equation_explanations(c_imp,
+                                                 {1: concept_names, 2: class_names})
+        # print(result)
+        self.assertEqual(result, expected_result)
+
+        # test global explanation
+        from torch_concepts.utils import get_global_explanations
+        global_explanations = get_global_explanations(result, y_pred, class_names)
+
+        expected_global_expl = {
+            'Y1': {'10.0 * C2': 1, '-10.0 * C2': 1, '1.0 * bias': 1}
+        }
+        # print(global_explanations)
+        self.assertEqual(global_explanations, expected_global_expl)
 
     def test_rule_eval(self):
         # here we test the logic_rule_eval function on the classic XOR case

@@ -144,77 +144,86 @@ def linear_equation_eval(
     In this case we have one equation (concept_weights) for each sample in the batch.
 
     Args:
-        concept_weights: Parameters representing the weights of multiple
-            linear models with shape (batch_size, n_concepts, n_classes).
+        concept_weights: Parameters representing the weights of multiple linear
+            models with shape (batch_size, memory_size, n_concepts, n_classes).
         c_pred: Concept predictions with shape (batch_size, n_concepts).
-        bias: Bias term to add to the linear models.
+        bias: Bias term to add to the linear models (batch_size,
+            memory_size, n_classes).
 
     Returns:
         Tensor: Predictions made by the linear models with shape (batch_size,
-            n_classes).
+            n_classes, memory_size).
     """
-    assert concept_weights.shape[1] == c_pred.shape[1]
-    assert bias.shape[1] == concept_weights.shape[2]
-    y_pred = torch.einsum('bcy,bc->by', concept_weights, c_pred)
+    assert concept_weights.shape[-2] == c_pred.shape[-1]
+    assert bias.shape[-1] == concept_weights.shape[-1]
+    y_pred = torch.einsum('bmcy,bc->bym', concept_weights, c_pred)
     if bias is not None:
-        y_pred += bias
+        # the bias is (b,m,y) while y_pred is (bym) so we invert bias dimension
+        y_pred += torch.transpose(bias, -1, -2)
     return y_pred
 
 
-def linear_memory_eval(
-        concept_weights: torch.Tensor,
-        c_pred: torch.Tensor,
-        bias: torch.Tensor = None,
-) -> torch.Tensor:
-    """
-    Function to evaluate a memory of linear equations with concept predictions.
-    The number of equation correspond to the memory size, and it is
-    not the same as the number of sample in the batch here.
+# def linear_memory_eval(
+#         concept_weights: torch.Tensor,
+#         c_pred: torch.Tensor,
+#         bias: torch.Tensor = None,
+# ) -> torch.Tensor:
+#     """
+#     Function to evaluate a memory of linear equations with concept predictions.
+#     The number of equation correspond to the memory size, and it is
+#     not the same as the number of sample in the batch here.
+#
+#     Args:
+#         concept_weights: parameters representing the weights of multiple linear
+#             models with shape (memory_size, n_concepts, n_classes)
+#         c_pred: concept predictions with shape (batch_size, n_concepts).
+#         bias: Bias term to add to the linear models (memory_size, n_classes).
+#     Returns:
+#         Tensor: Predictions made by the linear models with shape (batch_size,
+#                 n_classes, memory_size)
+#     """
+#     if bias is not None:
+#         assert (concept_weights.shape[0] == bias.shape[0]
+#                 and concept_weights.shape[2] == bias.shape[1])
+#     assert c_pred.shape[1] == concept_weights.shape[1]
+#     y_pred = torch.einsum('bmcy,bc->bym', concept_weights, c_pred)
+#     if bias is not None:
+#         # the bias is (m,y) while y_pred is (bym) so we invert bias dimension
+#         y_pred += bias.T
+#     return y_pred
 
-    Args:
-        concept_weights: parameters representing the weights of multiple linear
-            models with shape (memory_size, n_concepts, n_classes)
-        c_pred: concept predictions with shape (batch_size, n_concepts).
-        bias: Bias term to add to the linear models (memory_size, n_classes).
-    Returns:
-        Tensor: Predictions made by the linear models with shape (batch_size,
-                n_classes, memory_size)
-    """
-    if bias is not None:
-        assert (concept_weights.shape[0] == bias.shape[0]
-                and concept_weights.shape[2] == bias.shape[1])
-    assert c_pred.shape[1] == concept_weights.shape[1]
-    y_pred = torch.einsum('mcy,bc->bym', concept_weights, c_pred)
-    if bias is not None:
-        # the bias is (m,y) while y_pred is (bym) so we invert bias dimension
-        y_pred += bias.T
-    return y_pred
 
-
-def linear_memory_explanations(
+def linear_equation_explanations(
     concept_weights: torch.Tensor,
     concept_names: Dict[int, List[str]] = None,
 ) -> Dict[str, Dict[str, str]]:
     """
     Extract linear equations from decoded equations embeddings as strings.
     Args:
-        concept_weights: Rule embeddings with shape (memory_size, n_concepts,
-            n_tasks). It also has the bias term as last concept
-        concept_names: Concept and task names.
+        concept_weights: Equation embeddings with shape (batch_size,
+            memory_size, n_concepts, n_tasks). If the bias is included, the
+            shape is (batch_size, memory_size, n_concepts+1, n_tasks).
+        concept_names: Concept and task names. If the bias is included, the
+            concept names should include the bias name.
     Returns:
-        Dict[str, Dict[str, str]]: Equations as strings.
+        List[Dict[str, Dict[str, str]]]: List of predicted equations as strings.
     """
-    if len(concept_weights.shape) != 3:
+    if len(concept_weights.shape) != 4:
         raise ValueError(
-            "The concept weights must have 3 dimensions (memory_size, "
-            "n_concepts, n_tasks)."
+            "The concept weights must have 4 dimensions (batch_size, "
+            "memory_size, n_concepts, n_tasks)."
+        )
+    if (concept_names is not None
+            and concept_weights.shape[-2] != len(concept_names[1])):
+        raise ValueError(
+            "The concept names must have the same length as the number of "
+            "concepts."
         )
 
     if hasattr(concept_weights, 'concept_names'):
         names = concept_weights.concept_names.copy()
         c_names = names[1]
         t_names = names[2]
-
     else:
         names = _default_concept_names(concept_weights.shape[1:3])
         if concept_names is None:
@@ -224,18 +233,25 @@ def linear_memory_explanations(
             c_names = concept_names[1]
             t_names = concept_names[2]
 
-    equations_str = defaultdict(dict)  # task, memory_size
-    memory_size = concept_weights.size(0)
-    n_concepts = concept_weights.size(1)
-    n_tasks = concept_weights.size(2)
-    for task_idx in range(n_tasks):
-        for mem_idx in range(memory_size):
-            rule = [
-                f"{c_names[concept_idx]} * {concept_weights[mem_idx, concept_idx, task_idx]:.2f}"
-                for concept_idx in range(n_concepts)
-            ]
-            equations_str[t_names[task_idx]][f"Equation {mem_idx}"] = " + ".join(rule)
-    return dict(equations_str)
+    batch_size = concept_weights.size(0)
+    memory_size = concept_weights.size(1)
+    n_concepts = concept_weights.size(2)
+    n_tasks = concept_weights.size(3)
+    explanation_list = []
+    for s_idx in range(batch_size):
+        equations_str = defaultdict(dict)  # batch, task, memory_size
+        for t_idx in range(n_tasks):
+            for mem_idx in range(memory_size):
+                rule = []
+                for c_idx in range(n_concepts):
+                    weight = concept_weights[s_idx, mem_idx, c_idx, t_idx]
+                    name = c_names[c_idx]
+                    if torch.round(weight.abs(), decimals=2) > 0.1:
+                        rule.append(f"{weight:.1f} * {name}")
+                equations_str[t_names[t_idx]][f"Equation {mem_idx}"]\
+                    = " + ".join(rule)
+        explanation_list.append(dict(equations_str))
+    return explanation_list
 
 
 def logic_rule_eval(
