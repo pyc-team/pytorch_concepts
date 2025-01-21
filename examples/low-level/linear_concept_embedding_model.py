@@ -84,7 +84,7 @@ def main():
         concept_norm = torch.norm(c_weights, p=1)
         bias_norm = torch.norm(y_bias, p=2)
         loss = (concept_loss + concept_reg * task_loss +
-                1e-5 * concept_norm + 1e-2 * bias_norm)
+                1e-6 * concept_norm + 1e-4 * bias_norm)
 
         loss.backward()
         optimizer.step()
@@ -98,29 +98,7 @@ def main():
     print(f"Concept accuracy: {concept_accuracy:.2f}")
     print(f"Concepts: {c_pred}")
 
-    # explain the linear equation on the four binary cases
-    x_train = torch.tensor([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=torch.float32)
-    c_train = torch.tensor([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=torch.float32)
-    y_train = torch.tensor([[0], [1], [1], [0]], dtype=torch.float32)
-    emb = encoder(x_train)
-    c_emb = concept_emb_bottleneck(emb)
-    c_pred = concept_score_bottleneck(c_emb)
-    intervention_indexes = torch.ones_like(c_train).bool()
-
-    c_intervened = CF.intervene(c_pred, c_train, intervention_indexes)
-    c_mix = CF.concept_embedding_mixture(c_emb, c_intervened)
-    c_weights = concept_importance_predictor(c_mix)
-    y_bias = class_bias_predictor(c_mix)
-    # add memory size
-    c_weights, y_bias = c_weights.unsqueeze(1), y_bias.unsqueeze(1)
-    # remove memory size
-    y_pred = CF.linear_equation_eval(c_weights, c_pred, y_bias)[:, :, 0].sigmoid()
-    print(f"Predictions: {y_pred}")
-
-    c_weights = torch.cat((c_weights, y_bias.unsqueeze(-2)), dim=-2)
-    concept_names = concept_names + ['bias']
-    # c_weights = Annotate([concept_names, task_names], [1,2])(c_weights)
-    explanations = CF.linear_equation_explanations(c_weights,
+    explanations = CF.linear_equation_explanations(c_weights, y_bias,
                                                    {1: concept_names,
                                                     2: task_names})
 

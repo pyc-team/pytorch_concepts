@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import Annotate
-from torch_concepts.nn.functional import selection_eval, logic_memory_eval, logic_memory_reconstruction, logic_memory_explanations
+from torch_concepts.nn.functional import selection_eval, logic_rule_eval, logic_memory_reconstruction, logic_rule_explanations
 import torch_concepts.nn.functional as CF
 
 
@@ -65,8 +65,12 @@ def main():
         classifier_selector_logits = classifier_selector(c_mix)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
         memory_weights = concept_memory_decoder(latent_concept_memory.weight)
-        concept_weights, bias = memory_weights[:, :n_concepts], memory_weights[:, -1]
-        y_per_classifier = CF.linear_memory_eval(concept_weights, c_pred, bias)
+        # add batch dimension
+        memory_weights = memory_weights.unsqueeze(dim=0)
+        concept_weights = memory_weights[:, :, :n_concepts]
+        bias = memory_weights[:, :, -1]
+
+        y_per_classifier = CF.linear_equation_eval(concept_weights, c_pred, bias)
         y_pred = selection_eval(prob_per_classifier, y_per_classifier).sigmoid()
 
         # compute loss
@@ -85,8 +89,10 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
 
-    # explanations = logic_memory_explanations(concept_weights, {1: concept_names, 2: class_names})
-    # print(f"Learned rules: {explanations}")
+    explanations = CF.linear_equation_explanations(concept_weights, bias,
+                                                   {1: concept_names,
+                                            2: class_names})
+    print(f"Learned rules: {explanations}")
 
     return
 
