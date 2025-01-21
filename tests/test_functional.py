@@ -89,8 +89,8 @@ class TestConceptFunctions(unittest.TestCase):
             [True],
         ])
         result = CF.linear_equation_eval(c_imp, c_pred, y_bias)[:, 0]
-        print(result)
-        print((result > 0) == expected_result)
+        # print(result)
+        # print((result > 0) == expected_result)
         self.assertEqual(torch.all((result > 0) == expected_result).item(),
                          True)
 
@@ -118,7 +118,7 @@ class TestConceptFunctions(unittest.TestCase):
         ])
         y_pred = CF.linear_equation_eval(c_imp, c_pred, y_bias)[:, 0]
 
-        concept_names = ['C1', 'C2', 'bias']
+        concept_names = ['C1', 'C2']
         class_names = ['Y1']
 
         expected_result = [{'Y1': {'Equation 0': '10.0 * C2'}},
@@ -127,9 +127,9 @@ class TestConceptFunctions(unittest.TestCase):
                            {'Y1': {'Equation 0': ''}},
                            {'Y1': {'Equation 0': '1.0 * bias'}},
                            ]
-        c_imp = torch.concat((c_imp, y_bias.unsqueeze(-2)), dim=-2)
-        result = CF.linear_equation_explanations(c_imp,
-                                                 {1: concept_names, 2: class_names})
+        result = CF.linear_equation_explanations(c_imp, y_bias,
+                                                 {1: concept_names,
+                                                  2: class_names})
         # print(result)
         self.assertEqual(result, expected_result)
 

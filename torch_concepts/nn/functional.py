@@ -33,13 +33,13 @@ def intervene(
     Returns:
         Tensor: Intervened concepts.
     """
+    if c_true is None or indexes is None:
+        return c_pred
+
     if c_pred.shape != c_true.shape:
         raise ValueError(
             "Predicted and true concepts must have the same shape."
         )
-
-    if c_true is None or indexes is None:
-        return c_pred
 
     if c_true is not None and indexes is not None:
         if indexes.max() >= c_pred.shape[1]:
@@ -195,14 +195,17 @@ def linear_equation_eval(
 
 def linear_equation_explanations(
     concept_weights: torch.Tensor,
+    bias: torch.Tensor = None,
     concept_names: Dict[int, List[str]] = None,
+    round_decimals: int = 2,
 ) -> Dict[str, Dict[str, str]]:
     """
     Extract linear equations from decoded equations embeddings as strings.
     Args:
         concept_weights: Equation embeddings with shape (batch_size,
-            memory_size, n_concepts, n_tasks). If the bias is included, the
-            shape is (batch_size, memory_size, n_concepts+1, n_tasks).
+            memory_size, n_concepts, n_tasks).
+        bias: Bias term to add to the linear models (batch_size,
+            memory_size, n_tasks).
         concept_names: Concept and task names. If the bias is included, the
             concept names should include the bias name.
     Returns:
@@ -233,6 +236,11 @@ def linear_equation_explanations(
             c_names = concept_names[1]
             t_names = concept_names[2]
 
+    # add the bias to the concept_weights and c_names
+    if bias is not None:
+        concept_weights = torch.cat((concept_weights, bias.unsqueeze(-2)), dim=-2)
+        c_names = c_names + ["bias"]
+
     batch_size = concept_weights.size(0)
     memory_size = concept_weights.size(1)
     n_concepts = concept_weights.size(2)
@@ -242,14 +250,16 @@ def linear_equation_explanations(
         equations_str = defaultdict(dict)  # batch, task, memory_size
         for t_idx in range(n_tasks):
             for mem_idx in range(memory_size):
-                rule = []
+                eq = []
                 for c_idx in range(n_concepts):
                     weight = concept_weights[s_idx, mem_idx, c_idx, t_idx]
                     name = c_names[c_idx]
                     if torch.round(weight.abs(), decimals=2) > 0.1:
-                        rule.append(f"{weight:.1f} * {name}")
-                equations_str[t_names[t_idx]][f"Equation {mem_idx}"]\
-                    = " + ".join(rule)
+                        eq.append(f"{weight:.1f} * {name}")
+                eq = " + ".join(eq)
+                eq = eq.replace(" + -", " - ")
+                equations_str[t_names[t_idx]][f"Equation {mem_idx}"] = eq
+
         explanation_list.append(dict(equations_str))
     return explanation_list
 
@@ -258,7 +268,7 @@ def logic_rule_eval(
     concept_weights: torch.Tensor,
     c_pred: torch.Tensor,
     memory_idxs: torch.Tensor = None,
-    semantic = CMRSemantic()
+    semantic=CMRSemantic()
 ) -> torch.Tensor:
     """
     Use concept weights to make predictions based on logic rules.
@@ -269,9 +279,11 @@ def logic_rule_eval(
         c_pred: concept predictions with shape (batch_size, n_concepts).
         memory_idxs: Indices of rules to evaluate with shape (batch_size,
             n_tasks). Default is None (evaluate all).
+        semantic: Semantic function to use for rule evaluation.
 
     Returns:
-        torch.Tensor: Rule predictions with shape (batch_size, n_tasks, memory_size)
+        torch.Tensor: Rule predictions with shape (batch_size, n_tasks,
+            memory_size)
     """
 
     assert len(concept_weights.shape) == 5, \
@@ -362,7 +374,7 @@ def logic_rule_explanations(
     Extracts rules from rule concept weights as strings.
 
     Args:
-        concept_logic_weights: Rule embeddings with shape (memory_size,
+        concept_logic_weights: Rule embeddings with shape (batch_size, memory_size,
             n_concepts, n_tasks, 3).
         concept_names: Concept and task names.
 
