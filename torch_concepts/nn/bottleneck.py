@@ -222,6 +222,8 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
         Returns:
             torch.Tensor: Intervened concept scores.
         """
+        int_probs = torch.rand(x.shape[0], x.shape[1]) <= intervention_rate
+        intervention_idxs = int_probs * intervention_idxs
         return intervene(x, c_true, intervention_idxs)
 
     def transform(

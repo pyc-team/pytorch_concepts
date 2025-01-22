@@ -33,13 +33,13 @@ def intervene(
     Returns:
         Tensor: Intervened concepts.
     """
+    if c_true is None or indexes is None:
+        return c_pred
+
     if c_pred.shape != c_true.shape:
         raise ValueError(
             "Predicted and true concepts must have the same shape."
         )
-
-    if c_true is None or indexes is None:
-        return c_pred
 
     if c_true is not None and indexes is not None:
         if indexes.max() >= c_pred.shape[1]:
@@ -268,7 +268,7 @@ def logic_rule_eval(
     concept_weights: torch.Tensor,
     c_pred: torch.Tensor,
     memory_idxs: torch.Tensor = None,
-    semantic = CMRSemantic()
+    semantic=CMRSemantic()
 ) -> torch.Tensor:
     """
     Use concept weights to make predictions based on logic rules.
@@ -279,9 +279,11 @@ def logic_rule_eval(
         c_pred: concept predictions with shape (batch_size, n_concepts).
         memory_idxs: Indices of rules to evaluate with shape (batch_size,
             n_tasks). Default is None (evaluate all).
+        semantic: Semantic function to use for rule evaluation.
 
     Returns:
-        torch.Tensor: Rule predictions with shape (batch_size, n_tasks, memory_size)
+        torch.Tensor: Rule predictions with shape (batch_size, n_tasks,
+            memory_size)
     """
 
     assert len(concept_weights.shape) == 5, \
@@ -372,7 +374,7 @@ def logic_rule_explanations(
     Extracts rules from rule concept weights as strings.
 
     Args:
-        concept_logic_weights: Rule embeddings with shape (memory_size,
+        concept_logic_weights: Rule embeddings with shape (batch_size, memory_size,
             n_concepts, n_tasks, 3).
         concept_names: Concept and task names.
 
