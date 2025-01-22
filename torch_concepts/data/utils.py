@@ -1,7 +1,49 @@
 import os
+from typing import Tuple
+
 import torch
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+
+
+def stratified_train_test_split(
+    dataset: torch.utils.data.Dataset,
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> Tuple[Subset, Subset]:
+    """
+    Split a dataset into stratified training and testing sets
+
+    Args:
+        dataset: dataset object.
+        test_size: fraction of the dataset to include in the test split.
+        random_state: random seed for reproducibility.
+
+    Returns:
+        Tuple(Subset, Subset): training and testing datasets.
+    """
+    n_samples = len(dataset)
+    indices = torch.randperm(n_samples)
+    test_size = int(n_samples * test_size)
+    # stratified sampling
+    targets = [batch[-1] for batch in dataset]
+    targets = torch.stack(targets).squeeze()
+
+    train_idx, test_idx = [], []
+    for target in torch.unique(targets):
+        idx = indices[targets == target]
+        # shuffle the indices with the random seed for reproducibility
+        torch.manual_seed(random_state)
+        idx = idx[torch.randperm(len(idx))]
+        idx_train, idx_test = idx[:-test_size], idx[-test_size:]
+        train_idx.append(idx_train)
+        test_idx.append(idx_test)
+    train_idx = torch.cat(train_idx)
+    test_idx = torch.cat(test_idx)
+
+    train_dataset = Subset(dataset, train_idx)
+    test_dataset = Subset(dataset, test_idx)
+    return train_dataset, test_dataset
 
 
 class InputImgEncoder(torch.nn.Module):

@@ -65,3 +65,9 @@ doc/generated/
 
 # PyBuilder
 target/
+
+# pycharm
+.idea/*
+
+# lightning logs
+examples/lightning_logs/
