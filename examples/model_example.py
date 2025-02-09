@@ -8,7 +8,8 @@ from torch.utils.data import TensorDataset
 from torch_concepts.data import ToyDataset
 from torch_concepts.data.utils import stratified_train_test_split
 from torch_concepts.nn.models import ConceptBottleneckModel, \
-    ConceptResidualModel, ConceptEmbeddingModel
+    ConceptResidualModel, ConceptEmbeddingModel, DeepConceptReasoning, \
+    LinearConceptEmbeddingModel
 
 
 def main():
@@ -20,9 +21,15 @@ def main():
     residual_size = 4
     embedding_size = 4
 
-    models = [ConceptBottleneckModel,
-              ConceptResidualModel,
-              ConceptEmbeddingModel]
+    models = [
+        # ConceptBottleneckModel,
+        # ConceptResidualModel,
+        # ConceptEmbeddingModel,
+        # DeepConceptReasoning,
+        LinearConceptEmbeddingModel,
+        # ConceptMemoryReasoning,
+        # LinearConceptEmbeddingMemoryModel
+        ]
 
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x, c, y = data.data, data.concept_labels, data.target_labels

@@ -23,7 +23,8 @@ def main():
     memory_size = 7
     # memory_states = ["positive", "negative", "irrelevant"]
 
-    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims), torch.nn.LeakyReLU())
+    encoder = torch.nn.Sequential(torch.nn.Linear(n_features, latent_dims),
+                                  torch.nn.LeakyReLU())
     concept_emb_bottleneck = torch.nn.Sequential(
         torch.nn.Linear(latent_dims, n_concepts*concept_emb_size),
         torch.nn.Unflatten(-1, (n_concepts, concept_emb_size)),
@@ -47,8 +48,10 @@ def main():
         torch.nn.Unflatten(-1, (n_concepts+1, n_classes)),
         Annotate([concept_names+["BIAS"], class_names], [1, 2]),
     )
-    model = torch.nn.Sequential(encoder, concept_emb_bottleneck, concept_score_bottleneck,
-                                classifier_selector, latent_concept_memory, concept_memory_decoder)
+    model = torch.nn.Sequential(encoder, concept_emb_bottleneck,
+                                concept_score_bottleneck,
+                                classifier_selector, latent_concept_memory,
+                                concept_memory_decoder)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
