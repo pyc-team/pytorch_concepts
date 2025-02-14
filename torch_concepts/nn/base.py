@@ -11,7 +11,7 @@ def _standarize_annotations(
     annotations: Union[List[Union[List[str], int]], List[str], int]
 ) -> List[Union[List[str], int]]:
     """
-    Helper function to standarize the annotations arguments so that we can
+    Helper function to standardize the annotations arguments so that we can
     support singleton arguments (e.g., a single axis is being annotated), as
     well as axis-specific annotations.
     """
@@ -26,14 +26,14 @@ def _standarize_annotations(
         isinstance(annotations[0], str)
     ):
         # Then this is a singleton annotation with named dimensions. We will
-        # wrap it up to standarize on always using lists
+        # wrap it up to standardize on always using lists
         annotations = [annotations]
     return annotations
 
 class Annotate(torch.nn.Module):
     """
     Annotate is a class for annotation layers.
-    The output objects are annotated tensors with the same shape of the input
+    The output objects are annotated tensors with the exact shape of the input
     tensors.
     """
     def __init__(
@@ -60,7 +60,7 @@ class Annotate(torch.nn.Module):
 class LinearConceptLayer(torch.nn.Module):
     """
     LinearConceptLayer is a class which first applies a linear
-        tranformation to the input tensor, then it reshapes and
+        transformation to the input tensor, then it reshapes and
         annotates the output tensor.
     """
     def __init__(
@@ -76,7 +76,6 @@ class LinearConceptLayer(torch.nn.Module):
 
         self.annotations = []
         shape = []
-        self.annotated_axes = []
         for dim, annotation in enumerate(out_annotations):
             if isinstance(annotation, int):
                 self.annotations.append([])
@@ -84,7 +83,10 @@ class LinearConceptLayer(torch.nn.Module):
             else:
                 self.annotations.append(annotation)
                 shape.append(len(annotation))
-            self.annotated_axes.append(dim+1)
+
+        self.annotated_axes = []
+        for dim, annotation in enumerate(out_annotations):
+            self.annotated_axes.append(-len(shape) + dim)
 
         self._shape = shape
         self.output_size = np.prod(self.shape())
