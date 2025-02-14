@@ -7,7 +7,7 @@ from typing import List, Union, Dict, Tuple
 from torch_concepts.base import AnnotatedTensor
 
 
-def _standarize_annotations(
+def _standardize_annotations(
     annotations: Union[List[Union[List[str], int]], List[str], int]
 ) -> List[Union[List[str], int]]:
     """
@@ -20,7 +20,7 @@ def _standarize_annotations(
 
     if isinstance(annotations, int):
         # Then this is a singleton annotation. We will wrap it up to
-        # standarize on always using lists
+        # standardize on always using lists
         annotations = [annotations]
     elif isinstance(annotations, list) and len(annotations) and (
         isinstance(annotations[0], str)
@@ -42,7 +42,7 @@ class Annotate(torch.nn.Module):
         annotated_axis: Union[List[int], int] = None,
     ):
         super().__init__()
-        annotations = _standarize_annotations(annotations)
+        annotations = _standardize_annotations(annotations)
         self.annotated_axis = annotated_axis
         self.annotations = annotations
 
@@ -72,7 +72,7 @@ class LinearConceptLayer(torch.nn.Module):
     ):
         super().__init__()
         self.in_features = in_features
-        out_annotations = _standarize_annotations(out_annotations)
+        out_annotations = _standardize_annotations(out_annotations)
 
         self.annotations = []
         shape = []
@@ -87,7 +87,6 @@ class LinearConceptLayer(torch.nn.Module):
         self.annotated_axes = []
         for dim, annotation in enumerate(out_annotations):
             self.annotated_axes.append(-len(shape) + dim)
-
         self._shape = shape
         self.output_size = np.prod(self.shape())
 

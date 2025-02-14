@@ -72,7 +72,7 @@ class TestLinearConceptLayerSingleton(unittest.TestCase):
         output = self.layer(self.input_tensor)
         self.assertIsInstance(output, AnnotatedTensor)
         self.assertEqual(output.shape, (5, *self.layer.shape()))
-        self.assertEqual(output.annotations, [["concept1", "concept2"]])
+        self.assertEqual(output.annotations, [None, ["concept1", "concept2"]])
 
 if __name__ == '__main__':
     unittest.main()
