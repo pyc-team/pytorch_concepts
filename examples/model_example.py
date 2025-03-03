@@ -9,7 +9,11 @@ from torch_concepts.data import ToyDataset
 from torch_concepts.data.utils import stratified_train_test_split
 from torch_concepts.nn.models import ConceptBottleneckModel, \
     ConceptResidualModel, ConceptEmbeddingModel, DeepConceptReasoning, \
-    LinearConceptEmbeddingModel
+    LinearConceptEmbeddingModel, ConceptMemoryReasoning
+from torch_concepts.utils import set_seed
+
+
+# LinearConceptEmbeddingMemoryModel
 
 
 def main():
@@ -20,17 +24,19 @@ def main():
     batch_size = 1024
     residual_size = 4
     embedding_size = 4
+    memory_size = 2
 
     models = [
-        # ConceptBottleneckModel,
-        # ConceptResidualModel,
-        # ConceptEmbeddingModel,
-        # DeepConceptReasoning,
+        ConceptBottleneckModel,
+        ConceptResidualModel,
+        ConceptEmbeddingModel,
+        DeepConceptReasoning,
         LinearConceptEmbeddingModel,
-        # ConceptMemoryReasoning,
+        ConceptMemoryReasoning,
         # LinearConceptEmbeddingMemoryModel
         ]
 
+    set_seed(42)
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x, c, y = data.data, data.concept_labels, data.target_labels
     concept_names, task_names = data.concept_attr_names, data.task_attr_names
@@ -48,7 +54,7 @@ def main():
     for model_cls in models:
         model = model_cls(encoder, latent_dims, concept_names, task_names,
                           class_reg=class_reg, residual_size=residual_size,
-                          embedding_size=embedding_size)
+                          embedding_size=embedding_size, memory_size=memory_size)
         model.configure_optimizers()
 
         trainer = L.Trainer(max_epochs=n_epochs)
@@ -57,9 +63,9 @@ def main():
         model_result = trainer.test(model, val_loader)[0]
         results[model_cls.__name__] = model_result
 
-    print(pd.DataFrame(results))
-
-    return
+    results = pd.DataFrame(results)
+    print(results)
+    results.to_csv('model_results.csv')
 
 
 if __name__ == "__main__":

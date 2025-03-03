@@ -127,6 +127,7 @@ def selection_eval(
 
     product = selection_weights
     for pred in predictions:
+        assert pred.shape == product.shape, "Prediction shape mismatch the selection weights."
         product = product * pred
 
     result = product.sum(dim=-1)

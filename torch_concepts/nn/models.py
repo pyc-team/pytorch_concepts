@@ -46,15 +46,17 @@ class ConceptModel(ABC, L.LightningModule):
         self.int_idxs = int_idxs
 
     @abstractmethod
-    def forward(self, x, c_true=None):
+    def forward(self, x, c_true=None, **kwargs):
         pass
 
     def step(self, batch, mode="train") -> torch.Tensor:
         x, c_true, y_true = batch
 
-        # Intervene on concepts only during training step
+        # Intervene on concepts and memory reconstruction only on training
         if mode == "train":
-            y_pred, c_pred = self.forward(x, c_true)
+            y_pred, c_pred = self.forward(x,
+                                          c_true=c_true,
+                                          y_true=y_true)
         else:
             y_pred, c_pred = self.forward(x)
 
@@ -147,7 +149,7 @@ class ConceptResidualModel(ConceptModel):
             nn.Linear(latent_dim, len(task_names)),
         )
 
-    def forward(self, x, c_true=None):
+    def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
                                         intervention_idxs=self.int_idxs,
@@ -171,12 +173,12 @@ class ConceptEmbeddingModel(ConceptModel):
             nn.Linear(latent_dim, len(task_names)),
         )
 
-    def forward(self, x, c_true=None):
+    def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
                                         intervention_idxs=self.int_idxs,
                                         intervention_rate=self.int_prob)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         y_pred = self.y_predictor(c_emb.flatten(-2))
         return y_pred, c_pred
 
@@ -204,12 +206,12 @@ class DeepConceptReasoning(ConceptExplanationModel):
             nn.Unflatten(-1, (self.n_tasks, self.n_roles)),
         )
 
-    def forward(self, x, c_true=None):
+    def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
                                         intervention_idxs=self.int_idxs,
                                         intervention_rate=self.int_prob)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         c_weights = self.concept_importance_predictor(c_emb)
         # adding memory dimension
         c_weights = c_weights.unsqueeze(dim=1)
@@ -225,12 +227,15 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
+        # transform probabilities to logits
+        y_pred = torch.log(y_pred / (1 - y_pred))
+
         return y_pred, c_pred
 
     def get_local_explanations(self, x, return_preds=False, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         c_weights = self.concept_importance_predictor(c_emb)
         relevance = CF.soft_select(c_weights, self.temperature, -3)
         polarity = c_weights.softmax(-1)
@@ -259,20 +264,24 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         self.memory_size = memory_size
         self.bottleneck = LinearConceptBottleneck(latent_dim, concept_names)
 
-        self.concept_memory = torch.nn.Embedding(memory_size, self.latent_dims)
+        self.concept_memory = torch.nn.Embedding(memory_size, self.latent_dim)
         self.memory_decoder = LinearConceptLayer(self.latent_dim,
                                                  [self.concept_names,
                                                   self.task_names,
                                                   self.memory_names])
         self.classifier_selector = nn.Sequential(
-            LinearConceptLayer(latent_dim, [self.task_names]),
+            LinearConceptLayer(latent_dim, [self.task_names,
+                                            memory_size]),
         )
 
-    def forward(self, x, c_true=None, y_true=None):
+    def forward(self, x, c_true=None, y_true=None, **kwargs):
         # generate concept and task predictions
-        emb = self.encoder(x)
-        c_pred = self.concept_bottleneck(emb).sigmoid()
-        classifier_selector_logits = self.classifier_selector(emb)
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
+                                        intervention_idxs=self.int_idxs,
+                                        intervention_rate=self.int_prob)
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(latent)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
         # softmax over roles and adding batch dimension to concept memory
         concept_weights = self.memory_decoder(
@@ -286,6 +295,9 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
                                        c_rec_per_classifier)
         else:
             y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier)
+
+        # transform probabilities to logits
+        y_pred = torch.log(y_pred / (1 - y_pred))
 
         return y_pred, c_pred
 
@@ -345,10 +357,10 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
                 Annotate([task_names], 1)
             )
 
-    def forward(self, x, c_true=None):
+    def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         c_weights = self.concept_relevance(c_emb)
 
         y_bias = None
