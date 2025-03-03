@@ -126,10 +126,9 @@ class ConceptBottleneckModel(ConceptModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
-        c_pred = c_dict['c_pred']
+        c_pred, c_dict = self.bottleneck(latent, c_true=c_true,
+                                         intervention_idxs=self.int_idxs,
+                                         intervention_rate=self.int_prob)
         y_pred = self.y_predictor(c_pred)
         return y_pred, c_pred
 
@@ -154,7 +153,7 @@ class ConceptResidualModel(ConceptModel):
         c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
                                         intervention_idxs=self.int_idxs,
                                         intervention_rate=self.int_prob)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         y_pred = self.y_predictor(c_emb)
         return y_pred, c_pred
 
@@ -303,9 +302,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
     def get_local_explanations(self, x, return_preds=False, **kwargs):
         emb = self.encoder(x)
-        c_pred = self.concept_bottleneck(emb).sigmoid()
         classifier_selector_logits = self.classifier_selector(emb)
-        prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
         # softmax over roles and adding batch dimension to concept memory
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
@@ -359,7 +356,9 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent)
+        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
+                                        intervention_idxs=self.int_idxs,
+                                        intervention_rate=self.int_prob)
         c_pred = c_dict['c_int']
         c_weights = self.concept_relevance(c_emb)
 
@@ -374,7 +373,7 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
     def get_local_explanations(self, x, return_preds=False, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
-        c_pred = c_dict['c_pred']
+        c_pred = c_dict['c_int']
         c_weights = self.concept_relevance(c_emb)
 
         y_bias = None
@@ -391,3 +390,12 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         explanations, y_preds = self.get_local_explanations(x, return_preds=True)
         return get_global_explanations(explanations, y_preds, self.task_names)
 
+
+AVAILABLE_MODELS = {
+    "ConceptBottleneckModel": ConceptBottleneckModel,
+    "ConceptResidualModel": ConceptResidualModel,
+    "ConceptEmbeddingModel": ConceptEmbeddingModel,
+    "DeepConceptReasoning": DeepConceptReasoning,
+    "LinearConceptEmbeddingModel": LinearConceptEmbeddingModel,
+    "ConceptMemoryReasoning": ConceptMemoryReasoning,
+}
