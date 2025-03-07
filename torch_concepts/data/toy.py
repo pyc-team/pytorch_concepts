@@ -163,6 +163,7 @@ class ToyDataset(Dataset):
     def __init__(self, dataset: str, size: int, random_state: int = 42):
         self.size = size
         self.random_state = random_state
+        self.name = dataset
         (
             self.data,
             self.concept_labels,
@@ -171,6 +172,9 @@ class ToyDataset(Dataset):
             self.concept_attr_names,
             self.task_attr_names
         ) = self._load_data(dataset)
+
+        self.input_dim = self.data.shape[1]
+        self.transform = None
 
     def _load_data(self, dataset):
         if dataset == 'xor':
@@ -189,6 +193,9 @@ class ToyDataset(Dataset):
 
     def __getitem__(self, index):
         data = self.data[index]
+        if self.transform is not None:
+            data = self.transform(data)
+
         concept_label = self.concept_labels[index]
         target_label = self.target_labels[index]
         return data, concept_label, target_label
@@ -345,3 +352,6 @@ class CompletenessDataset:
         concept_label = self.concept_labels[index]
         target_label = self.target_labels[index]
         return data, concept_label, target_label
+
+
+TOYDATASETS =  ['xor', 'trigonometry', 'dot', 'checkmark']

@@ -1,9 +1,13 @@
+import matplotlib.pyplot as plt
+import warnings
 from abc import abstractmethod, ABC
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import lightning as L
 from sklearn.metrics import accuracy_score, f1_score
+import seaborn as sns
 
 from torch_concepts.nn import LinearConceptBottleneck, \
     LinearConceptResidualBottleneck, ConceptEmbeddingBottleneck, \
@@ -25,9 +29,9 @@ class ConceptModel(ABC, L.LightningModule):
         assert (len(task_names) > 1 or
                 not isinstance(y_loss_fn, nn.CrossEntropyLoss)), \
             "CrossEntropyLoss requires at least two tasks"
-        assert isinstance(y_loss_fn, nn.BCEWithLogitsLoss) or \
-                isinstance(y_loss_fn, nn.CrossEntropyLoss), \
-            "y_loss_fn must be either BCEWithLogitsLoss or CrossEntropyLoss"
+        # assert isinstance(y_loss_fn, nn.BCEWithLogitsLoss) or \
+        #        isinstance(y_loss_fn, nn.CrossEntropyLoss), \
+        #     "y_loss_fn must be either BCEWithLogitsLoss or CrossEntropyLoss"
 
         self.encoder = encoder
         self.latent_dim = latent_dim
@@ -38,12 +42,15 @@ class ConceptModel(ABC, L.LightningModule):
         
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
-        self.multi_class = isinstance(y_loss_fn, nn.CrossEntropyLoss)
+        self.multi_class = len(task_names) > 1
         self.class_reg = class_reg
         self.int_prob = int_prob
         if int_idxs is None:
             int_idxs = torch.ones(len(concept_names)).bool()
         self.int_idxs = int_idxs
+        self.test_intervention = False
+        self._train_losses = []
+        self._val_losses = []
 
     @abstractmethod
     def forward(self, x, c_true=None, **kwargs):
@@ -52,11 +59,12 @@ class ConceptModel(ABC, L.LightningModule):
     def step(self, batch, mode="train") -> torch.Tensor:
         x, c_true, y_true = batch
 
-        # Intervene on concepts and memory reconstruction only on training
+        # Intervene on concept and memory reconstruction only on training
+        # or if explicitly set to True
         if mode == "train":
-            y_pred, c_pred = self.forward(x,
-                                          c_true=c_true,
-                                          y_true=y_true)
+            y_pred, c_pred = self.forward(x, c_true=c_true, y_true=y_true)
+        elif self.test_intervention:
+            y_pred, c_pred = self.forward(x, c_true=c_true)
         else:
             y_pred, c_pred = self.forward(x)
 
@@ -64,17 +72,31 @@ class ConceptModel(ABC, L.LightningModule):
         if c_pred is not None:
             c_loss = self.c_loss_fn(c_pred, c_true)
 
-        y_loss = self.y_loss_fn(y_pred, y_true)
-
+        # BCELoss requires one-hot encoding
+        if ((isinstance(self.y_loss_fn, nn.BCELoss) or
+            isinstance(self.y_loss_fn, nn.BCEWithLogitsLoss))
+                and self.multi_class):
+            y_loss = self.y_loss_fn(y_pred,
+                                    F.one_hot(y_true, self.n_tasks).float())
+        else:
+            y_loss = self.y_loss_fn(y_pred, y_true)
         loss = c_loss + self.class_reg * y_loss
 
         c_acc, c_f1 = 0., 0.
         if c_pred is not None:
-            c_acc = accuracy_score(c_true, c_pred > 0.5)
+            c_acc = accuracy_score(c_true, (c_pred > 0.5).float())
             c_f1 = f1_score(c_true, c_pred > 0.5, average='macro')
+
         # Extract most likely class in multi-class classification
-        y_pred = y_pred.argmax(dim=1) if self.multi_class else y_pred > 0.
+        if self.multi_class:
+            y_pred = y_pred.argmax(dim=1)
+        elif isinstance(self.y_loss_fn, nn.BCELoss):
+            y_pred = (y_pred > 0.5).float()
+        else:
+            y_pred = (y_pred > 0.).float()
         y_acc = accuracy_score(y_true, y_pred)
+        # manually compute accuracy
+        # y_acc = (y_pred == y_true).sum().item() / len(y_true)
 
         # Log metrics on progress bar only during validation
         prog = mode == "val"
@@ -88,10 +110,14 @@ class ConceptModel(ABC, L.LightningModule):
         return loss
 
     def training_step(self, batch) -> torch.Tensor:
-        return self.step(batch, mode="train")
+        loss = self.step(batch, mode="train")
+        self._train_losses.append(loss.item())
+        return loss
 
     def validation_step(self, batch) -> torch.Tensor:
-        return self.step(batch, mode="val")
+        loss = self.step(batch, mode="val")
+        self._val_losses.append(loss.item())
+        return loss
 
     def test_step(self, batch):
         return self.step(batch, mode="test")
@@ -99,6 +125,19 @@ class ConceptModel(ABC, L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=0.01)
         return optimizer
+
+    def on_train_end(self) -> None:
+        # plot losses
+        sns.lineplot(x=torch.linspace(0, 1, len(self._train_losses)),
+                     y=self._train_losses)
+        sns.lineplot(x=torch.linspace(0, 1, len(self._val_losses)),
+                     y=self._val_losses)
+        plt.title("Train and validation losses -- " + self.__class__.__name__)
+        plt.ylabel("Loss")
+        plt.xlabel("Step")
+        plt.ylim(0.01, 1)
+        plt.yscale("log")
+        plt.show()
 
 
 class ConceptExplanationModel(ConceptModel):
@@ -189,6 +228,12 @@ class DeepConceptReasoning(ConceptExplanationModel):
 
     def __init__(self, encoder, latent_dim, concept_names, task_names,
                  embedding_size, semantic=ProductTNorm(), **kwargs):
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn("DCR y_loss_fn must be a BCELoss."
+                              "Changing to BCELoss.")
+
+        kwargs['y_loss_fn'] = nn.BCELoss()
         super().__init__(encoder, latent_dim, concept_names, task_names,
                          **kwargs)
         self.semantic = semantic
@@ -199,9 +244,9 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # its input is batch_size x n_concepts x embedding_size
         # its output is batch_size x n_concepts x n_tasks x n_roles
         self.concept_importance_predictor = nn.Sequential(
-            nn.Linear(embedding_size, embedding_size),
+            nn.Linear(embedding_size, latent_dim),
             nn.LeakyReLU(),
-            nn.Linear(embedding_size, self.n_tasks * self.n_roles),
+            nn.Linear(latent_dim, self.n_tasks * self.n_roles),
             nn.Unflatten(-1, (self.n_tasks, self.n_roles)),
         )
 
@@ -226,8 +271,8 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
-        # transform probabilities to logits
-        y_pred = torch.log(y_pred / (1 - y_pred))
+        # transform probabilities to logits # does not work, numerical problems
+        # y_pred = torch.log(y_pred) - torch.log(1 - y_pred + eps)
 
         return y_pred, c_pred
 
@@ -258,8 +303,14 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
     def __init__(self, encoder, latent_dim, concept_names, task_names,
                     memory_size, **kwargs):
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn("CMR y_loss_fn must be a BCELoss."
+                              "Changing to BCELoss.")
+        kwargs['y_loss_fn'] = nn.BCELoss()
         super().__init__(encoder, latent_dim, concept_names, task_names,
-                        **kwargs)
+                         **kwargs)
+
         self.memory_size = memory_size
         self.bottleneck = LinearConceptBottleneck(latent_dim, concept_names)
 
@@ -288,6 +339,10 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
         if y_true is not None:
+            # check if y_true is an array (label encoding) or a matrix (one-hot encoding
+            # in case it is an array convert it to a matrix
+            if len(y_true.shape) == 1:
+                y_true = torch.nn.functional.one_hot(y_true, len(self.task_names))
             c_rec_per_classifier = CF.logic_memory_reconstruction(concept_weights,
                                                                 c_true, y_true)
             y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier,
@@ -296,7 +351,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
             y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier)
 
         # transform probabilities to logits
-        y_pred = torch.log(y_pred / (1 - y_pred))
+        # y_pred = torch.log(y_pred) - torch.log(1 - y_pred + eps)
 
         return y_pred, c_pred
 
@@ -336,9 +391,9 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         # input batch_size x concept_number x embedding_size
         # output batch_size x concept_number x task_number
         self.concept_relevance = torch.nn.Sequential(
-            torch.nn.Linear(embedding_size, embedding_size),
+            torch.nn.Linear(embedding_size, latent_dim),
             torch.nn.LeakyReLU(),
-            torch.nn.Linear(embedding_size, len(task_names)),
+            torch.nn.Linear(latent_dim, len(task_names)),
             Annotate([concept_names, task_names], [1, 2])
         )
         # module predicting the class bias for each class
@@ -398,4 +453,13 @@ AVAILABLE_MODELS = {
     "DeepConceptReasoning": DeepConceptReasoning,
     "LinearConceptEmbeddingModel": LinearConceptEmbeddingModel,
     "ConceptMemoryReasoning": ConceptMemoryReasoning,
+}
+
+MODELS_ACRONYMS = {
+    "ConceptBottleneckModel": "CBM",
+    "ConceptResidualModel": "CRM",
+    "ConceptEmbeddingModel": "CEM",
+    "DeepConceptReasoning": "DCR",
+    "LinearConceptEmbeddingModel": "LICEM",
+    "ConceptMemoryReasoning": "CMR",
 }

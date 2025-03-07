@@ -1,8 +1,11 @@
 import numpy as np
 import random
 import torch
+from matplotlib import pyplot as plt
 
 from torchvision.datasets import MNIST
+from torchvision.transforms import transforms
+
 
 def _colorize(image: torch.Tensor, color: str) -> torch.Tensor:
     # Create an image with 3 channels (RGB)
@@ -93,3 +96,79 @@ class ColorMNISTDataset(MNIST):
             torch.tensor(concept_label, dtype=torch.float32),
             torch.tensor(target_label, dtype=torch.float32),
         )
+
+
+class MNISTAddition(MNIST):
+    """
+        The MNIST addition dataset is a modified version of the MNIST dataset where
+        each image is a concatenation of two MNIST images and the target label is the
+        sum of the two digits. The concept label is a one-hot encoding of the two
+        digits.
+
+        Attributes:
+            concept_names: The names of the concept labels.
+            task_names: The names of the task labels.
+            root: The root directory where the dataset is stored.
+            train: Whether to load the training or test split. Default is False.
+            transform: The transformations to apply to the images. Default is None.
+            target_transform: The transformations to apply to the target labels.
+                Default is None.
+            download: Whether to download the dataset if it does not exist. Default
+                is False.
+    """
+    name = "mnist_addition"
+    n_concepts = 20
+    n_tasks = 19
+    concept_names = [
+        "0_left", "1_left", "2_left", "3_left", "4_left",
+        "5_left", "6_left", "7_left", "8_left", "9_left",
+        "0_right", "1_right", "2_right", "3_right", "4_right",
+        "5_right", "6_right", "7_right", "8_right", "9_right",
+    ]
+    task_names = [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        "10", "11", "12", "13", "14", "15", "16", "17", "18",
+    ]
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    input_shape = (1, 28, 56)
+    input_dim = 28 * 56
+
+    def __init__(self, root, train,
+                 target_transform=None, download=True):
+        super(MNISTAddition, self).__init__(root, train, self.transform,
+                                            target_transform, download)
+
+    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+        # Get the first image and target
+        img_1, target_1 = super(MNISTAddition, self).__getitem__(index)
+
+        # Get a second image and target. To get a different image, we need to
+        # sample a different index. To do this, we pick the index from the end
+        img_2, target_2 = super(MNISTAddition, self).__getitem__(-index)
+
+        # Horizontally concat the two images and sum targets to get task label
+        img = torch.cat((img_1, img_2), dim=2)
+
+        # Sum the targets to get the task label
+        y = target_1 + target_2
+
+        # One hot encoding of the concept label on 20 digits
+        c = torch.zeros(20)
+        c[target_1] = 1
+        c[target_2 + 10] = 1
+
+        return img, c, y
+
+    def plot(self, index):
+        img, c, y = self.__getitem__(index)
+        plt.imshow(img.squeeze(), cmap='gray')
+        concept_names = [self.concept_names[i] for i in range(20) if c[i] == 1]
+        concept_names = ', '.join(concept_names)
+        task_names = [self.task_names[i] for i in range(20) if y == i]
+        task_names = ', '.join(task_names)
+        plt.title(f"Concept: {concept_names}, Task: {task_names}")
+        plt.axis('off')
+        plt.show()
