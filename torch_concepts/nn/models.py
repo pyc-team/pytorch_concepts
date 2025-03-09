@@ -47,7 +47,7 @@ class ConceptModel(ABC, L.LightningModule):
         self.int_prob = int_prob
         if int_idxs is None:
             int_idxs = torch.ones(len(concept_names)).bool()
-        self.int_idxs = int_idxs
+        self.register_buffer("int_idxs", int_idxs, persistent=True)
         self.test_intervention = False
         self._train_losses = []
         self._val_losses = []
@@ -84,8 +84,8 @@ class ConceptModel(ABC, L.LightningModule):
 
         c_acc, c_f1 = 0., 0.
         if c_pred is not None:
-            c_acc = accuracy_score(c_true, (c_pred > 0.5).float())
-            c_f1 = f1_score(c_true, c_pred > 0.5, average='macro')
+            c_acc = accuracy_score(c_true.cpu(), (c_pred.cpu() > 0.5).float())
+            c_f1 = f1_score(c_true.cpu(), c_pred.cpu() > 0.5, average='macro')
 
         # Extract most likely class in multi-class classification
         if self.multi_class:
@@ -94,7 +94,7 @@ class ConceptModel(ABC, L.LightningModule):
             y_pred = (y_pred > 0.5).float()
         else:
             y_pred = (y_pred > 0.).float()
-        y_acc = accuracy_score(y_true, y_pred)
+        y_acc = accuracy_score(y_true.cpu(), y_pred.detach().cpu())
         # manually compute accuracy
         # y_acc = (y_pred == y_true).sum().item() / len(y_true)
 
@@ -135,7 +135,7 @@ class ConceptModel(ABC, L.LightningModule):
         plt.title("Train and validation losses -- " + self.__class__.__name__)
         plt.ylabel("Loss")
         plt.xlabel("Step")
-        plt.ylim(0.01, 1)
+        plt.ylim(0.001, 1)
         plt.yscale("log")
         plt.show()
 
