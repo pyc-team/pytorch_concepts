@@ -58,12 +58,14 @@ def main():
         model.configure_optimizers()
 
         trainer = L.Trainer(max_epochs=n_epochs)
+        print(f"Training {model_cls.__name__} "
+              f"on device {trainer.strategy.root_device}")
         trainer.fit(model, train_loader)
 
         model_result = trainer.test(model, val_loader)[0]
         results[model_cls.__name__] = model_result
 
-    results = pd.DataFrame(results)
+    results = pd.DataFrame(results).T
     print(results)
     results.to_csv('model_results.csv')
 

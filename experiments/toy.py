@@ -8,10 +8,10 @@ from torchvision import transforms
 
 from torch_concepts.data.toy import ToyDataset, TOYDATASETS
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS
-from torch_concepts.utils import set_seed
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from utils import set_seed, CustomProgressBar
 
 def main(
     train_loader,
@@ -68,8 +68,9 @@ def main(
             # Train the model
             trainer = Trainer(
                 max_epochs=training_kwargs["epochs"],
-                callbacks=[checkpoint],
+                callbacks=[checkpoint, CustomProgressBar()],
             )
+            print(f"Training {model_name} with seed {seed}")
             trainer.fit(model, train_loader, val_loader)
             model.load_state_dict(torch.load(checkpoint.best_model_path)['state_dict'])
 
@@ -261,14 +262,14 @@ if __name__ == "__main__":
         test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
 
         # Run the experiments and plot the results
-        # main(train_loader, val_loader, test_loader, dataset, model_kwargs,
-        #      training_kwargs)
+        main(train_loader, val_loader, test_loader, dataset, model_kwargs,
+             training_kwargs)
         plot_test_accuracy(dataset)
         plot_concept_accuracy(dataset)
 
         # Test the intervenability of the models
-        # int_probs = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
-        # noise_levels = [0.0, 0.5, 1.0, 2.0, 3.0]
-        # test_intervenability(test_loader, dataset, model_kwargs, int_probs,
-        #                      noise_levels, training_kwargs)
-        # plot_intervenability(dataset)
+        int_probs = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
+        noise_levels = [0.0, 0.5, 1.0, 2.0, 3.0]
+        test_intervenability(test_loader, dataset, model_kwargs, int_probs,
+                             noise_levels, training_kwargs)
+        plot_intervenability(dataset)

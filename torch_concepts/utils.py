@@ -1,8 +1,6 @@
 from collections import Counter
 from typing import Dict, Union, List
-import torch
-import numpy as np
-import random
+
 
 def validate_and_generate_concept_names(
     concept_names: Dict[int, Union[int, List[str]]]
@@ -79,9 +77,3 @@ def get_global_explanations(
                                                        .most_common(n))
     return most_common_global_expl
 
-
-def set_seed(seed=0):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True

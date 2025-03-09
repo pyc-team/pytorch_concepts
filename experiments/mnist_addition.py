@@ -8,7 +8,7 @@ from torchvision import transforms
 
 from torch_concepts.data.mnist import MNISTAddition
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS
-from torch_concepts.utils import set_seed
+from utils import set_seed, CustomProgressBar
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -40,7 +40,7 @@ def main(
     results_df = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
-            set_seed()
+            set_seed(seed)
             model = model_cls(
                 encoder,
                 model_kwargs["latent_dim"],
@@ -68,8 +68,9 @@ def main(
             # Train the model
             trainer = Trainer(
                 max_epochs=training_kwargs["epochs"],
-                callbacks=[checkpoint]
+                callbacks=[checkpoint, CustomProgressBar()]
             )
+            print(f"Training {model_name} with seed {seed}")
             trainer.fit(model, train_loader, val_loader)
             model.load_state_dict(torch.load(checkpoint.best_model_path)['state_dict'])
 
@@ -83,6 +84,7 @@ def main(
         )
 
     results_df.to_csv(result_folder + "/results.csv")
+
 
 
 def plot_test_accuracy(dataset):
@@ -269,8 +271,8 @@ if __name__ == "__main__":
     test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
 
     # Run the experiments and plot the results
-    # main(train_loader, val_loader, test_loader, dataset,
-    #      model_kwargs, training_kwargs)
+    main(train_loader, val_loader, test_loader, dataset,
+         model_kwargs, training_kwargs)
 
     # results = pd.DataFrame()
     # for model_name, model_cls in AVAILABLE_MODELS.items():
