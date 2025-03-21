@@ -1,7 +1,8 @@
 import abc
+import torch
+
 from typing import Iterable
 
-import torch
 
 
 class Semantic:

@@ -1,11 +1,8 @@
-import numpy as np
 import torch
 
-from collections import defaultdict, Counter
-from typing import List, Union, Tuple, Dict
-
-from torch_concepts.semantic import CMRSemantic, Semantic, ProductTNorm
-
+from collections import defaultdict
+from torch_concepts.semantic import CMRSemantic
+from typing import List, Dict
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     concept_names = {}
@@ -127,7 +124,8 @@ def selection_eval(
 
     product = selection_weights
     for pred in predictions:
-        assert pred.shape == product.shape, "Prediction shape mismatch the selection weights."
+        assert pred.shape == product.shape, \
+            "Prediction shape mismatch the selection weights."
         product = product * pred
 
     result = product.sum(dim=-1)
@@ -142,7 +140,8 @@ def linear_equation_eval(
 ) -> torch.Tensor:
     """
     Function to evaluate a set of linear equations with concept predictions.
-    In this case we have one equation (concept_weights) for each sample in the batch.
+    In this case we have one equation (concept_weights) for each sample in the
+    batch.
 
     Args:
         concept_weights: Parameters representing the weights of multiple linear
@@ -239,7 +238,10 @@ def linear_equation_explanations(
 
     # add the bias to the concept_weights and c_names
     if bias is not None:
-        concept_weights = torch.cat((concept_weights, bias.unsqueeze(-2)), dim=-2)
+        concept_weights = torch.cat(
+            (concept_weights, bias.unsqueeze(-2)),
+            dim=-2,
+        )
         c_names = c_names + ["bias"]
 
     batch_size = concept_weights.size(0)
@@ -323,7 +325,9 @@ def logic_rule_eval(
     assert (y_per_rule < 1.0).all(), "y_per_rule should be in [0, 1]"
 
     # performing a conj while iterating over concepts of y_per_rule
-    y_per_rule = semantic.conj(*[y for y in y_per_rule.split(1, dim=2)]).squeeze(dim=2)
+    y_per_rule = semantic.conj(
+        *[y for y in y_per_rule.split(1, dim=2)]
+    ).squeeze(dim=2)
 
     return y_per_rule.permute(0, 2, 1)
 
@@ -375,8 +379,8 @@ def logic_rule_explanations(
     Extracts rules from rule concept weights as strings.
 
     Args:
-        concept_logic_weights: Rule embeddings with shape (batch_size, memory_size,
-            n_concepts, n_tasks, 3).
+        concept_logic_weights: Rule embeddings with shape
+            (batch_size, memory_size, n_concepts, n_tasks, 3).
         concept_names: Concept and task names.
 
     Returns:

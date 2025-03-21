@@ -64,7 +64,7 @@ class AnnotatedTensor(torch.Tensor):
         tensor: torch.Tensor,
         annotations: Union[List[List[str]], List[str]] = None,
         annotated_axis: Union[List[int], int] = None,
-    ) -> Tuple[List[List[str]], List[int]]:
+    ) -> List[List[str]]:
         if annotations is None:
             annotations = []
         if annotated_axis is None:
@@ -118,13 +118,23 @@ class AnnotatedTensor(torch.Tensor):
         ]
 
         for annotation_idx in annotated_axis:
-            if annotation_idx < 0 or annotation_idx >= len(tensor.shape):
+            if annotation_idx >= 0 and annotation_idx >= len(tensor.shape):
                 raise ValueError(
                     f"Annotation axis {annotation_idx} is out of range for "
                     f"tensor with shape {tensor.shape}."
                 )
+            if annotation_idx < 0 and -annotation_idx > len(tensor.shape):
+                raise ValueError(
+                    f"Annotation axis {annotation_idx} is out of range for "
+                    f"tensor with shape {tensor.shape}."
+                )
+        # Let's make all annotations be positive indices to simplify matters
+        annotated_axis = [
+            x if x >= 0 else len(tensor.shape) + x
+            for x in annotated_axis
+        ]
 
-        # Finally make it so that all dimensions are provied with annotations
+        # Finally make it so that all dimensions are provided with annotations
         # (empty) for those dimensions whose annotations we were not provided
         if annotated_axis == []:
             annotations = [[] for _ in tensor.shape]

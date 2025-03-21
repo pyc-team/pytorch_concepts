@@ -1,14 +1,13 @@
 import copy
-from abc import ABC, abstractmethod
-
 import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import List, Dict, Callable, Union, Tuple
 
+from abc import ABC, abstractmethod
 from torch_concepts.base import AnnotatedTensor
 from torch_concepts.nn import Annotate
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
+from typing import List, Dict, Callable, Union, Tuple
 
 
 def _check_annotations(annotations: Union[List[str], int]):
