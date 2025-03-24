@@ -165,10 +165,31 @@ class MNISTAddition(MNIST):
     def plot(self, index):
         img, c, y = self.__getitem__(index)
         plt.imshow(img.squeeze(), cmap='gray')
-        concept_names = [self.concept_names[i] for i in range(20) if c[i] == 1]
+        concept_names = [self.concept_names[i]
+                         for i in range(self.n_concepts) if c[i] == 1]
         concept_names = ', '.join(concept_names)
-        task_names = [self.task_names[i] for i in range(20) if y == i]
+        task_names = [self.task_names[i]
+                      for i in range(self.n_tasks) if y == i]
         task_names = ', '.join(task_names)
         plt.title(f"Concept: {concept_names}, Task: {task_names}")
         plt.axis('off')
         plt.show()
+
+
+class PartialMNISTAddition(MNISTAddition):
+    """
+    The partial MNIST addition dataset is a modified version of the MNIST
+    addition dataset where the concept annotation is partial. The concept
+    associated with the second digit is not provided.
+    """
+    name = "partial_mnist_addition"
+    n_concepts = 10
+    concept_names = [
+        "0_left", "1_left", "2_left", "3_left", "4_left",
+        "5_left", "6_left", "7_left", "8_left", "9_left",
+    ]
+
+    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+        x, c, y = super(PartialMNISTAddition, self).__getitem__(index)
+        c = c[:10]
+        return x, c, y
