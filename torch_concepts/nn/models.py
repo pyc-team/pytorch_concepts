@@ -1,29 +1,33 @@
+import lightning as L
 import matplotlib.pyplot as plt
-import warnings
-from abc import abstractmethod, ABC
-
+import seaborn as sns
 import torch
+import torch_concepts.nn as pyc_nn
 import torch.nn as nn
 import torch.nn.functional as F
-import lightning as L
+import warnings
+
+from abc import abstractmethod, ABC
 from sklearn.metrics import accuracy_score, f1_score
-import seaborn as sns
-
-from torch_concepts.nn import LinearConceptBottleneck, \
-    LinearConceptResidualBottleneck, ConceptEmbeddingBottleneck, \
-    LinearConceptLayer, Annotate
-from torch_concepts.semantic import ProductTNorm
 from torch_concepts.nn import functional as CF
+from torch_concepts.semantic import ProductTNorm
 from torch_concepts.utils import get_global_explanations
-
 
 class ConceptModel(ABC, L.LightningModule):
     @abstractmethod
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 class_reg=0.1, c_loss_fn=nn.BCELoss(),
-                 y_loss_fn=nn.BCEWithLogitsLoss(),
-                 int_prob=0.1, int_idxs=None,
-                 **kwargs):
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        class_reg=0.1,
+        c_loss_fn=nn.BCELoss(),
+        y_loss_fn=nn.BCEWithLogitsLoss(),
+        int_prob=0.1,
+        int_idxs=None,
+        **kwargs,
+    ):
         super().__init__()
 
         assert (len(task_names) > 1 or
@@ -39,7 +43,7 @@ class ConceptModel(ABC, L.LightningModule):
         self.task_names = task_names
         self.n_concepts = len(concept_names)
         self.n_tasks = len(task_names)
-        
+
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
         self.multi_class = len(task_names) > 1
@@ -128,10 +132,14 @@ class ConceptModel(ABC, L.LightningModule):
 
     def on_train_end(self) -> None:
         # plot losses
-        sns.lineplot(x=torch.linspace(0, 1, len(self._train_losses)),
-                     y=self._train_losses)
-        sns.lineplot(x=torch.linspace(0, 1, len(self._val_losses)),
-                     y=self._val_losses)
+        sns.lineplot(
+            x=torch.linspace(0, 1, len(self._train_losses)),
+            y=self._train_losses,
+        )
+        sns.lineplot(
+            x=torch.linspace(0, 1, len(self._val_losses)),
+            y=self._val_losses,
+        )
         plt.title("Train and validation losses -- " + self.__class__.__name__)
         plt.ylabel("Loss")
         plt.xlabel("Step")
@@ -151,12 +159,27 @@ class ConceptExplanationModel(ConceptModel):
 
 
 class ConceptBottleneckModel(ConceptModel):
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 *args, **kwargs):
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
 
-        self.bottleneck = LinearConceptBottleneck(latent_dim, concept_names)
+        self.bottleneck = pyc_nn.LinearConceptBottleneck(
+            latent_dim,
+            concept_names,
+        )
         self.y_predictor = nn.Sequential(
             nn.Linear(len(concept_names), latent_dim),
             nn.LeakyReLU(),
@@ -165,22 +188,39 @@ class ConceptBottleneckModel(ConceptModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_pred, c_dict = self.bottleneck(latent, c_true=c_true,
-                                         intervention_idxs=self.int_idxs,
-                                         intervention_rate=self.int_prob)
+        c_pred, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         y_pred = self.y_predictor(c_pred)
         return y_pred, c_pred
 
 
 class ConceptResidualModel(ConceptModel):
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 residual_size, **kwargs):
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        residual_size,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
 
-        self.bottleneck = LinearConceptResidualBottleneck(latent_dim,
-                                                          concept_names,
-                                                          residual_size)
+        self.bottleneck = pyc_nn.LinearConceptResidualBottleneck(
+            latent_dim,
+            concept_names,
+            residual_size,
+        )
         self.y_predictor = nn.Sequential(
             nn.Linear(len(concept_names) + residual_size, latent_dim),
             nn.LeakyReLU(),
@@ -189,22 +229,40 @@ class ConceptResidualModel(ConceptModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         c_pred = c_dict['c_int']
         y_pred = self.y_predictor(c_emb)
         return y_pred, c_pred
 
 
 class ConceptEmbeddingModel(ConceptModel):
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 embedding_size, **kwargs):
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        embedding_size,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
 
-        self.bottleneck = ConceptEmbeddingBottleneck(latent_dim, concept_names,
-                                                     embedding_size)
+        self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
+            latent_dim,
+            concept_names,
+            embedding_size,
+        )
         self.y_predictor = nn.Sequential(
             nn.Linear(len(concept_names) * embedding_size, latent_dim),
             nn.LeakyReLU(),
@@ -213,9 +271,12 @@ class ConceptEmbeddingModel(ConceptModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         c_pred = c_dict['c_int']
         y_pred = self.y_predictor(c_emb.flatten(-2))
         return y_pred, c_pred
@@ -226,19 +287,36 @@ class DeepConceptReasoning(ConceptExplanationModel):
     memory_names = ['Positive', 'Negative', 'Irrelevant']
     temperature = 100
 
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 embedding_size, semantic=ProductTNorm(), **kwargs):
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        embedding_size,
+        semantic=ProductTNorm(),
+        **kwargs,
+    ):
         if 'y_loss_fn' in kwargs:
             if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn("DCR y_loss_fn must be a BCELoss."
-                              "Changing to BCELoss.")
+                warnings.warn(
+                    "DCR y_loss_fn must be a BCELoss. Changing to BCELoss."
+                )
 
         kwargs['y_loss_fn'] = nn.BCELoss()
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
         self.semantic = semantic
-        self.bottleneck = ConceptEmbeddingBottleneck(latent_dim, concept_names,
-                                                     embedding_size)
+        self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
+            latent_dim,
+            concept_names,
+            embedding_size,
+        )
 
         # module predicting concept imp. for all concepts tasks and roles
         # its input is batch_size x n_concepts x embedding_size
@@ -252,9 +330,12 @@ class DeepConceptReasoning(ConceptExplanationModel):
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         c_pred = c_dict['c_int']
         c_weights = self.concept_importance_predictor(c_emb)
         # adding memory dimension
@@ -284,16 +365,25 @@ class DeepConceptReasoning(ConceptExplanationModel):
         relevance = CF.soft_select(c_weights, self.temperature, -3)
         polarity = c_weights.softmax(-1)
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
-        local_explanations = CF.logic_rule_eval(c_weights, c_pred,
-                                                semantic=self.semantic)
+        local_explanations = CF.logic_rule_eval(
+            c_weights,
+            c_pred,
+            semantic=self.semantic,
+        )
         if return_preds:
-            y_preds = CF.logic_rule_eval(c_weights, c_pred,
-                                         semantic=self.semantic)
+            y_preds = CF.logic_rule_eval(
+                c_weights,
+                c_pred,
+                semantic=self.semantic,
+            )
             return local_explanations, y_preds[:, :, 0]
         return local_explanations
 
     def get_global_explanations(self, x, **kwargs):
-        explanations, y_preds = self.get_local_explanations(x, return_preds=True)
+        explanations, y_preds = self.get_local_explanations(
+            x,
+            return_preds=True,
+        )
         return get_global_explanations(explanations, y_preds, self.task_names)
 
 
@@ -301,35 +391,63 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
     n_roles = 3
     memory_names = ['Positive', 'Negative', 'Irrelevant']
 
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                    memory_size, **kwargs):
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        memory_size,
+        **kwargs,
+    ):
         if 'y_loss_fn' in kwargs:
             if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn("CMR y_loss_fn must be a BCELoss."
-                              "Changing to BCELoss.")
+                warnings.warn(
+                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
+                )
         kwargs['y_loss_fn'] = nn.BCELoss()
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
 
         self.memory_size = memory_size
-        self.bottleneck = LinearConceptBottleneck(latent_dim, concept_names)
+        self.bottleneck = pyc_nn.LinearConceptBottleneck(
+            latent_dim,
+            concept_names,
+        )
 
-        self.concept_memory = torch.nn.Embedding(memory_size, self.latent_dim)
-        self.memory_decoder = LinearConceptLayer(self.latent_dim,
-                                                 [self.concept_names,
-                                                  self.task_names,
-                                                  self.memory_names])
+        self.concept_memory = torch.nn.Embedding(
+            memory_size,
+            self.latent_dim,
+        )
+        self.memory_decoder = pyc_nn.LinearConceptLayer(
+            self.latent_dim,
+            [
+                self.concept_names,
+                self.task_names,
+                self.memory_names,
+            ],
+        )
         self.classifier_selector = nn.Sequential(
-            LinearConceptLayer(latent_dim, [self.task_names,
-                                            memory_size]),
+            pyc_nn.LinearConceptLayer(
+                latent_dim,
+                [self.task_names, memory_size],
+            ),
         )
 
     def forward(self, x, c_true=None, y_true=None, **kwargs):
         # generate concept and task predictions
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         c_pred = c_dict['c_int']
         classifier_selector_logits = self.classifier_selector(latent)
         prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
@@ -339,14 +457,23 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
         if y_true is not None:
-            # check if y_true is an array (label encoding) or a matrix (one-hot encoding
-            # in case it is an array convert it to a matrix
+            # check if y_true is an array (label encoding) or a matrix
+            # (one-hot encoding) in case it is an array convert it to a matrix
             if len(y_true.shape) == 1:
-                y_true = torch.nn.functional.one_hot(y_true, len(self.task_names))
-            c_rec_per_classifier = CF.logic_memory_reconstruction(concept_weights,
-                                                                c_true, y_true)
-            y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier,
-                                       c_rec_per_classifier)
+                y_true = torch.nn.functional.one_hot(
+                    y_true,
+                    len(self.task_names),
+                )
+            c_rec_per_classifier = CF.logic_memory_reconstruction(
+                concept_weights,
+                c_true,
+                y_true,
+            )
+            y_pred = CF.selection_eval(
+                prob_per_classifier,
+                y_per_classifier,
+                c_rec_per_classifier,
+            )
         else:
             y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier)
 
@@ -362,31 +489,55 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
 
-        explanations = CF.logic_rule_explanations(concept_weights,
-                                               {1: self.concept_names,
-                                                2: self.class_names})
+        explanations = CF.logic_rule_explanations(
+            concept_weights,
+            {
+                1: self.concept_names,
+                2: self.class_names,
+            },
+        )
         return explanations
 
     def get_global_explanations(self, x, **kwargs):
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
 
-        global_explanations = CF.logic_rule_explanations(concept_weights,
-                                                         {1: self.concept_names,
-                                                          2: self.class_names})
+        global_explanations = CF.logic_rule_explanations(
+            concept_weights,
+            {
+                1: self.concept_names,
+                2: self.class_names,
+            },
+        )
 
         return global_explanations[0]
 
 
 class LinearConceptEmbeddingModel(ConceptExplanationModel):
-    def __init__(self, encoder, latent_dim, concept_names, task_names,
-                 embedding_size, bias=True, **kwargs):
-        super().__init__(encoder, latent_dim, concept_names, task_names,
-                         **kwargs)
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        embedding_size,
+        bias=True,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
         self.bias = bias
 
-        self.bottleneck = ConceptEmbeddingBottleneck(latent_dim, concept_names,
-                                                     embedding_size)
+        self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
+            latent_dim,
+            concept_names,
+            embedding_size,
+        )
         # module predicting the concept importance for all concepts and tasks
         # input batch_size x concept_number x embedding_size
         # output batch_size x concept_number x task_number
@@ -394,7 +545,7 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
             torch.nn.Linear(embedding_size, latent_dim),
             torch.nn.LeakyReLU(),
             torch.nn.Linear(latent_dim, len(task_names)),
-            Annotate([concept_names, task_names], [1, 2])
+            pyc_nn.Annotate([concept_names, task_names], [1, 2])
         )
         # module predicting the class bias for each class
         # input batch_size x concept_number x embedding_size
@@ -402,18 +553,23 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         if self.bias:
             self.bias_predictor = torch.nn.Sequential(
                 torch.nn.Flatten(),
-                torch.nn.Linear(self.n_concepts * embedding_size,
-                                embedding_size),
+                torch.nn.Linear(
+                    self.n_concepts * embedding_size,
+                    embedding_size,
+                ),
                 torch.nn.LeakyReLU(),
                 torch.nn.Linear(embedding_size, self.n_tasks),
-                Annotate([task_names], 1)
+                pyc_nn.Annotate([task_names], 1)
             )
 
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
-        c_emb, c_dict = self.bottleneck(latent, c_true=c_true,
-                                        intervention_idxs=self.int_idxs,
-                                        intervention_rate=self.int_prob)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
         c_pred = c_dict['c_int']
         c_weights = self.concept_relevance(c_emb)
 
@@ -442,7 +598,10 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         return linear_equations
 
     def get_global_explanations(self, x, **kwargs):
-        explanations, y_preds = self.get_local_explanations(x, return_preds=True)
+        explanations, y_preds = self.get_local_explanations(
+            x,
+            return_preds=True,
+        )
         return get_global_explanations(explanations, y_preds, self.task_names)
 
 
