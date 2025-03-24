@@ -33,7 +33,8 @@ def main(
         torch.nn.Flatten(),
         torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
         torch.nn.LeakyReLU(),
-        torch.nn.Linear(model_kwargs["latent_dim"] * 2, model_kwargs["latent_dim"]),
+        torch.nn.Linear(model_kwargs["latent_dim"] * 2,
+                        model_kwargs["latent_dim"]),
         torch.nn.LeakyReLU(),
     )
 
@@ -54,37 +55,40 @@ def main(
             )
             model.configure_optimizers()
 
-            # delete all existing checkpoints
-            for file in os.listdir(result_folder):
-                if file.startswith(f"{model_name}_seed_{seed}"):
-                    os.remove(os.path.join(result_folder, file))
             checkpoint = ModelCheckpoint(
                 monitor='val_loss',
                 save_top_k=1,
                 dirpath=result_folder,
                 filename=f"{model_name}_seed_{seed}"
             )
-
-            # Train the model
             trainer = Trainer(
                 max_epochs=training_kwargs["epochs"],
                 callbacks=[checkpoint, CustomProgressBar()]
             )
-            print(f"Training {model_name} with seed {seed}")
-            trainer.fit(model, train_loader, val_loader)
-            model.load_state_dict(torch.load(checkpoint.best_model_path)['state_dict'])
+
+            # Train the model
+            file = f"{result_folder}/{model_name}_seed_{seed}.ckpt"
+            if not os.path.exists(file) or not training_kwargs["load_results"]:
+                if os.path.exists(os.path.join(result_folder, file)):
+                    os.remove(os.path.join(result_folder, file))
+                print(f"Training {model_name} with seed {seed}")
+                trainer.fit(model, train_loader, val_loader)
+            else:
+                print(f"Model {model_name} with seed {seed} already trained")
+
+            model.load_state_dict(torch.load(file)['state_dict'])
 
             test_results = trainer.test(model, test_loader)[0]
             test_results["model"] = model_name
             test_results["seed"] = seed
 
-            results_df = pd.concat([results_df, pd.DataFrame([test_results])], axis=0)
+            results_df = pd.concat([results_df,
+                                    pd.DataFrame([test_results])], axis=0)
         results_df[results_df["model"] == model_name].to_csv(
             result_folder + f"/{model_name}.csv"
         )
 
     results_df.to_csv(result_folder + "/results.csv")
-
 
 
 def plot_test_accuracy(dataset):
@@ -129,6 +133,16 @@ def plot_concept_accuracy(dataset):
     plt.show()
 
 
+class GaussianNoiseTransform(object):
+
+    def __init__(self, mean=0., std=1.):
+        self.std = std
+        self.mean = mean
+
+    def __call__(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.std + self.mean
+
+
 def test_intervenability(
     test_loader,
     dataset,
@@ -154,7 +168,8 @@ def test_intervenability(
                                            f"{filename_pattern}.ckpt")
             encoder = torch.nn.Sequential(
                 torch.nn.Flatten(),
-                torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
+                torch.nn.Linear(dataset.input_dim,
+                                model_kwargs["latent_dim"] * 2),
                 torch.nn.LeakyReLU(),
                 torch.nn.Linear(model_kwargs["latent_dim"] * 2,
                                 model_kwargs["latent_dim"]),
@@ -179,7 +194,7 @@ def test_intervenability(
                 # add noise in the transform of the dataset
                 transform = transforms.Compose([
                     transforms.ToTensor(),
-                    transforms.Lambda(lambda x: x + noise_level * torch.randn_like(x)),
+                    GaussianNoiseTransform(std=noise_level),
                     transforms.Normalize((0.1307,), (0.3081,))
                 ])
                 test_loader.dataset.dataset.transform = transform
@@ -222,7 +237,8 @@ def plot_intervenability(dataset):
 
     # subplots as the noise levels
     n_noise_levels = len(results["noise_level"].unique())
-    fig, axs = plt.subplots(1, n_noise_levels, figsize=(4 * n_noise_levels, 4))
+    fig, axs = plt.subplots(1, n_noise_levels,
+                            figsize=(4 * n_noise_levels, 4))
 
     for i in range(n_noise_levels):
         noise_level = results["noise_level"].unique()[i]
@@ -243,11 +259,12 @@ if __name__ == "__main__":
     training_kwargs = {
         "seeds": 3,
         "epochs": 5,
+        "load_results": True,
     }
     model_kwargs = {
         "latent_dim": 64,
         "embedding_size": 32,
-        "class_reg": 0.01,
+        "class_reg": 0.1,
         "residual_size": 32,
         "memory_size": 20,
         "y_loss_fn": torch.nn.CrossEntropyLoss(),
@@ -266,21 +283,23 @@ if __name__ == "__main__":
     train_set, val_set, test_set = random_split(dataset,
                                                 [train_size,
                                                  val_size // 2, val_size // 2])
-    train_loader = DataLoader(train_set, batch_size=256, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=256, shuffle=False)
-    test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=256, shuffle=True,
+                              num_workers=4, persistent_workers=True)
+    val_loader = DataLoader(val_set, batch_size=256, shuffle=False,
+                            num_workers=4, persistent_workers=True)
+    test_loader = DataLoader(test_set, batch_size=256, shuffle=False,
+                             num_workers=4, persistent_workers=True)
 
     # Run the experiments and plot the results
-    main(train_loader, val_loader, test_loader, dataset,
-         model_kwargs, training_kwargs)
+    # main(train_loader, val_loader, test_loader, dataset,
+    #      model_kwargs, training_kwargs)
 
-    # results = pd.DataFrame()
-    # for model_name, model_cls in AVAILABLE_MODELS.items():
-    #     # read all results from all models and save them
-    #     results = pd.concat((results,
-    #                          pd.read_csv(f"results/{dataset.name}/{model_name}.csv")),
-    #                         axis=0)
-    # results.to_csv(f"results/{dataset.name}/results.csv")
+    results = pd.DataFrame()
+    for model_name, model_cls in AVAILABLE_MODELS.items():
+        # read all results from all models and save them
+        model_results = pd.read_csv(f"results/{dataset.name}/{model_name}.csv")
+        results = pd.concat((results, model_results), axis=0)
+    results.to_csv(f"results/{dataset.name}/results.csv")
 
     plot_test_accuracy(dataset)
     plot_concept_accuracy(dataset)
