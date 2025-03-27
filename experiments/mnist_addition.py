@@ -311,5 +311,3 @@ if __name__ == "__main__":
                          int_probs, noise_levels, training_kwargs)
     plot_intervenability(dataset)
 
-
-
