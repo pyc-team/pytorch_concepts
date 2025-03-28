@@ -33,14 +33,15 @@ def main(
         torch.nn.Flatten(),
         torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
         torch.nn.LeakyReLU(),
-        torch.nn.Linear(model_kwargs["latent_dim"] * 2, model_kwargs["latent_dim"]),
+        torch.nn.Linear(model_kwargs["latent_dim"] * 2,
+                        model_kwargs["latent_dim"]),
         torch.nn.LeakyReLU(),
     )
 
     results_df = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
-            set_seed()
+            set_seed(seed)
             model = model_cls(
                 encoder,
                 model_kwargs["latent_dim"],
@@ -54,31 +55,35 @@ def main(
             )
             model.configure_optimizers()
 
-            # delete all existing checkpoints
-            for file in os.listdir(result_folder):
-                if file.startswith(f"{model_name}_seed_{seed}"):
-                    os.remove(os.path.join(result_folder, file))
             checkpoint = ModelCheckpoint(
                 monitor='val_loss',
                 save_top_k=1,
                 dirpath=result_folder,
                 filename=f"{model_name}_seed_{seed}"
             )
-
-            # Train the model
             trainer = Trainer(
                 max_epochs=training_kwargs["epochs"],
                 callbacks=[checkpoint, CustomProgressBar()],
             )
-            print(f"Training {model_name} with seed {seed}")
-            trainer.fit(model, train_loader, val_loader)
-            model.load_state_dict(torch.load(checkpoint.best_model_path)['state_dict'])
+
+            # Train the model
+            file = f"{result_folder}/{model_name}_seed_{seed}.ckpt"
+            if not os.path.exists(file) or not training_kwargs["load_results"]:
+                if os.path.exists(os.path.join(result_folder, file)):
+                    os.remove(os.path.join(result_folder, file))
+                print(f"Training {model_name} with seed {seed}")
+                trainer.fit(model, train_loader, val_loader)
+            else:
+                print(f"Model {model_name} with seed {seed} already trained")
+
+            model.load_state_dict(torch.load(file)['state_dict'])
 
             test_results = trainer.test(model, test_loader)[0]
             test_results["model"] = model_name
             test_results["seed"] = seed
 
-            results_df = pd.concat([results_df, pd.DataFrame([test_results])], axis=0)
+            results_df = pd.concat([results_df,
+                                    pd.DataFrame([test_results])], axis=0)
         results_df[results_df["model"] == model_name].to_csv(
             result_folder + f"/{model_name}.csv"
         )
@@ -149,12 +154,15 @@ def test_intervenability(
             # Define the checkpoint to load the best model
             checkpoint_dir = f"results/{dataset_name}"
             filename_pattern = f"{model_name}_seed_{seed}"
-            best_model_path = os.path.join(checkpoint_dir, f"{filename_pattern}.ckpt")
+            best_model_path = os.path.join(checkpoint_dir,
+                                           f"{filename_pattern}.ckpt")
             encoder = torch.nn.Sequential(
                 torch.nn.Flatten(),
-                torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
+                torch.nn.Linear(dataset.input_dim,
+                                model_kwargs["latent_dim"] * 2),
                 torch.nn.LeakyReLU(),
-                torch.nn.Linear(model_kwargs["latent_dim"] * 2, model_kwargs["latent_dim"]),
+                torch.nn.Linear(model_kwargs["latent_dim"] * 2,
+                                model_kwargs["latent_dim"]),
                 torch.nn.LeakyReLU(),
             )
             model = model_cls(
@@ -175,7 +183,8 @@ def test_intervenability(
             for noise_level in noise_levels:
                 # add noise in the transform of the dataset
                 transform = transforms.Compose([
-                    transforms.Lambda(lambda x: x + noise_level * torch.randn_like(x)),
+                    transforms.Lambda(lambda x:
+                                      x + noise_level * torch.randn_like(x)),
                 ])
                 test_loader.dataset.dataset.transform = transform
                 for int_prob in int_probs:
@@ -236,6 +245,7 @@ if __name__ == "__main__":
     training_kwargs = {
         "seeds": 3,
         "epochs": 100,
+        "load_results": True,
     }
     model_kwargs = {
         "latent_dim": 32,
@@ -256,7 +266,10 @@ if __name__ == "__main__":
         # Split the dataset into train, validation and test sets
         train_size = int(0.8 * len(dataset))
         val_size = len(dataset) - train_size
-        train_set, val_set, test_set = random_split(dataset, [train_size, val_size // 2, val_size // 2])
+        train_set, val_set, test_set = random_split(dataset,
+                                                    [train_size,
+                                                     val_size // 2,
+                                                     val_size // 2])
         train_loader = DataLoader(train_set, batch_size=256, shuffle=True)
         val_loader = DataLoader(val_set, batch_size=256, shuffle=False)
         test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
@@ -264,6 +277,15 @@ if __name__ == "__main__":
         # Run the experiments and plot the results
         main(train_loader, val_loader, test_loader, dataset, model_kwargs,
              training_kwargs)
+
+        results = pd.DataFrame()
+        for model_name, model_cls in AVAILABLE_MODELS.items():
+            # read all results from all models and save them
+            model_results = pd.read_csv(
+                f"results/{dataset.name}/{model_name}.csv")
+            results = pd.concat((results, model_results), axis=0)
+        results.to_csv(f"results/{dataset.name}/results.csv")
+
         plot_test_accuracy(dataset)
         plot_concept_accuracy(dataset)
 

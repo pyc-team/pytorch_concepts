@@ -8,7 +8,8 @@ from torchvision import transforms
 
 from torch_concepts.data.mnist import MNISTAddition
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS
-from utils import set_seed, CustomProgressBar
+from utils import set_seed, CustomProgressBar, GaussianNoiseTransform, \
+    model_trained
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -54,7 +55,6 @@ def main(
                 memory_size=model_kwargs["memory_size"],
                 y_loss_fn=model_kwargs["y_loss_fn"],
             )
-            model.configure_optimizers()
 
             checkpoint = ModelCheckpoint(
                 monitor='val_loss',
