@@ -193,3 +193,66 @@ class PartialMNISTAddition(MNISTAddition):
         x, c, y = super(PartialMNISTAddition, self).__getitem__(index)
         c = c[:10]
         return x, c, y
+
+
+class MNISTEvenOdd(MNIST):
+    """
+    The MNIST even-odd dataset is a modified version of the MNIST dataset where
+    the task is to predict whether the digit is even or odd. The concept label
+    is a one-hot encoding of the digit.
+
+    Attributes:
+        concept_names: The names of the concept labels.
+        task_names: The names of the task labels.
+        root: The root directory where the dataset is stored.
+        train: Whether to load the training or test split. Default is False.
+        transform: The transformations to apply to the images. Default is None.
+        target_transform: The transformations to apply to the target labels.
+            Default is None.
+        download: Whether to download the dataset if it does not exist. Default
+            is False.
+    """
+    name = "mnist_even_odd"
+    n_concepts = 10
+    n_tasks = 2
+    concept_names = [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
+    ]
+    task_names = ["even", "odd"]
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    input_shape = (1, 28, 28)
+    input_dim = 28 * 28
+
+    def __init__(self, root, train,
+                 target_transform=None, download=True):
+        super(MNISTEvenOdd, self).__init__(root, train, self.transform,
+                                           target_transform, download)
+
+    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+        x, y = super(MNISTEvenOdd, self).__getitem__(index)
+
+        # One hot encoding of the concept label on 10 digits
+        c = torch.zeros(10)
+        c[y] = 1
+
+        # Task label is 1 if digit is even, 0 if digit is odd
+        t = 1 if y % 2 == 0 else 0
+
+        return x, c, t
+
+    def plot(self, index):
+        img, c, t = self.__getitem__(index)
+        plt.imshow(img.squeeze(), cmap='gray')
+        concept_names = [self.concept_names[i]
+                         for i in range(self.n_concepts) if c[i] == 1]
+        concept_names = ', '.join(concept_names)
+        task_names = [self.task_names[i]
+                      for i in range(self.n_tasks) if t == i]
+        task_names = ', '.join(task_names)
+        plt.title(f"Concept: {concept_names}, Task: {task_names}")
+        plt.axis('off')
+        plt.show()
+
