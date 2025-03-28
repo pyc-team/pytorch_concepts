@@ -26,6 +26,7 @@ class ConceptModel(ABC, L.LightningModule):
         y_loss_fn=nn.BCEWithLogitsLoss(),
         int_prob=0.1,
         int_idxs=None,
+        l_r=0.01,
         **kwargs,
     ):
         super().__init__()
@@ -43,6 +44,7 @@ class ConceptModel(ABC, L.LightningModule):
         self.task_names = task_names
         self.n_concepts = len(concept_names)
         self.n_tasks = len(task_names)
+        self.l_r = l_r
 
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
@@ -127,7 +129,8 @@ class ConceptModel(ABC, L.LightningModule):
         return self.step(batch, mode="test")
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=0.01)
+        print(f"Employing AdamW optimizer with learning rate {self.l_r}")
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.l_r)
         return optimizer
 
     def on_train_end(self) -> None:
@@ -140,10 +143,11 @@ class ConceptModel(ABC, L.LightningModule):
             x=torch.linspace(0, 1, len(self._val_losses)),
             y=self._val_losses,
         )
-        plt.title("Train and validation losses -- " + self.__class__.__name__)
+        model_name = INV_AVAILABLE_MODELS[self.__class__]
+        plt.title("Train and validation losses -- " + model_name)
         plt.ylabel("Loss")
         plt.xlabel("Step")
-        plt.ylim(0.001, 1)
+        plt.ylim(0.001, 10)
         plt.yscale("log")
         plt.show()
 

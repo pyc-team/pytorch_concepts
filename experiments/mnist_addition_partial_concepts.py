@@ -8,7 +8,7 @@ from torchvision import transforms
 
 from torch_concepts.data.mnist import PartialMNISTAddition
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS
-from utils import set_seed, CustomProgressBar
+from utils import set_seed, CustomProgressBar, GaussianNoiseTransform
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -134,16 +134,6 @@ def plot_concept_accuracy(dataset):
     plt.tight_layout()
     plt.savefig(f"results/{dataset_name}/concept_accuracy.png")
     plt.show()
-
-
-class GaussianNoiseTransform(object):
-
-    def __init__(self, mean=0., std=1.):
-        self.std = std
-        self.mean = mean
-
-    def __call__(self, tensor):
-        return tensor + torch.randn_like(tensor) * self.std + self.mean
 
 
 def test_intervenability(

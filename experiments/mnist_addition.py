@@ -47,6 +47,7 @@ def main(
                 model_kwargs["latent_dim"],
                 dataset.concept_names,
                 dataset.task_names,
+                l_r=model_kwargs["l_r"],
                 class_reg=model_kwargs["class_reg"],
                 residual_size=model_kwargs["residual_size"],
                 embedding_size=model_kwargs["embedding_size"],
@@ -67,14 +68,13 @@ def main(
             )
 
             # Train the model
-            file = f"{result_folder}/{model_name}_seed_{seed}.ckpt"
-            if not os.path.exists(file) or not training_kwargs["load_results"]:
-                if os.path.exists(os.path.join(result_folder, file)):
-                    os.remove(os.path.join(result_folder, file))
+            file = os.path.join(f"{result_folder}",
+                                f"{model_name}_seed_{seed}.ckpt")
+            if (not model_trained(model, model_name, file,
+                                 training_kwargs["load_results"])
+                    or model_name == "ConceptMemoryReasoning (embedding)"):
                 print(f"Training {model_name} with seed {seed}")
                 trainer.fit(model, train_loader, val_loader)
-            else:
-                print(f"Model {model_name} with seed {seed} already trained")
 
             model.load_state_dict(torch.load(file)['state_dict'])
 
@@ -131,16 +131,6 @@ def plot_concept_accuracy(dataset):
     plt.tight_layout()
     plt.savefig(f"results/{dataset_name}/concept_accuracy.png")
     plt.show()
-
-
-class GaussianNoiseTransform(object):
-
-    def __init__(self, mean=0., std=1.):
-        self.std = std
-        self.mean = mean
-
-    def __call__(self, tensor):
-        return tensor + torch.randn_like(tensor) * self.std + self.mean
 
 
 def test_intervenability(
@@ -247,7 +237,7 @@ def plot_intervenability(dataset):
                      data=noise_results, ax=axs[i])
         axs[i].set_title(f"Noise level {noise_level} - {dataset_name}")
         axs[i].set_xlabel("Intervention probability")
-        axs[i].set_ylabel("Test accuracy on {data")
+        axs[i].set_ylabel("Test accuracy")
 
     plt.tight_layout()
     plt.savefig(f"results/{dataset_name}/intervenability.png")
@@ -270,6 +260,14 @@ if __name__ == "__main__":
         "y_loss_fn": torch.nn.CrossEntropyLoss(),
     }
 
+    print("Running the MNIST addition experiment")
+    print("=====================================")
+    print("Training kwargs:")
+    print(training_kwargs)
+    print("Model kwargs:")
+    print(model_kwargs)
+    print("=====================================")
+
     # Set seed for reproducibility
     set_seed(42)
 
@@ -285,10 +283,8 @@ if __name__ == "__main__":
                                                  val_size // 2, val_size // 2])
     train_loader = DataLoader(train_set, batch_size=256, shuffle=True,
                               num_workers=4, persistent_workers=True)
-    val_loader = DataLoader(val_set, batch_size=256, shuffle=False,
-                            num_workers=4, persistent_workers=True)
-    test_loader = DataLoader(test_set, batch_size=256, shuffle=False,
-                             num_workers=4, persistent_workers=True)
+    val_loader = DataLoader(val_set, batch_size=256, shuffle=False)
+    test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
 
     # Run the experiments and plot the results
     # main(train_loader, val_loader, test_loader, dataset,
@@ -297,7 +293,8 @@ if __name__ == "__main__":
     results = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
         # read all results from all models and save them
-        model_results = pd.read_csv(f"results/{dataset.name}/{model_name}.csv")
+        model_results = pd.read_csv(
+            f"results/{dataset.name}/{model_name}.csv")
         results = pd.concat((results, model_results), axis=0)
     results.to_csv(f"results/{dataset.name}/results.csv")
 
