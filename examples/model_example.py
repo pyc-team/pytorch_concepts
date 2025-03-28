@@ -9,8 +9,9 @@ from torch_concepts.data import ToyDataset
 from torch_concepts.data.utils import stratified_train_test_split
 from torch_concepts.nn.models import ConceptBottleneckModel, \
     ConceptResidualModel, ConceptEmbeddingModel, DeepConceptReasoning, \
-    LinearConceptEmbeddingModel, ConceptMemoryReasoning
-from torch_concepts.utils import set_seed
+    LinearConceptEmbeddingModel, ConceptMemoryReasoning, \
+    ConceptEmbeddingReasoning, ConceptExplanationModel
+from experiments.utils import set_seed, CustomProgressBar
 
 
 # LinearConceptEmbeddingMemoryModel
@@ -27,13 +28,13 @@ def main():
     memory_size = 2
 
     models = [
-        ConceptBottleneckModel,
-        ConceptResidualModel,
-        ConceptEmbeddingModel,
-        DeepConceptReasoning,
-        LinearConceptEmbeddingModel,
+        # ConceptBottleneckModel,
+        # ConceptResidualModel,
+        # ConceptEmbeddingModel,
+        # DeepConceptReasoning,
+        # LinearConceptEmbeddingModel,
         ConceptMemoryReasoning,
-        # LinearConceptEmbeddingMemoryModel
+        ConceptEmbeddingReasoning
         ]
 
     set_seed(42)
@@ -42,6 +43,7 @@ def main():
     concept_names, task_names = data.concept_attr_names, data.task_attr_names
 
     dataset = TensorDataset(x, c, y)
+    # Check: stratified train test split returns twice the amount of test size
     train_set, val_set = stratified_train_test_split(dataset, test_size=0.2)
     train_loader = torch.utils.data.DataLoader(train_set, batch_size)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size)
@@ -57,13 +59,24 @@ def main():
                           embedding_size=embedding_size, memory_size=memory_size)
         model.configure_optimizers()
 
-        trainer = L.Trainer(max_epochs=n_epochs)
-        print(f"Training {model_cls.__name__} "
+        trainer = L.Trainer(max_epochs=n_epochs,
+                            callbacks=[CustomProgressBar()])
+        print(f"\n\nTraining {model_cls.__name__} "
               f"on device {trainer.strategy.root_device}")
-        trainer.fit(model, train_loader)
+        trainer.fit(model, train_loader, val_loader)
 
         model_result = trainer.test(model, val_loader)[0]
         results[model_cls.__name__] = model_result
+
+        if isinstance(model, ConceptExplanationModel):
+            print("Local Explanations: ")
+            print(model.get_local_explanations(x))
+
+            print("Global Explanations: ")
+            print(model.get_global_explanations(x))
+
+            print("Explanation Counter: ")
+            print(model.get_global_explanations(x, count_usage=True))
 
     results = pd.DataFrame(results).T
     print(results)
