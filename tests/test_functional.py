@@ -134,8 +134,8 @@ class TestConceptFunctions(unittest.TestCase):
         self.assertEqual(result, expected_result)
 
         # test global explanation
-        from torch_concepts.utils import get_global_explanations
-        global_explanations = get_global_explanations(result, y_pred, class_names)
+        from torch_concepts.utils import get_most_common_expl
+        global_explanations = get_most_common_expl(result, y_pred)
 
         expected_global_expl = {
             'Y1': {'10.0 * C2': 1, '-10.0 * C2': 1, '1.0 * bias': 1}
@@ -251,14 +251,14 @@ class TestConceptFunctions(unittest.TestCase):
         self.assertEqual(result, expected_result)
 
         # test global explanation
-        from torch_concepts.utils import get_global_explanations
+        from torch_concepts.utils import get_most_common_expl
         y_pred = torch.tensor([
             [0., 1.],
             [1., 0.],
             [1., 0.],
             [0., 1.],
         ])
-        global_explanations = get_global_explanations(result, y_pred, cls_names)
+        global_explanations = get_most_common_expl(result, y_pred)
         # print(global_explanations)
 
         expected_global_expl = {

@@ -3,7 +3,7 @@
 import pandas as pd
 import torch
 import lightning as L
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, random_split
 
 from torch_concepts.data import ToyDataset
 from torch_concepts.data.utils import stratified_train_test_split
@@ -12,6 +12,7 @@ from torch_concepts.nn.models import ConceptBottleneckModel, \
     LinearConceptEmbeddingModel, ConceptMemoryReasoning, \
     ConceptEmbeddingReasoning, ConceptExplanationModel
 from experiments.utils import set_seed, CustomProgressBar
+from torch_concepts.utils import get_most_common_expl
 
 
 # LinearConceptEmbeddingMemoryModel
@@ -30,7 +31,7 @@ def main():
     models = [
         # ConceptBottleneckModel,
         # ConceptResidualModel,
-        # ConceptEmbeddingModel,
+        ConceptEmbeddingModel,
         # DeepConceptReasoning,
         # LinearConceptEmbeddingModel,
         ConceptMemoryReasoning,
@@ -40,11 +41,14 @@ def main():
     set_seed(42)
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x, c, y = data.data, data.concept_labels, data.target_labels
+
     concept_names, task_names = data.concept_attr_names, data.task_attr_names
+    y = y.squeeze()
+    task_names = ['xnor', 'xor']
 
     dataset = TensorDataset(x, c, y)
     # Check: stratified train test split returns twice the amount of test size
-    train_set, val_set = stratified_train_test_split(dataset, test_size=0.2)
+    train_set, val_set = random_split(dataset, lengths=[900, 100])
     train_loader = torch.utils.data.DataLoader(train_set, batch_size)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size)
 
@@ -70,13 +74,14 @@ def main():
 
         if isinstance(model, ConceptExplanationModel):
             print("Local Explanations: ")
-            print(model.get_local_explanations(x))
+            local_expl = model.get_local_explanations(x)
+            print(local_expl)
 
             print("Global Explanations: ")
             print(model.get_global_explanations(x))
 
             print("Explanation Counter: ")
-            print(model.get_global_explanations(x, count_usage=True))
+            print(get_most_common_expl(local_expl))
 
     results = pd.DataFrame(results).T
     print(results)

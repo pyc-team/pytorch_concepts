@@ -57,23 +57,35 @@ def compute_output_size(concept_names: Dict[int, Union[int, List[str]]]) -> int:
     return output_size
 
 
-def get_global_explanations(
-        explanations,
-        y_pred,
-        class_names,
+def get_most_common_expl(
+        explanations: List[Dict[str, str]],
         n=10
-):
-    most_common_global_expl = {}
-    for j in range(y_pred.shape[1]):
-        gloabl_expl = [
-            # we do not consider the memory dimension in this case
-            expl[class_names[j]]["Rule 0"]
-            if "Rule 0" in expl[class_names[j]]
-            else expl[class_names[j]]["Equation 0"]
-            for i, expl in enumerate(explanations)
-            if y_pred[i, j] > 0.5
-        ]
-        most_common_global_expl[class_names[j]] = dict(Counter(gloabl_expl)
-                                                       .most_common(n))
-    return most_common_global_expl
+) -> Dict[str, Dict[str, int]]:
+    """
+    Get the most common explanations for each class. This function receives a
+    list of explanations and returns the most common explanations for each
+    class. The list of explanations is expected to be a list of dictionaries
+    containing the explanations for each sample. The value of the key
+    should be the explanation string. Each dictionary (sample) may contain a
+    single or multiple explanations for different classes.
+    Args:
+        explanations: List of explanations
+        n: Number of most common explanations to return
 
+    Returns:
+        Dict[str, Dict[str, int]]: Dictionary with the most common
+            explanations for each class.
+    """
+    exp_per_class = {}
+    for exp in explanations:
+        for class_, explanation in exp.items():
+            if class_ not in exp_per_class:
+                exp_per_class[class_] = []
+            exp_per_class[class_].append(explanation)
+
+    most_common_expl = {}
+
+    for class_, explanations in exp_per_class.items():
+        most_common_expl[class_] = dict(Counter(explanations).most_common(n))
+
+    return most_common_expl

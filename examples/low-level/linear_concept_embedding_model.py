@@ -4,7 +4,7 @@ from sklearn.metrics import accuracy_score
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import Annotate
 import torch_concepts.nn.functional as CF
-from torch_concepts.utils import get_global_explanations
+from torch_concepts.utils import get_most_common_expl
 
 
 def main():
@@ -104,8 +104,7 @@ def main():
 
     print(f"Explanations: {explanations}")
 
-    global_explanations = get_global_explanations(explanations, y_pred,
-                                                  task_names)
+    global_explanations = get_most_common_expl(explanations, y_pred)
     print(f"Global explanations: {global_explanations}")
 
     return

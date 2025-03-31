@@ -1,8 +1,12 @@
 import torch
 
 from collections import defaultdict
+
+from torch import Tensor
+
 from torch_concepts.semantic import CMRSemantic
-from typing import List, Dict
+from typing import List, Dict, Iterable
+
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     concept_names = {}
@@ -163,42 +167,11 @@ def linear_equation_eval(
     return y_pred
 
 
-# def linear_memory_eval(
-#         concept_weights: torch.Tensor,
-#         c_pred: torch.Tensor,
-#         bias: torch.Tensor = None,
-# ) -> torch.Tensor:
-#     """
-#     Function to evaluate a memory of linear equations with concept predictions.
-#     The number of equation correspond to the memory size, and it is
-#     not the same as the number of sample in the batch here.
-#
-#     Args:
-#         concept_weights: parameters representing the weights of multiple linear
-#             models with shape (memory_size, n_concepts, n_classes)
-#         c_pred: concept predictions with shape (batch_size, n_concepts).
-#         bias: Bias term to add to the linear models (memory_size, n_classes).
-#     Returns:
-#         Tensor: Predictions made by the linear models with shape (batch_size,
-#                 n_classes, memory_size)
-#     """
-#     if bias is not None:
-#         assert (concept_weights.shape[0] == bias.shape[0]
-#                 and concept_weights.shape[2] == bias.shape[1])
-#     assert c_pred.shape[1] == concept_weights.shape[1]
-#     y_pred = torch.einsum('bmcy,bc->bym', concept_weights, c_pred)
-#     if bias is not None:
-#         # the bias is (m,y) while y_pred is (bym) so we invert bias dimension
-#         y_pred += bias.T
-#     return y_pred
-
-
 def linear_equation_explanations(
     concept_weights: torch.Tensor,
     bias: torch.Tensor = None,
     concept_names: Dict[int, List[str]] = None,
-    round_decimals: int = 2,
-) -> Dict[str, Dict[str, str]]:
+) -> List[Dict[str, Dict[str, str]]]:
     """
     Extract linear equations from decoded equations embeddings as strings.
     Args:

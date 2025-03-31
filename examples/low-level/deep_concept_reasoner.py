@@ -8,7 +8,7 @@ from torch_concepts.nn import Annotate
 import torch_concepts.nn.functional as CF
 import torch.nn.functional as F
 
-from torch_concepts.utils import get_global_explanations
+from torch_concepts.utils import get_most_common_expl
 
 
 def main():
@@ -104,7 +104,7 @@ def main():
                                       {1: concept_names, 2: class_names})
     print(f"Learned rules: {expl}")
 
-    global_explanations = get_global_explanations(expl, y_pred, class_names)
+    global_explanations = get_most_common_expl(expl, y_pred)
     print(f"Global explanations: {global_explanations}")
 
     return

@@ -1,3 +1,6 @@
+from collections import Counter
+from typing import Optional
+
 import lightning as L
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -11,7 +14,7 @@ from abc import abstractmethod, ABC
 from sklearn.metrics import accuracy_score, f1_score
 from torch_concepts.nn import functional as CF
 from torch_concepts.semantic import ProductTNorm
-from torch_concepts.utils import get_global_explanations
+from torch_concepts.utils import get_most_common_expl
 
 class ConceptModel(ABC, L.LightningModule):
     @abstractmethod
@@ -157,11 +160,44 @@ class ConceptModel(ABC, L.LightningModule):
 
 class ConceptExplanationModel(ConceptModel):
     @abstractmethod
-    def get_local_explanations(self, x, **kwargs):
+    def get_local_explanations(self, x: torch.Tensor, multi_label=False,
+                               **kwargs) -> list[dict[str, str]]:
+        """
+        Get local explanations for the model given a batch of inputs.
+        It returns a list of dictionaries where each entry correspond
+        to the local explanation for each input. This is a dictionary with
+        the task name as key and the explanation as value. Only the predicted
+        task is included in the explanation. In case of multi-label tasks,
+        all tasks with a probability higher than 0.5 are included.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, n_features).
+            multi_label: boolean indicating if the task is multi-label.
+
+        Returns:
+            local_explanations (list[dict]): List of dictionaries with the
+                local explanations for each input.
+        """
         raise NotImplementedError()
 
     @abstractmethod
-    def get_global_explanations(self, x, **kwargs):
+    def get_global_explanations(self, x: Optional[torch.Tensor]=None,
+                                **kwargs) -> dict[str, dict[str, str]]:
+        """
+        Get the global explanations for the model. This is a dictionary of
+        explanations for each task. Each task has a dictionary with all
+        the explanations reported. Some models might require the input
+        tensor x to compute the global explanations.
+
+        Args:
+            x (Optional[torch.Tensor]): Input tensor of shape (batch_size,
+                n_features). Required for some models to compute the global
+                explanations.
+
+        Returns:
+            global_explanations (dict[str, dict]): Dictionary with the global
+                explanations for each task.
+        """
         raise NotImplementedError()
 
 
@@ -391,7 +427,7 @@ class DeepConceptReasoning(ConceptExplanationModel):
             x,
             return_preds=True,
         )
-        return get_global_explanations(explanations, y_preds, self.task_names)
+        return get_most_common_expl(explanations, y_preds)
 
 
 class ConceptMemoryReasoning(ConceptExplanationModel):
@@ -422,6 +458,8 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         )
 
         self.memory_size = memory_size
+        self.rec_weight = kwargs.get('rec_weight', 1.)
+
         self.bottleneck = pyc_nn.LinearConceptBottleneck(
             latent_dim,
             concept_names,
@@ -502,25 +540,41 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         return c_rec_per_classifier
     
 
-        return y_pred, c_pred
-
-    def get_local_explanations(self, x, return_preds=False, **kwargs):
-        emb = self.encoder(x)
-        classifier_selector_logits = self.classifier_selector(emb)
-        # softmax over roles and adding batch dimension to concept memory
+    def get_local_explanations(self, x, multi_label=False, **kwargs):
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(latent)
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(latent)
+        prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
-
-        explanations = CF.logic_rule_explanations(
+        y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
+        rule_probs = prob_per_classifier * y_per_classifier
+        rule_preds = rule_probs.argmax(dim=-1) # = CF.most_likely_expl(rule_probs, multi_label)
+        global_explanations = CF.logic_rule_explanations(
             concept_weights,
             {
                 1: self.concept_names,
                 2: self.task_names,
             },
         )
-        return explanations
+        local_expl = []
+        y_pred = rule_probs.sum(dim=-1)
+        for i in range(x.shape[0]):
+            sample_expl = {}
+            for j in range(self.n_tasks):
+                # a task is predicted if it is the most likely task or if it is
+                # a multi-label task and the probability is higher than 0.5
+                predicted_task = (j == y_pred[i].argmax()) or \
+                                 (multi_label and y_pred[i,j] > 0.5)
+                if predicted_task:
+                    task_rules = global_explanations[0][self.task_names[j]]
+                    predicted_rule = task_rules[f'Rule {rule_preds[i, j]}']
+                    sample_expl.update({self.task_names[j]: predicted_rule})
+            local_expl.append(sample_expl)
+        return local_expl
 
-    def get_global_explanations(self, x, **kwargs):
+    def get_global_explanations(self, x=None, **kwargs):
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
 
@@ -624,7 +678,131 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
             x,
             return_preds=True,
         )
-        return get_global_explanations(explanations, y_preds, self.task_names)
+        return get_most_common_expl(explanations, y_preds)
+
+
+
+class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
+    """
+    This model is a combination of the ConceptEmbeddingModel and the
+    ConceptMemoryReasoning model. It uses the concept embedding bottleneck
+    to both to predict the concept and to select the rule from the concept
+    memory. The concept memory is used to store the rules for each task.
+    """
+    n_roles = 3
+    memory_names = ['Positive', 'Negative', 'Irrelevant']
+
+
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        embedding_size,
+        memory_size,
+        **kwargs,
+    ):
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn(
+                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
+                )
+        kwargs['y_loss_fn'] = nn.BCELoss()
+        # kwargs['class_reg'] = kwargs['class_reg'] * 10 \
+        #     if 'class_reg' in kwargs else 1
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            memory_size,
+            **kwargs,
+        )
+
+        self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
+            latent_dim,
+            concept_names,
+            embedding_size,
+        )
+
+        self.classifier_selector = nn.Sequential(
+            torch.nn.Linear(embedding_size*len(concept_names),
+                            latent_dim),
+            pyc_nn.LinearConceptLayer(
+                latent_dim,
+                [self.task_names, memory_size],
+            ),
+        )
+
+    def forward(self, x, c_true=None, y_true=None, **kwargs):
+        # generate concept and task predictions
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(c_emb.flatten(-2))
+        prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
+        # softmax over roles and adding batch dimension to concept memory
+        concept_weights = self.memory_decoder(
+            self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
+
+        y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
+        if y_true is not None:
+            c_rec_per_classifier = self._conc_recon(concept_weights, 
+                                                    c_true, 
+                                                    y_true)
+            y_pred = CF.selection_eval(
+                prob_per_classifier,
+                y_per_classifier,
+                c_rec_per_classifier,
+            )
+        else:
+            y_pred = CF.selection_eval(prob_per_classifier,
+                                       y_per_classifier)
+
+        return y_pred, c_pred
+
+    def get_local_explanations(self, x, multi_label=False, **kwargs):
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(latent)
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(c_emb.flatten(-2))
+        prob_per_classifier = torch.softmax(classifier_selector_logits,
+                                            dim=-1)
+        concept_weights = self.memory_decoder(
+            self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
+        y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
+        rule_probs = prob_per_classifier * y_per_classifier
+        rule_preds = rule_probs.argmax(
+            dim=-1)  # = CF.most_likely_expl(rule_probs, multi_label)
+        global_explanations = CF.logic_rule_explanations(
+            concept_weights,
+            {
+                1: self.concept_names,
+                2: self.task_names,
+            },
+        )
+        local_expl = []
+        y_pred = rule_probs.sum(dim=-1)
+        for i in range(x.shape[0]):
+            sample_expl = {}
+            for j in range(self.n_tasks):
+                # a task is predicted if it is the most likely task or if it is
+                # a multi-label task and the probability is higher than 0.5
+                predicted_task = (j == y_pred[i].argmax()) or \
+                                 (multi_label and y_pred[i, j] > 0.5)
+                if predicted_task:
+                    task_rules = global_explanations[0][self.task_names[j]]
+                    predicted_rule = task_rules[f'Rule {rule_preds[i, j]}']
+                    sample_expl.update(
+                        {self.task_names[j]: predicted_rule})
+            local_expl.append(sample_expl)
+        return local_expl
 
 
 AVAILABLE_MODELS = {
@@ -634,7 +812,10 @@ AVAILABLE_MODELS = {
     "DeepConceptReasoning": DeepConceptReasoning,
     "LinearConceptEmbeddingModel": LinearConceptEmbeddingModel,
     "ConceptMemoryReasoning": ConceptMemoryReasoning,
+    "ConceptMemoryReasoning (embedding)": ConceptEmbeddingReasoning,
 }
+
+INV_AVAILABLE_MODELS = {v: k for k, v in AVAILABLE_MODELS.items()}
 
 MODELS_ACRONYMS = {
     "ConceptBottleneckModel": "CBM",
@@ -643,4 +824,5 @@ MODELS_ACRONYMS = {
     "DeepConceptReasoning": "DCR",
     "LinearConceptEmbeddingModel": "LICEM",
     "ConceptMemoryReasoning": "CMR",
+    "ConceptMemoryReasoning (embedding)": "CMR (emb)",
 }
