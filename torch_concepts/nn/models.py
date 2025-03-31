@@ -34,9 +34,6 @@ class ConceptModel(ABC, L.LightningModule):
         assert (len(task_names) > 1 or
                 not isinstance(y_loss_fn, nn.CrossEntropyLoss)), \
             "CrossEntropyLoss requires at least two tasks"
-        # assert isinstance(y_loss_fn, nn.BCEWithLogitsLoss) or \
-        #        isinstance(y_loss_fn, nn.CrossEntropyLoss), \
-        #     "y_loss_fn must be either BCEWithLogitsLoss or CrossEntropyLoss"
 
         self.encoder = encoder
         self.latent_dim = latent_dim
@@ -57,6 +54,9 @@ class ConceptModel(ABC, L.LightningModule):
         self.test_intervention = False
         self._train_losses = []
         self._val_losses = []
+
+        self._bce_loss = isinstance(y_loss_fn, nn.BCELoss) or \
+            isinstance(y_loss_fn, nn.BCEWithLogitsLoss)
 
     @abstractmethod
     def forward(self, x, c_true=None, **kwargs):
@@ -79,13 +79,14 @@ class ConceptModel(ABC, L.LightningModule):
             c_loss = self.c_loss_fn(c_pred, c_true)
 
         # BCELoss requires one-hot encoding
-        if ((isinstance(self.y_loss_fn, nn.BCELoss) or
-            isinstance(self.y_loss_fn, nn.BCEWithLogitsLoss))
-                and self.multi_class):
-            y_loss = self.y_loss_fn(y_pred,
-                                    F.one_hot(y_true, self.n_tasks).float())
-        else:
-            y_loss = self.y_loss_fn(y_pred, y_true)
+        if self._bce_loss and self.multi_class:
+            if y_true.squeeze().dim() == 1:
+                y_true = F.one_hot(y_true.long(),
+                                   self.n_tasks).squeeze().float()
+        elif y_true.dim() == 1 and self._bce_loss:
+            y_true = y_true.unsqueeze(-1) # add a dimension
+
+        y_loss = self.y_loss_fn(y_pred, y_true)
         loss = c_loss + self.class_reg * y_loss
 
         c_acc, c_f1 = 0., 0.
@@ -94,10 +95,12 @@ class ConceptModel(ABC, L.LightningModule):
             c_f1 = f1_score(c_true.cpu(), c_pred.cpu() > 0.5, average='macro')
 
         # Extract most likely class in multi-class classification
-        if self.multi_class:
+        if self.multi_class and y_true.squeeze().dim() == 1:
             y_pred = y_pred.argmax(dim=1)
+        # Extract prediction from sigmoid output
         elif isinstance(self.y_loss_fn, nn.BCELoss):
             y_pred = (y_pred > 0.5).float()
+        # Extract prediction from logits
         else:
             y_pred = (y_pred > 0.).float()
         y_acc = accuracy_score(y_true.cpu(), y_pred.detach().cpu())
@@ -461,28 +464,43 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
         if y_true is not None:
-            # check if y_true is an array (label encoding) or a matrix
-            # (one-hot encoding) in case it is an array convert it to a matrix
-            if len(y_true.shape) == 1:
-                y_true = torch.nn.functional.one_hot(
-                    y_true,
-                    len(self.task_names),
-                )
-            c_rec_per_classifier = CF.logic_memory_reconstruction(
-                concept_weights,
-                c_true,
-                y_true,
-            )
+            c_rec_per_classifier = self._conc_recon(concept_weights, 
+                                                    c_true, 
+                                                    y_true)
             y_pred = CF.selection_eval(
                 prob_per_classifier,
                 y_per_classifier,
                 c_rec_per_classifier,
             )
         else:
-            y_pred = CF.selection_eval(prob_per_classifier, y_per_classifier)
+            y_pred = CF.selection_eval(prob_per_classifier,
+                                       y_per_classifier)
 
-        # transform probabilities to logits
-        # y_pred = torch.log(y_pred) - torch.log(1 - y_pred + eps)
+        return y_pred, c_pred
+
+    def _conc_recon(self, concept_weights, c_true, y_true):
+        # check if y_true is an array (label encoding) or a matrix
+        # (one-hot encoding) in case it is an array convert it to a matrix
+        # if it is a multi-class task
+        if len(y_true.squeeze().shape) == 1 and self.multi_class:
+            y_true = torch.nn.functional.one_hot(
+                y_true.squeeze().long(),
+                len(self.task_names),
+            )
+
+        elif len(y_true.shape) == 1:
+            y_true = y_true.unsqueeze(-1)
+        c_rec_per_classifier = CF.logic_memory_reconstruction(
+            concept_weights,
+            c_true,
+            y_true,
+        )
+        # weighting the reconstruction loss - lower reconstruction weights
+        # brings values closer to 1 thus influencing less the prediction
+        c_rec_per_classifier = c_rec_per_classifier * self.rec_weight + \
+                               (1 - self.rec_weight)
+        return c_rec_per_classifier
+    
 
         return y_pred, c_pred
 
@@ -497,7 +515,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
             concept_weights,
             {
                 1: self.concept_names,
-                2: self.class_names,
+                2: self.task_names,
             },
         )
         return explanations
@@ -510,7 +528,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
             concept_weights,
             {
                 1: self.concept_names,
-                2: self.class_names,
+                2: self.task_names,
             },
         )
 
