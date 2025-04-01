@@ -383,10 +383,11 @@ class DeepConceptReasoning(ConceptExplanationModel):
         c_weights = self.concept_importance_predictor(c_emb)
         # adding memory dimension
         c_weights = c_weights.unsqueeze(dim=1)
-        # soft selecting important concepts
-        relevance = CF.soft_select(c_weights, self.temperature, -3)
-        # softmax over roles
-        polarity = c_weights.softmax(-1)
+        # soft selecting concept relevance (last role) among concepts
+        relevance = CF.soft_select(c_weights[:, :, :, :, -2:-1],
+                                   self.temperature, -3)
+        # softmax over positive/negative roles
+        polarity = c_weights[:, :, :, :, :-1].softmax(-1)
         # batch_size x memory_size x n_concepts x n_tasks x n_roles
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
 
@@ -395,39 +396,60 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
-        # transform probabilities to logits # does not work, numerical problems
-        # y_pred = torch.log(y_pred) - torch.log(1 - y_pred + eps)
-
         return y_pred, c_pred
 
-    def get_local_explanations(self, x, return_preds=False, **kwargs):
+    def get_local_explanations(self, x, multi_label=False, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
         c_pred = c_dict['c_int']
         c_weights = self.concept_importance_predictor(c_emb)
-        relevance = CF.soft_select(c_weights, self.temperature, -3)
-        polarity = c_weights.softmax(-1)
+        c_weights = c_weights.unsqueeze(dim=1) # add memory dimension
+        relevance = CF.soft_select(c_weights[:, :, :, :, -2:-1],
+                                   self.temperature, -3)
+        polarity = c_weights[:, :, :, :, :-1].softmax(-1)
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
-        local_explanations = CF.logic_rule_eval(
+        explanations = CF.logic_rule_explanations(
             c_weights,
-            c_pred,
-            semantic=self.semantic,
+            {
+                1: self.concept_names,
+                2: self.task_names,
+            },
         )
-        if return_preds:
-            y_preds = CF.logic_rule_eval(
-                c_weights,
-                c_pred,
-                semantic=self.semantic,
-            )
-            return local_explanations, y_preds[:, :, 0]
+        y_preds = CF.logic_rule_eval(c_weights, c_pred, semantic=self.semantic)
+
+        local_explanations = []
+        for i in range(x.shape[0]):
+            sample_expl = {}
+            for j in range(self.n_tasks):
+                # a task is predicted if it is the most likely task or is
+                # a multi-label task with probability higher than 0.5 or is
+                # a binary task with probability higher than 0.5
+                predicted_task = (j == y_preds[i].argmax()) or \
+                                 (multi_label and y_preds[i,j] > 0.5) or \
+                                 (not self.multi_class and y_preds[i,j] > 0.5)
+                if predicted_task:
+                    task_rules = explanations[i][self.task_names[j]]
+                    predicted_rule = task_rules[f'Rule {0}']
+                    sample_expl.update({self.task_names[j]: predicted_rule})
+            local_explanations.append(sample_expl)
         return local_explanations
 
-    def get_global_explanations(self, x, **kwargs):
-        explanations, y_preds = self.get_local_explanations(
-            x,
-            return_preds=True,
-        )
-        return get_most_common_expl(explanations, y_preds)
+    def get_global_explanations(self, x=None, multi_label=False, **kwargs):
+        assert x is not None, \
+            "DCR requires input x to compute global explanations"
+
+        local_explanations = self.get_local_explanations(x, multi_label)
+
+        global_explanations = {}
+        for i in range(self.n_tasks):
+            task_explanations = {
+                exp[self.task_names[i]]
+                for exp in local_explanations if self.task_names[i] in exp
+            }
+            global_explanations[self.task_names[i]] = {
+                    f"Rule {j}": exp for j, exp in enumerate(task_explanations)
+            }
+        return global_explanations
 
 
 class ConceptMemoryReasoning(ConceptExplanationModel):
@@ -563,10 +585,12 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         for i in range(x.shape[0]):
             sample_expl = {}
             for j in range(self.n_tasks):
-                # a task is predicted if it is the most likely task or if it is
-                # a multi-label task and the probability is higher than 0.5
+                # a task is predicted if it is the most likely task or is
+                # a multi-label task with probability higher than 0.5 or is
+                # a binary task with probability higher than 0.5
                 predicted_task = (j == y_pred[i].argmax()) or \
-                                 (multi_label and y_pred[i,j] > 0.5)
+                                 (multi_label and y_pred[i,j] > 0.5) or \
+                                 (not self.multi_class and y_pred[i,j] > 0.5)
                 if predicted_task:
                     task_rules = global_explanations[0][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {rule_preds[i, j]}']
