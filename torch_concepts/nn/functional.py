@@ -363,7 +363,7 @@ def logic_rule_explanations(
         concept_logic_weights.shape[-1] != 3
     ):
         raise ValueError(
-            "The concept logic weights must have 4 dimensions "
+            "The concept logic weights must have 5 dimensions "
             "(batch_size, memory_size, n_concepts, n_tasks, 3)."
         )
 

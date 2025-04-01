@@ -24,15 +24,15 @@ def main():
     n_samples = 1000
     class_reg = 0.5
     batch_size = 1024
-    residual_size = 4
-    embedding_size = 4
+    residual_size = 20
+    embedding_size = 20
     memory_size = 2
 
     models = [
-        # ConceptBottleneckModel,
-        # ConceptResidualModel,
+        ConceptBottleneckModel,
+        ConceptResidualModel,
         ConceptEmbeddingModel,
-        # DeepConceptReasoning,
+        DeepConceptReasoning,
         # LinearConceptEmbeddingModel,
         ConceptMemoryReasoning,
         ConceptEmbeddingReasoning

@@ -8,6 +8,7 @@ from torch_concepts.nn import Annotate
 import torch_concepts.nn.functional as CF
 import torch.nn.functional as F
 
+from torch_concepts.semantic import ProductTNorm
 from torch_concepts.utils import get_most_common_expl
 
 
@@ -83,7 +84,7 @@ def main():
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
 
         y_pred = CF.logic_rule_eval(c_weights, c_pred,
-                                    semantic=CF.ProductTNorm())[:, :, 0]
+                                    semantic=ProductTNorm())[:, :, 0]
 
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
@@ -102,10 +103,16 @@ def main():
 
     expl = CF.logic_rule_explanations(c_weights,
                                       {1: concept_names, 2: class_names})
+    # take the explanation for the predicted class
+    expl = [
+        {k: v['Rule 0'] for k, v in e.items()
+         if k == class_names[y_pred[i].argmax()]}
+        for i, e in enumerate(expl)
+    ]
     print(f"Learned rules: {expl}")
 
-    global_explanations = get_most_common_expl(expl, y_pred)
-    print(f"Global explanations: {global_explanations}")
+    most_common_expl = get_most_common_expl(expl)
+    print(f"Most common explanations: {most_common_expl}")
 
     return
 
