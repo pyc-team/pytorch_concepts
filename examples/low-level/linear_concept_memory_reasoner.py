@@ -92,9 +92,9 @@ def main():
     print(f"Task accuracy: {task_accuracy:.2f}")
     print(f"Concept accuracy: {concept_accuracy:.2f}")
 
-    explanations = CF.linear_equation_explanations(concept_weights, bias,
-                                                   {1: concept_names,
-                                            2: class_names})
+    explanations = CF.linear_eq_explanations(concept_weights, bias,
+                                             {1: concept_names,
+                                              2: class_names})
     print(f"Learned rules: {explanations}")
 
     return

@@ -621,7 +621,9 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         concept_names,
         task_names,
         embedding_size,
-        bias=True,
+        use_bias=True,
+        weight_reg=1e-4,
+        bias_reg=1e-4,
         **kwargs,
     ):
         super().__init__(
@@ -631,7 +633,7 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
             task_names,
             **kwargs,
         )
-        self.bias = bias
+        self.use_bias = use_bias
 
         self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
             latent_dim,
@@ -650,7 +652,7 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         # module predicting the class bias for each class
         # input batch_size x concept_number x embedding_size
         # output batch_size x task_number
-        if self.bias:
+        if self.use_bias:
             self.bias_predictor = torch.nn.Sequential(
                 torch.nn.Flatten(),
                 torch.nn.Linear(
@@ -662,6 +664,12 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
                 pyc_nn.Annotate([task_names], 1)
             )
 
+        self.weight_reg = weight_reg
+        self.bias_reg = bias_reg
+        self.__predicted_weights = None
+        if self.use_bias:
+            self.__predicted_bias = None
+
     def forward(self, x, c_true=None, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(
@@ -671,38 +679,93 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
             intervention_rate=self.int_prob,
         )
         c_pred = c_dict['c_int']
-        c_weights = self.concept_relevance(c_emb)
+        # adding memory dimension to concept weights
+        c_weights = self.concept_relevance(c_emb).unsqueeze(dim=1)
+        self.__predicted_weights = c_weights
 
         y_bias = None
-        if self.bias:
-            y_bias = self.bias_predictor(c_emb)
+        if self.use_bias:
+            # adding memory dimension to bias
+            y_bias = self.bias_predictor(c_emb).unsqueeze(dim=1)
+            self.__predicted_bias = y_bias
 
-        c_weights, y_bias = c_weights.unsqueeze(dim=1), y_bias.unsqueeze(dim=1)
         y_pred = CF.linear_equation_eval(c_weights, c_pred, y_bias)
         return y_pred[:, :, 0], c_pred
 
-    def get_local_explanations(self, x, return_preds=False, **kwargs):
+    def step(self, batch, mode="train") -> torch.Tensor:
+        loss = super().step(batch, mode)
+
+        # adding l2 regularization to the weights
+        w_loss = self.weight_reg * self.__predicted_weights.norm(p=2)
+        loss += w_loss
+
+        prog = mode == "val"
+        self.log(f'{mode}_weight_loss', w_loss, on_epoch=True,
+                 prog_bar=prog)
+
+        if self.use_bias:
+            b_loss = self.bias_reg * self.__predicted_bias.norm(p=1)
+            loss += b_loss
+            self.log(f'{mode}_bias_loss', b_loss,
+                     on_epoch=True, prog_bar=prog)
+
+        return loss
+
+    def get_local_explanations(self, x, multi_label=False, **kwargs):
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
         c_pred = c_dict['c_int']
         c_weights = self.concept_relevance(c_emb)
 
         y_bias = None
-        if self.bias:
+        if self.use_bias:
             y_bias = self.bias_predictor(c_emb)
-        linear_equations = CF.linear_equation_eval(c_weights, c_pred, y_bias)
 
-        if return_preds:
-            y_preds = CF.linear_equation_eval(c_weights, c_pred, y_bias)
-            return linear_equations, y_preds
-        return linear_equations
+        # adding memory dimension to concept weights and bias
+        c_weights, y_bias = c_weights.unsqueeze(dim=1), y_bias.unsqueeze(dim=1)
+        linear_equations = CF.linear_eq_explanations(c_weights,
+                                                     y_bias,
+                                                     {
+                                                         1: self.concept_names,
+                                                         2: self.task_names,
+                                                     }
+                                                     )
+        y_preds = CF.linear_equation_eval(c_weights, c_pred, y_bias)
 
-    def get_global_explanations(self, x, **kwargs):
-        explanations, y_preds = self.get_local_explanations(
-            x,
-            return_preds=True,
-        )
-        return get_most_common_expl(explanations, y_preds)
+        local_expl = []
+        for i in range(x.shape[0]):
+            sample_expl = {}
+            for j in range(self.n_tasks):
+                # a task is predicted if it is the most likely task or if it is
+                # a multi-label task and the probability is higher than 0.5
+                predicted_task = (j == y_preds[i].argmax()) or \
+                                 (multi_label and y_preds[i, j] > 0.5)
+                if predicted_task:
+                    task_eqs = linear_equations[i]
+                    predicted_eq = task_eqs[self.task_names[j]]['Equation 0']
+                    sample_expl.update(
+                        {self.task_names[j]: predicted_eq})
+            local_expl.append(sample_expl)
+
+        return local_expl
+
+    def get_global_explanations(self, x=None, **kwargs):
+        assert x is not None, "LinearConceptEmbeddingModel requires input x "\
+                              "to compute global explanations"
+
+        local_explanations = self.get_local_explanations(x, **kwargs)
+
+        global_explanations = {}
+        for i in range(self.n_tasks):
+            task_explanations = {
+                exp[self.task_names[i]]
+                for exp in local_explanations if self.task_names[i] in exp
+            }
+            global_explanations[self.task_names[i]] = {
+                f"Equation {j}": exp for j, exp in enumerate(task_explanations)
+            }
+
+        return global_explanations
 
 
 

@@ -127,9 +127,8 @@ class TestConceptFunctions(unittest.TestCase):
                            {'Y1': {'Equation 0': ''}},
                            {'Y1': {'Equation 0': '1.0 * bias'}},
                            ]
-        result = CF.linear_equation_explanations(c_imp, y_bias,
-                                                 {1: concept_names,
-                                                  2: class_names})
+        result = CF.linear_eq_explanations(c_imp, y_bias, {1: concept_names,
+                                                           2: class_names})
         # print(result)
         self.assertEqual(result, expected_result)
 

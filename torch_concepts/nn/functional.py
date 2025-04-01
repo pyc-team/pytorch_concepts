@@ -167,7 +167,7 @@ def linear_equation_eval(
     return y_pred
 
 
-def linear_equation_explanations(
+def linear_eq_explanations(
     concept_weights: torch.Tensor,
     bias: torch.Tensor = None,
     concept_names: Dict[int, List[str]] = None,

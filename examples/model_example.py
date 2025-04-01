@@ -15,9 +15,6 @@ from experiments.utils import set_seed, CustomProgressBar
 from torch_concepts.utils import get_most_common_expl
 
 
-# LinearConceptEmbeddingMemoryModel
-
-
 def main():
     latent_dims = 20
     n_epochs = 100
@@ -33,7 +30,7 @@ def main():
         ConceptResidualModel,
         ConceptEmbeddingModel,
         DeepConceptReasoning,
-        # LinearConceptEmbeddingModel,
+        LinearConceptEmbeddingModel,
         ConceptMemoryReasoning,
         ConceptEmbeddingReasoning
         ]
@@ -84,7 +81,7 @@ def main():
             print(get_most_common_expl(local_expl))
 
     results = pd.DataFrame(results).T
-    print(results)
+    print(results[['test_c_acc', 'test_c_f1', 'test_y_acc', 'test_loss']])
     results.to_csv('model_results.csv')
 
 

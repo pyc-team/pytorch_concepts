@@ -248,10 +248,11 @@ if __name__ == "__main__":
     # Hyperparameters
     training_kwargs = {
         "seeds": 3,
-        "epochs": 5,
-        "load_results": True,
+        "epochs": 10,
+        "load_results": False,
     }
     model_kwargs = {
+        "l_r": 1e-3,
         "latent_dim": 64,
         "embedding_size": 32,
         "class_reg": 0.1,
@@ -287,8 +288,8 @@ if __name__ == "__main__":
     test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
 
     # Run the experiments and plot the results
-    # main(train_loader, val_loader, test_loader, dataset,
-    #      model_kwargs, training_kwargs)
+    main(train_loader, val_loader, test_loader, dataset,
+         model_kwargs, training_kwargs)
 
     results = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
