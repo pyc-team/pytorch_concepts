@@ -199,7 +199,7 @@ class PartialMNISTAddition(MNISTAddition):
         "5_left", "6_left", "7_left", "8_left", "9_left",
     ]
 
-    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x, c, y = super(PartialMNISTAddition, self).__getitem__(index)
         c = c[:10]
         return x, c, y
@@ -241,7 +241,7 @@ class MNISTEvenOdd(MNIST):
         super(MNISTEvenOdd, self).__init__(root, train, self.transform,
                                            target_transform, download)
 
-    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x, y = super(MNISTEvenOdd, self).__getitem__(index)
 
         # One hot encoding of the concept label on 10 digits

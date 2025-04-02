@@ -747,30 +747,31 @@ class CUBDataset(Dataset):
         self,
         split='train',
         uncertain_concept_labels=False,
-        root_dir=CUB_DIR,
+        root=CUB_DIR,
         path_transform=None,
         sample_transform=None,
         concept_transform=None,
         label_transform=None,
         uncertainty_based_random_labels=False,
         unc_map=DEFAULT_UNC_MAP,
-        selected_concepts=SELECTED_CONCEPTS,
+        selected_concepts=None,
         training_augment=True,
     ):
         """
         TODO: Define different arguments
         """
-        if not (os.path.exists(root_dir) and os.path.isdir(root_dir)):
+        if not (os.path.exists(root) and os.path.isdir(root)):
             raise ValueError(
-                f'Provided CUB data directory "{root_dir}" is not a valid or '
+                f'Provided CUB data directory "{root}" is not a valid or '
                 f'an existing directory.'
             )
         assert split in ['train', 'val', 'test'], (
             f"CUB split must be in ['train', 'val', 'test'] but got '{split}'"
         )
         self.split = split
-        base_dir = os.path.join(root_dir, 'class_attr_data_10')
+        base_dir = os.path.join(root, 'class_attr_data_10')
         pkl_file_path = os.path.join(base_dir, f'{split}.pkl')
+        self.name = 'CUB'
 
         self.data = []
         with open(pkl_file_path, 'rb') as f:
@@ -789,13 +790,15 @@ class CUBDataset(Dataset):
         self.concept_transform = concept_transform or (lambda x: x)
         self.label_transform = label_transform or (lambda x: x)
         self.uncertain_concept_labels = uncertain_concept_labels
-        self.root_dir = root_dir
+        self.root = root
         self.path_transform = path_transform
         self.uncertainty_based_random_labels = uncertainty_based_random_labels
         self.unc_map = unc_map
         if selected_concepts is None:
-            selected_concepts = list((len(CONCEPT_SEMANTICS)))
+            selected_concepts = list(range(len(SELECTED_CONCEPTS)))
         self.selected_concepts = selected_concepts
+        self.concept_names = np.array(CONCEPT_SEMANTICS)[SELECTED_CONCEPTS][selected_concepts]
+        self.task_names = np.array(CLASS_NAMES)
 
     def __len__(self):
         return len(self.data)
@@ -808,7 +811,7 @@ class CUBDataset(Dataset):
             # CBM paper's repository/experiment code
             img_path = img_path.replace(
                 '/juice/scr/scr102/scr/thaonguyen/CUB_supervision/datasets/',
-                self.root_dir
+                self.root
             )
             try:
                 img = Image.open(img_path).convert('RGB')
@@ -828,7 +831,9 @@ class CUBDataset(Dataset):
             attr_label = img_data['uncertain_attribute_label']
         else:
             attr_label = img_data['attribute_label']
-        attr_label = self.concept_transform(attr_label[self.selected_concepts])
+        attr_label = self.concept_transform(
+            np.array(attr_label)[self.selected_concepts]
+        )
 
         # We may want to randomly sample concept labels based on their provided
         # annotator uncertainty
