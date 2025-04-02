@@ -1,0 +1,15 @@
+dataset: 'cub'
+batch_size: 256
+training_kwargs:
+  seeds: 3
+  epochs: 75
+  load_results: False
+model_kwargs:
+  l_r: 0.001
+  latent_dim: 64
+  embedding_size: 32
+  class_reg: 1
+  concept_reg: 10
+  residual_size: 32
+  memory_size: 20
+  y_loss_fn: ce
