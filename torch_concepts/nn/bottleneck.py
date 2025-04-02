@@ -11,9 +11,9 @@ from typing import List, Dict, Callable, Union, Tuple
 
 
 def _check_annotations(annotations: Union[List[str], int]):
-    assert isinstance(annotations, (list, int)), \
+    assert isinstance(annotations, (list, int, np.ndarray)), \
         "annotations must be either a single list of str or a single int"
-    if isinstance(annotations, list):
+    if isinstance(annotations, (list, np.ndarray)):
         assert all(isinstance(a, str) for a in annotations), \
             "all elements in the annotations list must be of type str"
 
@@ -161,7 +161,7 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
         self,
         in_features: int,
         annotations: Union[List[str], int],
-        activation: Callable = F.sigmoid,
+        activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
@@ -268,7 +268,7 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
         in_features: int,
         annotations: Union[List[str], int],
         residual_size: int,
-        activation: Callable = F.sigmoid,
+        activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
@@ -335,7 +335,7 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         in_features: int,
         annotations: Union[List[str], int],
         embedding_size: int,
-        activation: Callable = F.sigmoid,
+        activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):

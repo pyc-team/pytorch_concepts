@@ -70,14 +70,14 @@ class AnnotatedTensor(torch.Tensor):
         if annotated_axis is None:
             annotated_axis = [i for i in range(len(annotations))]
 
-        if not isinstance(annotations, (list, tuple)):
+        if not isinstance(annotations, (list, tuple, np.ndarray)):
             raise ValueError(
                 f'Expected annotations to be a list of string lists or a '
                 f'single list of strings. Instead, we were given '
                 f'{annotations}.'
             )
         if len(annotations) and (
-            not isinstance(annotations[0], (list, tuple))
+            not isinstance(annotations[0], (list, tuple, np.ndarray))
         ):
             if not isinstance(annotations[0], str):
                 raise ValueError(
@@ -89,13 +89,13 @@ class AnnotatedTensor(torch.Tensor):
             # to be a list of lists
             annotations = [annotations]
 
-        if not isinstance(annotated_axis, (list, tuple, int)):
+        if not isinstance(annotated_axis, (list, tuple, int, np.ndarray)):
             raise ValueError(
                 f'Expected annotated_axis to be a list of integers or a '
                 f'single integer. Instead, we were given '
                 f'{annotated_axis}.'
             )
-        if not isinstance(annotated_axis, (list, tuple)):
+        if not isinstance(annotated_axis, (list, tuple, np.ndarray)):
             annotated_axis = [annotated_axis]
 
         if len(annotations) != len(annotated_axis):
@@ -169,7 +169,7 @@ class AnnotatedTensor(torch.Tensor):
                     f"dim_{annotated_axis}_{i}"
                     for i in range(tensor.shape[annotation_idx])
                 ]
-            elif annotation_set == []:
+            elif len(annotation_set) == 0:
                 current_annotations = None
             elif (len(annotation_set) != tensor.shape[annotation_idx]):
                 raise ValueError(
@@ -473,7 +473,7 @@ class AnnotatedTensor(torch.Tensor):
         ):
             sliced_tensor = sliced_tensor.as_subclass(AnnotatedTensor)
 
-        if not isinstance(key, (list, tuple)):
+        if not isinstance(key, (list, tuple, np.ndarray)):
             key = [key]
 
         sliced_tensor.annotations = []
