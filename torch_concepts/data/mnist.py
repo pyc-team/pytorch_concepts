@@ -2,6 +2,7 @@ import numpy as np
 import random
 import torch
 from matplotlib import pyplot as plt
+from typing import Tuple
 
 from torchvision.datasets import MNIST
 from torchvision.transforms import transforms
@@ -100,21 +101,22 @@ class ColorMNISTDataset(MNIST):
 
 class MNISTAddition(MNIST):
     """
-        The MNIST addition dataset is a modified version of the MNIST dataset where
-        each image is a concatenation of two MNIST images and the target label is the
-        sum of the two digits. The concept label is a one-hot encoding of the two
-        digits.
+        The MNIST addition dataset is a modified version of the MNIST dataset
+        where each image is a concatenation of two MNIST images and the target
+        label is the sum of the two digits. The concept label is a one-hot
+        encoding of the two digits.
 
         Attributes:
             concept_names: The names of the concept labels.
             task_names: The names of the task labels.
             root: The root directory where the dataset is stored.
             train: Whether to load the training or test split. Default is False.
-            transform: The transformations to apply to the images. Default is None.
+            transform: The transformations to apply to the images. Default is
+                None.
             target_transform: The transformations to apply to the target labels.
                 Default is None.
-            download: Whether to download the dataset if it does not exist. Default
-                is False.
+            download: Whether to download the dataset if it does not exist.
+                Default is False.
     """
     name = "mnist_addition"
     n_concepts = 20
@@ -138,10 +140,18 @@ class MNISTAddition(MNIST):
 
     def __init__(self, root, train,
                  target_transform=None, download=True):
-        super(MNISTAddition, self).__init__(root, train, self.transform,
-                                            target_transform, download)
+        super(MNISTAddition, self).__init__(
+            root,
+            train,
+            self.transform,
+            target_transform,
+            download,
+        )
 
-    def __getitem__(self, index) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def __getitem__(
+        self,
+        index,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Get the first image and target
         img_1, target_1 = super(MNISTAddition, self).__getitem__(index)
 
