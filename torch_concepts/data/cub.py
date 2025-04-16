@@ -776,17 +776,23 @@ class CUBDataset(Dataset):
         self.data = []
         with open(self.pkl_file_path, 'rb') as f:
             self.data.extend(pickle.load(f))
+        image_size = 299
         if (split == 'train') and training_augment:
             self.sample_transform  = transforms.Compose([
                 transforms.ColorJitter(brightness=32/255, saturation=(0.5, 1.5)),
-                transforms.RandomResizedCrop(299),
+                transforms.RandomResizedCrop(image_size),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(), #implicitly divides by 255
+                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
                 sample_transform or (lambda x: x),
-                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2])
             ])
         else:
-            self.sample_transform = sample_transform or (lambda x: x)
+            self.sample_transform = transforms.Compose([
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(), #implicitly divides by 255
+                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
+                sample_transform or (lambda x: x),
+            ])
         self.concept_transform = concept_transform or (lambda x: x)
         self.label_transform = label_transform or (lambda x: x)
         self.uncertain_concept_labels = uncertain_concept_labels
