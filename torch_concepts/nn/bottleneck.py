@@ -283,7 +283,10 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
             torch.nn.Linear(in_features, residual_size),
             torch.nn.LeakyReLU()
         )
-        self.annotations_extended = copy.deepcopy(self.annotations)
+        self.annotations_extended = list(copy.deepcopy(self.annotations))
+        self.annotations_extended[0] = list(
+            self.annotations_extended[0]
+        )
         self.annotations_extended[0].extend(
             [f"residual_{i}" for i in range(residual_size)]
         )
@@ -342,7 +345,7 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         _check_annotations(annotations)
         annotations = [annotations, embedding_size]
         n_concepts = (
-            len(annotations[0]) if isinstance(annotations[0], list)
+            len(annotations[0]) if isinstance(annotations[0], (list, np.ndarray))
             else annotations[0]
         )
 

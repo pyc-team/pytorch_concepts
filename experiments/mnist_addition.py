@@ -1,10 +1,18 @@
 import os
 import pandas as pd
 import torch
-from lightning import Trainer
-from lightning.pytorch.callbacks import ModelCheckpoint
+
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
+
+from packaging import version
+if version.parse(torch.__version__) < version.parse("2.0.0"):
+    # Then we will use pytorch lightning's version compatible with PyTorch < 2.0
+    from pytorch_lightning import Trainer
+    from pytorch_lightning.callbacks import ModelCheckpoint
+else:
+    from lightning import Trainer
+    from lightning.pytorch.callbacks import ModelCheckpoint
 
 from torch_concepts.data.mnist import MNISTAddition
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS

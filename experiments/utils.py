@@ -4,7 +4,13 @@ from typing import Any
 import torch
 import numpy as np
 import random
-from lightning.pytorch.callbacks import TQDMProgressBar
+
+from packaging import version
+if version.parse(torch.__version__) < version.parse("2.0.0"):
+    # Then we will use pytorch lightning's version compatible with PyTorch < 2.0
+    from pytorch_lightning.callbacks import TQDMProgressBar
+else:
+    from lightning.pytorch.callbacks import TQDMProgressBar
 
 
 def set_seed(seed=0):

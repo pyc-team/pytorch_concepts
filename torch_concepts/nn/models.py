@@ -1,7 +1,3 @@
-from collections import Counter
-from typing import Optional
-
-import lightning as L
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
@@ -11,10 +7,19 @@ import torch.nn.functional as F
 import warnings
 
 from abc import abstractmethod, ABC
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, roc_auc_score
+from typing import Optional, List, Dict
+
+from packaging import version
+if version.parse(torch.__version__) < version.parse("2.0.0"):
+    # Then we will use pytorch lightning's version compatible with PyTorch < 2.0
+    import pytorch_lightning as L
+else:
+    import lightning as L
+
+
 from torch_concepts.nn import functional as CF
 from torch_concepts.semantic import ProductTNorm
-from torch_concepts.utils import get_most_common_expl
 
 class ConceptModel(ABC, L.LightningModule):
     @abstractmethod
@@ -25,11 +30,13 @@ class ConceptModel(ABC, L.LightningModule):
         concept_names,
         task_names,
         class_reg=0.1,
+        concept_reg=1,
         c_loss_fn=nn.BCELoss(),
         y_loss_fn=nn.BCEWithLogitsLoss(),
         int_prob=0.1,
         int_idxs=None,
         l_r=0.01,
+        optimizer_config=None,
         **kwargs,
     ):
         super().__init__()
@@ -45,11 +52,14 @@ class ConceptModel(ABC, L.LightningModule):
         self.n_concepts = len(concept_names)
         self.n_tasks = len(task_names)
         self.l_r = l_r
+        self.optimizer_config = optimizer_config or {}
+        optimizer_config['learning_rate'] = self.l_r
 
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
         self.multi_class = len(task_names) > 1
         self.class_reg = class_reg
+        self.concept_reg = concept_reg
         self.int_prob = int_prob
         if int_idxs is None:
             int_idxs = torch.ones(len(concept_names)).bool()
@@ -84,18 +94,23 @@ class ConceptModel(ABC, L.LightningModule):
         # BCELoss requires one-hot encoding
         if self._bce_loss and self.multi_class:
             if y_true.squeeze().dim() == 1:
-                y_true = F.one_hot(y_true.long(),
-                                   self.n_tasks).squeeze().float()
+                y_true = F.one_hot(
+                    y_true.long(),
+                    self.n_tasks,
+                ).squeeze().float()
         elif y_true.dim() == 1 and self._bce_loss:
             y_true = y_true.unsqueeze(-1) # add a dimension
 
         y_loss = self.y_loss_fn(y_pred, y_true)
-        loss = c_loss + self.class_reg * y_loss
+        loss = self.concept_reg * c_loss + self.class_reg * y_loss
 
         c_acc, c_f1 = 0., 0.
         if c_pred is not None:
             c_acc = accuracy_score(c_true.cpu(), (c_pred.cpu() > 0.5).float())
-            c_f1 = f1_score(c_true.cpu(), c_pred.cpu() > 0.5, average='macro')
+            c_avg_auc = roc_auc_score(
+                c_true.cpu().view(-1),
+                (c_pred.cpu().view(-1) > 0.5).float()
+            )
 
         # Extract most likely class in multi-class classification
         if self.multi_class and y_true.squeeze().dim() == 1:
@@ -113,31 +128,74 @@ class ConceptModel(ABC, L.LightningModule):
         # Log metrics on progress bar only during validation
         prog = mode == "val"
         self.log(f'{mode}_c_acc', c_acc, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_c_f1', c_f1, on_epoch=True, prog_bar=prog)
+        self.log(f'{mode}_c_avg_auc', c_avg_auc, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_y_acc', y_acc, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_loss', loss, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_c_loss', c_loss, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_y_loss', y_loss, on_epoch=True, prog_bar=prog)
+        if mode == 'train':
+            self.log(f'loss', loss, on_epoch=True, prog_bar=prog)
+        else:
+            self.log(f'{mode}_loss', loss, on_epoch=True, prog_bar=prog)
 
         return loss
 
-    def training_step(self, batch) -> torch.Tensor:
+    def training_step(self, batch, batch_no=None) -> torch.Tensor:
         loss = self.step(batch, mode="train")
         self._train_losses.append(loss.item())
         return loss
 
-    def validation_step(self, batch) -> torch.Tensor:
+    def validation_step(self, batch, batch_no=None) -> torch.Tensor:
         loss = self.step(batch, mode="val")
         self._val_losses.append(loss.item())
         return loss
 
-    def test_step(self, batch):
+    def test_step(self, batch, batch_no=None):
         return self.step(batch, mode="test")
 
     def configure_optimizers(self):
-        print(f"Employing AdamW optimizer with learning rate {self.l_r}")
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.l_r)
-        return optimizer
+        optimizer_name = self.optimizer_config.get('name', 'adamw')
+        if optimizer_name.lower() == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.optimizer_config.get('learning_rate', 1e-3),
+                weight_decay=self.optimizer_config.get('weight_decay', 0),
+            )
+        elif optimizer_name.lower() == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.optimizer_config.get('learning_rate', 1e-3),
+                weight_decay=self.optimizer_config.get('weight_decay', 0),
+            )
+        elif optimizer_name.lower() == "sgd":
+            optimizer = torch.optim.SGD(
+                filter(lambda p: p.requires_grad, self.parameters()),
+                lr=self.optimizer_config.get('learning_rate', 1e-3),
+                weight_decay=self.optimizer_config.get('weight_decay', 0),
+                momentum=self.optimizer_config.get('momentum', 0),
+            )
+        else:
+            raise ValueError(
+                f'Unsupported optimizer {optimizer_name}'
+            )
+
+        if self.optimizer_config.get('lr_scheduler_patience', 0) != 0:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                verbose=True,
+                patience=self.optimizer_config.get('lr_scheduler_patience', 0),
+                factor=self.optimizer_config.get('lr_scheduler_factor', 0.1),
+                min_lr=self.optimizer_config.get('lr_scheduler_min_lr', 1e-5),
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": lr_scheduler,
+                "monitor": "loss",
+            }
+        return {
+            "optimizer": optimizer,
+            "monitor": "loss",
+        }
 
     def on_train_end(self) -> None:
         # plot losses
@@ -160,8 +218,12 @@ class ConceptModel(ABC, L.LightningModule):
 
 class ConceptExplanationModel(ConceptModel):
     @abstractmethod
-    def get_local_explanations(self, x: torch.Tensor, multi_label=False,
-                               **kwargs) -> list[dict[str, str]]:
+    def get_local_explanations(
+        self,
+        x: torch.Tensor,
+        multi_label=False,
+        **kwargs,
+    ) -> List[Dict[str, str]]:
         """
         Get local explanations for the model given a batch of inputs.
         It returns a list of dictionaries where each entry correspond
@@ -181,8 +243,11 @@ class ConceptExplanationModel(ConceptModel):
         raise NotImplementedError()
 
     @abstractmethod
-    def get_global_explanations(self, x: Optional[torch.Tensor]=None,
-                                **kwargs) -> dict[str, dict[str, str]]:
+    def get_global_explanations(
+        self,
+        x: Optional[torch.Tensor]=None,
+        **kwargs,
+    ) -> Dict[str, Dict[str, str]]:
         """
         Get the global explanations for the model. This is a dictionary of
         explanations for each task. Each task has a dictionary with all
@@ -524,8 +589,8 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
 
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
         if y_true is not None:
-            c_rec_per_classifier = self._conc_recon(concept_weights, 
-                                                    c_true, 
+            c_rec_per_classifier = self._conc_recon(concept_weights,
+                                                    c_true,
                                                     y_true)
             y_pred = CF.selection_eval(
                 prob_per_classifier,
@@ -560,7 +625,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         c_rec_per_classifier = c_rec_per_classifier * self.rec_weight + \
                                (1 - self.rec_weight)
         return c_rec_per_classifier
-    
+
 
     def get_local_explanations(self, x, multi_label=False, **kwargs):
         latent = self.encoder(x)
@@ -840,8 +905,8 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
 
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)
         if y_true is not None:
-            c_rec_per_classifier = self._conc_recon(concept_weights, 
-                                                    c_true, 
+            c_rec_per_classifier = self._conc_recon(concept_weights,
+                                                    c_true,
                                                     y_true)
             y_pred = CF.selection_eval(
                 prob_per_classifier,
