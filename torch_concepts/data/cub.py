@@ -770,13 +770,13 @@ class CUBDataset(Dataset):
         )
         self.split = split
         base_dir = os.path.join(root, 'class_attr_data_10')
-        pkl_file_path = os.path.join(base_dir, f'{split}.pkl')
+        self.pkl_file_path = os.path.join(base_dir, f'{split}.pkl')
         self.name = 'CUB'
 
         self.data = []
-        with open(pkl_file_path, 'rb') as f:
+        with open(self.pkl_file_path, 'rb') as f:
             self.data.extend(pickle.load(f))
-        if training_augment:
+        if (split == 'train') and training_augment:
             self.sample_transform  = transforms.Compose([
                 transforms.ColorJitter(brightness=32/255, saturation=(0.5, 1.5)),
                 transforms.RandomResizedCrop(299),
@@ -857,3 +857,22 @@ class CUBDataset(Dataset):
             attr_label = np.random.binomial(1, competencies)
 
         return img, torch.FloatTensor(attr_label), class_label
+
+    def concept_weights(self):
+        """
+        Calculate class imbalance ratio for binary attribute labels
+        """
+        imbalance_ratio = []
+        with open(self.pkl_file_path, 'rb') as f:
+            data = pickle.load(f)
+        n = len(data)
+        n_attr = len(data[0]['attribute_label'])
+        n_ones = [0] * n_attr
+        total = [n] * n_attr
+        for d in data:
+            labels = d['attribute_label']
+            for i in range(n_attr):
+                n_ones[i] += labels[i]
+        for j in range(len(n_ones)):
+            imbalance_ratio.append(total[j]/n_ones[j] - 1)
+        return np.array(imbalance_ratio)[self.selected_concepts]
