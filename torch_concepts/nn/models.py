@@ -52,8 +52,9 @@ class ConceptModel(ABC, L.LightningModule):
         self.n_concepts = len(concept_names)
         self.n_tasks = len(task_names)
         self.l_r = l_r
-        self.optimizer_config = optimizer_config or {}
-        optimizer_config['learning_rate'] = self.l_r
+        self.optimizer_config = optimizer_config \
+            if optimizer_config is not None else {}
+        self.optimizer_config['learning_rate'] = self.l_r
 
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
@@ -104,7 +105,7 @@ class ConceptModel(ABC, L.LightningModule):
         y_loss = self.y_loss_fn(y_pred, y_true)
         loss = self.concept_reg * c_loss + self.class_reg * y_loss
 
-        c_acc, c_f1 = 0., 0.
+        c_acc, c_avg_auc = 0., 0.
         if c_pred is not None:
             c_acc = accuracy_score(c_true.cpu(), (c_pred.cpu() > 0.5).float())
             c_avg_auc = roc_auc_score(
@@ -130,7 +131,6 @@ class ConceptModel(ABC, L.LightningModule):
         self.log(f'{mode}_c_acc', c_acc, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_c_avg_auc', c_avg_auc, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_y_acc', y_acc, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_loss', loss, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_c_loss', c_loss, on_epoch=True, prog_bar=prog)
         self.log(f'{mode}_y_loss', y_loss, on_epoch=True, prog_bar=prog)
         if mode == 'train':
