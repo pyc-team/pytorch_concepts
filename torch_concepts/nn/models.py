@@ -25,12 +25,12 @@ class ConceptModel(ABC, L.LightningModule):
     @abstractmethod
     def __init__(
         self,
-        encoder,
-        latent_dim,
-        concept_names,
-        task_names,
-        class_reg=0.1,
-        concept_reg=1,
+        encoder: torch.nn.Module,
+        latent_dim: int,
+        concept_names : list[str],
+        task_names: list[str],
+        class_reg: float=0.1,
+        concept_reg: float=1,
         c_loss_fn=nn.BCELoss(),
         y_loss_fn=nn.BCEWithLogitsLoss(),
         int_prob=0.1,
@@ -58,7 +58,6 @@ class ConceptModel(ABC, L.LightningModule):
 
         self.c_loss_fn = c_loss_fn
         self.y_loss_fn = y_loss_fn
-        self.multi_class = len(task_names) > 1
         self.class_reg = class_reg
         self.concept_reg = concept_reg
         self.int_prob = int_prob
@@ -71,6 +70,7 @@ class ConceptModel(ABC, L.LightningModule):
 
         self._bce_loss = isinstance(y_loss_fn, nn.BCELoss) or \
             isinstance(y_loss_fn, nn.BCEWithLogitsLoss)
+        self._multi_class = len(task_names) > 1
 
     @abstractmethod
     def forward(self, x, c_true=None, **kwargs):
@@ -93,7 +93,7 @@ class ConceptModel(ABC, L.LightningModule):
             c_loss = self.c_loss_fn(c_pred, c_true)
 
         # BCELoss requires one-hot encoding
-        if self._bce_loss and self.multi_class:
+        if self._bce_loss and self._multi_class:
             if y_true.squeeze().dim() == 1:
                 y_true = F.one_hot(
                     y_true.long(),
@@ -114,7 +114,7 @@ class ConceptModel(ABC, L.LightningModule):
             )
 
         # Extract most likely class in multi-class classification
-        if self.multi_class and y_true.squeeze().dim() == 1:
+        if self._multi_class and y_true.squeeze().dim() == 1:
             y_pred = y_pred.argmax(dim=1)
         # Extract prediction from sigmoid output
         elif isinstance(self.y_loss_fn, nn.BCELoss):
@@ -405,13 +405,6 @@ class DeepConceptReasoning(ConceptExplanationModel):
         semantic=ProductTNorm(),
         **kwargs,
     ):
-        if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn(
-                    "DCR y_loss_fn must be a BCELoss. Changing to BCELoss."
-                )
-
-        kwargs['y_loss_fn'] = nn.BCELoss()
         super().__init__(
             encoder,
             latent_dim,
@@ -461,6 +454,9 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
+        # converting probabilities to logits
+        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
+
         return y_pred, c_pred
 
     def get_local_explanations(self, x, multi_label=False, **kwargs):
@@ -491,7 +487,7 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 # a binary task with probability higher than 0.5
                 predicted_task = (j == y_preds[i].argmax()) or \
                                  (multi_label and y_preds[i,j] > 0.5) or \
-                                 (not self.multi_class and y_preds[i,j] > 0.5)
+                                 (not self._multi_class and y_preds[i,j] > 0.5)
                 if predicted_task:
                     task_rules = explanations[i][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {0}']
@@ -528,14 +524,9 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         concept_names,
         task_names,
         memory_size,
+        conc_rec_weight=1.0,
         **kwargs,
     ):
-        if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn(
-                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
-                )
-        kwargs['y_loss_fn'] = nn.BCELoss()
         super().__init__(
             encoder,
             latent_dim,
@@ -545,7 +536,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         )
 
         self.memory_size = memory_size
-        self.rec_weight = kwargs.get('rec_weight', 1.)
+        self.rec_weight = conc_rec_weight
 
         self.bottleneck = pyc_nn.LinearConceptBottleneck(
             latent_dim,
@@ -601,13 +592,16 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
             y_pred = CF.selection_eval(prob_per_classifier,
                                        y_per_classifier)
 
+        # converting probabilities to logits
+        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
+
         return y_pred, c_pred
 
     def _conc_recon(self, concept_weights, c_true, y_true):
         # check if y_true is an array (label encoding) or a matrix
         # (one-hot encoding) in case it is an array convert it to a matrix
         # if it is a multi-class task
-        if len(y_true.squeeze().shape) == 1 and self.multi_class:
+        if len(y_true.squeeze().shape) == 1 and self._multi_class:
             y_true = torch.nn.functional.one_hot(
                 y_true.squeeze().long(),
                 len(self.task_names),
@@ -622,8 +616,8 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         )
         # weighting the reconstruction loss - lower reconstruction weights
         # brings values closer to 1 thus influencing less the prediction
-        c_rec_per_classifier = c_rec_per_classifier * self.rec_weight + \
-                               (1 - self.rec_weight)
+        c_rec_per_classifier = torch.pow(c_rec_per_classifier, self.rec_weight)
+
         return c_rec_per_classifier
 
 
@@ -655,7 +649,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
                 # a binary task with probability higher than 0.5
                 predicted_task = (j == y_pred[i].argmax()) or \
                                  (multi_label and y_pred[i,j] > 0.5) or \
-                                 (not self.multi_class and y_pred[i,j] > 0.5)
+                                 (not self._multi_class and y_pred[i,j] > 0.5)
                 if predicted_task:
                     task_rules = global_explanations[0][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {rule_preds[i, j]}']
@@ -855,14 +849,6 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         memory_size,
         **kwargs,
     ):
-        if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn(
-                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
-                )
-        kwargs['y_loss_fn'] = nn.BCELoss()
-        # kwargs['class_reg'] = kwargs['class_reg'] * 10 \
-        #     if 'class_reg' in kwargs else 1
         super().__init__(
             encoder,
             latent_dim,
@@ -916,6 +902,9 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         else:
             y_pred = CF.selection_eval(prob_per_classifier,
                                        y_per_classifier)
+
+        # converting probabilities to logits
+        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
 
         return y_pred, c_pred
 
