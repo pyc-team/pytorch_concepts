@@ -3,13 +3,13 @@ import pandas as pd
 import torch
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
-from networkx.algorithms.isolate import is_isolate
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
-from torch_concepts.data.mnist import MNISTAddition, MNISTEvenOdd
+from torch_concepts.data.mnist import MNISTEvenOdd
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS, \
     ConceptExplanationModel
+from torch_concepts.utils import get_most_common_expl
 from utils import set_seed, CustomProgressBar, GaussianNoiseTransform, \
     model_trained
 import matplotlib.pyplot as plt
@@ -31,31 +31,26 @@ def main(
     if not os.path.exists(result_folder):
         os.makedirs(result_folder)
 
-    # Initialize encoder and model parameters
-    encoder = torch.nn.Sequential(
-        torch.nn.Flatten(),
-        torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
-        torch.nn.LeakyReLU(),
-        torch.nn.Linear(model_kwargs["latent_dim"] * 2,
-                        model_kwargs["latent_dim"]),
-        torch.nn.LeakyReLU(),
-    )
-
+    model_kwargs = model_kwargs.copy()
+    latent_dim = model_kwargs.pop("latent_dim")
     results_df = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
             set_seed(seed)
+            # Initialize encoder and model parameters
+            encoder = torch.nn.Sequential(
+                torch.nn.Flatten(),
+                torch.nn.Linear(dataset.input_dim, latent_dim * 2),
+                torch.nn.LeakyReLU(),
+                torch.nn.Linear(latent_dim * 2, latent_dim),
+                torch.nn.LeakyReLU(),
+            )
             model = model_cls(
                 encoder,
-                model_kwargs["latent_dim"],
+                latent_dim,
                 dataset.concept_names,
                 dataset.task_names,
-                l_r=model_kwargs["l_r"],
-                class_reg=model_kwargs["class_reg"],
-                residual_size=model_kwargs["residual_size"],
-                embedding_size=model_kwargs["embedding_size"],
-                memory_size=model_kwargs["memory_size"],
-                y_loss_fn=model_kwargs["y_loss_fn"],
+                **model_kwargs
             )
 
             checkpoint = ModelCheckpoint(
@@ -74,9 +69,10 @@ def main(
                                 f"{model_name}_seed_{seed}.ckpt")
             if not model_trained(model, model_name, file,
                                  training_kwargs["load_results"]):
-                    # or model_name == "ConceptMemoryReasoning (embedding)"):
                 print(f"Training {model_name} with seed {seed}")
                 trainer.fit(model, train_loader, val_loader)
+            else:
+                print(f"Model {model_name} with seed {seed} already trained")
 
             model.load_state_dict(torch.load(file)['state_dict'])
 
@@ -86,8 +82,9 @@ def main(
 
             if isinstance(model, ConceptExplanationModel):
                 x = next(iter(test_loader))[0]
-                print("\nGlobal Explanations:")
-                print(model.get_global_explanations(x))
+                print("\nMost common Explanations:")
+                local_explanations = model.get_local_explanations(x)
+                print(get_most_common_expl(local_explanations, 5))
 
             results_df = pd.concat([results_df,
                                     pd.DataFrame([test_results])], axis=0)
@@ -131,7 +128,7 @@ def plot_concept_accuracy(dataset):
     results["model"] = results["model"].map(MODELS_ACRONYMS)
 
     # plot
-    sns.barplot(x="model", y="test_c_f1", data=results)
+    sns.barplot(x="model", y="test_c_avg_auc", data=results)
     plt.xlabel("Model")
     plt.ylabel("Concept accuracy")
     plt.title(f"{dataset_name}", fontsize=24)
@@ -156,6 +153,8 @@ def test_intervenability(
     dataset_name = dataset.name
     results = []
 
+    model_kwargs = model_kwargs.copy()
+    latent_dim = model_kwargs.pop("latent_dim")
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
             # Define the checkpoint to load the best model
@@ -165,23 +164,17 @@ def test_intervenability(
                                            f"{filename_pattern}.ckpt")
             encoder = torch.nn.Sequential(
                 torch.nn.Flatten(),
-                torch.nn.Linear(dataset.input_dim,
-                                model_kwargs["latent_dim"] * 2),
+                torch.nn.Linear(dataset.input_dim, latent_dim * 2),
                 torch.nn.LeakyReLU(),
-                torch.nn.Linear(model_kwargs["latent_dim"] * 2,
-                                model_kwargs["latent_dim"]),
+                torch.nn.Linear(latent_dim * 2, latent_dim),
                 torch.nn.LeakyReLU(),
             )
             model = model_cls(
                 encoder,
-                model_kwargs["latent_dim"],
+                latent_dim,
                 dataset.concept_names,
                 dataset.task_names,
-                class_reg=model_kwargs["class_reg"],
-                residual_size=model_kwargs["residual_size"],
-                embedding_size=model_kwargs["embedding_size"],
-                memory_size=model_kwargs["memory_size"],
-                y_loss_fn=model_kwargs["y_loss_fn"],
+                **model_kwargs
             )
             model.load_state_dict(torch.load(best_model_path)['state_dict'])
 
@@ -216,8 +209,6 @@ def test_intervenability(
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(f"results/{dataset_name}/intervention_results.csv")
-
-
 
 
 def plot_intervenability(dataset):
@@ -258,7 +249,7 @@ if __name__ == "__main__":
     training_kwargs = {
         "seeds": 3,
         "epochs": 5,
-        "load_results": True,
+        "load_results": False,
     }
     model_kwargs = {
         "l_r": 1e-3,
@@ -268,7 +259,16 @@ if __name__ == "__main__":
         "residual_size": 32,
         "memory_size": 20,
         "y_loss_fn": torch.nn.CrossEntropyLoss(),
+        "conc_rec_weight": 0.1,
     }
+
+    print("Running the MNIST Even vs Odd experiment".center(50))
+    print("=====================================")
+    print("Training kwargs:")
+    print(training_kwargs)
+    print("Model kwargs:")
+    print(model_kwargs)
+    print("=====================================")
 
     # Set seed for reproducibility
     set_seed(42)
