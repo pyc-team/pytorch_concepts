@@ -22,6 +22,33 @@ from torch_concepts.nn import functional as CF
 from torch_concepts.semantic import ProductTNorm
 
 class ConceptModel(ABC, L.LightningModule):
+    """
+    Abstract class for concept-based models. It defines the basic structure
+    of a concept-based model and the methods that should be implemented by
+    the subclasses. The concept-based models are models that predict the
+    output of a task based on the concepts extracted from the input data.
+
+    Attributes:
+        encoder (torch.nn.Module): The encoder module that extracts the
+            features from the input data.
+        latent_dim (int): The dimension of the latent space.
+        concept_names (list[str]): The names of the concepts extracted from
+            the input data.
+        task_names (list[str]): The names of the tasks to predict.
+        class_reg (float): The regularization factor for the task
+            classification loss.
+        c_loss_fn (torch.nn.Module): The loss function for learning the
+            concepts.
+        y_loss_fn (torch.nn.Module): The loss function for learning the
+            tasks.
+        int_prob (float): The probability of intervening on the concepts at
+            training time.
+        int_idxs (torch.Tensor): The indices of the concepts to intervene
+            on.
+        l_r (float): The learning rate for the optimizer.
+
+    """
+
     @abstractmethod
     def __init__(
         self,
@@ -217,6 +244,14 @@ class ConceptModel(ABC, L.LightningModule):
 
 
 class ConceptExplanationModel(ConceptModel):
+    """
+        Abstract class for concept-based models that provide local and global
+        explanations. It extends the ConceptModel class and adds the methods
+        get_local_explanations and get_global_explanations. The local
+        explanations are the explanations for each input in the batch, while
+        the global explanations are the explanations for the whole model.
+    """
+
     @abstractmethod
     def get_local_explanations(
         self,
@@ -391,6 +426,17 @@ class ConceptEmbeddingModel(ConceptModel):
 
 
 class DeepConceptReasoning(ConceptExplanationModel):
+    """
+        DCR is a concept-based model that makes task prediction by means of
+        a locally constructed logic rule made of concepts. The model uses a
+        concept embedding bottleneck to extract the concepts from the input
+        data. The concept roles are computed from the concept embeddings
+        and are used to construct the define how concept enter the logic rule.
+        The model uses a fuzzy system based on some semantic to compute
+        the final prediction according to the predicted rules.
+
+        Paper: https://arxiv.org/abs/2304.14068
+    """
     n_roles = 3
     memory_names = ['Positive', 'Negative', 'Irrelevant']
     temperature = 100
@@ -514,6 +560,16 @@ class DeepConceptReasoning(ConceptExplanationModel):
 
 
 class ConceptMemoryReasoning(ConceptExplanationModel):
+    """
+    This model represent an advancement of DCR as it stores the rules in a
+    memory and selects the right one for the given input. The memory is
+    a tensor of shape memory_size x n_concepts x n_tasks x n_roles. Each entry
+    in the memory represents a rule for a task. The model predicts the current
+    task according to which task is most likely given the predicted concepts.
+
+    Paper: https://arxiv.org/abs/2407.15527
+    """
+
     n_roles = 3
     memory_names = ['Positive', 'Negative', 'Irrelevant']
 
