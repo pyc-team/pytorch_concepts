@@ -393,10 +393,10 @@ def logic_rule_explanations(
             for mem_id in range(memory_size):
                 rule = []
                 for concept_id in range(n_concepts):
-                    role = concept_roles[sample_id, mem_id, concept_id, task_id]
+                    role = concept_roles[sample_id, mem_id, concept_id, task_id].item()
                     if role == 0:
                         rule.append(c_names[concept_id])
-                    if role == 1:
+                    elif role == 1:
                         rule.append(f"~ {c_names[concept_id]}")
                     else:
                         continue
@@ -444,7 +444,22 @@ def confidence_selection(
     return torch.where(c_confidence > theta, True, False)
 
 
-def soft_select(values, temperature, dim=1):
+def soft_select(values, temperature, dim=1) -> torch.Tensor:
+    """
+    Soft selection function, a special activation function for a network
+    rescaling the output such that, if they are uniformly distributed, then we
+    will select only half of them. A higher temperature will select more
+    concepts, a lower temperature will select fewer concepts.
+
+    Args:
+        values: Output of the network.
+        temperature: Temperature for the softmax function [-inf, +inf].
+        dim: dimension to apply the softmax function. Default is 1.
+
+    Returns:
+        Tensor: Soft selection scores.
+    """
+
     softmax_scores = torch.log_softmax(values, dim=dim)
     soft_scores = torch.sigmoid(softmax_scores - temperature *
                                softmax_scores.mean(dim=dim, keepdim=True))

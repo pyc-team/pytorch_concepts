@@ -439,7 +439,6 @@ class DeepConceptReasoning(ConceptExplanationModel):
     """
     n_roles = 3
     memory_names = ['Positive', 'Negative', 'Irrelevant']
-    temperature = 100
 
     def __init__(
         self,
@@ -449,6 +448,7 @@ class DeepConceptReasoning(ConceptExplanationModel):
         task_names,
         embedding_size,
         semantic=ProductTNorm(),
+        temperature=100,
         **kwargs,
     ):
         super().__init__(
@@ -464,6 +464,9 @@ class DeepConceptReasoning(ConceptExplanationModel):
             concept_names,
             embedding_size,
         )
+        self.temperature = temperature
+        self._y_pred = None
+        print(f"Setting concept temperature to {self.temperature}")
 
         # module predicting concept imp. for all concepts tasks and roles
         # its input is batch_size x n_concepts x embedding_size
@@ -506,6 +509,8 @@ class DeepConceptReasoning(ConceptExplanationModel):
         return y_pred, c_pred
 
     def get_local_explanations(self, x, multi_label=False, **kwargs):
+        assert not multi_label or self._multi_class, \
+            "Multi-label explanations are supported only for multi-class tasks"
         latent = self.encoder(x)
         c_emb, c_dict = self.bottleneck(latent)
         c_pred = c_dict['c_int']
@@ -522,7 +527,8 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 2: self.task_names,
             },
         )
-        y_preds = CF.logic_rule_eval(c_weights, c_pred, semantic=self.semantic)
+        y_preds = CF.logic_rule_eval(c_weights, c_pred,
+                                     semantic=self.semantic)[:, :, 0]
 
         local_explanations = []
         for i in range(x.shape[0]):
@@ -531,9 +537,11 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 # a task is predicted if it is the most likely task or is
                 # a multi-label task with probability higher than 0.5 or is
                 # a binary task with probability higher than 0.5
-                predicted_task = (j == y_preds[i].argmax()) or \
-                                 (multi_label and y_preds[i,j] > 0.5) or \
-                                 (not self._multi_class and y_preds[i,j] > 0.5)
+                if self._multi_class and not multi_label:
+                    predicted_task = j == y_preds[i].argmax()
+                else: # multi-label or binary
+                    predicted_task = y_preds[i,j] > 0.5
+
                 if predicted_task:
                     task_rules = explanations[i][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {0}']
