@@ -256,7 +256,7 @@ if __name__ == "__main__":
     # Hyperparameters
     training_kwargs = {
         "seeds": 3,
-        "epochs": 5,
+        "epochs": 10,
         "load_results": False,
     }
     model_kwargs = {
@@ -267,7 +267,7 @@ if __name__ == "__main__":
         "residual_size": 32,
         "memory_size": 20,
         "y_loss_fn": torch.nn.CrossEntropyLoss(),
-        "conc_rec_weight": 0.1,
+        "conc_rec_weight": 0.01,
     }
 
     print("Running the MNIST addition experiment".center(200))

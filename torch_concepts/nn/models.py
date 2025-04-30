@@ -17,7 +17,6 @@ if version.parse(torch.__version__) < version.parse("2.0.0"):
 else:
     import lightning as L
 
-
 from torch_concepts.nn import functional as CF
 from torch_concepts.semantic import ProductTNorm
 
@@ -120,16 +119,18 @@ class ConceptModel(ABC, L.LightningModule):
             c_loss = self.c_loss_fn(c_pred, c_true)
 
         # BCELoss requires one-hot encoding
-        if self._bce_loss and self._multi_class:
-            if y_true.squeeze().dim() == 1:
-                y_true = F.one_hot(
-                    y_true.long(),
-                    self.n_tasks,
-                ).squeeze().float()
-        elif y_true.dim() == 1 and self._bce_loss:
-            y_true = y_true.unsqueeze(-1) # add a dimension
+        if (self._bce_loss and self._multi_class and
+                y_true.squeeze().dim() == 1):
+            y_true_loss = F.one_hot(
+                y_true.long(),
+                self.n_tasks,
+            ).squeeze().float()
+        elif self._bce_loss and y_true.squeeze().dim() == 1 :
+            y_true_loss = y_true.unsqueeze(-1) # add a dimension
+        else:
+            y_true_loss = y_true
 
-        y_loss = self.y_loss_fn(y_pred, y_true)
+        y_loss = self.y_loss_fn(y_pred, y_true_loss)
         loss = self.concept_reg * c_loss + self.class_reg * y_loss
 
         c_acc, c_avg_auc = 0., 0.
@@ -150,8 +151,6 @@ class ConceptModel(ABC, L.LightningModule):
         else:
             y_pred = (y_pred > 0.).float()
         y_acc = accuracy_score(y_true.cpu(), y_pred.detach().cpu())
-        # manually compute accuracy
-        # y_acc = (y_pred == y_true).sum().item() / len(y_true)
 
         # Log metrics on progress bar only during validation
         prog = mode == "val"
@@ -451,6 +450,12 @@ class DeepConceptReasoning(ConceptExplanationModel):
         temperature=100,
         **kwargs,
     ):
+        
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn("DCR requires a BCE loss function, not "
+                              f"{kwargs['y_loss_fn']}. Using BCELoss instead.")
+                kwargs['y_loss_fn'] = nn.BCELoss()
         super().__init__(
             encoder,
             latent_dim,
@@ -503,8 +508,9 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
-        # converting probabilities to logits
-        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
+        # converting probabilities to logits # REMOVED! it makes rules
+        # difficult to learn. They might be false but they still get predicted
+        # y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
 
         return y_pred, c_pred
 
@@ -591,6 +597,12 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         conc_rec_weight=1.0,
         **kwargs,
     ):
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn("CMR requires a BCE loss function, not "
+                              f"{kwargs['y_loss_fn']}. Using BCELoss instead.")
+                kwargs['y_loss_fn'] = nn.BCELoss()
+
         super().__init__(
             encoder,
             latent_dim,
@@ -656,8 +668,9 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
             y_pred = CF.selection_eval(prob_per_classifier,
                                        y_per_classifier)
 
-        # converting probabilities to logits
-        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
+        # converting probabilities to logits # REMOVED! it makes rules 
+        # difficult to learn. They might be false but they still get predicted
+        # y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
 
         return y_pred, c_pred
 
@@ -913,6 +926,12 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         memory_size,
         **kwargs,
     ):
+        if 'y_loss_fn' in kwargs:
+            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+                warnings.warn("CMR (emb) requires a BCE loss function, not "
+                              f"{kwargs['y_loss_fn']}. Using BCELoss instead.")
+                kwargs['y_loss_fn'] = nn.BCELoss()
+
         super().__init__(
             encoder,
             latent_dim,
@@ -967,8 +986,9 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
             y_pred = CF.selection_eval(prob_per_classifier,
                                        y_per_classifier)
 
-        # converting probabilities to logits
-        y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
+        # converting probabilities to logits # REMOVED! it makes rules
+        # difficult to learn. They might be false but they still get predicted
+        # y_pred = torch.log(y_pred / (1 - y_pred + 1e-8) + 1e-8)
 
         return y_pred, c_pred
 

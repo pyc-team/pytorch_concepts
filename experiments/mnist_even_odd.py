@@ -81,9 +81,10 @@ def main(
             test_results["seed"] = seed
 
             if isinstance(model, ConceptExplanationModel):
-                x = next(iter(test_loader))[0]
+                local_explanations = []
+                for x, c, y in test_loader:
+                    local_explanations += model.get_local_explanations(x)
                 print("\nMost common Explanations:")
-                local_explanations = model.get_local_explanations(x)
                 print(get_most_common_expl(local_explanations, 5))
 
             results_df = pd.concat([results_df,
@@ -248,7 +249,7 @@ if __name__ == "__main__":
     # Hyperparameters
     training_kwargs = {
         "seeds": 3,
-        "epochs": 5,
+        "epochs": 10,
         "load_results": False,
     }
     model_kwargs = {
@@ -257,9 +258,9 @@ if __name__ == "__main__":
         "embedding_size": 32,
         "class_reg": 0.1,
         "residual_size": 32,
-        "memory_size": 20,
+        "memory_size": 5,
         "y_loss_fn": torch.nn.CrossEntropyLoss(),
-        "conc_rec_weight": 0.1,
+        "conc_rec_weight": .1,
     }
 
     print("Running the MNIST Even vs Odd experiment".center(50))
