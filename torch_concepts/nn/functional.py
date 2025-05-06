@@ -159,7 +159,7 @@ def linear_equation_eval(
             n_classes, memory_size).
     """
     assert concept_weights.shape[-2] == c_pred.shape[-1]
-    assert bias.shape[-1] == concept_weights.shape[-1]
+    assert bias is None or bias.shape[-1] == concept_weights.shape[-1]
     y_pred = torch.einsum('bmcy,bc->bym', concept_weights, c_pred)
     if bias is not None:
         # the bias is (b,m,y) while y_pred is (bym) so we invert bias dimension
@@ -167,7 +167,7 @@ def linear_equation_eval(
     return y_pred
 
 
-def linear_eq_explanations(
+def linear_equation_expl(
     concept_weights: torch.Tensor,
     bias: torch.Tensor = None,
     concept_names: Dict[int, List[str]] = None,
@@ -231,7 +231,7 @@ def linear_eq_explanations(
                     weight = concept_weights[s_idx, mem_idx, c_idx, t_idx]
                     name = c_names[c_idx]
                     if torch.round(weight.abs(), decimals=2) > 0.1:
-                        eq.append(f"{weight:.1f} * {name}")
+                        eq.append(f"{weight.item():.1f} * {name}")
                 eq = " + ".join(eq)
                 eq = eq.replace(" + -", " - ")
                 equations_str[t_names[t_idx]][f"Equation {mem_idx}"] = eq

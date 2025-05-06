@@ -533,7 +533,7 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 2: self.task_names,
             },
         )
-        y_preds = CF.logic_rule_eval(c_weights, c_pred,
+        y_pred = CF.logic_rule_eval(c_weights, c_pred,
                                      semantic=self.semantic)[:, :, 0]
 
         local_explanations = []
@@ -544,9 +544,9 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 # a multi-label task with probability higher than 0.5 or is
                 # a binary task with probability higher than 0.5
                 if self._multi_class and not multi_label:
-                    predicted_task = j == y_preds[i].argmax()
+                    predicted_task = j == y_pred[i].argmax()
                 else: # multi-label or binary
-                    predicted_task = y_preds[i,j] > 0.5
+                    predicted_task = y_pred[i,j] > 0.5
 
                 if predicted_task:
                     task_rules = explanations[i][self.task_names[j]]
@@ -859,14 +859,11 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
 
         # adding memory dimension to concept weights and bias
         c_weights, y_bias = c_weights.unsqueeze(dim=1), y_bias.unsqueeze(dim=1)
-        linear_equations = CF.linear_eq_explanations(c_weights,
-                                                     y_bias,
-                                                     {
-                                                         1: self.concept_names,
-                                                         2: self.task_names,
-                                                     }
-                                                     )
-        y_preds = CF.linear_equation_eval(c_weights, c_pred, y_bias)
+        linear_equations = CF.linear_equation_expl(c_weights, y_bias, {
+            1: self.concept_names,
+            2: self.task_names,
+        })
+        y_pred = CF.linear_equation_eval(c_weights, c_pred, y_bias)
 
         local_expl = []
         for i in range(x.shape[0]):
@@ -874,8 +871,9 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
             for j in range(self.n_tasks):
                 # a task is predicted if it is the most likely task or if it is
                 # a multi-label task and the probability is higher than 0.5
-                predicted_task = (j == y_preds[i].argmax()) or \
-                                 (multi_label and y_preds[i, j] > 0.5)
+                # or is a binary task with probability higher than 0.5
+                predicted_task = (j == y_pred[i].argmax()) or \
+                                 (multi_label and y_pred[i, j] > 0.5)
                 if predicted_task:
                     task_eqs = linear_equations[i]
                     predicted_eq = task_eqs[self.task_names[j]]['Equation 0']
@@ -1017,10 +1015,14 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         for i in range(x.shape[0]):
             sample_expl = {}
             for j in range(self.n_tasks):
-                # a task is predicted if it is the most likely task or if it is
-                # a multi-label task and the probability is higher than 0.5
-                predicted_task = (j == y_pred[i].argmax()) or \
-                                 (multi_label and y_pred[i, j] > 0.5)
+                # a task is predicted if it is the most likely task or is
+                # a multi-label task with probability higher than 0.5 or is
+                # a binary task with probability higher than 0.5
+                if self._multi_class and not multi_label:
+                    predicted_task = j == y_pred[i].argmax()
+                else: # multi-label or binary
+                    predicted_task = y_pred[i,j] > 0.5
+                
                 if predicted_task:
                     task_rules = global_explanations[0][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {rule_preds[i, j]}']
@@ -1028,6 +1030,166 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
                         {self.task_names[j]: predicted_rule})
             local_expl.append(sample_expl)
         return local_expl
+
+
+class LinearConceptMemoryReasoning(ConceptExplanationModel):
+    """
+    This model is a combination of the LinearConceptEmbeddingModel and the
+    ConceptMemoryReasoning model. It uses the concept embedding bottleneck
+    to both to predict the concept and to select the equations from the
+    memory. The memory is used to store the equations that can be used for each task.
+    The model uses a linear equation to compute the final prediction according
+    to the predicted equation. Differently from LICEM it does not use the bias.
+    """
+
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        embedding_size,
+        memory_size,
+        weight_reg=1e-4,
+        negative_concepts=True,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
+        self.memory_size = memory_size
+        self.weight_reg = weight_reg
+        self.negative_concepts = negative_concepts
+
+        self.bottleneck = pyc_nn.ConceptEmbeddingBottleneck(
+            latent_dim,
+            concept_names,
+            embedding_size,
+        )
+
+        self.classifier_selector = nn.Sequential(
+            torch.nn.Linear(embedding_size * len(concept_names),
+                            latent_dim),
+            pyc_nn.LinearConceptLayer(
+                latent_dim,
+                [self.task_names, memory_size],
+            ),
+        )
+        self.equation_memory = torch.nn.Embedding(
+            memory_size,
+            latent_dim
+        )
+
+        self.equation_decoder = pyc_nn.LinearConceptLayer(
+            latent_dim,
+            [
+                self.concept_names,
+                self.task_names,
+            ],
+        )
+
+    def forward(self, x, c_true=None, **kwargs):
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(
+            latent,
+            c_true=c_true,
+            intervention_idxs=self.int_idxs,
+            intervention_rate=self.int_prob,
+        )
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(c_emb.flatten(-2))
+        prob_per_classifier = torch.softmax(classifier_selector_logits, dim=-1)
+        # adding batch dimension to concept memory
+        equation_weights = self.equation_decoder(
+            self.equation_memory.weight).unsqueeze(dim=0)
+
+        if self.negative_concepts:
+            c_mapped = 2*c_pred - 1
+        else:
+            c_mapped = c_pred
+
+        y_per_classifier = CF.linear_equation_eval(equation_weights, c_mapped)
+        y_pred = CF.selection_eval(prob_per_classifier,
+                                   y_per_classifier)
+
+        return y_pred, c_pred
+
+    def step(self, batch, mode="train") -> torch.Tensor:
+        loss = super().step(batch, mode)
+
+        # adding l2 regularization to the weights
+        w_loss = self.weight_reg * self.equation_memory.weight.norm(p=2)
+        loss += w_loss
+
+        prog = mode == "val"
+        self.log(f'{mode}_weight_loss', w_loss, on_epoch=True,
+                 prog_bar=prog)
+
+        return loss
+
+    def get_local_explanations(
+        self,
+        x: torch.Tensor,
+        multi_label=False,
+        **kwargs,
+    ) -> List[Dict[str, str]]:
+        latent = self.encoder(x)
+        c_emb, c_dict = self.bottleneck(latent)
+        c_pred = c_dict['c_int']
+        classifier_selector_logits = self.classifier_selector(c_emb.flatten(-2))
+        prob_per_classifier = torch.softmax(classifier_selector_logits,
+                                            dim=-1)
+        equation_weights = self.equation_decoder(
+            self.equation_memory.weight).unsqueeze(dim=0)
+        c_mapped = 2*c_pred - 1 if self.negative_concepts else c_pred
+        y_per_classifier = CF.linear_equation_eval(equation_weights, c_mapped)
+        equation_probs = prob_per_classifier * y_per_classifier
+        y_pred = equation_probs.sum(dim=-1)
+
+        global_explanations = CF.linear_equation_expl(
+            equation_weights, None, {
+            1: self.concept_names,
+            2: self.task_names,
+        })
+
+        local_expl = []
+        for i in range(x.shape[0]):
+            sample_expl = {}
+            for j in range(self.n_tasks):
+                # a task is predicted if it is the most likely task or is
+                # a multi-label task with probability higher than 0.5 or is
+                # a binary task with probability higher than 0.5
+                if self._multi_class and not multi_label:
+                    predicted_task = j == y_pred[i].argmax()
+                else: # multi-label or binary
+                    predicted_task = y_pred[i,j] > 0.5
+                    
+                if predicted_task:
+                    task_eqs = global_explanations[0][self.task_names[j]]
+                    predicted_eq = task_eqs[f'Equation 0']
+                    sample_expl.update(
+                        {self.task_names[j]: predicted_eq})
+            local_expl.append(sample_expl)
+        return local_expl
+
+    def get_global_explanations(self, x=None, **kwargs):
+        concept_weights = self.equation_decoder(
+            self.equation_memory.weight).unsqueeze(dim=0)
+
+        global_explanations = CF.linear_equation_expl(
+            concept_weights, None,
+            {
+                1: self.concept_names,
+                2: self.task_names,
+            },
+        )
+
+        return global_explanations[0]
+
 
 
 AVAILABLE_MODELS = {
@@ -1038,6 +1200,7 @@ AVAILABLE_MODELS = {
     "LinearConceptEmbeddingModel": LinearConceptEmbeddingModel,
     "ConceptMemoryReasoning": ConceptMemoryReasoning,
     "ConceptMemoryReasoning (embedding)": ConceptEmbeddingReasoning,
+    "LinearConceptMemoryReasoning": LinearConceptMemoryReasoning,
 }
 
 INV_AVAILABLE_MODELS = {v: k for k, v in AVAILABLE_MODELS.items()}
@@ -1050,4 +1213,5 @@ MODELS_ACRONYMS = {
     "LinearConceptEmbeddingModel": "LICEM",
     "ConceptMemoryReasoning": "CMR",
     "ConceptMemoryReasoning (embedding)": "CMR (emb)",
+    "LinearConceptMemoryReasoning": "LCMR",
 }
