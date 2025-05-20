@@ -291,8 +291,110 @@ def generate_encoder(**encoder_config):
     for i in range(1, len(units)):
         layers.append((f"nonlin_{i}", torch.nn.LeakyReLU()))
         layers.append((f"outlayer_{i}", torch.nn.Linear(units[i-1], units[i])))
+    if encoder_config.get('out_nonlin', None):
+        if encoder_config['out_nonlin'].lower() == 'leakyrelu':
+            layers.append((f"nonlin_out", torch.nn.LeakyReLU()))
+        elif encoder_config['out_nonlin'].lower() == 'sigmoid':
+            layers.append((f"nonlin_out", torch.nn.Sigmoid()))
+        elif encoder_config['out_nonlin'].lower() == 'softmax':
+            layers.append((f"nonlin_out", torch.nn.Softmax()))
+        elif encoder_config['out_nonlin'].lower() == 'tanh':
+            layers.append((f"nonlin_out", torch.nn.Tanh()))
+        elif encoder_config['out_nonlin'].lower() == 'relu':
+            layers.append((f"nonlin_out", torch.nn.ReLU()))
+        else:
+            raise ValueError(
+                f'Unsupported out_nonlin {encoder_config["out_nonlin"]}'
+            )
     model.fc = torch.nn.Sequential(collections.OrderedDict(layers))
     return model
+
+
+
+def single_intervention_run(
+    test_loader,
+    dataset,
+    int_probs,
+    run_config,
+    run_name,
+    split,
+    results,
+):
+    set_seed(split + 1)
+    model_name  = run_config['model_name']
+    model_cls = AVAILABLE_MODELS[model_name]
+    encoder_config = run_config['encoder_config']
+    encoder = generate_encoder(**encoder_config)
+    model = model_cls(
+        encoder=encoder,
+        concept_names=dataset.concept_names,
+        task_names=dataset.task_names,
+        **run_config,
+    )
+
+    filename_pattern = f"{run_name}_seed_{split}"
+    best_model_path = os.path.join(
+        run_config['result_dir'],
+        f"{filename_pattern}.ckpt",
+    )
+    model.load_state_dict(torch.load(best_model_path)['state_dict'])
+
+    model.test_intervention = True
+    # Test the intervenability of the model
+    for int_prob in int_probs:
+        # set the intervention probability
+        model.int_prob = int_prob
+
+        trainer = Trainer(
+            accelerator=run_config.get('accelerator', 'gpu'),
+            devices=run_config.get('devices', 1),
+        )
+        test_int_result = trainer.test(model, test_loader)[0]
+
+        results.append({
+            "model": run_name,
+            "test_y_acc": test_int_result["test_y_acc"],
+            "test_c_acc": test_int_result["test_c_acc"],
+            "int_prob": int_prob,
+        })
+
+        print(
+            f"Model {run_name} "
+            f"- Int prob {int_prob}"
+            f" - y_acc: {test_int_result['test_y_acc']}"
+        )
+
+def test_intervenability(
+    test_loader,
+    dataset,
+    int_probs,
+    all_runs,
+):
+    """
+    Test the intervenability of the models by adding noise to the input
+    and then substituting the predicted concept with the right one with
+    increasing probability.
+    """
+    results = []
+
+    for run_name, run_config, split, in all_runs:
+        single_intervention_run(
+            test_loader=test_loader,
+            dataset=dataset,
+            int_probs=int_probs,
+            run_config=run_config,
+            run_name=run_name,
+            split=split,
+            results=results,
+        )
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(
+        os.path.join(
+            run_config['result_dir'],
+            f"intervention_results.csv",
+        ),
+    )
+    return results_df
 
 
 if __name__ == "__main__":
@@ -316,6 +418,16 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="starts debug mode in our program.",
+    )
+    parser.add_argument(
+        "-l",
+        "--load_results",
+        action="store_true",
+        default=False,
+        help=(
+            "loads already computed results to make plots rather than "
+            "re-runing everything."
+        ),
     )
     parser.add_argument(
         '-p',
@@ -389,6 +501,14 @@ if __name__ == "__main__":
 
     dataset_config = experiment_config['dataset_config']
     val_proportion = dataset_config.pop('val_proportion', 0.2)
+    batch_size = dataset_config.pop('batch_size', 64)
+    num_workers = dataset_config.pop(
+        'num_workers',
+        shared_params.get('num_workers', 6),
+    )
+    train_batch_size = dataset_config.pop('train_batch_size', batch_size)
+    test_batch_size = dataset_config.pop('test_batch_size', batch_size)
+    val_batch_size = dataset_config.pop('val_batch_size', batch_size)
     other_ds_args = copy.deepcopy(dataset_config)
     other_ds_args.pop('name')
     if dataset_config['name'].lower() == 'awa2':
@@ -404,11 +524,6 @@ if __name__ == "__main__":
     print(f"[Using {train_dataset.name} as a dataset for all runs]")
 
     # Set split for reproducibility
-    batch_size = dataset_config.get('batch_size', 64)
-    num_workers = dataset_config.get(
-        'num_workers',
-        experiment_config.get('num_workers', 6),
-    )
     set_seed(dataset_config.get('split', 42))
 
     # Split the dataset into train, validation and test sets
@@ -420,19 +535,19 @@ if __name__ == "__main__":
     )
     train_loader = DataLoader(
         train_set,
-        batch_size=dataset_config.get('train_batch_size', batch_size),
+        batch_size=train_batch_size,
         shuffle=True,
         num_workers=num_workers,
     )
     val_loader = DataLoader(
         val_set,
-        batch_size=dataset_config.get('val_batch_size', batch_size),
+        batch_size=val_batch_size,
         shuffle=False,
         num_workers=num_workers,
     )
     test_loader = DataLoader(
         test_set,
-        batch_size=dataset_config.get('test_batch_size', batch_size),
+        batch_size=test_batch_size,
         shuffle=False,
         num_workers=num_workers,
     )
@@ -440,18 +555,24 @@ if __name__ == "__main__":
     # Time to check if we will use weights for the concept loss to handle
     # imbalances
     concept_weights = None
-    if experiment_config.get('concept_weights', False):
-        if hasattr(train_set, 'concept_weights'):
+    if shared_params.get('concept_weights', False):
+        if hasattr(train_dataset, 'concept_weights'):
             concept_weights = train_dataset.concept_weights()
         else:
+            print("Computing concept weights automatically...")
             # Else let us compute it automatically
             attribute_count = np.zeros((len(train_dataset.concept_names),))
             samples_seen = 0
-            for (_, c, _) in train_set:
+            for (_, c, _) in train_loader:
                 c = c.cpu().detach().numpy()
                 attribute_count += np.sum(c, axis=0)
                 samples_seen += c.shape[0]
             concept_weights = samples_seen / attribute_count - 1
+        concept_weights = torch.tensor(concept_weights)
+    print("concept_weights =", concept_weights)
+    experiment_config['c_loss_fn'] = torch.nn.BCELoss(weight=concept_weights)
+    shared_params['c_loss_fn'] = torch.nn.BCELoss(weight=concept_weights)
+
     ###################
     ## Determine all models to run
     ###################
@@ -473,22 +594,18 @@ if __name__ == "__main__":
         f'results/{train_dataset.name}/'
     )
     Path(result_dir).mkdir(parents=True, exist_ok=True)
-    results = main(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        test_loader=test_loader,
-        dataset=train_dataset,
-        all_runs=all_runs,
-    )
-
-    # results = pd.DataFrame()
-    # for run_name, _, _ in all_runs:
-    #     # read all results from all models and save them
-    #     model_results = pd.read_csv(
-    #         os.path.join(result_dir, f"{run_name}.csv")
-    #     )
-    #     results = pd.concat((results, model_results), axis=0)
-    # results.to_csv(os.path.join(result_dir, "results.csv"))
+    if args.load_results:
+        results = pd.read_csv(os.path.join(result_dir, "results.csv"))
+    else:
+        results = main(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loader=test_loader,
+            dataset=train_dataset,
+            all_runs=all_runs,
+        )
+        results.to_csv(os.path.join(result_dir, "results.csv"))
+    results = pd.read_csv(os.path.join(result_dir, "results.csv"))
 
 
     ##################
@@ -506,7 +623,7 @@ if __name__ == "__main__":
         results=results,
         run_names=[name for name, _, _ in all_runs],
         metric_name="test_c_avg_auc",
-        save_path=os.path.join(result_dir, "task_accuracy.png"),
+        save_path=os.path.join(result_dir, "task_concept.png"),
         title=train_dataset.name,
     )
 
@@ -514,21 +631,27 @@ if __name__ == "__main__":
     ## Test interventions
     ##################
 
-    # # Test the intervenability of the models
-    # int_probs = experiment_config.get(
-    #     'int_probs',
-    #     [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-    # )
-    # noise_levels = experiment_config.get('noise_levels', [0.0])
-    # experiment_summaries.test_intervenability(
-    #     test_loader=test_loader,
-    #     dataset=dataset,
-    #     model_kwargs=model_kwargs,
-    #     int_probs=int_probs,
-    #     noise_levels=noise_levels,
-    #     experiment_config=experiment_config,
-    #     config=loaded_config,
-    #     encoder_fn=encoder_fn,
-    # )
-    # experiment_summaries.plot_intervenability(dataset)
+    # Test the intervenability of the models
+    int_probs = experiment_config.get(
+        'int_probs',
+        [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+    )
+    if args.load_results:
+        intervention_results = pd.read_csv(
+            os.path.join(result_dir, "intervention_results.csv")
+        )
+    else:
+        intervention_results = test_intervenability(
+            test_loader=test_loader,
+            dataset=train_dataset,
+            int_probs=int_probs,
+            all_runs=all_runs,
+        )
+        intervention_results.to_csv(
+            os.path.join(result_dir, "intervention_results.csv")
+        )
 
+    experiment_summaries.plot_intervenability(
+        results=intervention_results,
+        save_path=os.path.join(result_dir, "intervenability.png"),
+    )

@@ -221,55 +221,57 @@ class AwA2Dataset(Dataset):
 
     def __init__(
         self,
-        root_dir,
-        augment_data=False,
+        root,
+        training_augment=True,
         split='train',
         image_size=224,
         concept_transform=None,
         sample_transform=None,
+        selected_concepts=None,
         seed=42,
     ):
-        self.root_dir = root_dir
-        self.augment_data = augment_data
+        self.root = root
+        self.training_augment = training_augment
         self.split = split
-        self.concept_transform = concept_transform
+        self.concept_transform = concept_transform or (lambda x: x)
+        self.name = 'AwA2'
 
-        if not os.path.exists(self.root_dir):
+        if not os.path.exists(self.root):
             raise ValueError(
-                f'{self.root_dir} does not exist yet. Please download the '
+                f'{self.root} does not exist yet. Please download the '
                 f'dataset first.'
             )
 
         if split == 'train':
             self.transform = get_transform_awa2(
                 train=True,
-                augment_data=augment_data,
+                augment_data=training_augment,
                 image_size=image_size,
                 sample_transform=sample_transform,
             )
         else:
             self.transform = get_transform_awa2(
                 train=False,
-                augment_data=augment_data,
+                augment_data=False,
                 image_size=image_size,
                 sample_transform=sample_transform,
             )
 
 
         self.predicate_binary_mat = np.array(np.genfromtxt(
-            os.path.join(root_dir, 'predicate-matrix-binary.txt'),
+            os.path.join(root, 'predicate-matrix-binary.txt'),
             dtype='int',
         ))
         self.class_to_index = dict()
         # Build dictionary of indices to classes
-        with open(f"{root_dir}/classes.txt") as f:
+        with open(f"{root}/classes.txt") as f:
             for line in f:
                 class_name = line.split('\t')[1].strip()
                 self.class_to_index[class_name] = len(self.class_to_index)
 
         for split_attempt in ['train', 'val', 'test']:
             split_file = os.path.join(
-                self.root_dir,
+                self.root,
                 f'{split_attempt}_split.npz',
             )
             if not os.path.exists(split_file):
@@ -283,19 +285,27 @@ class AwA2Dataset(Dataset):
         # And now we can simply load the actual paths and classes to be used
         # for each split :)
         split_file = os.path.join(
-            self.root_dir,
+            self.root,
             f'{split}_split.npz',
         )
         split_info = np.load(split_file)
         self.img_paths = split_info['paths']
         self.img_labels = split_info['labels']
-        print(f"{split.upper()} AWA2 dataset has:", len(self), f"samples")
+        if selected_concepts is None:
+            selected_concepts = list(range(len(CONCEPT_SEMANTICS)))
+        self.selected_concepts = selected_concepts
+        self.concept_names = self.concept_attr_names = list(
+            np.array(
+                CONCEPT_SEMANTICS
+            )[selected_concepts]
+        )
+        self.task_names = self.task_attr_names = CLASS_NAMES
 
     def _generate_splits(self, seed, train_size=0.6, val_size=0.2):
         # First find all samples and generate a list of their paths
         image_paths = []
         image_classes = []
-        img_dir = os.path.join(self.root_dir, 'JPEGImages')
+        img_dir = os.path.join(self.root, 'JPEGImages')
         for root, _, files in os.walk(img_dir):
             for file in files:
                 if file.lower().endswith('.jpg'):
@@ -320,7 +330,7 @@ class AwA2Dataset(Dataset):
         train_paths = image_paths[train_indices]
         train_classes = image_classes[train_indices]
         np.savez(
-            os.path.join(self.root_dir, 'train_split.npz'),
+            os.path.join(self.root, 'train_split.npz'),
             paths=train_paths,
             labels=train_classes,
         )
@@ -329,7 +339,7 @@ class AwA2Dataset(Dataset):
         val_paths = image_paths[val_indices]
         val_classes = image_classes[val_indices]
         np.savez(
-            os.path.join(self.root_dir, 'val_split.npz'),
+            os.path.join(self.root, 'val_split.npz'),
             paths=val_paths,
             labels=val_classes,
         )
@@ -338,7 +348,7 @@ class AwA2Dataset(Dataset):
         test_paths = image_paths[test_indices]
         test_classes = image_classes[test_indices]
         np.savez(
-            os.path.join(self.root_dir, 'test_split.npz'),
+            os.path.join(self.root, 'test_split.npz'),
             paths=test_paths,
             labels=test_classes,
         )
@@ -351,8 +361,9 @@ class AwA2Dataset(Dataset):
             img = self.transform(img)
         label_idx = self.img_labels[index]
         concepts = self.predicate_binary_mat[label_idx,:]
-        if self.concept_transform is not None:
-            concepts = self.concept_transform(concepts)
+        concepts = self.concept_transform(
+            np.array(concepts)[self.selected_concepts]
+        )
         return img, torch.FloatTensor(concepts), label_idx
 
     def __len__(self):

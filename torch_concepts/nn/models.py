@@ -37,6 +37,7 @@ class ConceptModel(ABC, L.LightningModule):
         int_idxs=None,
         l_r=0.01,
         optimizer_config=None,
+        concept_weights=None,
         **kwargs,
     ):
         super().__init__()
@@ -104,7 +105,7 @@ class ConceptModel(ABC, L.LightningModule):
         y_loss = self.y_loss_fn(y_pred, y_true)
         loss = self.concept_reg * c_loss + self.class_reg * y_loss
 
-        c_acc, c_f1 = 0., 0.
+        c_acc, c_avg_auc = 0., 0.
         if c_pred is not None:
             c_acc = accuracy_score(c_true.cpu(), (c_pred.cpu() > 0.5).float())
             c_avg_auc = roc_auc_score(
@@ -126,17 +127,18 @@ class ConceptModel(ABC, L.LightningModule):
         # y_acc = (y_pred == y_true).sum().item() / len(y_true)
 
         # Log metrics on progress bar only during validation
-        prog = mode == "val"
-        self.log(f'{mode}_c_acc', c_acc, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_c_avg_auc', c_avg_auc, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_y_acc', y_acc, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_loss', loss, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_c_loss', c_loss, on_epoch=True, prog_bar=prog)
-        self.log(f'{mode}_y_loss', y_loss, on_epoch=True, prog_bar=prog)
-        if mode == 'train':
-            self.log(f'loss', loss, on_epoch=True, prog_bar=prog)
+        if mode == "train":
+            self.log(f'c_avg_auc', c_avg_auc, on_step=True, on_epoch=False, prog_bar=True)
+            self.log(f'y_acc', y_acc, on_step=True, on_epoch=False, prog_bar=True)
+            self.log(f'loss', loss, on_step=True, on_epoch=False, prog_bar=False)
         else:
+            prog = mode == "val"
+            self.log(f'{mode}_c_acc', c_acc, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_c_avg_auc', c_avg_auc, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_y_acc', y_acc, on_epoch=True, prog_bar=prog)
             self.log(f'{mode}_loss', loss, on_epoch=True, prog_bar=prog)
+            # self.log(f'{mode}_c_loss', c_loss, on_epoch=True, prog_bar=prog)
+            # self.log(f'{mode}_y_loss', y_loss, on_epoch=True, prog_bar=prog)
 
         return loss
 
@@ -393,7 +395,6 @@ class ConceptEmbeddingModel(ConceptModel):
 class DeepConceptReasoning(ConceptExplanationModel):
     n_roles = 3
     memory_names = ['Positive', 'Negative', 'Irrelevant']
-    temperature = 100
 
     def __init__(
         self,
@@ -403,15 +404,31 @@ class DeepConceptReasoning(ConceptExplanationModel):
         task_names,
         embedding_size,
         semantic=ProductTNorm(),
+        temperature=100,
+        use_bce=False,
         **kwargs,
     ):
+        self.temperature = temperature
         if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
-                warnings.warn(
-                    "DCR y_loss_fn must be a BCELoss. Changing to BCELoss."
-                )
-
-        kwargs['y_loss_fn'] = nn.BCELoss()
+            if isinstance(kwargs['y_loss_fn'], nn.CrossEntropyLoss):
+                if use_bce:
+                    warnings.warn(
+                        "DCR y_loss_fn must operate with probabilities, not "
+                        "logits. Changing CrossEntropyLoss to BCE."
+                    )
+                    kwargs['y_loss_fn'] = nn.BCELoss()
+                else:
+                    warnings.warn(
+                        "DCR y_loss_fn must operate with probabilities, not "
+                        "logits. Changing CrossEntropyLoss to NLLLoss with "
+                        "a log."
+                    )
+                    kwargs['y_loss_fn'] = lambda input, target, **kwargs: \
+                        torch.nn.functional.nll_loss(
+                            torch.log(input / (input.sum(dim=-1, keepdim=True) + 1e-8) + 1e-8),
+                            target,
+                            **kwargs,
+                        )
         super().__init__(
             encoder,
             latent_dim,
@@ -449,15 +466,21 @@ class DeepConceptReasoning(ConceptExplanationModel):
         # adding memory dimension
         c_weights = c_weights.unsqueeze(dim=1)
         # soft selecting concept relevance (last role) among concepts
-        relevance = CF.soft_select(c_weights[:, :, :, :, -2:-1],
-                                   self.temperature, -3)
+        relevance = CF.soft_select(
+            c_weights[:, :, :, :, -2:-1],
+            self.temperature,
+            -3,
+        )
         # softmax over positive/negative roles
         polarity = c_weights[:, :, :, :, :-1].softmax(-1)
         # batch_size x memory_size x n_concepts x n_tasks x n_roles
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
 
-        y_pred = CF.logic_rule_eval(c_weights, c_pred,
-                                    semantic=self.semantic)
+        y_pred = CF.logic_rule_eval(
+            c_weights,
+            c_pred,
+            semantic=self.semantic,
+        )
         # removing memory dimension
         y_pred = y_pred[:, :, 0]
 
@@ -469,8 +492,11 @@ class DeepConceptReasoning(ConceptExplanationModel):
         c_pred = c_dict['c_int']
         c_weights = self.concept_importance_predictor(c_emb)
         c_weights = c_weights.unsqueeze(dim=1) # add memory dimension
-        relevance = CF.soft_select(c_weights[:, :, :, :, -2:-1],
-                                   self.temperature, -3)
+        relevance = CF.soft_select(
+            c_weights[:, :, :, :, -2:-1],
+            self.temperature,
+            -3,
+        )
         polarity = c_weights[:, :, :, :, :-1].softmax(-1)
         c_weights = torch.cat([polarity, 1 - relevance], dim=-1)
         explanations = CF.logic_rule_explanations(
@@ -489,9 +515,11 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 # a task is predicted if it is the most likely task or is
                 # a multi-label task with probability higher than 0.5 or is
                 # a binary task with probability higher than 0.5
-                predicted_task = (j == y_preds[i].argmax()) or \
-                                 (multi_label and y_preds[i,j] > 0.5) or \
-                                 (not self.multi_class and y_preds[i,j] > 0.5)
+                predicted_task = (
+                    (j == y_preds[i].argmax()) or
+                    (multi_label and y_preds[i,j] > 0.5) or
+                    (not self.multi_class and y_preds[i,j] > 0.5)
+                )
                 if predicted_task:
                     task_rules = explanations[i][self.task_names[j]]
                     predicted_rule = task_rules[f'Rule {0}']
@@ -512,7 +540,7 @@ class DeepConceptReasoning(ConceptExplanationModel):
                 for exp in local_explanations if self.task_names[i] in exp
             }
             global_explanations[self.task_names[i]] = {
-                    f"Rule {j}": exp for j, exp in enumerate(task_explanations)
+                f"Rule {j}": exp for j, exp in enumerate(task_explanations)
             }
         return global_explanations
 
@@ -528,14 +556,21 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         concept_names,
         task_names,
         memory_size,
+        rec_weight=1,
         **kwargs,
     ):
         if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+            if isinstance(kwargs['y_loss_fn'], nn.CrossEntropyLoss):
                 warnings.warn(
-                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
+                    "CMR y_loss_fn must operate with probabilities, not logits. "
+                    "Changing CrossEntropyLoss to NLLLoss with a log."
                 )
-        kwargs['y_loss_fn'] = nn.BCELoss()
+            kwargs['y_loss_fn'] = lambda input, target, **kwargs: \
+                torch.nn.functional.nll_loss(
+                    torch.log(input / (input.sum(dim=-1, keepdim=True) + 1e-8) + 1e-8),
+                    target,
+                    **kwargs,
+                )
         super().__init__(
             encoder,
             latent_dim,
@@ -545,7 +580,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         )
 
         self.memory_size = memory_size
-        self.rec_weight = kwargs.get('rec_weight', 1.)
+        self.rec_weight = rec_weight
 
         self.bottleneck = pyc_nn.LinearConceptBottleneck(
             latent_dim,
@@ -622,8 +657,7 @@ class ConceptMemoryReasoning(ConceptExplanationModel):
         )
         # weighting the reconstruction loss - lower reconstruction weights
         # brings values closer to 1 thus influencing less the prediction
-        c_rec_per_classifier = c_rec_per_classifier * self.rec_weight + \
-                               (1 - self.rec_weight)
+        c_rec_per_classifier = torch.pow(c_rec_per_classifier, self.rec_weight)
         return c_rec_per_classifier
 
 
@@ -833,7 +867,6 @@ class LinearConceptEmbeddingModel(ConceptExplanationModel):
         return global_explanations
 
 
-
 class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
     """
     This model is a combination of the ConceptEmbeddingModel and the
@@ -856,11 +889,17 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         **kwargs,
     ):
         if 'y_loss_fn' in kwargs:
-            if not isinstance(kwargs['y_loss_fn'], nn.BCELoss):
+            if isinstance(kwargs['y_loss_fn'], nn.CrossEntropyLoss):
                 warnings.warn(
-                    "CMR y_loss_fn must be a BCELoss. Changing to BCELoss."
+                    "CMR y_loss_fn must operate with probabilities, not logits. "
+                    "Changing CrossEntropyLoss to NLLLoss with a log."
                 )
-        kwargs['y_loss_fn'] = nn.BCELoss()
+            kwargs['y_loss_fn'] = lambda input, target, **kwargs: \
+                torch.nn.functional.nll_loss(
+                    torch.log(input / (input.sum(dim=-1, keepdim=True) + 1e-8) + 1e-8),
+                    target,
+                    **kwargs,
+                )
         # kwargs['class_reg'] = kwargs['class_reg'] * 10 \
         #     if 'class_reg' in kwargs else 1
         super().__init__(
@@ -879,8 +918,7 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         )
 
         self.classifier_selector = nn.Sequential(
-            torch.nn.Linear(embedding_size*len(concept_names),
-                            latent_dim),
+            torch.nn.Linear(embedding_size*len(concept_names), latent_dim),
             pyc_nn.LinearConceptLayer(
                 latent_dim,
                 [self.task_names, memory_size],
@@ -924,8 +962,10 @@ class ConceptEmbeddingReasoning(ConceptMemoryReasoning):
         c_emb, c_dict = self.bottleneck(latent)
         c_pred = c_dict['c_int']
         classifier_selector_logits = self.classifier_selector(c_emb.flatten(-2))
-        prob_per_classifier = torch.softmax(classifier_selector_logits,
-                                            dim=-1)
+        prob_per_classifier = torch.softmax(
+            classifier_selector_logits,
+            dim=-1,
+        )
         concept_weights = self.memory_decoder(
             self.concept_memory.weight).softmax(dim=-1).unsqueeze(dim=0)
         y_per_classifier = CF.logic_rule_eval(concept_weights, c_pred)

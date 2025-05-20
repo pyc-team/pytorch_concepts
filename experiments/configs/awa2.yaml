@@ -1,21 +1,20 @@
 # General experiment configuration
-result_dir: results/cub
+result_dir: results/awa2
 seeds: 1
 load_results: true
 
 # Dataset to be used
 dataset_config:
-  name: 'cub'
-  root: '/homes/me466/data/CUB200/'
+  name: 'awa2'
+  root: /anfs/bigdisc/me466/AwA2/Animals_with_Attributes2
   training_augment: true
   val_proportion: 0.2
-  test_batch_size: 512
 
 # The following config params will be shared across all runs
 shared_params:
   # Training config
   epochs: 100
-  batch_size: 64
+  batch_size: 512
   num_workers: 8
   check_val_every_n_epoch: 5
   log_every_n_steps: 25
@@ -99,10 +98,3 @@ runs:
       - rec_weight
 
   - model_name: "ConceptMemoryReasoning (embedding)"
-    run_name: CMR_emb_cr_{concept_reg}_rw_{rec_weight}
-    embedding_size: 16
-    memory_size: 20
-    rec_weight: [0, 0.1, 0.5]
-    grid_variables:
-      - concept_reg
-      - rec_weight

@@ -803,8 +803,12 @@ class CUBDataset(Dataset):
         if selected_concepts is None:
             selected_concepts = list(range(len(SELECTED_CONCEPTS)))
         self.selected_concepts = selected_concepts
-        self.concept_names = np.array(CONCEPT_SEMANTICS)[SELECTED_CONCEPTS][selected_concepts]
-        self.task_names = np.array(CLASS_NAMES)
+        self.concept_names = self.concept_attr_names = list(
+            np.array(
+                CONCEPT_SEMANTICS
+            )[CONCEPT_SEMANTICS][selected_concepts]
+        )
+        self.task_names = self.task_attr_names = CLASS_NAMES
 
     def __len__(self):
         return len(self.data)
