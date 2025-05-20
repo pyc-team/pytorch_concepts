@@ -48,8 +48,8 @@ class GaussianNoiseTransform(object):
 def model_trained(model, model_name, file, load_results=True):
     if not os.path.exists(file) or not load_results:
         if os.path.exists(file):
-            print("Model already trained, but not loading results. "
-                  "Retraining.")
+            print("Model already trained, but not loading results. \n"
+                  "Removing model file and retraining.")
             os.remove(file)
         return False
     else:

@@ -98,9 +98,9 @@ def main():
     print(f"Concept accuracy: {concept_accuracy:.2f}")
     print(f"Concepts: {c_pred}")
 
-    explanations = CF.linear_eq_explanations(c_weights, y_bias,
-                                             {1: concept_names,
-                                              2: task_names})
+    explanations = CF.linear_equation_expl(c_weights, y_bias,
+                                           {1: concept_names,
+                                            2: task_names})
 
     print(f"Explanations: {explanations}")
 

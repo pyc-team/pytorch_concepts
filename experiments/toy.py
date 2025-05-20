@@ -6,12 +6,13 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
+from experiments.utils import GaussianNoiseTransform
 from torch_concepts.data.toy import ToyDataset, TOYDATASETS
 from torch_concepts.nn.models import AVAILABLE_MODELS, MODELS_ACRONYMS
+from utils import set_seed, CustomProgressBar, model_trained
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from utils import set_seed, CustomProgressBar
 
 def main(
     train_loader,
@@ -28,30 +29,27 @@ def main(
     if not os.path.exists(result_folder):
         os.makedirs(result_folder)
 
-    # Initialize encoder and model parameters
-    encoder = torch.nn.Sequential(
-        torch.nn.Flatten(),
-        torch.nn.Linear(dataset.input_dim, model_kwargs["latent_dim"] * 2),
-        torch.nn.LeakyReLU(),
-        torch.nn.Linear(model_kwargs["latent_dim"] * 2,
-                        model_kwargs["latent_dim"]),
-        torch.nn.LeakyReLU(),
-    )
+    model_kwargs = model_kwargs.copy()
+    latent_dim = model_kwargs.pop("latent_dim")
 
     results_df = pd.DataFrame()
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
             set_seed(seed)
+            # Initialize encoder and model parameters
+            encoder = torch.nn.Sequential(
+                torch.nn.Flatten(),
+                torch.nn.Linear(dataset.input_dim, latent_dim * 2),
+                torch.nn.LeakyReLU(),
+                torch.nn.Linear(latent_dim * 2, latent_dim),
+                torch.nn.LeakyReLU(),
+            )
             model = model_cls(
                 encoder,
-                model_kwargs["latent_dim"],
+                latent_dim,
                 dataset.concept_attr_names,
                 dataset.task_attr_names,
-                class_reg=model_kwargs["class_reg"],
-                residual_size=model_kwargs["residual_size"],
-                embedding_size=model_kwargs["embedding_size"],
-                memory_size=model_kwargs["memory_size"],
-                y_loss_fn=model_kwargs["y_loss_fn"],
+                **model_kwargs
             )
             model.configure_optimizers()
 
@@ -63,14 +61,14 @@ def main(
             )
             trainer = Trainer(
                 max_epochs=training_kwargs["epochs"],
-                callbacks=[checkpoint, CustomProgressBar()],
+                callbacks=[checkpoint, CustomProgressBar()]
             )
 
             # Train the model
-            file = f"{result_folder}/{model_name}_seed_{seed}.ckpt"
-            if not os.path.exists(file) or not training_kwargs["load_results"]:
-                if os.path.exists(os.path.join(result_folder, file)):
-                    os.remove(os.path.join(result_folder, file))
+            file = os.path.join(f"{result_folder}",
+                                f"{model_name}_seed_{seed}.ckpt")
+            if not model_trained(model, model_name, file,
+                                 training_kwargs["load_results"]):
                 print(f"Training {model_name} with seed {seed}")
                 trainer.fit(model, train_loader, val_loader)
             else:
@@ -124,7 +122,7 @@ def plot_concept_accuracy(dataset):
     results["model"] = results["model"].map(MODELS_ACRONYMS)
 
     # plot
-    sns.barplot(x="model", y="test_c_f1", data=results)
+    sns.barplot(x="model", y="test_c_avg_auc", data=results)
     plt.xlabel("Model")
     plt.ylabel("Concept accuracy")
     plt.title(f"{dataset_name}", fontsize=24)
@@ -149,6 +147,8 @@ def test_intervenability(
     dataset_name = dataset.name
     results = []
 
+    model_kwargs = model_kwargs.copy()
+    latent_dim = model_kwargs.pop("latent_dim")
     for model_name, model_cls in AVAILABLE_MODELS.items():
         for seed in range(training_kwargs["seeds"]):
             # Define the checkpoint to load the best model
@@ -158,23 +158,17 @@ def test_intervenability(
                                            f"{filename_pattern}.ckpt")
             encoder = torch.nn.Sequential(
                 torch.nn.Flatten(),
-                torch.nn.Linear(dataset.input_dim,
-                                model_kwargs["latent_dim"] * 2),
+                torch.nn.Linear(dataset.input_dim, latent_dim * 2),
                 torch.nn.LeakyReLU(),
-                torch.nn.Linear(model_kwargs["latent_dim"] * 2,
-                                model_kwargs["latent_dim"]),
+                torch.nn.Linear(latent_dim * 2, latent_dim),
                 torch.nn.LeakyReLU(),
             )
             model = model_cls(
                 encoder,
-                model_kwargs["latent_dim"],
+                latent_dim,
                 dataset.concept_attr_names,
                 dataset.task_attr_names,
-                class_reg=model_kwargs["class_reg"],
-                residual_size=model_kwargs["residual_size"],
-                embedding_size=model_kwargs["embedding_size"],
-                memory_size=model_kwargs["memory_size"],
-                y_loss_fn=model_kwargs["y_loss_fn"],
+                **model_kwargs
             )
             model.load_state_dict(torch.load(best_model_path)['state_dict'])
 
@@ -183,8 +177,7 @@ def test_intervenability(
             for noise_level in noise_levels:
                 # add noise in the transform of the dataset
                 transform = transforms.Compose([
-                    transforms.Lambda(lambda x:
-                                      x + noise_level * torch.randn_like(x)),
+                    GaussianNoiseTransform(std=noise_level),
                 ])
                 test_loader.dataset.dataset.transform = transform
                 for int_prob in int_probs:
@@ -202,7 +195,8 @@ def test_intervenability(
                         "noise_level": noise_level,
                     })
 
-                    print(f"Model {model_name} - Noise {noise_level} - Int prob {int_prob}"
+                    print(f"Model {model_name} - Noise {noise_level} "
+                          f"- Int prob {int_prob}"
                           f" - y_acc: {test_int_result['test_y_acc']}")
 
     results_df = pd.DataFrame(results)
@@ -225,12 +219,14 @@ def plot_intervenability(dataset):
 
     # subplots as the noise levels
     n_noise_levels = len(results["noise_level"].unique())
-    fig, axs = plt.subplots(1, n_noise_levels, figsize=(4 * n_noise_levels, 4))
+    fig, axs = plt.subplots(1, n_noise_levels,
+                            figsize=(4 * n_noise_levels, 4))
 
     for i in range(n_noise_levels):
         noise_level = results["noise_level"].unique()[i]
         noise_results = results[results["noise_level"] == noise_level]
-        sns.lineplot(x="int_prob", y="test_y_acc", hue="model", data=noise_results, ax=axs[i])
+        sns.lineplot(x="int_prob", y="test_y_acc", hue="model",
+                     data=noise_results, ax=axs[i])
         axs[i].set_title(f"Noise level {noise_level} - {dataset_name}")
         axs[i].set_xlabel("Intervention probability")
         axs[i].set_ylabel("Test accuracy")

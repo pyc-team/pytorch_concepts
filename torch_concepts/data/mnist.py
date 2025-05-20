@@ -228,7 +228,7 @@ class MNISTEvenOdd(MNIST):
     concept_names = [
         "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
     ]
-    task_names = ["even", "odd"]
+    task_names = ["odd", "even"]
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))

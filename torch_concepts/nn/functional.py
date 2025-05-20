@@ -159,7 +159,7 @@ def linear_equation_eval(
             n_classes, memory_size).
     """
     assert concept_weights.shape[-2] == c_pred.shape[-1]
-    assert bias.shape[-1] == concept_weights.shape[-1]
+    assert bias is None or bias.shape[-1] == concept_weights.shape[-1]
     y_pred = torch.einsum('bmcy,bc->bym', concept_weights, c_pred)
     if bias is not None:
         # the bias is (b,m,y) while y_pred is (bym) so we invert bias dimension
@@ -167,7 +167,7 @@ def linear_equation_eval(
     return y_pred
 
 
-def linear_eq_explanations(
+def linear_equation_expl(
     concept_weights: torch.Tensor,
     bias: torch.Tensor = None,
     concept_names: Dict[int, List[str]] = None,
@@ -231,7 +231,7 @@ def linear_eq_explanations(
                     weight = concept_weights[s_idx, mem_idx, c_idx, t_idx]
                     name = c_names[c_idx]
                     if torch.round(weight.abs(), decimals=2) > 0.1:
-                        eq.append(f"{weight:.1f} * {name}")
+                        eq.append(f"{weight.item():.1f} * {name}")
                 eq = " + ".join(eq)
                 eq = eq.replace(" + -", " - ")
                 equations_str[t_names[t_idx]][f"Equation {mem_idx}"] = eq
@@ -393,10 +393,10 @@ def logic_rule_explanations(
             for mem_id in range(memory_size):
                 rule = []
                 for concept_id in range(n_concepts):
-                    role = concept_roles[sample_id, mem_id, concept_id, task_id]
+                    role = concept_roles[sample_id, mem_id, concept_id, task_id].item()
                     if role == 0:
                         rule.append(c_names[concept_id])
-                    if role == 1:
+                    elif role == 1:
                         rule.append(f"~ {c_names[concept_id]}")
                     else:
                         continue
@@ -444,7 +444,22 @@ def confidence_selection(
     return torch.where(c_confidence > theta, True, False)
 
 
-def soft_select(values, temperature, dim=1):
+def soft_select(values, temperature, dim=1) -> torch.Tensor:
+    """
+    Soft selection function, a special activation function for a network
+    rescaling the output such that, if they are uniformly distributed, then we
+    will select only half of them. A higher temperature will select more
+    concepts, a lower temperature will select fewer concepts.
+
+    Args:
+        values: Output of the network.
+        temperature: Temperature for the softmax function [-inf, +inf].
+        dim: dimension to apply the softmax function. Default is 1.
+
+    Returns:
+        Tensor: Soft selection scores.
+    """
+
     softmax_scores = torch.log_softmax(values, dim=dim)
     soft_scores = torch.sigmoid(softmax_scores - temperature *
                                softmax_scores.mean(dim=dim, keepdim=True))

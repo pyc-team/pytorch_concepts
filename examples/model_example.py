@@ -10,7 +10,8 @@ from torch_concepts.data.utils import stratified_train_test_split
 from torch_concepts.nn.models import ConceptBottleneckModel, \
     ConceptResidualModel, ConceptEmbeddingModel, DeepConceptReasoning, \
     LinearConceptEmbeddingModel, ConceptMemoryReasoning, \
-    ConceptEmbeddingReasoning, ConceptExplanationModel
+    ConceptEmbeddingReasoning, ConceptExplanationModel, \
+    LinearConceptMemoryReasoning
 from experiments.utils import set_seed, CustomProgressBar
 from torch_concepts.utils import get_most_common_expl
 
@@ -32,7 +33,8 @@ def main():
         DeepConceptReasoning,
         LinearConceptEmbeddingModel,
         ConceptMemoryReasoning,
-        ConceptEmbeddingReasoning
+        ConceptEmbeddingReasoning,
+        LinearConceptMemoryReasoning,
         ]
 
     set_seed(42)
@@ -81,7 +83,7 @@ def main():
             print(get_most_common_expl(local_expl))
 
     results = pd.DataFrame(results).T
-    print(results[['test_c_acc', 'test_c_f1', 'test_y_acc', 'test_loss']])
+    print(results[['test_c_acc', 'test_c_avg_auc', 'test_y_acc', 'test_loss']])
     results.to_csv('model_results.csv')
 
 
