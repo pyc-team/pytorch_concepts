@@ -7,7 +7,9 @@ from .bottleneck import (
     LinearConceptBottleneck,
     LinearConceptResidualBottleneck,
     ConceptEmbeddingBottleneck,
+    StochasticConceptBottleneck,
 )
+
 from .functional import (
     concept_embedding_mixture,
     confidence_selection,

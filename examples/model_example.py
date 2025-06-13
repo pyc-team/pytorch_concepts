@@ -11,7 +11,7 @@ from torch_concepts.nn.models import ConceptBottleneckModel, \
     ConceptResidualModel, ConceptEmbeddingModel, DeepConceptReasoning, \
     LinearConceptEmbeddingModel, ConceptMemoryReasoning, \
     ConceptEmbeddingReasoning, ConceptExplanationModel, \
-    LinearConceptMemoryReasoning
+    LinearConceptMemoryReasoning, StochasticConceptBottleneckModel
 from experiments.utils import set_seed, CustomProgressBar
 from torch_concepts.utils import get_most_common_expl
 
@@ -25,6 +25,11 @@ def main():
     residual_size = 20
     embedding_size = 20
     memory_size = 2
+    num_monte_carlo=100
+    level=0.9
+    cov_reg = 1.0
+    concept_reg = 1.0
+    model_kwargs = dict()
 
     models = [
         ConceptBottleneckModel,
@@ -35,6 +40,7 @@ def main():
         ConceptMemoryReasoning,
         ConceptEmbeddingReasoning,
         LinearConceptMemoryReasoning,
+        StochasticConceptBottleneckModel,
         ]
 
     set_seed(42)
@@ -57,9 +63,18 @@ def main():
 
     results = {}
     for model_cls in models:
+        # Add special kwargs for specific models
+        if model_cls.__name__ == "StochasticConceptBottleneckModel":
+            model_kwargs.update(dict(
+                num_monte_carlo=num_monte_carlo,
+                level=level,
+                n_epochs=n_epochs,
+                cov_reg = cov_reg,
+                concept_reg = concept_reg
+            ))
         model = model_cls(encoder, latent_dims, concept_names, task_names,
                           class_reg=class_reg, residual_size=residual_size,
-                          embedding_size=embedding_size, memory_size=memory_size)
+                          embedding_size=embedding_size, memory_size=memory_size, **model_kwargs)
         model.configure_optimizers()
 
         trainer = L.Trainer(max_epochs=n_epochs,

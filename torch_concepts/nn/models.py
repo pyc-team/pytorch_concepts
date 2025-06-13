@@ -19,6 +19,8 @@ else:
 
 from torch_concepts.nn import functional as CF
 from torch_concepts.semantic import ProductTNorm
+from torch.distributions import RelaxedBernoulli
+from torch_concepts.utils import compute_temperature
 
 class ConceptModel(ABC, L.LightningModule):
     """
@@ -1248,7 +1250,125 @@ class LinearConceptMemoryReasoning(ConceptExplanationModel):
 
         return global_explanations[0]
 
+class StochasticConceptBottleneckModel(ConceptModel):
+    def __init__(
+        self,
+        encoder,
+        latent_dim,
+        concept_names,
+        task_names,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(
+            encoder,
+            latent_dim,
+            concept_names,
+            task_names,
+            **kwargs,
+        )
+        self.num_monte_carlo = kwargs['num_monte_carlo']
+        self.num_epochs = kwargs['n_epochs']
 
+        self.cov_reg = kwargs['cov_reg']
+        self.concept_reg = kwargs['concept_reg']
+        self.y_loss_fn = nn.BCELoss()
+        
+        self.bottleneck = pyc_nn.StochasticConceptBottleneck(latent_dim, concept_names, num_monte_carlo= self.num_monte_carlo, level=kwargs['level'])
+        self.y_predictor = nn.Sequential(torch.nn.Linear(len(concept_names), latent_dim),
+                                      torch.nn.LeakyReLU(),
+                                      torch.nn.Linear(latent_dim, len(task_names)),
+                                      torch.nn.Sigmoid())
+    
+    def step(self, batch, mode="train") -> torch.Tensor:
+
+        x, c_true, y_true = batch
+        y_pred, c_pred, c_pred_av, emb = self.forward(x, c_true=c_true, current_epoch=self.trainer.current_epoch)
+
+        # Monte Carlo concept loss
+        c_true_exp = c_true.unsqueeze(-1).expand_as(c_pred).float()
+        bce_loss = F.binary_cross_entropy(c_pred, c_true_exp, reduction="none")
+        intermediate_concepts_loss = -torch.sum(bce_loss, dim=1)  # [B, MCMC]
+        mcmc_loss = -torch.logsumexp(intermediate_concepts_loss, dim=1)
+        concept_loss = torch.mean(mcmc_loss)
+
+        # Task loss
+        # BCELoss requires one-hot encoding
+        if (self._bce_loss and self._multi_class and
+                y_true.squeeze().dim() == 1):
+            y_true_loss = F.one_hot(
+                y_true.long(),
+                self.n_tasks,
+            ).squeeze().float()
+        elif self._bce_loss and y_true.squeeze().dim() == 1 :
+            y_true_loss = y_true.unsqueeze(-1) # add a dimension
+        else:
+            y_true_loss = y_true
+        task_loss = self.y_loss_fn(y_pred, y_true_loss)
+
+        # Precision matrix regularization
+        c_triang_cov = self.bottleneck.predict_sigma(emb)
+        c_triang_inv = torch.inverse(c_triang_cov)
+        prec_matrix = torch.matmul(c_triang_inv.transpose(1, 2), c_triang_inv)
+        prec_loss = prec_matrix.abs().sum(dim=(1, 2)) - prec_matrix.diagonal(
+            dim1=1, dim2=2).abs().sum(dim=1)
+
+        if prec_matrix.size(1) > 1:
+            prec_loss = prec_loss / (prec_matrix.size(1) * (prec_matrix.size(1) - 1))
+        else:  # Univariate case, can happen when intervening
+            prec_loss = prec_loss
+        cov_loss = prec_loss.mean()
+
+        # Final loss
+        total_loss = self.concept_reg * concept_loss + task_loss + self.cov_reg * cov_loss
+
+        # Metrics
+        c_acc, c_avg_auc = 0., 0.
+        if c_pred_av is not None:
+            c_acc = accuracy_score(c_true.cpu(), (c_pred_av.cpu() > 0.5).float())
+            c_avg_auc = roc_auc_score(
+                c_true.cpu().view(-1),
+                (c_pred_av.cpu().view(-1) > 0.5).float()
+            )
+
+        # Extract most likely class in multi-class classification
+        if self._multi_class and y_true.squeeze().dim() == 1:
+            y_pred = y_pred.argmax(dim=1)
+        # Extract prediction from sigmoid output
+        elif isinstance(self.y_loss_fn, nn.BCELoss):
+            y_pred = (y_pred > 0.5).float()
+        y_acc = accuracy_score(y_true.cpu(), y_pred.detach().cpu())
+
+        if mode == "train":
+            self.log(f'c_avg_auc', c_avg_auc, on_step=True, on_epoch=False, prog_bar=True)
+            self.log(f'y_acc', y_acc, on_step=True, on_epoch=False, prog_bar=True)
+            self.log(f'loss', total_loss, on_step=True, on_epoch=False, prog_bar=False)
+        else:
+            prog = mode == "val"
+            self.log(f'{mode}_loss', total_loss, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_c_loss', concept_loss, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_y_loss', task_loss, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_c_acc', c_acc, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_c_avg_auc', c_avg_auc, on_epoch=True, prog_bar=prog)
+            self.log(f'{mode}_y_acc', y_acc, on_epoch=True, prog_bar=prog)
+        return total_loss
+
+    def forward(self, x, c_true=None, **kwargs):
+        # generate concept and task predictions
+        emb = self.encoder(x)
+        c_pred, _ = self.bottleneck(emb)
+        c_pred_av = c_pred.mean(-1) 
+        # Hard MC concepts
+        temp = compute_temperature(kwargs["current_epoch"], self.num_epochs).to(c_pred.device)
+        c_pred_relaxed = RelaxedBernoulli(temp, probs=c_pred).rsample()
+        c_pred_hard = (c_pred_relaxed > 0.5) * 1
+        c_pred_hard = c_pred_hard - c_pred_relaxed.detach() + c_pred_relaxed
+        y_pred = 0
+        for i in range(self.num_monte_carlo):
+            c_i = c_pred_hard[:, :, i]
+            y_pred += self.y_predictor(c_i)
+        y_pred /= self.num_monte_carlo
+        return y_pred, c_pred, c_pred_av, emb
 
 AVAILABLE_MODELS = {
     "ConceptBottleneckModel": ConceptBottleneckModel,
@@ -1259,6 +1379,7 @@ AVAILABLE_MODELS = {
     "ConceptMemoryReasoning": ConceptMemoryReasoning,
     "ConceptMemoryReasoning (embedding)": ConceptEmbeddingReasoning,
     "LinearConceptMemoryReasoning": LinearConceptMemoryReasoning,
+    "StochasticConceptBottleneckModel": StochasticConceptBottleneckModel,
 }
 
 INV_AVAILABLE_MODELS = {v: k for k, v in AVAILABLE_MODELS.items()}
@@ -1272,4 +1393,5 @@ MODELS_ACRONYMS = {
     "ConceptMemoryReasoning": "CMR",
     "ConceptMemoryReasoning (embedding)": "CMR (emb)",
     "LinearConceptMemoryReasoning": "LCMR",
+    "StochasticConceptBottleneckModel": "SCBM",
 }
