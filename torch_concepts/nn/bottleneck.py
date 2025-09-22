@@ -3,21 +3,24 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from torch.distributions import MultivariateNormal
 from abc import ABC, abstractmethod
 from torch_concepts.base import AnnotatedTensor
 from torch_concepts.nn import Annotate
 from torch_concepts.utils import numerical_stability_check
 from torch_concepts.nn.functional import intervene, concept_embedding_mixture
 from torch_concepts.nn.functional import ConfIntervalOptimalStrategy
+from torch.distributions import MultivariateNormal
 from typing import List, Dict, Callable, Union, Tuple
 
+
 def _check_annotations(annotations: Union[List[str], int]):
-    assert isinstance(annotations, (list, int, np.ndarray)), \
-        "annotations must be either a single list of str or a single int"
+    assert isinstance(
+        annotations, (list, int, np.ndarray)
+    ), "annotations must be either a single list of str or a single int"
     if isinstance(annotations, (list, np.ndarray)):
-        assert all(isinstance(a, str) for a in annotations), \
-            "all elements in the annotations list must be of type str"
+        assert all(
+            isinstance(a, str) for a in annotations
+        ), "all elements in the annotations list must be of type str"
 
 
 class BaseConceptBottleneck(ABC, torch.nn.Module):
@@ -25,6 +28,7 @@ class BaseConceptBottleneck(ABC, torch.nn.Module):
     BaseConceptLayer is an abstract base class for concept layers.
     The output objects are annotated tensors.
     """
+
     def __init__(
         self,
         in_features: int,
@@ -44,7 +48,7 @@ class BaseConceptBottleneck(ABC, torch.nn.Module):
             else:
                 self.annotations.append(annotation)
                 shape.append(len(annotation))
-                self.annotated_axes.append(dim+1)
+                self.annotated_axes.append(dim + 1)
 
         self.concept_axis = 1
         self._shape = shape
@@ -69,7 +73,7 @@ class BaseConceptBottleneck(ABC, torch.nn.Module):
         Returns:
             torch.Tensor: Predicted concept scores.
         """
-        raise NotImplementedError('predict')
+        raise NotImplementedError("predict")
 
     @abstractmethod
     def intervene(
@@ -92,14 +96,11 @@ class BaseConceptBottleneck(ABC, torch.nn.Module):
         Returns:
             torch.Tensor: Intervened concept scores.
         """
-        raise NotImplementedError('intervene')
+        raise NotImplementedError("intervene")
 
     @abstractmethod
     def transform(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs
+        self, x: torch.Tensor, *args, **kwargs
     ) -> Tuple[AnnotatedTensor, Dict]:
         """
         Transform input tensor.
@@ -111,7 +112,7 @@ class BaseConceptBottleneck(ABC, torch.nn.Module):
             Tuple[AnnotatedTensor, Dict]: Transformed tensor and dictionary with
                 intermediate concepts tensors.
         """
-        raise NotImplementedError('transform')
+        raise NotImplementedError("transform")
 
     def annotate(
         self,
@@ -159,6 +160,7 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
         annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
+
     def __init__(
         self,
         in_features: int,
@@ -229,10 +231,7 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
         return intervene(x, c_true, intervention_idxs)
 
     def transform(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs
+        self, x: torch.Tensor, *args, **kwargs
     ) -> Tuple[AnnotatedTensor, Dict]:
         """
         Transform input tensor.
@@ -245,7 +244,7 @@ class LinearConceptBottleneck(BaseConceptBottleneck):
                 dictionary with intermediate concepts tensors.
         """
         c_pred = c_int = self.predict(x)
-        if 'c_true' in kwargs:
+        if "c_true" in kwargs:
             c_int = self.intervene(c_pred, *args, **kwargs)
         c_int = self.annotate(c_int)
         c_pred = self.annotate(c_pred)
@@ -263,11 +262,14 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
         annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
+
     def __init__(
         self,
         in_features: int,
         annotations: Union[List[str], int],
         activation: Callable = torch.sigmoid,
+        level: float = 0.99,
+        num_monte_carlo: int = 100,
         *args,
         **kwargs,
     ):
@@ -280,7 +282,7 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             in_features=in_features,
             annotations=[annotations],
         )
-        self.num_monte_carlo = kwargs['num_monte_carlo']
+        self.num_monte_carlo = num_monte_carlo
         self.activation = activation
         self.mu = torch.nn.Sequential(
             torch.nn.Linear(
@@ -290,11 +292,13 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             torch.nn.Unflatten(-1, self.shape()),
         )
         self.sigma = torch.nn.Linear(
-                in_features,
-                int(self.output_size*(self.output_size+1)/2),
-            )
-        self.sigma.weight.data*=(0.01) # Prevent exploding precision matrix at initialization
-        self.interv_strat = ConfIntervalOptimalStrategy(level=kwargs['level'])
+            in_features,
+            int(self.output_size * (self.output_size + 1) / 2),
+        )
+        self.sigma.weight.data *= (
+            0.01  # Prevent exploding precision matrix at initialization
+        )
+        self.interv_strat = ConfIntervalOptimalStrategy(level=level)
 
     def predict_sigma(self, x):
         c_sigma = self.sigma(x)
@@ -312,7 +316,7 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             F.softplus(c_sigma[:, diag_idx]) + 1e-6
         )
         return c_triang_cov
-    
+
     def predict(
         self,
         x: torch.Tensor,
@@ -330,8 +334,11 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
         c_triang_cov = self.predict_sigma(x)
         # Sample from predicted normal distribution
         c_dist = MultivariateNormal(c_mu, scale_tril=c_triang_cov)
-        c_mcmc_logit = c_dist.rsample([self.num_monte_carlo]).movedim(
-            0, -1
+        c_mcmc_logit = c_dist.rsample(
+            [self.num_monte_carlo]
+            ).movedim(
+            0, 
+            -1
         )  # [batch_size,num_concepts,mcmc_size]
         return self.activation(c_mcmc_logit)
 
@@ -377,7 +384,9 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             )
             ## Compute conditional normal distribution sample-wise
             # Permute covariance s.t. intervened-on concepts are a block at start
-            indices = torch.argsort(intervention_idxs, dim=1, descending=True, stable=True)
+            indices = torch.argsort(
+                intervention_idxs, dim=1, descending=True, stable=True
+            )
             perm_cov = c_cov.gather(
                 1, indices.unsqueeze(2).expand(-1, -1, c_cov.size(2))
             )
@@ -438,7 +447,7 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             assert (
                 torch.argsort(indices[:, num_intervened:])
                 == torch.arange(len(perm_interv_mu[0][:]), device=device)
-            ).all()  # Check that non-intervened concepts weren't permuted s.t. no permutation of interv_mu is needed
+            ).all(), "Non-intervened concepts were permuted, a permutation of interv_mu is needed"
             interv_mu = perm_interv_mu
             interv_cov = perm_interv_cov
         assert (
@@ -446,21 +455,19 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
             == (interv_mu.isnan()).any()
             == (interv_cov.isnan()).any()
             == False
-        )
+        ), "NaN values in intervened-on concepts"
         # Compute probabilities and set intervened-on probs to 0/1
         mcmc_probs = self.act_c(mcmc_logits)
         # Set intervened-on hard concepts to 0/1
         mcmc_probs = (c_true * intervention_idxs).unsqueeze(2).repeat(
             1, 1, self.num_monte_carlo
-        ) + mcmc_probs * (1 - intervention_idxs).unsqueeze(2).repeat(1, 1, self.num_monte_carlo)
+        ) + mcmc_probs * (1 - intervention_idxs).unsqueeze(2).repeat(
+            1, 1, self.num_monte_carlo
+        )
         return mcmc_probs
 
-
     def transform(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs
+        self, x: torch.Tensor, *args, **kwargs
     ) -> Tuple[AnnotatedTensor, Dict]:
         """
         Transform input tensor.
@@ -473,11 +480,12 @@ class StochasticConceptBottleneck(BaseConceptBottleneck):
                 dictionary with intermediate concepts tensors.
         """
         c_pred = c_int = self.predict(x)
-        if 'c_true' in kwargs:
+        if "c_true" in kwargs:
             c_int = self.intervene(c_pred, *args, **kwargs)
         c_int = self.annotate(c_int)
         c_pred = self.annotate(c_pred)
         return c_int, dict(c_pred=c_pred, c_int=c_int)
+
 
 class LinearConceptResidualBottleneck(LinearConceptBottleneck):
     """
@@ -492,6 +500,7 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
         annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
+
     def __init__(
         self,
         in_features: int,
@@ -509,13 +518,10 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
             **kwargs,
         )
         self.residual = torch.nn.Sequential(
-            torch.nn.Linear(in_features, residual_size),
-            torch.nn.LeakyReLU()
+            torch.nn.Linear(in_features, residual_size), torch.nn.LeakyReLU()
         )
         self.annotations_extended = list(copy.deepcopy(self.annotations))
-        self.annotations_extended[0] = list(
-            self.annotations_extended[0]
-        )
+        self.annotations_extended[0] = list(self.annotations_extended[0])
         self.annotations_extended[0].extend(
             [f"residual_{i}" for i in range(residual_size)]
         )
@@ -525,10 +531,7 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
         )
 
     def transform(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs
+        self, x: torch.Tensor, *args, **kwargs
     ) -> Tuple[AnnotatedTensor, Dict]:
         """
         Transform input tensor.
@@ -542,7 +545,7 @@ class LinearConceptResidualBottleneck(LinearConceptBottleneck):
         """
         c_pred = c_int = self.predict(x)
         emb = self.residual(x)
-        if 'c_true' in kwargs:
+        if "c_true" in kwargs:
             c_int = self.intervene(c_pred, *args, **kwargs)
         c_int = self.annotate(c_int)
         c_pred = self.annotate(c_pred)
@@ -562,6 +565,7 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
+
     def __init__(
         self,
         in_features: int,
@@ -574,7 +578,8 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         _check_annotations(annotations)
         annotations = [annotations, embedding_size]
         n_concepts = (
-            len(annotations[0]) if isinstance(annotations[0], (list, np.ndarray))
+            len(annotations[0])
+            if isinstance(annotations[0], (list, np.ndarray))
             else annotations[0]
         )
 
@@ -644,10 +649,7 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         return intervene(x, c_true, intervention_idxs)
 
     def transform(
-        self,
-        x: torch.Tensor,
-        *args,
-        **kwargs
+        self, x: torch.Tensor, *args, **kwargs
     ) -> Tuple[AnnotatedTensor, Dict]:
         """
         Transform input tensor.
@@ -661,7 +663,7 @@ class ConceptEmbeddingBottleneck(BaseConceptBottleneck):
         """
         c_emb = self.linear(x)
         c_pred = c_int = self.activation(self.concept_score_bottleneck(c_emb))
-        if 'c_true' in kwargs:
+        if "c_true" in kwargs:
             c_int = self.intervene(c_pred, *args, **kwargs)
         c_mix = concept_embedding_mixture(c_emb, c_int)
         c_mix = self.annotate(c_mix)

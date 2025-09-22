@@ -1,9 +1,10 @@
 from collections import Counter
 from typing import Dict, Union, List
 import torch, math
+import logging
 
 def validate_and_generate_concept_names(
-    concept_names: Dict[int, Union[int, List[str]]]
+    concept_names: Dict[int, Union[int, List[str]]],
 ) -> Dict[int, List[str]]:
     """
     Validate and generate concept names based on the provided dictionary.
@@ -22,9 +23,7 @@ def validate_and_generate_concept_names(
             # Batch size dimension is expected to be empty
             processed_concept_names[dim] = []
         elif isinstance(value, int):
-            processed_concept_names[dim] = [
-                f"concept_{dim}_{i}" for i in range(value)
-            ]
+            processed_concept_names[dim] = [f"concept_{dim}_{i}" for i in range(value)]
         elif isinstance(value, list):
             processed_concept_names[dim] = value
         else:
@@ -58,8 +57,7 @@ def compute_output_size(concept_names: Dict[int, Union[int, List[str]]]) -> int:
 
 
 def get_most_common_expl(
-        explanations: List[Dict[str, str]],
-        n=10
+    explanations: List[Dict[str, str]], n=10
 ) -> Dict[str, Dict[str, int]]:
     """
     Get the most common explanations for each class. This function receives a
@@ -89,6 +87,7 @@ def get_most_common_expl(
         most_common_expl[class_] = dict(Counter(explanations).most_common(n))
 
     return most_common_expl
+
 
 def compute_temperature(epoch, num_epochs):
     final_temp = torch.tensor([0.5])
@@ -121,7 +120,7 @@ def numerical_stability_check(cov, device, epsilon=1e-6):
             # Attempt Cholesky decomposition; if it fails, the matrix is not positive definite
             torch.linalg.cholesky(cov)
             if num_added > 0.0001:
-                print(
+                logging.warning(
                     "Added {} to the diagonal of the covariance matrix.".format(
                         num_added
                     )
