@@ -71,3 +71,7 @@ target/
 
 # lightning logs
 examples/lightning_logs/
+lightning_logs/
+
+# results
+model_results.csv
