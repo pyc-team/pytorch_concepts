@@ -1,4 +1,6 @@
-![PyC Logo](https://raw.githubusercontent.com/pyc-team/pytorch_concepts/dev/doc/_static/img/pyc_logo.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/dev/doc/_static/img/pyc_logo.png" alt="PyC Logo" height="40%">
+</p>
 
 # PyTorch Concepts
 
