@@ -3,9 +3,13 @@
 """A template."""
 
 import codecs
+from pathlib import Path
 
 from setuptools import find_packages, setup
-from torch_concepts import __version__
+
+about = {}
+version_file = Path(__file__).parent / "torch_concepts" / "_version.py"
+exec(version_file.read_text(), about)
 
 DISTNAME = 'pytorch_concepts'
 DESCRIPTION = ' Concept-Based Deep Learning Library for PyTorch.'
@@ -17,7 +21,7 @@ MAINTAINER_EMAIL = 'pyc.devteam@gmail.com'
 URL = 'https://github.com/pyc-team/pytorch_concepts'
 LICENSE = 'Apache 2.0'
 DOWNLOAD_URL = 'https://github.com/pyc-team/pytorch_concepts'
-VERSION = __version__
+VERSION = about["__version__"]
 INSTALL_REQUIRES = [
     'numpy',
     'opencv-python',

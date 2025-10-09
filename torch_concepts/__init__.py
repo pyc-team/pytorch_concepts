@@ -1,16 +1,12 @@
-__version__ = '0.0.11'
+from ._version import __version__
+from importlib import import_module
+from typing import Any
 
-from .data import (
-    celeba,
-    mnist,
-    toy,
-)
+def __getattr__(name: str) -> Any:
+    if name in {"data", "nn"}:
+        return import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-from .nn import (
-    base,
-    bottleneck,
-    functional,
-)
 
 __all__ = [
     '__version__'
