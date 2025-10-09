@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/dev/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="220">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/dev/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="30%">
 </p>
 
 # PyTorch Concepts
