@@ -7,13 +7,12 @@
 PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train Concept-Based Deep Learning models.
 
 You can install PyC along with all its dependencies from
-`PyPI <https://pypi.org/project/pytorch-concepts/>`__:
+[PyPI](https://pypi.org/project/pytorch-concepts/):
 
-.. code:: bash
+```pip install pytorch-concepts ```
 
-    pip install pytorch-concepts
-
-The folder `https://github.com/pyc-team/pytorch_concepts/tree/master/examples <https://github.com/pyc-team/pytorch_concepts/tree/master/examples>`__ includes many examples showing how the library can be used.
+The folder [https://github.com/pyc-team/pytorch_concepts/tree/master/examples](https://github.com/pyc-team/pytorch_concepts/tree/master/examples)
+ includes many examples showing how the library can be used.
 
 ## Low-level APIs
 
