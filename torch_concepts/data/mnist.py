@@ -1,7 +1,6 @@
 import numpy as np
 import random
 import torch
-from matplotlib import pyplot as plt
 from typing import Tuple
 
 from torchvision.datasets import MNIST
@@ -172,19 +171,6 @@ class MNISTAddition(MNIST):
 
         return img, c, y
 
-    def plot(self, index):
-        img, c, y = self.__getitem__(index)
-        plt.imshow(img.squeeze(), cmap='gray')
-        concept_names = [self.concept_names[i]
-                         for i in range(self.n_concepts) if c[i] == 1]
-        concept_names = ', '.join(concept_names)
-        task_names = [self.task_names[i]
-                      for i in range(self.n_tasks) if y == i]
-        task_names = ', '.join(task_names)
-        plt.title(f"Concept: {concept_names}, Task: {task_names}")
-        plt.axis('off')
-        plt.show()
-
 
 class PartialMNISTAddition(MNISTAddition):
     """
@@ -252,17 +238,3 @@ class MNISTEvenOdd(MNIST):
         t = 1 if y % 2 == 0 else 0
 
         return x, c, t
-
-    def plot(self, index):
-        img, c, t = self.__getitem__(index)
-        plt.imshow(img.squeeze(), cmap='gray')
-        concept_names = [self.concept_names[i]
-                         for i in range(self.n_concepts) if c[i] == 1]
-        concept_names = ', '.join(concept_names)
-        task_names = [self.task_names[i]
-                      for i in range(self.n_tasks) if t == i]
-        task_names = ', '.join(task_names)
-        plt.title(f"Concept: {concept_names}, Task: {task_names}")
-        plt.axis('off')
-        plt.show()
-

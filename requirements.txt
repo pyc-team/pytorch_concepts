@@ -1,4 +1,4 @@
 scikit-learn
 torch
-medmnist
 opencv-python
+pytorch-minimize
