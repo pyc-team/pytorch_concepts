@@ -22,7 +22,7 @@ import torch_concepts
 # -- Project information -----------------------------------------------------
 
 project = 'pytorch_concepts'
-author = 'Pietro Barbiero'
+author = 'PyC Team'
 copyright = '{}, {}'.format(datetime.datetime.now().year, author)
 
 version = torch_concepts.__version__

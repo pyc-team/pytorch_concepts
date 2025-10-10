@@ -8,18 +8,18 @@ Quick start
 -----------
 
 You can install ``torch_concepts`` along with all its dependencies from
-`PyPI <https://pypi.org/project/torch_concepts/>`__:
+`PyPI <https://pypi.org/project/pytorch-concepts/>`__:
 
 .. code:: bash
 
-    pip install torch_concepts
+    pip install pytorch-concepts
 
 
 Source
 ------
 
 The source code and minimal working examples can be found on
-`GitHub <https://github.com/pietrobarbiero/pytorch_concepts>`__.
+`GitHub <https://github.com/pyc-team/pytorch_concepts>`__.
 
 
 .. toctree::
