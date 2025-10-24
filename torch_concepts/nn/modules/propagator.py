@@ -1,5 +1,7 @@
 import torch
 
+from ...nn.base.layer import BaseEncoderLayer, BasePredictorLayer
+
 
 class Propagator(torch.nn.Module):
     def __init__(self,
@@ -18,8 +20,8 @@ class Propagator(torch.nn.Module):
         self.module = None
 
     def build(self,
-              in_features: int,
-              annotations: 'Annotations',  # Assuming Annotations is a defined type
+              in_object,
+              out_annotations: 'Annotations',  # Assuming Annotations is a defined type
               ) -> torch.nn.Module:
         """
         Constructor method to instantiate the underlying module with required arguments.
@@ -30,12 +32,20 @@ class Propagator(torch.nn.Module):
 
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
-        self.module = self._module_cls(
-            in_features=in_features,
-            annotations=annotations,
-            *self._module_args,
-            **self._module_kwargs
-        )
+        if issubclass(self._module_cls, BaseEncoderLayer):
+            self.module = self._module_cls(
+                in_features=in_object,
+                out_annotations=out_annotations,
+                *self._module_args,
+                **self._module_kwargs
+            )
+        elif issubclass(self._module_cls, BasePredictorLayer):
+            self.module = self._module_cls(
+                in_contracts=in_object,
+                out_annotations=out_annotations,
+                *self._module_args,
+                **self._module_kwargs
+            )
 
         # Crucial for PyTorch: Check if the module is properly registered
         if not isinstance(self.module, torch.nn.Module):

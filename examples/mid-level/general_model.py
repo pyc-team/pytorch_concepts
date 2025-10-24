@@ -1,9 +1,9 @@
 import torch
 from torch import nn
 
-from torch_concepts import ConceptTensor, Annotations, AxisAnnotation
-from torch_concepts.nn import LinearPredictorLayer, LinearEncoderLayer, BipartiteModel, Propagator, GraphModel, \
-    COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner
+from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, AnnotatedAdjacencyMatrix
+from torch_concepts.nn import ProbPredictorLayer, ProbEncoderLayer, BipartiteModel, Propagator, GraphModel, \
+    COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEmbEncoderLayer, MixProbEmbPredictorLayer
 from torch_concepts.nn.modules.inference.forward import KnownGraphInference, UnknownGraphInference
 
 
@@ -18,33 +18,42 @@ def main():
     annotations = Annotations({1: AxisAnnotation(('a', 'b', 'c', 'd', 'e'))})
 
     c = ConceptTensor(annotations, concept_probs)
+
+    # FIXME: there is something wrong in the init predictors, we may need to change the predictor propagator into a residual layer
+    model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
+                                                         [0, 0, 1, 0, 0],
+                                                         [0, 0, 0, 1, 0],
+                                                         [0, 0, 0, 0, 1],
+                                                         [0, 0, 0, 0, 0]]).float(),
+                                           annotations)
+    model = GraphModel(model_graph=model_graph,
+                       encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
+                       predictor=Propagator(MixProbEmbPredictorLayer),
+                       annotations=annotations,
+                       input_size=x.shape[1])
+    inference_train = KnownGraphInference(model=model)
+    cy_preds = inference_train.query(x)
+    print(cy_preds)
+
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
-                              encoder=Propagator(LinearEncoderLayer),
-                              predictor=Propagator(LinearPredictorLayer),
+                              encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
+                              predictor=Propagator(MixProbEmbPredictorLayer),
                               annotations=annotations,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
     c_encoder, c_predictor = inference_train.query(x, c)
-    known_graph_model = model.get_model_known_graph()
-    inference_test = KnownGraphInference(model=known_graph_model)
-    cy_pred = inference_test.query(x)
-
-    print(known_graph_model.model_graph.data)
-    print(c_encoder.concept_probs[0])
-    print(c_predictor.concept_probs[0])
-    print(cy_pred.concept_probs[0])
+    print(c_encoder)
+    print(c_predictor)
 
     model = BipartiteModel(task_names=['c', 'e'],
-                           encoder=Propagator(LinearEncoderLayer),
-                           predictor=Propagator(LinearPredictorLayer),
+                           encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
+                           predictor=Propagator(MixProbEmbPredictorLayer),
                            annotations=annotations,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)
     cy_pred = inference_test.query(x)
 
     print(cy_pred)
-
-
 
 
 if __name__ == "__main__":

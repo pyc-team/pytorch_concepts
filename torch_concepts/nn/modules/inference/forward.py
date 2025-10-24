@@ -32,11 +32,16 @@ class KnownGraphInference(BaseInference):
         return c_all
 
 
-
 class UnknownGraphInference(BaseInference):
     def __init__(self, model: torch.nn.Module):
         super().__init__(model=model)
         self.train_mode = 'independent'
+
+    def mask_concept_tensor(self, c: ConceptTensor, model_graph: AnnotatedAdjacencyMatrix, c_name: str) -> torch.Tensor:
+        broadcast_shape = [1] * len(c.size())
+        broadcast_shape[1] = c.size(1)
+        mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape)  # FIXME: get_by_nodes does not work!
+        return c * mask
 
     def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> [ConceptTensor, ConceptTensor]:
         c_encoder = ConceptTensor(self.model.annotations)
@@ -46,20 +51,17 @@ class UnknownGraphInference(BaseInference):
             c_out = self.model.encoders[c_name](x)
             c_encoder = c_encoder.join(c_out)
 
-
         # --- from concepts to concepts copy
         model_graph = self.model.graph_learner()
         c_predictor = ConceptTensor(self.model.annotations)
         for c_name in self.model.annotations.get_axis_labels(axis=1):
             # Mask the input concept object to get only parent concepts
-            broadcast_shape = [1] * len(c.size())
-            broadcast_shape[1] = c.size(1)
-            mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape) # FIXME: get_by_nodes does not work!
-            input_obj = c * mask  # c_obj has shape (batch, n_concepts, ...) / model_graph has shape (n_concepts, n_concepts)
+            c_encoder_masked = self.mask_concept_tensor(c_encoder, model_graph, c_name)
+            c_masked = self.mask_concept_tensor(c, model_graph, c_name)
+            input_obj = ConceptTensor(self.model.annotations, concept_embs=c_encoder_masked, concept_probs=c_masked)
 
             c_out = self.model.predictors[c_name](input_obj)
             c_predictor = c_predictor.join(c_out)
-
 
         return c_encoder, c_predictor
 

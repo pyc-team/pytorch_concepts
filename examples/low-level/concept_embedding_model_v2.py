@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ProbEncoderLayer, ProbPredictorLayer
+from torch_concepts.nn import MixProbEmbPredictorLayer, ProbEmbEncoderLayer
 
 
 def main():
@@ -11,6 +11,7 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
+    embedding_size = 10
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
@@ -24,14 +25,14 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderLayer(latent_dims, c_annotations)
+    cem_encoder = ProbEmbEncoderLayer(latent_dims, c_annotations, embedding_size)
     concept_bottleneck = torch.nn.Sequential(
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
-        encoder_layer,
+        cem_encoder,
     )
     y_predictor = torch.nn.Sequential(
-        ProbPredictorLayer(encoder_layer.out_contract, y_annotations)
+        MixProbEmbPredictorLayer(cem_encoder.out_contract, y_annotations)
     )
     model = torch.nn.Sequential(encoder, concept_bottleneck, y_predictor)
 
@@ -47,7 +48,7 @@ def main():
         y_pred = y_predictor(c_pred)
 
         # compute loss
-        concept_loss = loss_fn(c_pred, c_train)
+        concept_loss = loss_fn(c_pred.concept_probs, c_train)
         task_loss = loss_fn(y_pred, y_train)
         loss = concept_loss + concept_reg * task_loss
 

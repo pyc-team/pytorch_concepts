@@ -25,6 +25,8 @@ class GraphModel(BaseModel):
             encoder=encoder,
             predictor=predictor,
             model_graph=model_graph,
+            include_encoders=True,
+            include_predictors=True,
         )
 
 
@@ -46,6 +48,8 @@ class LearnedGraphModel(BaseModel):
             encoder=encoder,
             predictor=predictor,
             model_graph=model_graph,  # learned graph
+            include_encoders=True,
+            include_predictors=False,
         )
 
     def get_model_known_graph(self) -> GraphModel:

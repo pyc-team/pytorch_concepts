@@ -74,10 +74,11 @@ def concept_embedding_mixture(
         Tensor: Mix of concept embeddings and concept scores with shape
             (batch_size, n_concepts, emb_size//2)
     """
-    emb_size = c_emb[0].shape[1] // 2
+    # FIXME: fix .data in AnnotatedTensor
+    emb_size = c_emb.data[0].shape[1] // 2
     c_mix = (
-        c_scores.unsqueeze(-1) * c_emb[:, :, :emb_size] +
-        (1 - c_scores.unsqueeze(-1)) * c_emb[:, :, emb_size:]
+        c_scores.data.unsqueeze(-1) * c_emb.data[:, :, :emb_size] +
+        (1 - c_scores.data.unsqueeze(-1)) * c_emb.data[:, :, emb_size:]
     )
     return c_mix
 

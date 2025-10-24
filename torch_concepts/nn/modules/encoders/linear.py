@@ -2,10 +2,10 @@ import torch
 
 from torch_concepts import Annotations, ConceptTensor
 from ...base.layer import BaseEncoderLayer
-from typing import List, Callable, Union
+from typing import List, Callable, Union, Dict
 
 
-class LinearEncoderLayer(BaseEncoderLayer):
+class ProbEncoderLayer(BaseEncoderLayer):
     """
     ConceptLayer creates a bottleneck of supervised concepts.
     Main reference: `"Concept Layer
@@ -16,29 +16,41 @@ class LinearEncoderLayer(BaseEncoderLayer):
         annotations (Union[List[str], int]): Concept dimensions.
         activation (Callable): Activation function of concept scores.
     """
-
     def __init__(
         self,
         in_features: int,
-        annotations: Annotations,
+        out_annotations: Annotations,
         activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
         super().__init__(
             in_features=in_features,
-            annotations=annotations,
+            out_annotations=out_annotations,
         )
+
         self.activation = activation
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features,
-                self.output_size,
+                self.in_features,
+                self.out_features,
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.shape()),
+            torch.nn.Unflatten(-1, self.out_shape),
         )
+
+    @property
+    def out_features(self) -> int:
+        return self._out_concepts_size
+
+    @property
+    def out_shape(self) -> Union[torch.Size, tuple]:
+        return self._out_concepts_shape
+
+    @property
+    def out_contract(self) -> Dict[str, int]:
+        return {"concept_probs": self.out_features}
 
     def encode(
         self,
@@ -57,4 +69,4 @@ class LinearEncoderLayer(BaseEncoderLayer):
         """
         c_logits = self.linear(x)
         c_probs = self.activation(c_logits)
-        return ConceptTensor(self.annotations, concept_probs=c_probs)
+        return ConceptTensor(self.out_annotations, concept_probs=c_probs)

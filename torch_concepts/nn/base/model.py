@@ -4,6 +4,7 @@ import torch
 from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
 from typing import Union, List
 
+from ..modules.encoders.embedding import ProbEmbEncoderLayer
 from ..modules.propagator import Propagator
 from .graph import BaseGraphLearner
 
@@ -19,6 +20,8 @@ class BaseModel(torch.nn.Module):
                  encoder: Propagator,  # layer for root concepts
                  predictor: Propagator,
                  model_graph: Union[AnnotatedAdjacencyMatrix, BaseGraphLearner],
+                 include_encoders: bool,
+                 include_predictors: bool,
                  ):
         super(BaseModel, self).__init__()
         self.emb_size = input_size
@@ -26,6 +29,8 @@ class BaseModel(torch.nn.Module):
         self.concept_names = concept_names
         self._encoder_builder = encoder
         self._predictor_builder = predictor
+        self.include_encoders = include_encoders
+        self.include_predictors = include_predictors
 
         # handle model graph
         self.model_graph = model_graph
@@ -75,8 +80,22 @@ class BaseModel(torch.nn.Module):
             else:
                 parent_names = self.concept_names
 
-            parent_cardinality = np.prod(self.annotations.select(axis=1, keep_labels=parent_names).shape[1:]).item()
-            propagators[c_name] = layer.build(parent_cardinality, output_annotations)
+            in_contracts = []
+            if self.include_encoders:
+                in_contracts += [m.out_contract for name, m in self.encoders.items() if name in parent_names]
+
+            if self.include_predictors:
+                for name, m in propagators.items():
+                    c = None
+                    if name in parent_names:
+                        c = m.out_contract
+                    if c is not None:
+                        in_contracts += [c]
+
+            # FIXME
+            # if self.residual_encoders and :
+            #     c
+            propagators[c_name] = layer.build(in_contracts, output_annotations)
 
         return propagators
 

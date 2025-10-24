@@ -8,12 +8,13 @@ from .base.layer import (
 
 from torch_concepts.nn.modules.propagator import Propagator
 
-from .modules.encoders.linear import LinearEncoderLayer
-# from .modules.encoders.embedding import ConceptEmbeddingLayer
+from .modules.encoders.linear import ProbEncoderLayer
 # from .modules.encoders.residual import LinearConceptResidualLayer
+from .modules.encoders.embedding import ProbEmbEncoderLayer
 # from .modules.encoders.stochastic import StochasticConceptLayer
 
-from .modules.predictors.linear import LinearPredictorLayer
+from .modules.predictors.linear import ProbPredictorLayer
+from .modules.predictors.embedding import MixProbEmbPredictorLayer
 
 from .modules.cosmo import COSMOGraphLearner
 
@@ -41,13 +42,14 @@ __all__ = [
     "Propagator",
 
     # Encoder classes
-    "LinearEncoderLayer",
+    "ProbEncoderLayer",
     # "LinearConceptResidualLayer",
-    # "ConceptEmbeddingLayer",
+    "ProbEmbEncoderLayer",
     # "StochasticConceptLayer",
 
     # Predictor classes
-    "LinearPredictorLayer",
+    "ProbPredictorLayer",
+    "MixProbEmbPredictorLayer",
 
     # COSMO
     "COSMOGraphLearner",

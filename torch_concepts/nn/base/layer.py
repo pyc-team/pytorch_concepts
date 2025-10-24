@@ -1,9 +1,9 @@
-from typing import Union
+from typing import Union, Dict, Tuple
 
 import numpy as np
 import torch
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
 
 
@@ -14,39 +14,72 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     def __init__(
         self,
-        in_features: int,
-        annotations: Annotations,
+        out_annotations: Annotations,
         *args,
         **kwargs,
     ):
         super().__init__()
-        self.in_features = in_features
-        self.annotations = annotations
+        self.out_annotations = out_annotations
 
         self.concept_axis = 1
-        self._shape = annotations.shape[1:]
-        self.output_size = np.prod(self._shape).item()
+        self._out_concepts_shape = out_annotations.shape[1:]
+        self._out_concepts_size = np.prod(self._out_concepts_shape).item()
 
-    def shape(self):
-        return self._shape
+    @property
+    @abstractmethod
+    def in_features(self) -> int:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def in_shape(self) -> Union[torch.Size, tuple]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def in_contract(self) -> Dict[str, int]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def out_features(self) -> int:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def out_shape(self) -> Union[torch.Size, tuple]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def out_contract(self) -> Dict[str, int]:
+        raise NotImplementedError
+
+    @property
+    def in_contract_keys(self) -> Tuple[str]:
+        return tuple(self.in_contract.keys())
+
+    @property
+    def out_contract_keys(self) -> Tuple[str]:
+        return tuple(self.out_contract.keys())
 
     def annotate(
-        self,
-        x: torch.Tensor,
-    ) -> AnnotatedTensor:
-        """
-        Annotate tensor.
+            self,
+            x: torch.Tensor,
+        ) -> AnnotatedTensor:
+            """
+            Annotate tensor.
 
-        Args:
-            x (torch.Tensor): A tensor compatible with the layer's annotations.
+            Args:
+                x (torch.Tensor): A tensor compatible with the layer's annotations.
 
-        Returns:
-            AnnotatedTensor: Annotated tensor.
-        """
-        return AnnotatedTensor(
-            data=x,
-            annotations=self.annotations
-        )
+            Returns:
+                AnnotatedTensor: Annotated tensor.
+            """
+            return AnnotatedTensor(
+                data=x,
+                annotations=self.out_annotations
+            )
 
 
 class BaseEncoderLayer(BaseConceptLayer):
@@ -54,6 +87,26 @@ class BaseEncoderLayer(BaseConceptLayer):
     BaseConceptLayer is an abstract base class for concept encoder layers.
     The output objects are ConceptTensors.
     """
+    def __init__(self, in_features: int, out_annotations: Annotations, *args, **kwargs):
+        super().__init__(
+            out_annotations=out_annotations,
+            *args,
+            **kwargs,
+        )
+        self._in_features = in_features
+
+    @property
+    def in_features(self) -> int:
+        return self._in_features
+
+    @property
+    def in_shape(self) -> Union[torch.Size, tuple]:
+        return (self._in_features,)
+
+    @property
+    def in_contract(self) -> Dict[str, int]:
+        return {"residual": self.in_features}
+
     def forward(
         self,
         x: torch.Tensor,
@@ -113,9 +166,29 @@ class BasePredictorLayer(BaseConceptLayer):
     BasePredictorLayer is an abstract base class for concept predictor layers.
     The input objects are ConceptTensors and the output objects are ConceptTensors with concept probabilities only.
     """
+    def __init__(self, in_contracts: Union[Tuple[Dict[str, int]], Dict[str, int]], out_annotations: Annotations, *args, **kwargs):
+        super().__init__(
+            out_annotations=out_annotations,
+            *args,
+            **kwargs,
+        )
+        self._in_contracts = in_contracts
+
+    @property
+    def out_features(self) -> int:
+        return self._out_concepts_size
+
+    @property
+    def out_shape(self) -> Union[torch.Size, tuple]:
+        return self._out_concepts_shape
+
+    @property
+    def out_contract(self) -> Dict[str, int]:
+        return {"concept_probs": self.out_features}
+
     def forward(
         self,
-        x: Union[torch.Tensor, ConceptTensor],
+        x: ConceptTensor,
         *args,
         **kwargs,
     ) -> ConceptTensor:
@@ -128,6 +201,12 @@ class BasePredictorLayer(BaseConceptLayer):
         Returns:
             ConceptTensor: Predicted concept object.
         """
+        if not isinstance(x, ConceptTensor):
+            raise TypeError(
+                f"The input to {self.__class__.__name__}.forward() must be a ConceptTensor, "
+                f"but got {type(x)} instead."
+            )
+
         # 1. Call the subclass's logic
         output: ConceptTensor = self.predict(x, *args, **kwargs)
 
@@ -143,7 +222,7 @@ class BasePredictorLayer(BaseConceptLayer):
     @abstractmethod
     def predict(
         self,
-        x: Union[torch.Tensor, ConceptTensor],
+        x: ConceptTensor,
         *args,
         **kwargs,
     ) -> ConceptTensor:

@@ -17,7 +17,7 @@ class BipartiteModel(BaseModel):
                  encoder: Propagator,
                  predictor: Propagator,
                  input_size: int,
-                 annotations: Annotations,
+                 annotations: Annotations
                  ):
 
         # create bipartite graph from concepts and tasks
@@ -34,4 +34,6 @@ class BipartiteModel(BaseModel):
             encoder=encoder,
             predictor=predictor,
             model_graph=bipartite_graph,
+            include_encoders=True,
+            include_predictors=False,
         )
