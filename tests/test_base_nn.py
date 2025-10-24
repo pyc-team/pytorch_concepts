@@ -1,7 +1,7 @@
 import unittest
 import torch
 
-from torch_concepts.base import AnnotatedTensor
+from torch_concepts.concepts.base import AnnotatedTensor
 from torch_concepts.nn import Annotate, LinearConceptLayer
 
 

@@ -1,44 +1,63 @@
-from .base import (
-    Annotate,
-    LinearConceptLayer,
-)
-from .bottleneck import (
-    BaseConceptBottleneck,
-    LinearConceptBottleneck,
-    LinearConceptResidualBottleneck,
-    ConceptEmbeddingBottleneck,
-    StochasticConceptBottleneck,
+from .base.graph import BaseGraphLearner
+from .base.model import BaseModel
+from .base.layer import (
+    BaseConceptLayer,
+    BaseEncoderLayer,
+    BasePredictorLayer,
 )
 
-from .functional import (
-    concept_embedding_mixture,
-    confidence_selection,
-    intervene,
-    linear_equation_eval,
-    logic_rule_eval,
-    logic_rule_explanations,
-    logic_memory_reconstruction,
-    selective_calibration,
+from torch_concepts.nn.modules.propagator import Propagator
+
+from .modules.encoders.linear import LinearEncoderLayer
+# from .modules.encoders.embedding import ConceptEmbeddingLayer
+# from .modules.encoders.residual import LinearConceptResidualLayer
+# from .modules.encoders.stochastic import StochasticConceptLayer
+
+from .modules.predictors.linear import LinearPredictorLayer
+
+from .modules.cosmo import COSMOGraphLearner
+
+from .modules.models.bipartite import BipartiteModel
+from .modules.models.graph import (
+    GraphModel,
+    LearnedGraphModel,
+)
+
+from .modules.inference.forward import (
+    KnownGraphInference,
+    UnknownGraphInference,
 )
 
 
 __all__ = [
-    "Annotate",
-    "LinearConceptLayer",
+    # Base classes
+    "BaseConceptLayer",
+    "BaseEncoderLayer",
+    "BasePredictorLayer",
+    "BaseGraphLearner",
+    "BaseModel",
 
-    "BaseConceptBottleneck",
-    "LinearConceptBottleneck",
-    "LinearConceptResidualBottleneck",
-    "ConceptEmbeddingBottleneck",
+    # Propagator
+    "Propagator",
 
-    "intervene",
-    "concept_embedding_mixture",
+    # Encoder classes
+    "LinearEncoderLayer",
+    # "LinearConceptResidualLayer",
+    # "ConceptEmbeddingLayer",
+    # "StochasticConceptLayer",
 
-    "linear_equation_eval",
-    "logic_rule_eval",
-    "logic_memory_reconstruction",
-    "logic_rule_explanations",
+    # Predictor classes
+    "LinearPredictorLayer",
 
-    "confidence_selection",
-    "selective_calibration",
+    # COSMO
+    "COSMOGraphLearner",
+
+    # Models
+    "BipartiteModel",
+    "GraphModel",
+    "LearnedGraphModel",
+
+    # Inference
+    "KnownGraphInference",
+    "UnknownGraphInference",
 ]

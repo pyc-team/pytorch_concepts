@@ -5,7 +5,7 @@ from collections import defaultdict
 from torch import Tensor
 
 from torch_concepts.semantic import CMRSemantic
-from typing import List, Dict, Iterable
+from typing import List, Dict
 from torch_concepts.utils import numerical_stability_check
 from scipy.stats import chi2
 from torch_concepts.nn.minimize_constraint import minimize_constr

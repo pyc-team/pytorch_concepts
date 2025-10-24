@@ -2,7 +2,7 @@ import unittest
 import torch
 import torch.nn.functional as F
 from torch_concepts.nn.bottleneck import LinearConceptBottleneck, LinearConceptResidualBottleneck, ConceptEmbeddingBottleneck
-from torch_concepts.base import AnnotatedTensor
+from torch_concepts.concepts.base import AnnotatedTensor
 
 class TestLinearConceptBottleneck(unittest.TestCase):
     def setUp(self):

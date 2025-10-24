@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import LinearConceptLayer
+from torch_concepts.nn import LinearConceptBottleneck
 
 
 def main():
@@ -26,12 +26,12 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    concept_bottleneck = LinearConceptLayer(latent_dims, [concept_names])
+    concept_bottleneck = LinearConceptBottleneck(latent_dims)
     y_predictor = torch.nn.Sequential(
         torch.nn.Flatten(),
         torch.nn.Linear(n_concepts, latent_dims),
         torch.nn.LeakyReLU(),
-        LinearConceptLayer(latent_dims, [task_names]),
+        LinearConceptBottleneck(latent_dims, [task_names]),
     )
     model = torch.nn.Sequential(encoder, concept_bottleneck, y_predictor)
 
