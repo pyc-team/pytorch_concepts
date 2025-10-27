@@ -5,6 +5,7 @@ from .base.layer import (
     BaseEncoder,
     BasePredictor,
 )
+from .base.inference import BaseInference, BaseIntervention
 
 from torch_concepts.nn.modules.propagator import Propagator
 
@@ -30,6 +31,12 @@ from .modules.inference.forward import (
     KnownGraphInference,
     UnknownGraphInference,
 )
+from .modules.inference.intervention import (
+    ConstantTensorIntervention,
+    ConstantLikeIntervention,
+    DistributionIntervention,
+    intervene_in_dict,
+)
 
 
 __all__ = [
@@ -39,6 +46,8 @@ __all__ = [
     "BasePredictor",
     "BaseGraphLearner",
     "BaseModel",
+    "BaseInference",
+    "BaseIntervention",
 
     # Propagator
     "Propagator",
@@ -68,4 +77,9 @@ __all__ = [
     # Inference
     "KnownGraphInference",
     "UnknownGraphInference",
+    # Interventions
+    "ConstantTensorIntervention",
+    "ConstantLikeIntervention",
+    "DistributionIntervention",
+    "intervene_in_dict",
 ]

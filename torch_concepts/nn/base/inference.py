@@ -1,6 +1,11 @@
-from abc import abstractmethod
+import contextlib
+from abc import ABC, abstractmethod
+from typing import Dict, Iterable, Tuple, Union, Callable, Optional
 
+import fnmatch
 import torch
+import torch.nn as nn
+import torch.distributions as D
 
 from torch_concepts import ConceptTensor
 
@@ -36,3 +41,22 @@ class BaseInference(torch.nn.Module):
             ConceptTensor: Queried concepts.
         """
         raise NotImplementedError
+
+
+class BaseIntervention(BaseInference, ABC):
+    """
+    Base class for interventions. Subclass and implement `forward`.
+    """
+    def __init__(self, module_dict: torch.nn.ModuleDict, *args, **kwargs):
+        super().__init__(model=module_dict)
+        self.out_features = None
+
+    def forward(self, key: str, *args, **kwargs) -> ConceptTensor:
+        """
+        Apply intervention to the module identified by `key`.
+        """
+        if key not in self.model:
+            raise KeyError(f"ModuleDict has no key '{key}'")
+
+        self.out_features = self.model[key].out_features
+        return self.query(self.model[key], *args, **kwargs)
