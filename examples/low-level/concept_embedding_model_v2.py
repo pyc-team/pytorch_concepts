@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import MixProbEmbPredictorLayer, ProbEmbEncoderLayer
+from torch_concepts.nn import MixProbEmbPredictor, ProbEmbEncoder
 
 
 def main():
@@ -25,16 +25,9 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    cem_encoder = ProbEmbEncoderLayer(latent_dims, c_annotations, embedding_size)
-    concept_bottleneck = torch.nn.Sequential(
-        torch.nn.Linear(latent_dims, latent_dims),
-        torch.nn.LeakyReLU(),
-        cem_encoder,
-    )
-    y_predictor = torch.nn.Sequential(
-        MixProbEmbPredictorLayer(cem_encoder.out_contract, y_annotations)
-    )
-    model = torch.nn.Sequential(encoder, concept_bottleneck, y_predictor)
+    cem_encoder = ProbEmbEncoder(latent_dims, c_annotations, embedding_size)
+    cem_predictor = MixProbEmbPredictor(cem_encoder.out_concept_features, y_annotations)
+    model = torch.nn.Sequential(encoder, cem_encoder, cem_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
@@ -44,8 +37,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = concept_bottleneck(emb)
-        y_pred = y_predictor(c_pred)
+        c_pred = cem_encoder(emb)
+        y_pred = cem_predictor(c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred.concept_probs, c_train)

@@ -3,7 +3,7 @@ from typing import Union, Dict, Tuple
 import numpy as np
 import torch
 
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
 
 
@@ -22,46 +22,41 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self.out_annotations = out_annotations
 
         self.concept_axis = 1
-        self._out_concepts_shape = out_annotations.shape[1:]
-        self._out_concepts_size = np.prod(self._out_concepts_shape).item()
+        self.out_probs_dim = out_annotations.shape[1]
+
+    @property
+    def in_concept_features(self) -> Dict[str, int]:
+        in_concept_features = {}
+        for key, shape in self.in_concept_shapes.items():
+            in_concept_features[key] = np.prod(shape).item()
+        return in_concept_features
+
+    @property
+    def out_concept_features(self) -> Dict[str, int]:
+        out_concept_features = {}
+        for key, shape in self.out_concept_shapes.items():
+            out_concept_features[key] = np.prod(shape).item()
+        return out_concept_features
 
     @property
     @abstractmethod
-    def in_features(self) -> int:
+    def in_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
         raise NotImplementedError
 
     @property
     @abstractmethod
-    def in_shape(self) -> Union[torch.Size, tuple]:
+    def out_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
         raise NotImplementedError
 
     @property
     @abstractmethod
-    def in_contract(self) -> Dict[str, int]:
+    def in_concepts(self) -> Tuple[str, ...]:
         raise NotImplementedError
 
     @property
     @abstractmethod
-    def out_features(self) -> int:
+    def out_concepts(self) -> Tuple[str, ...]:
         raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def out_shape(self) -> Union[torch.Size, tuple]:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def out_contract(self) -> Dict[str, int]:
-        raise NotImplementedError
-
-    @property
-    def in_contract_keys(self) -> Tuple[str]:
-        return tuple(self.in_contract.keys())
-
-    @property
-    def out_contract_keys(self) -> Tuple[str]:
-        return tuple(self.out_contract.keys())
 
     def annotate(
             self,
@@ -82,7 +77,7 @@ class BaseConceptLayer(ABC, torch.nn.Module):
             )
 
 
-class BaseEncoderLayer(BaseConceptLayer):
+class BaseEncoder(BaseConceptLayer):
     """
     BaseConceptLayer is an abstract base class for concept encoder layers.
     The output objects are ConceptTensors.
@@ -94,18 +89,16 @@ class BaseEncoderLayer(BaseConceptLayer):
             **kwargs,
         )
         self._in_features = in_features
+        in_concept_shapes = self.in_concept_shapes
+        in_concept_features = self.in_concept_features
 
     @property
-    def in_features(self) -> int:
-        return self._in_features
+    def in_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
+        return {"residual": (self._in_features,)}
 
     @property
-    def in_shape(self) -> Union[torch.Size, tuple]:
-        return (self._in_features,)
-
-    @property
-    def in_contract(self) -> Dict[str, int]:
-        return {"residual": self.in_features}
+    def in_concepts(self) -> Tuple[str]:
+        return ("residual",)
 
     def forward(
         self,
@@ -161,30 +154,30 @@ class BaseEncoderLayer(BaseConceptLayer):
         raise NotImplementedError("encode")
 
 
-class BasePredictorLayer(BaseConceptLayer):
+class BasePredictor(BaseConceptLayer):
     """
-    BasePredictorLayer is an abstract base class for concept predictor layers.
+    BasePredictor is an abstract base class for concept predictor layers.
     The input objects are ConceptTensors and the output objects are ConceptTensors with concept probabilities only.
     """
-    def __init__(self, in_contracts: Union[Tuple[Dict[str, int]], Dict[str, int]], out_annotations: Annotations, *args, **kwargs):
+    def __init__(self, in_concept_features: Union[Tuple[Dict[str, int]], Dict[str, int]], out_annotations: Annotations, *args, **kwargs):
         super().__init__(
             out_annotations=out_annotations,
             *args,
             **kwargs,
         )
-        self._in_contracts = in_contracts
+        self._in_concept_features = in_concept_features
+        in_concept_shapes = self.in_concept_shapes
+        in_concept_features = self.in_concept_features
+        out_concept_shapes = self.out_concept_shapes
+        out_concept_features = self.out_concept_features
 
     @property
-    def out_features(self) -> int:
-        return self._out_concepts_size
+    def out_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
+        return {"concept_probs": (self.out_probs_dim,)}
 
     @property
-    def out_shape(self) -> Union[torch.Size, tuple]:
-        return self._out_concepts_shape
-
-    @property
-    def out_contract(self) -> Dict[str, int]:
-        return {"concept_probs": self.out_features}
+    def out_concepts(self) -> Tuple[str]:
+        return ("concept_probs",)
 
     def forward(
         self,

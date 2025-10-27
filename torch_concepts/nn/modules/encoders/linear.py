@@ -1,11 +1,11 @@
 import torch
 
 from torch_concepts import Annotations, ConceptTensor
-from ...base.layer import BaseEncoderLayer
-from typing import List, Callable, Union, Dict
+from ...base.layer import BaseEncoder
+from typing import List, Callable, Union, Dict, Tuple
 
 
-class ProbEncoderLayer(BaseEncoderLayer):
+class ProbEncoder(BaseEncoder):
     """
     ConceptLayer creates a bottleneck of supervised concepts.
     Main reference: `"Concept Layer
@@ -32,25 +32,21 @@ class ProbEncoderLayer(BaseEncoderLayer):
         self.activation = activation
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
-                self.in_features,
-                self.out_features,
+                self.in_concept_features["residual"],
+                self.out_concept_features["concept_probs"],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_shape),
+            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_probs"]),
         )
 
     @property
-    def out_features(self) -> int:
-        return self._out_concepts_size
+    def out_concept_shapes(self) -> Dict[str, tuple]:
+        return {"concept_probs": (self.out_probs_dim,)}
 
     @property
-    def out_shape(self) -> Union[torch.Size, tuple]:
-        return self._out_concepts_shape
-
-    @property
-    def out_contract(self) -> Dict[str, int]:
-        return {"concept_probs": self.out_features}
+    def out_concepts(self) -> Tuple[str]:
+        return ("concept_probs",)
 
     def encode(
         self,

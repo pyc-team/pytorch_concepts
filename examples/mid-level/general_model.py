@@ -2,8 +2,8 @@ import torch
 from torch import nn
 
 from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, AnnotatedAdjacencyMatrix
-from torch_concepts.nn import ProbPredictorLayer, ProbEncoderLayer, BipartiteModel, Propagator, GraphModel, \
-    COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEmbEncoderLayer, MixProbEmbPredictorLayer
+from torch_concepts.nn import ProbPredictor, ProbEncoder, BipartiteModel, Propagator, GraphModel, \
+    COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEmbEncoder, MixProbEmbPredictor
 from torch_concepts.nn.modules.inference.forward import KnownGraphInference, UnknownGraphInference
 
 
@@ -27,8 +27,8 @@ def main():
                                                          [0, 0, 0, 0, 0]]).float(),
                                            annotations)
     model = GraphModel(model_graph=model_graph,
-                       encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
-                       predictor=Propagator(MixProbEmbPredictorLayer),
+                       encoder=Propagator(ProbEmbEncoder, embedding_size=7),
+                       predictor=Propagator(MixProbEmbPredictor),
                        annotations=annotations,
                        input_size=x.shape[1])
     inference_train = KnownGraphInference(model=model)
@@ -36,8 +36,8 @@ def main():
     print(cy_preds)
 
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
-                              encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
-                              predictor=Propagator(MixProbEmbPredictorLayer),
+                              encoder=Propagator(ProbEmbEncoder, embedding_size=7),
+                              predictor=Propagator(MixProbEmbPredictor),
                               annotations=annotations,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
@@ -46,8 +46,8 @@ def main():
     print(c_predictor)
 
     model = BipartiteModel(task_names=['c', 'e'],
-                           encoder=Propagator(ProbEmbEncoderLayer, embedding_size=7),
-                           predictor=Propagator(MixProbEmbPredictorLayer),
+                           encoder=Propagator(ProbEmbEncoder, embedding_size=7),
+                           predictor=Propagator(MixProbEmbPredictor),
                            annotations=annotations,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)

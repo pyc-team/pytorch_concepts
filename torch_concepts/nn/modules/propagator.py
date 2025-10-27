@@ -1,6 +1,6 @@
 import torch
 
-from ...nn.base.layer import BaseEncoderLayer, BasePredictorLayer
+from ...nn.base.layer import BaseEncoder, BasePredictor
 
 
 class Propagator(torch.nn.Module):
@@ -32,16 +32,16 @@ class Propagator(torch.nn.Module):
 
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
-        if issubclass(self._module_cls, BaseEncoderLayer):
+        if issubclass(self._module_cls, BaseEncoder):
             self.module = self._module_cls(
                 in_features=in_object,
                 out_annotations=out_annotations,
                 *self._module_args,
                 **self._module_kwargs
             )
-        elif issubclass(self._module_cls, BasePredictorLayer):
+        elif issubclass(self._module_cls, BasePredictor):
             self.module = self._module_cls(
-                in_contracts=in_object,
+                in_concept_features=in_object,
                 out_annotations=out_annotations,
                 *self._module_args,
                 **self._module_kwargs

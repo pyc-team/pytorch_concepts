@@ -2,11 +2,11 @@ import numpy as np
 import torch
 
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
-from ...base.layer import BaseEncoderLayer
+from ...base.layer import BaseEncoder
 from typing import List, Dict, Callable, Union, Tuple
 
 
-class ProbEmbEncoderLayer(BaseEncoderLayer):
+class ProbEmbEncoder(BaseEncoder):
     """
     ConceptEmbeddingLayer creates supervised concept embeddings.
     Main reference: `"Concept Embedding Models: Beyond the
@@ -34,35 +34,31 @@ class ProbEmbEncoderLayer(BaseEncoderLayer):
         self.activation = activation
         self.embedding_size = embedding_size
 
-        self._out_concepts_shape = (self.out_annotations.shape[1], embedding_size * 2)
-        self._out_concepts_size = np.prod(self._out_concepts_shape).item()
+        self.n_states = 2 # TODO: fix
+        self.out_concept_emb_shapes = (self.out_probs_dim, embedding_size * self.n_states)
 
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
-                self.in_features,
-                self.out_features,
+                self.in_concept_features["residual"],
+                self.out_concept_features["concept_embs"],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_shape),
+            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_embs"]),
             torch.nn.LeakyReLU(),
         )
         self.concept_score_bottleneck = torch.nn.Sequential(
-            torch.nn.Linear(self.out_shape[-1], 1),
+            torch.nn.Linear(self.out_concept_shapes["concept_embs"][1], 1), # FIXME: check for different types of concepts
             torch.nn.Flatten(),
         )
 
     @property
-    def out_features(self) -> int:
-        return self._out_concepts_size
+    def out_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
+        return {"concept_embs": self.out_concept_emb_shapes, "concept_probs": (self.out_probs_dim,)}
 
     @property
-    def out_shape(self) -> Union[torch.Size, tuple]:
-        return self._out_concepts_shape
-
-    @property
-    def out_contract(self) -> Dict[str, int]:
-        return {"concept_probs": self.out_shape[0], "concept_embs": self.out_shape}
+    def out_concepts(self) -> Tuple[str, ...]:
+        return "concept_embs", "concept_probs"
 
     def encode(
         self, x: torch.Tensor, *args, **kwargs

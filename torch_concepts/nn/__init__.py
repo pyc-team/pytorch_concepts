@@ -2,19 +2,19 @@ from .base.graph import BaseGraphLearner
 from .base.model import BaseModel
 from .base.layer import (
     BaseConceptLayer,
-    BaseEncoderLayer,
-    BasePredictorLayer,
+    BaseEncoder,
+    BasePredictor,
 )
 
 from torch_concepts.nn.modules.propagator import Propagator
 
-from .modules.encoders.linear import ProbEncoderLayer
+from .modules.encoders.linear import ProbEncoder
 # from .modules.encoders.residual import LinearConceptResidualLayer
-from .modules.encoders.embedding import ProbEmbEncoderLayer
+from .modules.encoders.embedding import ProbEmbEncoder
 # from .modules.encoders.stochastic import StochasticConceptLayer
 
-from .modules.predictors.linear import ProbPredictorLayer
-from .modules.predictors.embedding import MixProbEmbPredictorLayer
+from .modules.predictors.linear import ProbPredictor
+from .modules.predictors.embedding import MixProbEmbPredictor
 
 from .modules.cosmo import COSMOGraphLearner
 
@@ -33,8 +33,8 @@ from .modules.inference.forward import (
 __all__ = [
     # Base classes
     "BaseConceptLayer",
-    "BaseEncoderLayer",
-    "BasePredictorLayer",
+    "BaseEncoder",
+    "BasePredictor",
     "BaseGraphLearner",
     "BaseModel",
 
@@ -42,14 +42,14 @@ __all__ = [
     "Propagator",
 
     # Encoder classes
-    "ProbEncoderLayer",
+    "ProbEncoder",
     # "LinearConceptResidualLayer",
-    "ProbEmbEncoderLayer",
+    "ProbEmbEncoder",
     # "StochasticConceptLayer",
 
     # Predictor classes
-    "ProbPredictorLayer",
-    "MixProbEmbPredictorLayer",
+    "ProbPredictor",
+    "MixProbEmbPredictor",
 
     # COSMO
     "COSMOGraphLearner",

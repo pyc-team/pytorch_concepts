@@ -4,7 +4,7 @@ import torch
 from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
 from typing import Union, List
 
-from ..modules.encoders.embedding import ProbEmbEncoderLayer
+from ..modules.encoders.embedding import ProbEmbEncoder
 from ..modules.propagator import Propagator
 from .graph import BaseGraphLearner
 
@@ -80,22 +80,22 @@ class BaseModel(torch.nn.Module):
             else:
                 parent_names = self.concept_names
 
-            in_contracts = []
+            in_concept_features = []
             if self.include_encoders:
-                in_contracts += [m.out_contract for name, m in self.encoders.items() if name in parent_names]
+                in_concept_features += [m.out_concept_features for name, m in self.encoders.items() if name in parent_names]
 
             if self.include_predictors:
                 for name, m in propagators.items():
                     c = None
                     if name in parent_names:
-                        c = m.out_contract
+                        c = m.out_concept_features
                     if c is not None:
-                        in_contracts += [c]
+                        in_concept_features += [c]
 
             # FIXME
             # if self.residual_encoders and :
             #     c
-            propagators[c_name] = layer.build(in_contracts, output_annotations)
+            propagators[c_name] = layer.build(in_concept_features, output_annotations)
 
         return propagators
 

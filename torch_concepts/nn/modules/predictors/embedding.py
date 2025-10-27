@@ -2,12 +2,12 @@ import numpy as np
 import torch
 
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
-from ...base.layer import BasePredictorLayer
+from ...base.layer import BasePredictor
 from torch_concepts.nn.functional import concept_embedding_mixture
 from typing import List, Dict, Callable, Union, Tuple
 
 
-class MixProbEmbPredictorLayer(BasePredictorLayer):
+class MixProbEmbPredictor(BasePredictor):
     """
     ConceptEmbeddingLayer creates supervised concept embeddings.
     Main reference: `"Concept Embedding Models: Beyond the
@@ -20,59 +20,51 @@ class MixProbEmbPredictorLayer(BasePredictorLayer):
     """
     def __init__(
         self,
-        in_contracts: Union[Tuple[Dict[str, int]], Dict[str, int]],
+        in_concept_features: Union[Tuple[Dict[str, int]], Dict[str, int]],
         out_annotations: Annotations,
         activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
         super().__init__(
-            in_contracts=in_contracts,
+            in_concept_features=in_concept_features,
             out_annotations=out_annotations,
         )
-        in_features = self.in_features # for linting purposes
-        out_features = self.out_features
-        out_shape = self.out_shape
-        out_contract = self.out_contract
-        in_contract = self.in_contract
-
-
         self.activation = activation
+        in_concept_features = self.in_concept_features
 
-        self._internal_emb_size = in_features[1] * in_contract["concept_embs"][0]
+        self._internal_emb_size = np.prod(self.in_concept_shapes["concept_embs"]).item() // 2  #FIXME: when nested
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
                 self._internal_emb_size,
-                out_features,
+                self.out_concept_features["concept_probs"],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_shape),
+            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_probs"]),
         )
 
     @property
-    def in_features(self) -> int:
-        return self.in_contract["concept_embs"]
-
-    @property
-    def in_shape(self) -> Union[torch.Size, tuple]:
-        return (self.in_contract["concept_embs"],)
-
-    @property
-    def in_contract(self) -> Dict[str, int]:
-        _in_contracts: Tuple[Dict] = self._in_contracts
-        if isinstance(self._in_contracts, dict):
-            _in_contracts = (self._in_contracts,)
+    def in_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
+        in_concept_features: Tuple[Dict] = self._in_concept_features
+        if isinstance(self._in_concept_features, dict):
+            in_concept_features = (self._in_concept_features,)
 
         n_concepts = 0
-        for c in _in_contracts:
-            if "concept_embs" not in c.keys():
-                raise ValueError("Input contracts must contain 'concept_embs' key.")
-            n_concepts += c["concept_embs"][0]
+        in_concept_features_summary = {"concept_probs": 0}
+        for c in in_concept_features:
+            if "concept_embs" not in c.keys() or "concept_probs" not in c.keys():
+                raise ValueError("Input contracts must contain 'concept_embs' and 'concept_probs' keys.")
+            in_concept_features_summary["concept_probs"] += c["concept_probs"]
+            n_concepts += c["concept_probs"]
 
-        concept_embs = (n_concepts, c["concept_embs"][1]//2) # since we use half for probs, half for embeddings
-        in_contract = {"concept_embs": tuple(concept_embs)}
-        return in_contract
+        emb_dim = in_concept_features[0]["concept_embs"]//2 # FIXME: assuming all have same emb size + denominator when nested
+
+        return {"concept_probs": (in_concept_features_summary["concept_probs"],), "concept_embs": (n_concepts, emb_dim)}
+
+    @property
+    def in_concepts(self) -> Tuple[str, ...]:
+        return "concept_embs", "concept_probs"
 
     def predict(
         self, x: ConceptTensor, *args, **kwargs
