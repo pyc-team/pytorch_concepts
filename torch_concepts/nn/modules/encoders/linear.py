@@ -66,10 +66,6 @@ class ProbEncoder(BaseEncoder):
     def out_shapes(self) -> Dict[str, tuple]:
         return {"concept_probs": (self.out_probs_dim,)}
 
-    @property
-    def out_keys(self) -> Tuple[str]:
-        return ("concept_probs",)
-
     def encode(
         self,
         x: torch.Tensor,

@@ -65,10 +65,6 @@ class MixProbEmbPredictor(BasePredictor):
 
         return {"concept_probs": (in_features_summary["concept_probs"],), "concept_embs": (n_concepts, emb_dim_standard)}
 
-    @property
-    def in_keys(self) -> Tuple[str, ...]:
-        return "concept_embs", "concept_probs"
-
     def predict(
         self, x: ConceptTensor, *args, **kwargs
     ) -> ConceptTensor:
@@ -138,14 +134,10 @@ class HyperNetLinearPredictor(BasePredictor):
 
         return {"concept_probs": (in_features_summary["concept_probs"],), "concept_embs": (in_emb_size,)}
 
-    @property
-    def in_keys(self) -> Tuple[str, ...]:
-        return "concept_embs", "concept_probs"
-
     def predict(self, 
                 parent_probs: ConceptTensor, 
-                self_emb: ConceptTensor, 
-                *args, 
+                self_emb: ConceptTensor,
+                *args,
                 **kwargs
     ) -> ConceptTensor:
         """

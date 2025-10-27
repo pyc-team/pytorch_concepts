@@ -39,6 +39,14 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         return out_features
 
     @property
+    def in_keys(self) -> Tuple[str, ...]:
+        return tuple(self.in_shapes.keys())
+
+    @property
+    def out_keys(self) -> Tuple[str, ...]:
+        return tuple(self.out_shapes.keys())
+
+    @property
     @abstractmethod
     def in_shapes(self) -> Dict[str, Tuple[int, ...]]:
         raise NotImplementedError
@@ -46,16 +54,6 @@ class BaseConceptLayer(ABC, torch.nn.Module):
     @property
     @abstractmethod
     def out_shapes(self) -> Dict[str, Tuple[int, ...]]:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def in_keys(self) -> Tuple[str, ...]:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def out_keys(self) -> Tuple[str, ...]:
         raise NotImplementedError
 
     def annotate(
@@ -102,10 +100,6 @@ class BaseEncoder(BaseConceptLayer):
         if self.exogenous:
             return {"concept_embs": (self._in_features["concept_embs"],)}
         return {"residual": (self._in_features,)}
-
-    @property
-    def in_keys(self) -> Tuple[str]:
-        return ("concept_embs",) if self.exogenous else ("residual",)
 
     def forward(
         self,
@@ -199,10 +193,6 @@ class BasePredictor(BaseConceptLayer):
     @property
     def out_shapes(self) -> Dict[str, Tuple[int, ...]]:
         return {"concept_probs": (self.out_probs_dim,)}
-
-    @property
-    def out_keys(self) -> Tuple[str]:
-        return ("concept_probs",)
 
     def forward(
         self,

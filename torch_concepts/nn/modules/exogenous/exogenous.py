@@ -47,10 +47,6 @@ class ExogEncoder(BaseEncoder):
     def out_shapes(self) -> Dict[str, tuple]:
         return {"concept_embs": (self.embedding_size,)}
 
-    @property
-    def out_keys(self) -> Tuple[str]:
-        return ("concept_embs",)
-
     def encode(
         self,
         x: torch.Tensor,
