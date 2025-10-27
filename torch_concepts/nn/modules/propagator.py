@@ -41,7 +41,7 @@ class Propagator(torch.nn.Module):
             )
         elif issubclass(self._module_cls, BasePredictor):
             self.module = self._module_cls(
-                in_concept_features=in_object,
+                in_features=in_object,
                 out_annotations=out_annotations,
                 *self._module_args,
                 **self._module_kwargs

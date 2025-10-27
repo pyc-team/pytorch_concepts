@@ -80,22 +80,22 @@ class BaseModel(torch.nn.Module):
             else:
                 parent_names = self.concept_names
 
-            in_concept_features = []
+            in_features = []
             if self.include_encoders:
-                in_concept_features += [m.out_concept_features for name, m in self.encoders.items() if name in parent_names]
+                in_features += [m.out_features for name, m in self.encoders.items() if name in parent_names]
 
             if self.include_predictors:
                 for name, m in propagators.items():
                     c = None
                     if name in parent_names:
-                        c = m.out_concept_features
+                        c = m.out_features
                     if c is not None:
-                        in_concept_features += [c]
+                        in_features += [c]
 
             # FIXME
             # if self.residual_encoders and :
             #     c
-            propagators[c_name] = layer.build(in_concept_features, output_annotations)
+            propagators[c_name] = layer.build(in_features, output_annotations)
 
         return propagators
 

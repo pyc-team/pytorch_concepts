@@ -26,7 +26,7 @@ def main():
         torch.nn.LeakyReLU(),
     )
     cem_encoder = ProbEmbEncoder(latent_dims, c_annotations, embedding_size)
-    y_predictor = ProbPredictor(cem_encoder.out_concept_features, y_annotations)
+    y_predictor = ProbPredictor(cem_encoder.out_features, y_annotations)
     model = torch.nn.Sequential(encoder, cem_encoder, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)

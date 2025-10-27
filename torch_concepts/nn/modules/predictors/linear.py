@@ -19,43 +19,43 @@ class ProbPredictor(BasePredictor):
 
     def __init__(
         self,
-        in_concept_features: Union[Tuple[Dict[str, int]], Dict[str, int]],
+        in_features: Union[Tuple[Dict[str, int]], Dict[str, int]],
         out_annotations: Annotations,
         activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
         super().__init__(
-            in_concept_features=in_concept_features,
+            in_features=in_features,
             out_annotations=out_annotations,
         )
         self.activation = activation
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
-                self.in_concept_features["concept_probs"],
-                self.out_concept_features["concept_probs"],
+                self.in_features["concept_probs"],
+                self.out_features["concept_probs"],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_probs"]),
+            torch.nn.Unflatten(-1, self.out_shapes["concept_probs"]),
         )
 
     @property
-    def in_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
-        in_concept_features: Tuple[Dict] = self._in_concept_features
-        if isinstance(self._in_concept_features, dict):
-            in_concept_features = (self._in_concept_features,)
+    def in_shapes(self) -> Dict[str, Tuple[int, ...]]:
+        in_features: Tuple[Dict] = self._in_features
+        if isinstance(self._in_features, dict):
+            in_features = (self._in_features,)
 
-        in_concept_features_summary = {"concept_probs": 0}
-        for c in in_concept_features:
+        in_features_summary = {"concept_probs": 0}
+        for c in in_features:
             if "concept_probs" not in c.keys():
                 raise ValueError("Input contracts must contain 'concept_probs' key.")
-            in_concept_features_summary["concept_probs"] += c["concept_probs"]
+            in_features_summary["concept_probs"] += c["concept_probs"]
 
-        return {"concept_probs": (in_concept_features_summary["concept_probs"],)}
+        return {"concept_probs": (in_features_summary["concept_probs"],)}
 
     @property
-    def in_concepts(self) -> Tuple[str, ...]:
+    def in_keys(self) -> Tuple[str, ...]:
         return ("concept_probs",)
 
     def predict(

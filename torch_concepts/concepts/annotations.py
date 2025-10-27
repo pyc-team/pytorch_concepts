@@ -145,6 +145,16 @@ class AxisAnnotation:
             raise IndexError(f"Index {idx} out of range with {len(self.labels)} labels")
         return self.labels[idx]
 
+    def get_total_cardinality(self) -> Optional[int]:
+        """Get total cardinality for nested axis, or None if not nested."""
+        if self.is_nested:
+            if self.cardinalities is not None:
+                return sum(self.cardinalities)
+            else:
+                raise ValueError("Cardinalities are not defined for this nested axis")
+        else:
+            return len(self.labels) 
+        
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert to JSON-serializable dictionary.

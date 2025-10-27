@@ -384,11 +384,12 @@ class AnnotatedTensor(torch.Tensor):
             Annotations object (possibly empty if None provided)
         """
 
-        if not isinstance(annotations, Annotations):
-            raise ValueError(
-                f'Expected annotations to be an Annotations object. '
-                f'Instead, we were given {type(annotations)}.'
-            )
+        # FIXME: replace with type
+        # if not isinstance(annotations, Annotations):
+        #     raise ValueError(
+        #         f'Expected annotations to be an Annotations object. '
+        #         f'Instead, we were given {type(annotations)}.'
+        #     )
 
         # Validate that all annotated axes are within tensor dimensions
         for axis in annotations.annotated_axes:

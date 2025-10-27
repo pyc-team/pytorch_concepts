@@ -20,6 +20,7 @@ class ProbEncoder(BaseEncoder):
         self,
         in_features: int,
         out_annotations: Annotations,
+        exogenous: bool = False,
         activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
@@ -27,25 +28,46 @@ class ProbEncoder(BaseEncoder):
         super().__init__(
             in_features=in_features,
             out_annotations=out_annotations,
+            exogenous=exogenous,
         )
 
         self.activation = activation
-        self.linear = torch.nn.Sequential(
-            torch.nn.Linear(
-                self.in_concept_features["residual"],
-                self.out_concept_features["concept_probs"],
-                *args,
-                **kwargs,
-            ),
-            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_probs"]),
-        )
+
+        in_features = self.in_features
+        if "residual" in in_features:
+            in_features = in_features["residual"]
+        elif "concept_embs" in in_features:
+            in_features = in_features["concept_embs"]
+        else:
+            raise ValueError("Input features must contain either 'residual' or 'concept_embs' key.")
+        
+        if self.exogenous:
+            self.linear = torch.nn.Sequential(
+                torch.nn.Linear(
+                    in_features,
+                    1,
+                    *args,
+                    **kwargs,
+                ),
+                torch.nn.Flatten(),
+            )
+        else:
+            self.linear = torch.nn.Sequential(
+                torch.nn.Linear(
+                    in_features,
+                    self.out_features["concept_probs"],
+                    *args,
+                    **kwargs,
+                ),
+                torch.nn.Unflatten(-1, self.out_shapes["concept_probs"]),
+            )
 
     @property
-    def out_concept_shapes(self) -> Dict[str, tuple]:
+    def out_shapes(self) -> Dict[str, tuple]:
         return {"concept_probs": (self.out_probs_dim,)}
 
     @property
-    def out_concepts(self) -> Tuple[str]:
+    def out_keys(self) -> Tuple[str]:
         return ("concept_probs",)
 
     def encode(

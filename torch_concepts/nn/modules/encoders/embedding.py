@@ -23,6 +23,7 @@ class ProbEmbEncoder(BaseEncoder):
         in_features: int,
         out_annotations: Annotations,
         embedding_size: int,
+        exogenous: bool = False,
         activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
@@ -30,6 +31,7 @@ class ProbEmbEncoder(BaseEncoder):
         super().__init__(
             in_features=in_features,
             out_annotations=out_annotations,
+            exogenous=exogenous,
         )
         self.activation = activation
         self.embedding_size = embedding_size
@@ -39,25 +41,25 @@ class ProbEmbEncoder(BaseEncoder):
 
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
-                self.in_concept_features["residual"],
-                self.out_concept_features["concept_embs"],
+                self.in_features["residual"],
+                self.out_features["concept_embs"],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_concept_shapes["concept_embs"]),
+            torch.nn.Unflatten(-1, self.out_shapes["concept_embs"]),
             torch.nn.LeakyReLU(),
         )
         self.concept_score_bottleneck = torch.nn.Sequential(
-            torch.nn.Linear(self.out_concept_shapes["concept_embs"][1], 1), # FIXME: check for different types of concepts
+            torch.nn.Linear(self.out_shapes["concept_embs"][1], 1), # FIXME: check for different types of concepts
             torch.nn.Flatten(),
         )
 
     @property
-    def out_concept_shapes(self) -> Dict[str, Tuple[int, ...]]:
+    def out_shapes(self) -> Dict[str, Tuple[int, ...]]:
         return {"concept_embs": self.out_concept_emb_shapes, "concept_probs": (self.out_probs_dim,)}
 
     @property
-    def out_concepts(self) -> Tuple[str, ...]:
+    def out_keys(self) -> Tuple[str, ...]:
         return "concept_embs", "concept_probs"
 
     def encode(
