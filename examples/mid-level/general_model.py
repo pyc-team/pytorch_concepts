@@ -20,20 +20,20 @@ def main():
     c = ConceptTensor(annotations, concept_probs)
 
     # FIXME: there is something wrong in the init predictors, we may need to change the predictor propagator into a residual layer
-    model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
-                                                         [0, 0, 1, 0, 0],
-                                                         [0, 0, 0, 1, 0],
-                                                         [0, 0, 0, 0, 1],
-                                                         [0, 0, 0, 0, 0]]).float(),
-                                           annotations)
-    model = GraphModel(model_graph=model_graph,
-                       encoder=Propagator(ProbEmbEncoder, embedding_size=7),
-                       predictor=Propagator(MixProbEmbPredictor),
-                       annotations=annotations,
-                       input_size=x.shape[1])
-    inference_train = KnownGraphInference(model=model)
-    cy_preds = inference_train.query(x)
-    print(cy_preds)
+    # model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
+    #                                                      [0, 0, 1, 0, 0],
+    #                                                      [0, 0, 0, 1, 0],
+    #                                                      [0, 0, 0, 0, 1],
+    #                                                      [0, 0, 0, 0, 0]]).float(),
+    #                                        annotations)
+    # model = GraphModel(model_graph=model_graph,
+    #                    encoder=Propagator(ProbEmbEncoder, embedding_size=7),
+    #                    predictor=Propagator(MixProbEmbPredictor),
+    #                    annotations=annotations,
+    #                    input_size=x.shape[1])
+    # inference_train = KnownGraphInference(model=model)
+    # cy_preds = inference_train.query(x)
+    # print(cy_preds)
 
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
                               encoder=Propagator(ProbEmbEncoder, embedding_size=7),

@@ -33,7 +33,7 @@ class MixProbEmbPredictor(BasePredictor):
         self.activation = activation
         in_concept_features = self.in_concept_features
 
-        self._internal_emb_size = np.prod(self.in_concept_shapes["concept_embs"]).item() // 2  #FIXME: when nested
+        self._internal_emb_size = np.prod(self.in_concept_shapes["concept_embs"]).item()  #FIXME: when nested
         self.linear = torch.nn.Sequential(
             torch.nn.Linear(
                 self._internal_emb_size,
@@ -58,9 +58,12 @@ class MixProbEmbPredictor(BasePredictor):
             in_concept_features_summary["concept_probs"] += c["concept_probs"]
             n_concepts += c["concept_probs"]
 
-        emb_dim = in_concept_features[0]["concept_embs"]//2 # FIXME: assuming all have same emb size + denominator when nested
+        # FIXME: assuming all have same emb size
+        emb_dim_standard = in_concept_features[0]["concept_embs"] // in_concept_features[0]["concept_probs"]
+        n_states = 2  # FIXME: hardcoded for now
+        emb_dim_standard = emb_dim_standard // n_states
 
-        return {"concept_probs": (in_concept_features_summary["concept_probs"],), "concept_embs": (n_concepts, emb_dim)}
+        return {"concept_probs": (in_concept_features_summary["concept_probs"],), "concept_embs": (n_concepts, emb_dim_standard)}
 
     @property
     def in_concepts(self) -> Tuple[str, ...]:
