@@ -77,6 +77,8 @@ def _merge_payload(name: str,
     return out, U_mask
 
 
+
+
 class ConceptTensor(torch.Tensor):
     """
     Tensor subclass with multiple concept-related payloads
@@ -85,10 +87,10 @@ class ConceptTensor(torch.Tensor):
 
     def __new__(
         cls,
-        annotations: Annotations,
+        annotations,
         concept_probs: Optional[torch.Tensor] = None,
         concept_embs: Optional[torch.Tensor] = None,
-        residual: Optional[torch.Tensor] = None
+        residual: Optional[torch.Tensor] = None,
     ):
         base = None
         if concept_embs is not None:
@@ -106,11 +108,13 @@ class ConceptTensor(torch.Tensor):
             )
         return obj
 
-    def __init__(self,
-                 annotations: Annotations,
-                 concept_probs: Optional[torch.Tensor] = None,
-                 concept_embs: Optional[torch.Tensor] = None,
-                 residual: Optional[torch.Tensor] = None):
+    def __init__(
+        self,
+        annotations,
+        concept_probs: Optional[torch.Tensor] = None,
+        concept_embs: Optional[torch.Tensor] = None,
+        residual: Optional[torch.Tensor] = None,
+    ):
         super().__init__()
         self.annotations = annotations
         self.concept_embs = concept_embs
@@ -128,28 +132,53 @@ class ConceptTensor(torch.Tensor):
             if t.ndim < min_ndim:
                 raise ValueError(f"Payload '{name}' must have at least {min_ndim} dims")
             if t.shape[1] != C:
-                raise ValueError(f"Payload '{name}' columns ({t.size(1)}) must equal |annotations| ({C})")
+                raise ValueError(
+                    f"Payload '{name}' columns ({t.size(1)}) must equal |annotations| ({C})"
+                )
 
         _check("concept_embs", concept_embs, 3)
         _check("concept_probs", concept_probs, 2)
         _check("residual", residual, 2)
 
-        # automatically create presence masks
-        self._mask = {}
+        # Create presence masks on the active device
+        base = (
+            concept_embs
+            if concept_embs is not None
+            else concept_probs
+            if concept_probs is not None
+            else residual
+        )
+        base_device = base.device if base is not None else torch.device("cpu")
+
+        self._mask: Dict[str, torch.Tensor] = {}
         for name, payload in {
             "concept_embs": concept_embs,
             "concept_probs": concept_probs,
             "residual": residual,
         }.items():
-            if payload is not None:
-                device = payload.device
-            else:
-                device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self._mask[name] = torch.ones(C, dtype=torch.bool, device=device) if payload is not None else \
-                torch.zeros(C, dtype=torch.bool, device=device)
+            self._mask[name] = torch.ones(C, dtype=torch.bool, device=base_device) if payload is not None else \
+                               torch.zeros(C, dtype=torch.bool, device=base_device)
+
+        # Ensure masks track the ConceptTensor device thereafter
+        self._sync_mask_device_()
+
+    # ---------- mask/device helpers ----------
+    def _current_device(self) -> torch.device:
+        try:
+            return self.tensor.device
+        except RuntimeError:
+            return torch.device("cpu")
+
+    def _sync_mask_device_(self, device: Optional[torch.device] = None):
+        if device is None:
+            device = self._current_device()
+        for k, m in self._mask.items():
+            if m is not None and m.device != device:
+                self._mask[k] = m.to(device, non_blocking=True)
 
     def mask(self, name: str) -> torch.Tensor:
-        """Return boolean presence mask for payload."""
+        """Return boolean presence mask for payload (always on the same device as the active payload)."""
+        self._sync_mask_device_()
         return self._mask[name]
 
     # ---------- priority selection ----------
@@ -165,7 +194,7 @@ class ConceptTensor(torch.Tensor):
         t, _ = self._select_tensor()
         return t
 
-    # ---------- unwrap helper ----------
+    # ---------- unwrap helpers ----------
     @staticmethod
     def _materialise_if_nested(inner):
         if hasattr(inner, "is_nested") and getattr(inner, "is_nested"):
@@ -206,50 +235,79 @@ class ConceptTensor(torch.Tensor):
             fn = getattr(x, method, None)
             return fn(*args, **kwargs) if callable(fn) else x
 
-        return ConceptTensor(
+        out = ConceptTensor(
+            annotations=self.annotations,
             concept_probs=maybe_apply(self.concept_probs),
             concept_embs=maybe_apply(self.concept_embs),
             residual=maybe_apply(self.residual),
         )
+        # Copy masks; keep them in sync with the new active device
+        out._mask = {k: v.clone() for k, v in self._mask.items()}
+        out._sync_mask_device_()
+        return out
 
     def to(self, all: bool = False, *args, **kwargs):
         if all:
-            return self._apply_to_all("to", *args, **kwargs)
+            out = self._apply_to_all("to", *args, **kwargs)
+            out._sync_mask_device_()
+            return out
+
         t, name = self._select_tensor()
         moved = getattr(t, "to", lambda *a, **k: t)(*args, **kwargs)
-        return ConceptTensor(
+        out = ConceptTensor(
+            annotations=self.annotations,
             concept_probs=moved if name == "concept_probs" else self.concept_probs,
             concept_embs=moved if name == "concept_embs" else self.concept_embs,
             residual=moved if name == "residual" else self.residual,
         )
+        out._mask = {k: v.clone() for k, v in self._mask.items()}
+        out._sync_mask_device_()
+        return out
 
-    def cpu(self, all=False):
+    def cpu(self, all: bool = False):
         return self.to(all=all, device="cpu")
 
-    def cuda(self, all=False):
+    def cuda(self, all: bool = False):
         return self.to(all=all, device="cuda")
 
-    def detach(self, all=False):
+    def detach(self, all: bool = False):
         if all:
-            return self._apply_to_all("detach")
+            out = self._apply_to_all("detach")
+            # Masks are tensors; share or clone as you prefer. Keep devices in sync.
+            out._mask = {k: v for k, v in self._mask.items()}
+            out._sync_mask_device_()
+            return out
+
         t, name = self._select_tensor()
         det = getattr(t, "detach", lambda: t)()
-        return ConceptTensor(
+        out = ConceptTensor(
+            annotations=self.annotations,
             concept_probs=det if name == "concept_probs" else self.concept_probs,
             concept_embs=det if name == "concept_embs" else self.concept_embs,
             residual=det if name == "residual" else self.residual,
         )
+        out._mask = {k: v for k, v in self._mask.items()}
+        out._sync_mask_device_()
+        return out
 
-    def clone(self, all=False):
+    def clone(self, all: bool = False):
         if all:
-            return self._apply_to_all("clone")
+            out = self._apply_to_all("clone")
+            out._mask = {k: v.clone() for k, v in self._mask.items()}
+            out._sync_mask_device_()
+            return out
+
         t, name = self._select_tensor()
         cl = getattr(t, "clone", lambda: t)()
-        return ConceptTensor(
+        out = ConceptTensor(
+            annotations=self.annotations,
             concept_probs=cl if name == "concept_probs" else self.concept_probs,
             concept_embs=cl if name == "concept_embs" else self.concept_embs,
             residual=cl if name == "residual" else self.residual,
         )
+        out._mask = {k: v.clone() for k, v in self._mask.items()}
+        out._sync_mask_device_()
+        return out
 
     # ---------- nice printing ----------
     def __repr__(self):
@@ -267,25 +325,32 @@ class ConceptTensor(torch.Tensor):
         )
 
     def join(self, other: "ConceptTensor") -> "ConceptTensor":
+        # Assumes _merge_payload is defined elsewhere in your codebase.
         new_ann = self.annotations.join_union(other.annotations, axis=1)
         union_labels = new_ann.get_axis_labels(1)
         left_labels = self.annotations.get_axis_labels(1)
         right_labels = other.annotations.get_axis_labels(1)
 
-        new_embs, embs_mask = _merge_payload("concept_embs",
-                                             self.concept_embs, self._mask["concept_embs"],
-                                             other.concept_embs, other._mask["concept_embs"],
-                                             left_labels, right_labels, union_labels)
+        new_embs, embs_mask = _merge_payload(
+            "concept_embs",
+            self.concept_embs, self._mask["concept_embs"],
+            other.concept_embs, other._mask["concept_embs"],
+            left_labels, right_labels, union_labels
+        )
 
-        new_probs, probs_mask = _merge_payload("concept_probs",
-                                               self.concept_probs, self._mask["concept_probs"],
-                                               other.concept_probs, other._mask["concept_probs"],
-                                               left_labels, right_labels, union_labels)
+        new_probs, probs_mask = _merge_payload(
+            "concept_probs",
+            self.concept_probs, self._mask["concept_probs"],
+            other.concept_probs, other._mask["concept_probs"],
+            left_labels, right_labels, union_labels
+        )
 
-        new_resid, resid_mask = _merge_payload("residual",
-                                               self.residual, self._mask["residual"],
-                                               other.residual, other._mask["residual"],
-                                               left_labels, right_labels, union_labels)
+        new_resid, resid_mask = _merge_payload(
+            "residual",
+            self.residual, self._mask["residual"],
+            other.residual, other._mask["residual"],
+            left_labels, right_labels, union_labels
+        )
 
         out = ConceptTensor(new_ann, new_probs, new_embs, new_resid)
         out._mask = {
@@ -293,15 +358,20 @@ class ConceptTensor(torch.Tensor):
             "concept_probs": probs_mask,
             "residual": resid_mask,
         }
+        out._sync_mask_device_()
         return out
 
     def extract_by_annotation(self, labels: Sequence[str]) -> "ConceptTensor":
         labels = tuple(labels)
         new_ann = self.annotations.select(axis=1, keep_labels=labels)
         pos = {l: i for i, l in enumerate(self.annotations.get_axis_labels(1))}
-        idx = torch.tensor([pos[l] for l in labels],
-                           device=next((t.device for t in [self.concept_embs, self.concept_probs, self.residual] if
-                                        t is not None), 'cpu'))
+        idx = torch.tensor(
+            [pos[l] for l in labels],
+            device=next(
+                (t.device for t in [self.concept_embs, self.concept_probs, self.residual] if t is not None),
+                torch.device("cpu"),
+            ),
+        )
 
         def _slice(T):
             return None if T is None else T.index_select(1, idx)
@@ -320,4 +390,5 @@ class ConceptTensor(torch.Tensor):
             "concept_probs": _slice_mask(self._mask["concept_probs"]),
             "residual": _slice_mask(self._mask["residual"]),
         }
+        out._sync_mask_device_()
         return out
