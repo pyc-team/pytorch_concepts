@@ -1,5 +1,6 @@
 import torch
 
+from ...concepts.annotations import Annotations
 from ...nn.base.layer import BaseEncoder, BasePredictor
 
 
@@ -21,7 +22,7 @@ class Propagator(torch.nn.Module):
 
     def build(self,
               in_object,
-              out_annotations: 'Annotations',  # Assuming Annotations is a defined type
+              out_annotations: Annotations,  # Assuming Annotations is a defined type
               ) -> torch.nn.Module:
         """
         Constructor method to instantiate the underlying module with required arguments.

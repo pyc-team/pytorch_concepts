@@ -19,8 +19,6 @@ class ProbPredictor(BasePredictor):
 
     def __init__(
         self,
-        in_features_global: int,
-        in_features_exogenous: int,
         in_features_logits: int,
         out_annotations: Annotations,
         in_activation: Callable = torch.sigmoid,
@@ -28,13 +26,11 @@ class ProbPredictor(BasePredictor):
         **kwargs,
     ):
         super().__init__(
-            in_features_global=in_features_global,
-            in_features_exogenous=in_features_exogenous,
             in_features_logits=in_features_logits,
             out_annotations=out_annotations,
+            in_activation=in_activation,
         )
-        self.in_activation = in_activation # FIXME: this is the input activation, not the output!
-        self.logit_layer = torch.nn.Sequential(
+        self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
                 in_features_logits,
                 self.out_annotations.shape[1],
@@ -46,12 +42,12 @@ class ProbPredictor(BasePredictor):
 
     def forward(
         self,
-        logits: torch.Tensor,
-        x: torch.Tensor=None,
-        exogenous: torch.Tensor=None,
+        logits: torch.Tensor = None,
+        embedding: torch.Tensor = None,
+        exogenous: torch.Tensor = None,
         *args,
         **kwargs,
-    ) -> ConceptTensor:
+    ) -> torch.Tensor:
         in_probs = self.in_activation(logits)
-        probs = self.logit_layer(in_probs)
+        probs = self.predictor(in_probs)
         return probs

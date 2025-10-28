@@ -1,4 +1,4 @@
-from typing import Union, Dict, Tuple
+from typing import Union, Dict, Tuple, Callable
 
 import numpy as np
 import torch
@@ -15,14 +15,30 @@ class BaseConceptLayer(ABC, torch.nn.Module):
     def __init__(
         self,
         out_annotations: Annotations,
+        in_features_logits: int = None,
+        in_features_embedding: int = None,
+        in_features_exogenous: int = None,
         *args,
         **kwargs,
     ):
         super().__init__()
         self.out_annotations = out_annotations
+        self.in_features_logits = in_features_logits
+        self.in_features_embedding = in_features_embedding
+        self.in_features_exogenous = in_features_exogenous
 
         self.concept_axis = 1
         self.out_probs_dim = out_annotations.shape[1]
+
+    def forward(
+        self,
+        logits: torch.Tensor = None,
+        embedding: torch.Tensor = None,
+        exogenous: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        raise NotImplementedError
 
     def annotate(
             self,
@@ -48,28 +64,21 @@ class BaseEncoder(BaseConceptLayer):
     BaseConceptLayer is an abstract base class for concept encoder layers.
     The output objects are ConceptTensors.
     """
-    def __init__(self, 
-                 in_features_global: int,
-                 in_features_exogenous: int,
+    def __init__(self,
                  out_annotations: Annotations,
+                 in_features_embedding: int = None,
+                 in_features_exogenous: int = None,
                  *args, 
                  **kwargs):
         super().__init__(
+            in_features_logits=None,
+            in_features_embedding=in_features_embedding,
+            in_features_exogenous=in_features_exogenous,
             out_annotations=out_annotations,
             *args,
             **kwargs,
         )
-        self.in_features_global = in_features_global
-        self.in_features_exogenous = in_features_exogenous
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        exogenous: torch.Tensor,
-        *args,
-        **kwargs,
-    ) -> ConceptTensor:
-        raise NotImplementedError
 
 class BasePredictor(BaseConceptLayer):
     """
@@ -77,27 +86,19 @@ class BasePredictor(BaseConceptLayer):
     The input objects are ConceptTensors and the output objects are ConceptTensors with concept probabilities only.
     """
     def __init__(self,
-                 in_features_logits: int,
                  out_annotations: Annotations,
-                 in_features_global: int = None,
+                 in_features_logits: int,
+                 in_features_embedding: int = None,
                  in_features_exogenous: int = None,
+                 in_activation: Callable = torch.sigmoid,
                  *args, 
                  **kwargs):
         super().__init__(
+            in_features_logits=in_features_logits,
+            in_features_embedding=in_features_embedding,
+            in_features_exogenous=in_features_exogenous,
             out_annotations=out_annotations,
             *args,
             **kwargs,
         )
-        self.in_features_global = in_features_global
-        self.in_features_exogenous = in_features_exogenous
-        self.in_features_logits = in_features_logits
-
-    def forward(
-        self,
-        logits: torch.Tensor,
-        x: torch.Tensor = None,
-        exogenous: torch.Tensor = None,
-        *args,
-        **kwargs,
-    ) -> ConceptTensor:
-        raise NotImplementedError
+        self.in_activation = in_activation

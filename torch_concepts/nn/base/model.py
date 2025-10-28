@@ -4,7 +4,6 @@ import torch
 from torch_concepts import AnnotatedAdjacencyMatrix, Annotations, nn
 from typing import Union, List
 
-from ..modules.encoders.embedding import ProbEmbEncoder
 from ..modules.propagator import Propagator
 from .graph import BaseGraphLearner
 

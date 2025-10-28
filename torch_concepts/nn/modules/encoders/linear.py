@@ -5,7 +5,7 @@ from ...base.layer import BaseEncoder
 from typing import List, Callable, Union, Dict, Tuple
 
 
-class ProbEncoder(BaseEncoder):
+class ProbEncoderFromEmb(BaseEncoder):
     """
     ConceptLayer creates a bottleneck of supervised concepts.
     Main reference: `"Concept Layer
@@ -18,30 +18,18 @@ class ProbEncoder(BaseEncoder):
     """
     def __init__(
         self,
-        in_features_global: int,
-        in_features_exogenous: int,
+        in_features_embedding: int,
         out_annotations: Annotations,
         *args,
         **kwargs,
     ):
         super().__init__(
-            in_features_global=in_features_global,
-            in_features_exogenous=in_features_exogenous,
+            in_features_embedding=in_features_embedding,
             out_annotations=out_annotations,
         )
-
-        self.exogenous_layer = torch.nn.Sequential(
+        self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_exogenous,
-                1,
-                *args,
-                **kwargs,
-            ),
-            torch.nn.Flatten(),
-        )
-        self.global_layer = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features_global,
+                in_features_embedding,
                 self.out_annotations.shape[1],
                 *args,
                 **kwargs,
@@ -51,26 +39,53 @@ class ProbEncoder(BaseEncoder):
 
     def forward(
         self,
-        x: torch.Tensor = None,
+        logits: torch.Tensor = None,
+        embedding: torch.Tensor = None,
         exogenous: torch.Tensor = None,
         *args,
         **kwargs,
-    ) -> ConceptTensor:
-        """
-        Encode concept scores.
+    ) -> torch.Tensor:
+        return self.encoder(embedding)
 
-        Args:
-            x (torch.Tensor): Input tensor.
 
-        Returns:
-            ConceptTensor: Encoded concept scores.
-        """
-        if exogenous is not None:
-            logits = self.exogenous_layer(exogenous)
-        elif x is not None:
-            logits = self.global_layer(x)
-        else:
-            # raise error explaining
-            raise RuntimeError()
+class ProbEncoderFromExog(BaseEncoder):
+    """
+    ConceptLayer creates a bottleneck of supervised concepts.
+    Main reference: `"Concept Layer
+    Models" <https://arxiv.org/pdf/2007.04612>`_
 
-        return logits
+    Attributes:
+        in_features (int): Number of input features.
+        annotations (Union[List[str], int]): Concept dimensions.
+        activation (Callable): Activation function of concept scores.
+    """
+    def __init__(
+        self,
+        in_features_exogenous: int,
+        out_annotations: Annotations,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(
+            in_features_exogenous=in_features_exogenous,
+            out_annotations=out_annotations,
+        )
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(
+                in_features_exogenous,
+                1,
+                *args,
+                **kwargs,
+            ),
+            torch.nn.Flatten(),
+        )
+
+    def forward(
+        self,
+        logits: torch.Tensor = None,
+        embedding: torch.Tensor = None,
+        exogenous: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        return self.encoder(exogenous)
