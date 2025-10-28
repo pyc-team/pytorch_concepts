@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import List
 
 import torch
 from torch import nn
@@ -18,18 +19,39 @@ class GraphModel(BaseModel):
                  encoder: Propagator,
                  predictor: Propagator,
                  model_graph: AnnotatedAdjacencyMatrix,
+                 exogenous: Propagator = None
                  ):
         super(GraphModel, self).__init__(
             input_size=input_size,
             annotations=annotations,
             encoder=encoder,
             predictor=predictor,
-            model_graph=model_graph,
-            include_encoders=True,
-            include_predictors=True,
+            model_graph=model_graph
         )
 
+        self.has_exogenous = exogenous is not None
 
+        assert model_graph.is_directed_acyclic(), "Input model graph must be a directed acyclic graph."
+        assert model_graph.annotations.get_axis_labels(axis=1) == self.concept_names, "concept_names must match model_graph annotations."
+        self.root_nodes = [r for r in model_graph.get_root_nodes()]
+        self.graph_order = model_graph.topological_sort()  # TODO: group by graph levels?
+        self.internal_nodes = [c for c in self.graph_order if c not in self.root_nodes] 
+
+        if self.has_exogenous:
+            self.exogenous_roots, out_features_exog_roots = self._init_encoder(exogenous, input_size, concept_names=self.root_nodes)
+            self.exogenous_internal, out_features_exog_internal = self._init_encoder(exogenous, input_size, concept_names=self.internal_nodes)
+            self.encoder, out_features_roots = self._init_encoder(encoder, out_features_exog_roots[self.root_nodes[0]], concept_names=self.root_nodes) # FIXME: two different encoders. with and without exogenous
+        else:
+            self.exogenous_roots = None
+            self.exogenous_internal = None
+            out_features_exog_internal = {}
+            self.encoder, out_features_roots = self._init_encoder(encoder, input_size, concept_names=self.root_nodes)
+        self.predictors = self._init_predictors(predictor, 
+                                                concept_names=self.internal_nodes, 
+                                                out_features_roots=out_features_roots,
+                                                out_features_exog_internal=out_features_exog_internal)
+        
+    
 class LearnedGraphModel(BaseModel):
     """
     Model using a graph structure between concepts and tasks.
@@ -41,17 +63,37 @@ class LearnedGraphModel(BaseModel):
                  encoder: Propagator,
                  predictor: Propagator,
                  model_graph: BaseGraphLearner,
+                 exogenous: Propagator = None
                  ):
         super(LearnedGraphModel, self).__init__(
             input_size=input_size,
             annotations=annotations,
             encoder=encoder,
             predictor=predictor,
-            model_graph=model_graph,  # learned graph
-            include_encoders=True,
-            include_predictors=False,
+            model_graph=model_graph  # learned graph
         )
 
+        self.has_exogenous = exogenous is not None
+
+        # if model_graph is None, create a fully connected graph, and sparsify this during training
+        self.root_nodes = self.concept_names  # all concepts are roots in a fully connected graph
+        self.graph_order = None
+        self.graph_learner = model_graph(annotations=annotations)
+
+
+        if self.has_exogenous:
+            self.exogenous, out_features_exog_2nd = self._init_encoder(exogenous, input_size, concept_names=self.concept_names)
+            self.encoder, out_features_1st = self._init_encoder(encoder, out_features_exog_2nd[self.root_nodes[0]], concept_names=self.concept_names) # FIXME: two different encoders. with and without exogenous
+        else:
+            self.exogenous = None
+            out_features_exog_2nd = {}
+            self.encoder, out_features_1st = self._init_encoder(encoder, input_size, concept_names=self.concept_names)
+        self.predictors = self._init_predictors(predictor, 
+                                                concept_names=self.concept_names, 
+                                                out_features_roots=out_features_1st,
+                                                out_features_exog_internal=out_features_exog_2nd,
+                                                parent_names=self.concept_names)
+            
     def get_model_known_graph(self) -> GraphModel:
         """
         Convert this LearnedGraphModel into a GraphModel with a fixed, materialised graph.

@@ -65,6 +65,11 @@ class MixProbEmbPredictor(BasePredictor):
 
         return {"concept_probs": (in_features_summary["concept_probs"],), "concept_embs": (n_concepts, emb_dim_standard)}
 
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({"scorer": self.linear})
+
+
     def predict(
         self, x: ConceptTensor, *args, **kwargs
     ) -> ConceptTensor:

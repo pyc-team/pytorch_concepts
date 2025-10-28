@@ -46,6 +46,10 @@ class ExogEncoder(BaseEncoder):
     @property
     def out_shapes(self) -> Dict[str, tuple]:
         return {"concept_embs": (self.embedding_size,)}
+    
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({})
 
     def encode(
         self,

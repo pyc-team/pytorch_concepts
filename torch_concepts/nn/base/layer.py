@@ -183,7 +183,11 @@ class BasePredictor(BaseConceptLayer):
     BasePredictor is an abstract base class for concept predictor layers.
     The input objects are ConceptTensors and the output objects are ConceptTensors with concept probabilities only.
     """
-    def __init__(self, in_features: Union[Tuple[Dict[str, int]], Dict[str, int]], out_annotations: Annotations, *args, **kwargs):
+    def __init__(self, 
+                 in_features: Union[Tuple[Dict[str, int]], Dict[str, int]], 
+                 out_annotations: Annotations, 
+                 *args, 
+                 **kwargs):
         super().__init__(
             out_annotations=out_annotations,
             *args,

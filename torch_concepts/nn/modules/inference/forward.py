@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from torch_concepts import AnnotatedTensor, ConceptTensor, Annotations, AnnotatedAdjacencyMatrix
-from typing import Union, Optional, Tuple, Mapping
+from typing import List, Union, Optional, Tuple, Mapping
 
 from ... import GraphModel
 from ...base.inference import BaseInference
@@ -17,17 +17,29 @@ class KnownGraphInference(BaseInference):
         self.train_mode = 'joint'
 
     def query(self, x: torch.Tensor, *args, **kwargs) -> ConceptTensor:
-        c_all = ConceptTensor(self.model.annotations)
-        for c_name in self.model.graph_order:
-            if c_name in self.model.roots:
-                input_obj = x
-                propagator = self.model.encoders[c_name]
-            else:
-                parents = list(self.model.model_graph.get_predecessors(c_name))
-                propagator = self.model.predictors[c_name]
-                input_obj = c_all.extract_by_annotation(parents)
+        # get exogenous
+        if self.model.has_exogenous:
+            c_exog_roots = self.model.exogenous_roots(x)
+            c_exog_internal = self.model.exogenous_internal(x)
+        
+        # get roots
+        if self.model.has_exogenous:
+            input_obj = c_exog_roots.extract_by_annotation(self.model.root_nodes)
+        else:
+            input_obj = x
+        c_all = self.model.encoder(input_obj)
 
-            c_out = propagator(input_obj)
+        for c_name in self.model.internal_nodes:
+            propagator = self.model.predictors[c_name]
+            parents = list(self.model.model_graph.get_predecessors(c_name))
+            input_obj = c_all.extract_by_annotation(parents)
+
+            if self.model.has_exogenous:
+                exog = c_exog_internal.extract_by_annotation([c_name])
+                c_out = propagator(input_obj, exog)
+            else:
+                c_out = propagator(input_obj)
+
             c_all = c_all.join(c_out)
         return c_all
 
@@ -41,28 +53,41 @@ class UnknownGraphInference(BaseInference):
         broadcast_shape = [1] * len(c.size())
         broadcast_shape[1] = c.size(1)
         mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape)  # FIXME: get_by_nodes does not work!
-        return c * mask
+        return c * mask.data
 
-    def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> [ConceptTensor, ConceptTensor]:
-        c_encoder = ConceptTensor(self.model.annotations)
-
-        # --- from embeddings to concepts
-        for c_name in self.model.roots:
-            c_out = self.model.encoders[c_name](x)
-            c_encoder = c_encoder.join(c_out)
+    def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> List[ConceptTensor]:
+        # --- maybe from embeddings to exogenous
+        if self.model.has_exogenous:
+            c_exog = self.model.exogenous(x)
+        
+        #  get roots
+        if self.model.has_exogenous:
+            input_obj = c_exog.extract_by_annotation(self.model.root_nodes)
+        else:
+            input_obj = x
+        c_encoder = self.model.encoder(input_obj)
 
         # --- from concepts to concepts copy
         model_graph = self.model.graph_learner()
         c_predictor = ConceptTensor(self.model.annotations)
+
         for c_name in self.model.annotations.get_axis_labels(axis=1):
+            propagator = self.model.predictors[c_name]
             # Mask the input concept object to get only parent concepts
             c_encoder_masked = self.mask_concept_tensor(c_encoder, model_graph, c_name)
             c_masked = self.mask_concept_tensor(c, model_graph, c_name)
-            input_obj = ConceptTensor(self.model.annotations, concept_embs=c_encoder_masked, concept_probs=c_masked)
+            if c_encoder.concept_embs is None:
+                input_obj = ConceptTensor(self.model.annotations, concept_probs=c_masked)
+            else:
+                input_obj = ConceptTensor(self.model.annotations, concept_embs=c_encoder_masked, concept_probs=c_masked)
 
-            c_out = self.model.predictors[c_name](input_obj)
+            if self.model.has_exogenous:
+                exog = c_exog.extract_by_annotation([c_name])
+                c_out = propagator(input_obj, exog)
+            else:
+                c_out = propagator(input_obj)
+
             c_predictor = c_predictor.join(c_out)
-
         return c_encoder, c_predictor
 
     def get_model_known_graph(self) -> GraphModel:

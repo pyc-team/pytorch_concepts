@@ -19,14 +19,14 @@ def main():
 
     c = ConceptTensor(annotations, concept_probs)
 
-    # # FIXME: there is something wrong in the init predictors, we may need to change the predictor propagator into a residual layer
-    # model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
-    #                                                      [0, 0, 1, 0, 0],
-    #                                                      [0, 0, 0, 1, 0],
-    #                                                      [0, 0, 0, 0, 1],
-    #                                                      [0, 0, 0, 0, 0]]).float(),
-    #                                        annotations)
-    # # C2BM. FIXME: check layers are initialized correctly inside the model
+    # FIXME: there is something wrong in the init predictors, we may need to change the predictor propagator into a residual layer
+    model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
+                                                         [0, 0, 1, 0, 0],
+                                                         [0, 0, 0, 1, 0],
+                                                         [0, 0, 0, 0, 1],
+                                                         [0, 0, 0, 0, 0]]).float(),
+                                           annotations)
+    # C2BM. FIXME: check layers are initialized correctly inside the model
     # model = GraphModel(model_graph=model_graph,
     #                    exogenous=Propagator(ExogEncoder, embedding_size=7),
     #                    encoder=Propagator(ProbEncoder, exogenous=True),
@@ -36,8 +36,26 @@ def main():
     # inference_train = KnownGraphInference(model=model)
     # cy_preds = inference_train.query(x)
     # print(cy_preds)
+    # model = GraphModel(model_graph=model_graph,
+    #                    encoder=Propagator(ProbEncoder),
+    #                    predictor=Propagator(ProbPredictor),
+    #                    annotations=annotations,
+    #                    input_size=x.shape[1])
+    # inference_train = KnownGraphInference(model=model)
+    # cy_preds = inference_train.query(x)
+    # print(cy_preds)
 
     # CGM
+    model = LearnedGraphModel(model_graph=COSMOGraphLearner,
+                              exogenous=Propagator(ExogEncoder, embedding_size=7),
+                              encoder=Propagator(ProbEncoder, exogenous=True),
+                              predictor=Propagator(HyperNetLinearPredictor),
+                              annotations=annotations,
+                              input_size=x.shape[1])
+    inference_train = UnknownGraphInference(model=model)
+    c_encoder, c_predictor = inference_train.query(x, c)
+    print(c_encoder)
+    print(c_predictor)
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
                               encoder=Propagator(ProbEmbEncoder, embedding_size=7),
                               predictor=Propagator(MixProbEmbPredictor),
@@ -58,6 +76,14 @@ def main():
     cy_pred = inference_test.query(x)
 
     # CBM
+    model = BipartiteModel(task_names=['c', 'e'],
+                           exogenous=Propagator(ExogEncoder, embedding_size=7),
+                           encoder=Propagator(ProbEncoder, exogenous=True),
+                           predictor=Propagator(HyperNetLinearPredictor),
+                           annotations=annotations,
+                           input_size=x.shape[1])
+    inference_test = KnownGraphInference(model=model)
+    cy_pred = inference_test.query(x)
     model = BipartiteModel(task_names=['c', 'e'],
                            encoder=Propagator(ProbEncoder),
                            predictor=Propagator(ProbPredictor),

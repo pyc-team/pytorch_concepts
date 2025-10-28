@@ -4,20 +4,21 @@ import torch
 import pandas as pd
 
 from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
-from torch_concepts.nn import BaseModel, Propagator
+from .graph import GraphModel
+from ....nn import Propagator
 
-
-class BipartiteModel(BaseModel):
+class BipartiteModel(GraphModel):
     """
     Model using a bipartite graph structure between concepts and tasks.
     Assuming independent concepts and tasks.
     """
     def __init__(self,
                  task_names: list[str],
+                 input_size: int,
+                 annotations: Annotations,
                  encoder: Propagator,
                  predictor: Propagator,
-                 input_size: int,
-                 annotations: Annotations
+                 exogenous: Propagator = None
                  ):
 
         # create bipartite graph from concepts and tasks
@@ -34,6 +35,5 @@ class BipartiteModel(BaseModel):
             encoder=encoder,
             predictor=predictor,
             model_graph=bipartite_graph,
-            include_encoders=True,
-            include_predictors=False,
+            exogenous=exogenous
         )
