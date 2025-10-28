@@ -54,6 +54,10 @@ class ProbPredictor(BasePredictor):
 
         return {"concept_probs": (in_features_summary["concept_probs"],)}
 
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({"scorer": self.linear})
+
     def predict(
         self,
         x: Union[torch.Tensor, ConceptTensor],

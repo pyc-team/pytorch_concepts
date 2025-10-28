@@ -134,6 +134,10 @@ class HyperNetLinearPredictor(BasePredictor):
 
         return {"concept_probs": (in_features_summary["concept_probs"],), "concept_embs": (in_emb_size,)}
 
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({"hypernet": self.hypernet})
+
     def predict(self, 
                 parent_probs: ConceptTensor, 
                 self_emb: ConceptTensor,

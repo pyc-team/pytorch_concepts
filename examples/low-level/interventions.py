@@ -62,28 +62,25 @@ def main():
 
 
     print(c_pred[:5])
-    with intervene_in_dict(model, {
-        "encoder_layer": ConstantTensorIntervention(model, torch.zeros_like(c_train))("encoder_layer"),
-    }):
+    const_iv = ConstantTensorIntervention(model, torch.zeros_like(c_train))
+    with intervene_in_dict(model, const_iv(["encoder_layer.scorer"])):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
-        # y_pred = model["y_predictor"](c_pred)
+        y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
 
-    with intervene_in_dict(model, {
-        "encoder_layer": ConstantLikeIntervention(model, fill=11.0)("encoder_layer"),
-    }):
+    const_iv2 = ConstantLikeIntervention(model, fill=.5)
+    with intervene_in_dict(model, const_iv2(["encoder_layer.scorer"])):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](c_train)
-        # y_pred = model["y_predictor"](c_pred)
+        y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
 
-    with intervene_in_dict(model, {
-        "encoder_layer": DistributionIntervention(model, Normal(0.0, 1.0))("encoder_layer"),
-    }):
+    noise_iv = DistributionIntervention(model, Normal(0.0, 1.0))
+    with intervene_in_dict(model, noise_iv(["encoder_layer.scorer"])):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](c_train)
-        # y_pred = model["y_predictor"](c_pred)
+        y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
 
     return

@@ -56,6 +56,11 @@ class BaseConceptLayer(ABC, torch.nn.Module):
     def out_shapes(self) -> Dict[str, Tuple[int, ...]]:
         raise NotImplementedError
 
+    @property
+    @abstractmethod
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        raise NotImplementedError
+
     def annotate(
             self,
             x: torch.Tensor,

@@ -66,6 +66,10 @@ class ProbEncoder(BaseEncoder):
     def out_shapes(self) -> Dict[str, tuple]:
         return {"concept_probs": (self.out_probs_dim,)}
 
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({"scorer": self.linear})
+
     def encode(
         self,
         x: torch.Tensor,

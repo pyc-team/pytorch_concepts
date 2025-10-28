@@ -58,6 +58,10 @@ class ProbEmbEncoder(BaseEncoder):
     def out_shapes(self) -> Dict[str, Tuple[int, ...]]:
         return {"concept_embs": self.out_concept_emb_shapes, "concept_probs": (self.out_probs_dim,)}
 
+    @property
+    def intervenable_modules(self) -> torch.nn.ModuleDict:
+        return torch.nn.ModuleDict({"scorer": self.concept_score_bottleneck})
+
     def encode(
         self, x: torch.Tensor, *args, **kwargs
     ) -> ConceptTensor:
