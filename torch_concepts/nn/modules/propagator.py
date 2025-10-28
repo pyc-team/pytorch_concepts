@@ -26,10 +26,6 @@ class Propagator(torch.nn.Module):
         """
         Constructor method to instantiate the underlying module with required arguments.
         """
-        if self.module is not None:
-            # Optional: Add logic to re-initialize or raise an error if already built
-            print("Warning: Propagator module is being rebuilt.")
-
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
         if issubclass(self._module_cls, BaseEncoder):

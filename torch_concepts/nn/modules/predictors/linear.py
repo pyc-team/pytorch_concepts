@@ -19,60 +19,39 @@ class ProbPredictor(BasePredictor):
 
     def __init__(
         self,
-        in_features: Union[Tuple[Dict[str, int]], Dict[str, int]],
+        in_features_global: int,
+        in_features_exogenous: int,
+        in_features_logits: int,
         out_annotations: Annotations,
-        activation: Callable = torch.sigmoid,
+        in_activation: Callable = torch.sigmoid,
         *args,
         **kwargs,
     ):
         super().__init__(
-            in_features=in_features,
+            in_features_global=in_features_global,
+            in_features_exogenous=in_features_exogenous,
+            in_features_logits=in_features_logits,
             out_annotations=out_annotations,
         )
-        self.activation = activation
-        self.linear = torch.nn.Sequential(
+        self.in_activation = in_activation # FIXME: this is the input activation, not the output!
+        self.logit_layer = torch.nn.Sequential(
             torch.nn.Linear(
-                self.in_features["concept_probs"],
-                self.out_features["concept_probs"],
+                in_features_logits,
+                self.out_annotations.shape[1],
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, self.out_shapes["concept_probs"]),
+            torch.nn.Unflatten(-1, (self.out_annotations.shape[1],)),
         )
 
-    @property
-    def in_shapes(self) -> Dict[str, Tuple[int, ...]]:
-        in_features: Tuple[Dict] = self._in_features
-        if isinstance(self._in_features, dict):
-            in_features = (self._in_features,)
-
-        in_features_summary = {"concept_probs": 0}
-        for c in in_features:
-            if "concept_probs" not in c.keys():
-                raise ValueError("Input contracts must contain 'concept_probs' key.")
-            in_features_summary["concept_probs"] += c["concept_probs"]
-
-        return {"concept_probs": (in_features_summary["concept_probs"],)}
-
-    @property
-    def intervenable_modules(self) -> torch.nn.ModuleDict:
-        return torch.nn.ModuleDict({"scorer": self.linear})
-
-    def predict(
+    def forward(
         self,
-        x: Union[torch.Tensor, ConceptTensor],
+        logits: torch.Tensor,
+        x: torch.Tensor=None,
+        exogenous: torch.Tensor=None,
         *args,
         **kwargs,
     ) -> ConceptTensor:
-        """
-        Predict concept scores.
-
-        Args:
-            x (Union[torch.Tensor, ConceptTensor]): Input tensor.
-
-        Returns:
-            ConceptTensor: Predicted concept scores.
-        """
-        c_logits = self.linear(x.concept_probs)
-        c_probs = self.activation(c_logits)
-        return ConceptTensor(self.out_annotations, concept_probs=c_probs)
+        in_probs = self.in_activation(logits)
+        probs = self.logit_layer(in_probs)
+        return probs

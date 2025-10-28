@@ -60,10 +60,12 @@ def main():
             concept_accuracy = accuracy_score(c_train, c_pred.concept_probs > 0.5)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
-
+    # encoder_layer.set_submodule('linear', torch.nn.Identity())
+    # [k for k, v in encoder_layer.named_children()]
+    # ['linear']
     print(c_pred[:5])
-    const_iv = ConstantTensorIntervention(model, torch.zeros_like(c_train))
-    with intervene_in_dict(model, const_iv(["encoder_layer.scorer"])):
+    const_iv = ConstantTensorIntervention(model, torch.zeros_like(c_train)) # TODO: rename ground truth intervention
+    with intervene_in_dict(model, const_iv(["encoder_layer.scorer"])): # TODO: layer vs concept intervention + add try except
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
         y_pred = model["y_predictor"](c_pred)

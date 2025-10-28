@@ -27,23 +27,23 @@ def main():
                                                          [0, 0, 0, 0, 0]]).float(),
                                            annotations)
     # C2BM. FIXME: check layers are initialized correctly inside the model
-    # model = GraphModel(model_graph=model_graph,
-    #                    exogenous=Propagator(ExogEncoder, embedding_size=7),
-    #                    encoder=Propagator(ProbEncoder, exogenous=True),
-    #                    predictor=Propagator(HyperNetLinearPredictor),
-    #                    annotations=annotations,
-    #                    input_size=x.shape[1])
-    # inference_train = KnownGraphInference(model=model)
-    # cy_preds = inference_train.query(x)
-    # print(cy_preds)
-    # model = GraphModel(model_graph=model_graph,
-    #                    encoder=Propagator(ProbEncoder),
-    #                    predictor=Propagator(ProbPredictor),
-    #                    annotations=annotations,
-    #                    input_size=x.shape[1])
-    # inference_train = KnownGraphInference(model=model)
-    # cy_preds = inference_train.query(x)
-    # print(cy_preds)
+    model = GraphModel(model_graph=model_graph,
+                       exogenous=Propagator(ExogEncoder, embedding_size=7),
+                       encoder=Propagator(ProbEncoder, exogenous=True),
+                       predictor=Propagator(HyperNetLinearPredictor),
+                       annotations=annotations,
+                       input_size=x.shape[1])
+    inference_train = KnownGraphInference(model=model)
+    cy_preds = inference_train.query(x)
+    print(cy_preds)
+    model = GraphModel(model_graph=model_graph,
+                       encoder=Propagator(ProbEncoder),
+                       predictor=Propagator(ProbPredictor),
+                       annotations=annotations,
+                       input_size=x.shape[1])
+    inference_train = KnownGraphInference(model=model)
+    cy_preds = inference_train.query(x)
+    print(cy_preds)
 
     # CGM
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,

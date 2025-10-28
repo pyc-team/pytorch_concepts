@@ -24,20 +24,25 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoder(latent_dims, c_annotations)
-    y_predictor = ProbPredictor(encoder_layer.out_features, y_annotations)
+    encoder_layer = ProbEncoder(in_features_global=latent_dims,
+                                in_features_exogenous=0,
+                                out_annotations=c_annotations)
+    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1],
+                                in_features_global=0,
+                                in_features_exogenous=0,
+                                out_annotations=y_annotations)
     model = torch.nn.Sequential(encoder, encoder_layer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(emb)
-        y_pred = y_predictor(c_pred)
+        c_pred = encoder_layer(x=emb)
+        y_pred = y_predictor(logits=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -48,8 +53,8 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.concept_probs > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     return
