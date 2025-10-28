@@ -430,6 +430,28 @@ class AnnotatedTensor(torch.Tensor):
             f"annotations {self.annotations}."
         )
 
+    def __deepcopy__(self, memo):
+        """
+        Custom deepcopy implementation for AnnotatedTensor.
+        
+        Args:
+            memo: Dictionary of already copied objects
+            
+        Returns:
+            Deep copy of the AnnotatedTensor
+        """
+        # Create a deep copy of the underlying tensor data
+        new_data = self.data.clone().detach()
+        if self.requires_grad:
+            new_data.requires_grad_(True)
+        
+        # Deep copy annotations
+        import copy as copy_module
+        new_annotations = copy_module.deepcopy(self.annotations, memo)
+        
+        # Create new instance with copied data and annotations
+        return type(self)(new_data, annotations=new_annotations)
+
     def annotated_axis(self) -> List[int]:
         """Get list of annotated axes."""
         return self.annotations.annotated_axes
@@ -969,6 +991,33 @@ class AnnotatedAdjacencyMatrix(AnnotatedTensor):
     def n_nodes(self) -> int:
         """Get number of nodes in the graph."""
         return self.shape[0]
+
+    def __deepcopy__(self, memo):
+        """
+        Custom deepcopy implementation for AnnotatedAdjacencyMatrix.
+        
+        Preserves is_directed attribute along with data and annotations.
+        
+        Args:
+            memo: Dictionary of already copied objects
+            
+        Returns:
+            Deep copy of the AnnotatedAdjacencyMatrix
+        """
+        # Create a deep copy of the underlying tensor data
+        new_data = self.data.clone().detach()
+        if self.requires_grad:
+            new_data.requires_grad_(True)
+        
+        # Deep copy annotations
+        import copy as copy_module
+        new_annotations = copy_module.deepcopy(self.annotations, memo)
+        
+        # Get is_directed attribute
+        is_directed = getattr(self, 'is_directed', True)
+        
+        # Create new instance with copied data, annotations, and is_directed
+        return AnnotatedAdjacencyMatrix(new_data, annotations=new_annotations, is_directed=is_directed)
 
     def dense_to_sparse(self, threshold: float = 0.0) -> Tuple[Tensor, Tensor]:
         """

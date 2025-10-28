@@ -63,7 +63,7 @@ class BaseModel(torch.nn.Module):
 
         propagators = torch.nn.ModuleDict()
         for c_name in concept_names:
-            output_annotations = self.annotations.select(axis=1, keep_labels=c_name)
+            output_annotations = self.annotations.select(axis=1, keep_labels=[c_name])
 
             if parent_names is None:
                 _parent_names = self.model_graph.get_predecessors(c_name)

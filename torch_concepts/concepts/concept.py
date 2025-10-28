@@ -141,9 +141,12 @@ class ConceptTensor(torch.Tensor):
             "concept_probs": concept_probs,
             "residual": residual,
         }.items():
-            device = None if payload is None else payload.device
+            if payload is not None:
+                device = payload.device
+            else:
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
             self._mask[name] = torch.ones(C, dtype=torch.bool, device=device) if payload is not None else \
-                torch.zeros(C, dtype=torch.bool)
+                torch.zeros(C, dtype=torch.bool, device=device)
 
     def mask(self, name: str) -> torch.Tensor:
         """Return boolean presence mask for payload."""
