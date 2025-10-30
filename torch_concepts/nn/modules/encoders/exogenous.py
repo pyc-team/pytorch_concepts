@@ -50,9 +50,7 @@ class ExogEncoder(BaseEncoder):
 
     def forward(
         self,
-        logits: torch.Tensor = None,
         embedding: torch.Tensor = None,
-        exogenous: torch.Tensor = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor]:

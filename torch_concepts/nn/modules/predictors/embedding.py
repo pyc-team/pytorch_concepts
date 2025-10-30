@@ -46,7 +46,6 @@ class MixProbExogPredictor(BasePredictor):
     def forward(
         self,
         logits: torch.Tensor = None,
-        embedding: torch.Tensor = None,
         exogenous: torch.Tensor = None,
         *args,
         **kwargs,
@@ -88,7 +87,6 @@ class HyperNetLinearPredictor(BasePredictor):
             self,
             logits: torch.Tensor = None,
             embedding: torch.Tensor = None,
-            exogenous: torch.Tensor = None,
             *args,
             **kwargs,
     ) -> torch.Tensor:

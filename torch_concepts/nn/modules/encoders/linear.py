@@ -39,9 +39,7 @@ class ProbEncoderFromEmb(BaseEncoder):
 
     def forward(
         self,
-        logits: torch.Tensor = None,
         embedding: torch.Tensor = None,
-        exogenous: torch.Tensor = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -82,8 +80,6 @@ class ProbEncoderFromExog(BaseEncoder):
 
     def forward(
         self,
-        logits: torch.Tensor = None,
-        embedding: torch.Tensor = None,
         exogenous: torch.Tensor = None,
         *args,
         **kwargs,

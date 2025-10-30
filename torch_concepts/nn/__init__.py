@@ -31,11 +31,15 @@ from .modules.inference.forward import (
     UnknownGraphInference,
 )
 from .modules.inference.intervention import (
-    ConstantTensorIntervention,
-    ConstantLikeIntervention,
+    GroundTruthIntervention,
+    DoIntervention,
     DistributionIntervention,
-    intervene_in_dict,
+    intervention,
 )
+
+from .modules.policy.random import RandomPolicy
+from .modules.policy.uniform import UniformPolicy
+from .modules.policy.uncertainty import UncertaintyInterventionPolicy
 
 
 __all__ = [
@@ -76,9 +80,13 @@ __all__ = [
     # Inference
     "KnownGraphInference",
     "UnknownGraphInference",
+
     # Interventions
-    "ConstantTensorIntervention",
-    "ConstantLikeIntervention",
+    "GroundTruthIntervention",
+    "DoIntervention",
     "DistributionIntervention",
-    "intervene_in_dict",
+    "intervention",
+
+    # Intervention policies
+    "UncertaintyInterventionPolicy",
 ]

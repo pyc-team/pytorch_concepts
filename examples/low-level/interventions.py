@@ -4,8 +4,8 @@ from torch.distributions import Normal
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ProbEncoder, ProbPredictor, intervene_in_dict, ConstantTensorIntervention, \
-    ConstantLikeIntervention, DistributionIntervention
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, intervention, GroundTruthIntervention, \
+    UncertaintyInterventionPolicy, intervention, DoIntervention, DistributionIntervention, UniformPolicy, RandomPolicy
 
 
 def main():
@@ -15,19 +15,20 @@ def main():
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    c_train = torch.concat([c_train, c_train, c_train], dim=1)
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
 
-    c_annotations = Annotations({1: AxisAnnotation(concept_names)})
+    c_annotations = Annotations({1: AxisAnnotation(concept_names+['C3', 'C4', 'C5', 'C6'])})
     y_annotations = Annotations({1: AxisAnnotation(task_names)})
 
     encoder = torch.nn.Sequential(
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoder(latent_dims, c_annotations)
-    y_predictor = ProbPredictor(encoder_layer.out_features, y_annotations)
+    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims, out_annotations=c_annotations)
+    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1], out_annotations=y_annotations)
 
     # all models in a ModuleDict for easier intervention
     model = torch.nn.ModuleDict({
@@ -37,15 +38,15 @@ def main():
     })
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(emb)
-        y_pred = y_predictor(c_pred)
+        c_pred = encoder_layer(embedding=emb)
+        y_pred = y_predictor(logits=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -56,34 +57,89 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.concept_probs > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
-    # encoder_layer.set_submodule('linear', torch.nn.Identity())
-    # [k for k, v in encoder_layer.named_children()]
-    # ['linear']
+
     print(c_pred[:5])
-    const_iv = ConstantTensorIntervention(model, torch.zeros_like(c_train)) # TODO: rename ground truth intervention
-    with intervene_in_dict(model, const_iv(["encoder_layer.scorer"])): # TODO: layer vs concept intervention + add try except
+    print(y_pred[:5])
+    model = torch.nn.ModuleDict({
+        "encoder": encoder,
+        "encoder_layer": encoder_layer,
+        "y_predictor": y_predictor,
+    })
+    quantile = 0.8
+    int_policy_c = UniformPolicy(out_annotations=c_annotations)
+    int_strategy_c = GroundTruthIntervention(model=model, ground_truth=torch.logit(c_train, eps=1e-6))
+    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C4", "C5", "C6"])
+    int_policy_y = UncertaintyInterventionPolicy(out_annotations=y_annotations)
+    int_strategy_y = DoIntervention(model=model, constants=100)
+    int_annotations_y = y_annotations.select(axis=1, keep_labels=["xor"])
+    print("Uncertainty + DoIntervention")
+    with intervention(policies=[int_policy_c, int_policy_y],
+                      strategies=[int_strategy_c, int_strategy_y],
+                      on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
+                      on_annotations=[int_annotations_c, int_annotations_y],
+                      quantiles=[quantile, 1]):
+        emb = model["encoder"](x_train)
+        c_pred = model["encoder_layer"](emb)
+        y_pred = model["y_predictor"](c_pred)
+        print(c_pred[:5])
+        print(y_pred[:5])
+
+    print("Do Intervention + UniformPolicy")
+    int_policy_c = UniformPolicy(out_annotations=c_annotations)
+    int_strategy_c = DoIntervention(model=model, constants=-10)
+    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C2", "C6"])
+    with intervention(policies=[int_policy_c],
+                      strategies=[int_strategy_c],
+                      on_layers=["encoder_layer.encoder"],
+                      on_annotations=[int_annotations_c],
+                      quantiles=[quantile]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
         y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
 
-    const_iv2 = ConstantLikeIntervention(model, fill=.5)
-    with intervene_in_dict(model, const_iv2(["encoder_layer.scorer"])):
+    print("Do Intervention + RandomPolicy")
+    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100)
+    int_strategy_c = DoIntervention(model=model, constants=-10)
+    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C2", "C6"])
+    with intervention(policies=[int_policy_c],
+                      strategies=[int_strategy_c],
+                      on_layers=["encoder_layer.encoder"],
+                      on_annotations=[int_annotations_c],
+                      quantiles=[quantile]):
         emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](c_train)
+        c_pred = model["encoder_layer"](emb)
         y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
 
-    noise_iv = DistributionIntervention(model, Normal(0.0, 1.0))
-    with intervene_in_dict(model, noise_iv(["encoder_layer.scorer"])):
+    print("Distribution Intervention")
+    int_strategy_c = DistributionIntervention(model=model, dist=torch.distributions.Normal(loc=0, scale=1))
+    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C5", "C6"])
+    with intervention(policies=[int_policy_c],
+                      strategies=[int_strategy_c],
+                      on_layers=["encoder_layer.encoder"],
+                      on_annotations=[int_annotations_c],
+                      quantiles=[quantile]):
         emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](c_train)
+        c_pred = model["encoder_layer"](emb)
         y_pred = model["y_predictor"](c_pred)
         print(c_pred[:5])
+
+    print("Single Intervention")
+    with intervention(policies=[int_policy_c],
+                      strategies=[int_strategy_c],
+                      on_layers=["encoder_layer.encoder"],
+                      on_annotations=[int_annotations_c],
+                      quantiles=[quantile]):
+        emb = model["encoder"](x_train)
+        c_pred = model["encoder_layer"](emb)
+        y_pred = model["y_predictor"](c_pred)
+        print(c_pred[:5])
+        print(y_pred[:5])
 
     return
 

@@ -1,127 +1,284 @@
+import math
 import contextlib
-from abc import ABC, abstractmethod
-from typing import Dict, Iterable, Tuple, Union, Callable, Optional, List
-
-import fnmatch
+from typing import List, Sequence, Union, Iterable
 import torch
 import torch.nn as nn
-import torch.distributions as D
 
-from ...base.inference import BaseIntervention, _get_parent_and_key
+from ...base.inference import BaseIntervention
 
+# ---------------- core helpers ----------------
 
-def _get_parent_key_owner(root: nn.ModuleDict, path: str) -> Tuple[nn.ModuleDict, str, Optional[nn.Module]]:
+def _get_submodule(model: nn.Module, dotted: str) -> nn.Module:
+    cur = model
+    for name in dotted.split("."):
+        cur = cur.get_submodule(name)
+    return cur
+
+def _set_submodule(model: nn.Module, dotted: str, new: nn.Module) -> None:
+    parts = dotted.split(".")
+    parent = model.get_submodule(".".join(parts[:-1])) if len(parts) > 1 else model
+    setattr(parent, parts[-1], new)
+
+def _as_list(x, n: int):
+    # broadcast a singleton to length n; if already a list/tuple, validate length
+    if isinstance(x, (list, tuple)):
+        if len(x) != n:
+            raise ValueError(f"Expected list of length {n}, got {len(x)}")
+        return list(x)
+    return [x for _ in range(n)]
+
+# ---------------- strategy ----------------
+
+class RewiringIntervention(BaseIntervention):
+    def __init__(self, model: nn.Module):
+        super().__init__(model)
+
+    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    def query(self, original_module: nn.Module, mask: torch.Tensor) -> nn.Module:
+        parent = self
+
+        class _Rewire(nn.Module):
+            def __init__(self, orig: nn.Module, mask_: torch.Tensor):
+                super().__init__()
+                self.orig = orig
+                self.register_buffer("mask", mask_.clone())
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                y = self.orig(x)  # [B, F]
+                assert y.dim() == 2, "RewiringIntervention expects 2-D tensors [Batch, N_concepts]"
+                t = parent._make_target(y)  # [B, F]
+                m = self.mask.to(dtype=y.dtype)
+                return y * m + t * (1.0 - m)
+
+        return _Rewire(original_module, mask)
+
+# -------------------- Concrete strategies --------------------
+
+class GroundTruthIntervention(RewiringIntervention):
     """
-    Resolve dotted path to (parent_dict, key, owner_module_or_None).
-
-    - Walks through root ModuleDict.
-    - When entering a module that has .intervenable_modules (a ModuleDict),
-      we descend into that dict and remember its owner (the module that
-      exposes it). If we replace an entry in that dict, we also replace
-      the owner’s attribute that references the same module object.
+    Mix in a provided ground-truth tensor.
+    REQUIREMENT: ground_truth must be exactly [B, F] at runtime (no broadcasting).
     """
-    parts = path.split(".")
-    cur = root
-    parent = None
-    key = None
-    owner = None  # module that holds .intervenable_modules we’re in
 
-    for seg in parts:
-        if isinstance(cur, nn.ModuleDict):
-            if seg not in cur:
-                raise KeyError(f"ModuleDict has no key '{seg}' in path '{path}'")
-            parent, key, cur = cur, seg, cur[seg]
-            # if the next hop exposes intervenables, remember it as a potential owner
-            if hasattr(cur, "intervenable_modules") and isinstance(cur.intervenable_modules, nn.ModuleDict):
-                owner = cur
-        elif hasattr(cur, "intervenable_modules") and isinstance(cur.intervenable_modules, nn.ModuleDict):
-            # we are inside an owner’s intervenable space
-            md = cur.intervenable_modules
-            if seg not in md:
-                raise KeyError(f"intervenable_modules has no key '{seg}' in path '{path}'")
-            parent, key, cur = md, seg, md[seg]
-            owner = cur if hasattr(cur, "intervenable_modules") else owner
+    def __init__(self, model: nn.Module, ground_truth: torch.Tensor):
+        super().__init__(model)
+        self.register_buffer("ground_truth", ground_truth)
+
+    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+        return self.ground_truth.to(dtype=y.dtype, device=y.device)
+
+class DoIntervention(RewiringIntervention):
+    """
+    Set features to constants.
+    Accepts:
+      - scalar
+      - [F]
+      - [1, F]
+      - [B, F]
+    Will broadcast to [B, F] where possible.
+    """
+
+    def __init__(self, model: nn.Module, constants: torch.Tensor | float):
+        super().__init__(model)
+        const = constants if torch.is_tensor(constants) else torch.tensor(constants)
+        self.register_buffer("constants", const)
+
+    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+        B, F = y.shape
+        v = self.constants
+
+        if v.dim() == 0:  # scalar
+            v = v.view(1, 1).expand(B, F)
+        elif v.dim() == 1:  # [F]
+            assert v.numel() == F, f"constants [F] must have F={F}, got {v.numel()}"
+            v = v.unsqueeze(0).expand(B, F)
+        elif v.dim() == 2:
+            b, f = v.shape
+            assert f == F, f"constants second dim must be F={F}, got {f}"
+            if b == 1:
+                v = v.expand(B, F)  # [1, F] -> [B, F]
+            else:
+                assert b == B, f"constants first dim must be B={B} or 1, got {b}"
         else:
-            raise TypeError(f"Cannot descend into '{seg}' in '{path}'")
-    if parent is None or key is None:
-        raise ValueError(f"Invalid path '{path}'")
-    # If parent is an intervenable_modules dict, owner is the module that exposes it.
-    # If parent is a top-level ModuleDict, owner stays None.
-    return parent, key, owner
+            raise ValueError(
+                "constants must be scalar, [F], [1, F], or [B, F]"
+            )
 
+        return v.to(dtype=y.dtype, device=y.device)
 
-class ConstantTensorIntervention(BaseIntervention):
-    def __init__(self, module_dict: nn.ModuleDict, value: torch.Tensor):
-        super().__init__(module_dict)
-        self.value = value.detach()
-    def query(self, layer: nn.Module, *_, target_shape=None, **__) -> nn.Module:
-        # Constant stays constant; we only align device/dtype at call time.
-        m = nn.Identity()
-        def fwd(*args, **kwargs):
-            dev = args[0].device if args and isinstance(args[0], torch.Tensor) else self.value.device
-            return self.value.to(dev)
-        m.forward = fwd
-        return m
+class DistributionIntervention(RewiringIntervention):
+    """
+    Sample each feature from a distribution.
+      - dist: a single torch.distributions.Distribution (broadcast to all features)
+              OR a list/tuple of length F with per-feature distributions.
+    Uses rsample when available; falls back to sample.
+    """
 
+    def __init__(self, model: nn.Module, dist):
+        super().__init__(model)
+        self.dist = dist
 
-class ConstantLikeIntervention(BaseIntervention):
-    def __init__(self, module_dict: nn.ModuleDict, fill: float = 0.0):
-        super().__init__(module_dict); self.fill = float(fill)
-    def query(self, layer: nn.Module, *_, target_shape, **__) -> nn.Module:
-        m = nn.Identity()
-        def fwd(x, *a, **k):
-            batch = x.shape[0]
-            shp = (batch, *tuple(target_shape))
-            return x.new_full(shp, self.fill)
-        m.forward = fwd
-        return m
+    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+        B, F = y.shape
+        device, dtype = y.device, y.dtype
 
+        def _sample(d, shape):
+            return d.rsample(shape) if hasattr(d, "rsample") else d.sample(shape)
 
-class DistributionIntervention(BaseIntervention):
-    def __init__(self, module_dict: nn.ModuleDict, dist: D.Distribution, rsample: bool = False):
-        super().__init__(module_dict); self.dist, self.rsample = dist, bool(rsample)
-    def query(self, layer: nn.Module, *_, target_shape, **__) -> nn.Module:
-        m = nn.Identity()
-        def fwd(x, *a, **k):
-            batch = x.shape[0]
-            shp = (batch, *tuple(target_shape))
-            if self.rsample and hasattr(self.dist, "rsample"):
-                return self.dist.rsample(shp)
-            return self.dist.sample(shp)
-        m.forward = fwd
-        return m
+        if hasattr(self.dist, "sample"):  # one distribution for all features
+            t = _sample(self.dist, (B, F))
+        else:  # per-feature list/tuple
+            dists = list(self.dist)
+            assert len(dists) == F, f"Need {F} per-feature distributions, got {len(dists)}"
+            cols = [_sample(d, (B,)) for d in dists]  # each [B]
+            t = torch.stack(cols, dim=1)  # [B, F]
 
+        return t.to(device=device, dtype=dtype)
+
+# ---------------- wrapper ----------------
+
+class _InterventionWrapper(nn.Module):
+    def __init__(
+        self,
+        original: nn.Module,
+        policy: nn.Module,
+        strategy: GroundTruthIntervention,
+        on_annotations,                   # Annotations (axis=1) subset for THIS layer
+        quantile: float,
+    ):
+        super().__init__()
+        self.original = original
+        self.policy = policy
+        self.strategy = strategy
+        self.quantile = float(quantile)
+        self.on_annotations = on_annotations
+        self.concept_axis = 1
+
+    def _build_mask(self, policy_logits: torch.Tensor) -> torch.Tensor:
+        B, F = policy_logits.shape
+        device = policy_logits.device
+        dtype = policy_logits.dtype
+
+        sel_labels = self.on_annotations.get_axis_labels(1)
+        if len(sel_labels) == 0:
+            return torch.ones_like(policy_logits)
+
+        sel_idx = torch.tensor(
+            [self.policy.out_annotations.get_index(1, lab) for lab in sel_labels],
+            device=device, dtype=torch.long
+        )
+        K = sel_idx.numel()
+        sel = policy_logits.index_select(dim=1, index=sel_idx)  # [B, K]
+
+        if K == 1:
+            # Edge case: single selected column.
+            # q < 1 => keep; q == 1 => replace.
+            keep_col = torch.ones((B, 1), device=device, dtype=dtype) if self.quantile < 1.0 \
+                else torch.zeros((B, 1), device=device, dtype=dtype)
+            mask = torch.ones((B, F), device=device, dtype=dtype)
+            mask.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), keep_col)
+
+            # STE proxy (optional; keeps gradients flowing on the selected col)
+            row_max = sel.max(dim=1, keepdim=True).values + 1e-12
+            soft_sel = torch.log1p(sel) / torch.log1p(row_max)  # [B,1]
+            soft_proxy = torch.ones_like(policy_logits)
+            soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
+            mask = (mask - soft_proxy).detach() + soft_proxy
+            return mask
+
+        # K > 1: standard per-row quantile via kthvalue
+        k = int(max(1, min(K, 1 + math.floor(self.quantile * (K - 1)))))
+        thr, _ = torch.kthvalue(sel, k, dim=1, keepdim=True)  # [B,1]
+
+        # Use strict '>' so ties at the threshold are replaced (robust near edges)
+        sel_mask_hard = (sel > (thr - 0.0)).to(dtype)  # [B,K]
+
+        mask = torch.ones((B, F), device=device, dtype=dtype)
+        mask.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), sel_mask_hard)
+
+        # STE proxy (unchanged)
+        row_max = sel.max(dim=1, keepdim=True).values + 1e-12
+        soft_sel = torch.log1p(sel) / torch.log1p(row_max)
+        soft_proxy = torch.ones_like(policy_logits)
+        soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
+        mask = (mask - soft_proxy).detach() + soft_proxy
+        return mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.original(x)
+        logits = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
+        mask = self._build_mask(logits)  # 1 keep, 0 replace
+
+        # 3) proxy that returns the cached y instead of recomputing
+        class _CachedOutput(nn.Module):
+            def __init__(self, y_cached: torch.Tensor):
+                super().__init__()
+                self.y_cached = y_cached        # keep graph-connected tensor; do NOT detach
+            def forward(self, _x: torch.Tensor) -> torch.Tensor:
+                return self.y_cached
+
+        cached = _CachedOutput(y)
+
+        # 4) use existing strategy API; no changes to GroundTruthIntervention
+        replacer = self.strategy.query(cached, mask)
+        return replacer(x)
+
+# ---------------- context manager (now multi-layer) ----------------
 
 @contextlib.contextmanager
-def intervene_in_dict(root: nn.ModuleDict, replacements: Dict[str, nn.Module]):
+def intervention(
+    *,
+    policies: Union[nn.Module, Sequence[nn.Module]],
+    strategies: Union[RewiringIntervention, Sequence[RewiringIntervention]],
+    on_layers: Union[str, Sequence[str]],
+    on_annotations,                         # Annotations or list[Annotations]
+    quantiles: Union[float, Sequence[float]],
+    model: nn.Module = None,                # optional; defaults to strategies[0].model
+):
     """
-    Temporarily replace leaf modules addressed by dotted paths, and
-    also swap the owner’s attribute that points to the same module object.
+    Now supports multiple layers. Singletons are broadcast to len(on_layers).
+    Example:
+        with intervention(
+            policies=[int_policy_c, int_policy_y],
+            strategies=[int_strategy_c, int_strategy_y],
+            on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
+            on_annotations=[int_annotations_c, int_annotations_y],
+            quantiles=[quantile, 1.0],
+        ):
+            ...
     """
-    # records: (parent_dict, key, old_module, owner_module_or_None, owner_attr_name_or_None)
-    originals = []
+    # Normalise on_layers to list and compute N
+    if isinstance(on_layers, str):
+        on_layers = [on_layers]
+    N = len(on_layers)
+
+    # Broadcast/validate others
+    policies   = _as_list(policies,   N)
+    strategies = _as_list(strategies, N)
+    on_annotations = _as_list(on_annotations, N)
+    quantiles  = _as_list(quantiles,  N)
+
+    # Choose the reference model
+    ref_model = model if model is not None else strategies[0].model
+
+    originals: List[nn.Module] = []
+
     try:
-        for path, new_mod in replacements.items():
-            parent, key, owner = _get_parent_key_owner(root, path)
-            old = parent[key]
-            new_mod.train(old.training)
-
-            # Replace entry in the parent dict (top-level or intervenable_modules)
-            parent[key] = new_mod
-
-            # If we're in an intervenable dict, also replace the owner’s attribute
-            owner_attr = None
-            if owner is not None:
-                for name, sub in owner._modules.items():
-                    if sub is old:
-                        owner._modules[name] = new_mod
-                        owner_attr = name
-                        break
-
-            originals.append((parent, key, old, owner, owner_attr))
-        yield root
+        for path, pol, strat, ann, q in zip(on_layers, policies, strategies, on_annotations, quantiles):
+            orig = _get_submodule(ref_model, path)
+            originals.append((path, orig))
+            wrap = _InterventionWrapper(
+                original=orig,
+                policy=pol,
+                strategy=strat,
+                on_annotations=ann,
+                quantile=q,
+            )
+            _set_submodule(ref_model, path, wrap)
+        yield
     finally:
-        for parent, key, old, owner, owner_attr in reversed(originals):
-            parent[key] = old
-            if owner is not None and owner_attr is not None:
-                owner._modules[owner_attr] = old
+        # restore originals
+        for path, orig in originals:
+            _set_submodule(ref_model, path, orig)
