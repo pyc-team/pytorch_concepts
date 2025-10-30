@@ -1,7 +1,37 @@
+from typing import Optional
+
 import torch
 
 from ...concepts.annotations import Annotations
 from ...nn.base.layer import BaseEncoder, BasePredictor
+
+import inspect
+
+def _filter_kwargs_for_ctor(cls, **kwargs):
+    """Return only kwargs accepted by cls.__init__, skipping 'self'."""
+    sig = inspect.signature(cls.__init__)
+    params = sig.parameters
+
+    # If the class accepts **kwargs, we can pass everything through.
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return kwargs
+
+    allowed = {
+        name for name, p in params.items()
+        if name != "self" and p.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
+    return {k: v for k, v in kwargs.items() if k in allowed}
+
+def instantiate_adaptive(module_cls, *args, drop_none=True, **kwargs):
+    """Instantiate module_cls with only supported kwargs (optionally dropping None)."""
+    if drop_none:
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    filtered = _filter_kwargs_for_ctor(module_cls, **kwargs)
+    return module_cls(*args, **filtered)
+
 
 
 class Propagator(torch.nn.Module):
@@ -21,28 +51,27 @@ class Propagator(torch.nn.Module):
         self.module = None
 
     def build(self,
-              in_object,
               out_annotations: Annotations,  # Assuming Annotations is a defined type
+              in_features_logits: Optional[int],
+              in_features_embedding: Optional[int],
+              in_features_exogenous: Optional[int],
               ) -> torch.nn.Module:
         """
         Constructor method to instantiate the underlying module with required arguments.
         """
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
-        if issubclass(self._module_cls, BaseEncoder):
-            self.module = self._module_cls(
-                in_features=in_object,
-                out_annotations=out_annotations,
-                *self._module_args,
-                **self._module_kwargs
-            )
-        elif issubclass(self._module_cls, BasePredictor):
-            self.module = self._module_cls(
-                in_features=in_object,
-                out_annotations=out_annotations,
-                *self._module_args,
-                **self._module_kwargs
-            )
+        self.module = instantiate_adaptive(
+            self._module_cls,
+            *self._module_args,
+            **{
+                "in_features_logits": in_features_logits,
+                "in_features_embedding": in_features_embedding,
+                "in_features_exogenous": in_features_exogenous,
+                "out_annotations": out_annotations,
+                **self._module_kwargs,  # user-provided extras
+            }
+        )
 
         # Crucial for PyTorch: Check if the module is properly registered
         if not isinstance(self.module, torch.nn.Module):

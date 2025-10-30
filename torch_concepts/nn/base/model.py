@@ -37,25 +37,19 @@ class BaseModel(torch.nn.Module):
         #     self.tensor_mode = 'tensor'
         self.tensor_mode = 'tensor' # TODO: fixme
 
-    def _init_encoder(self, layer: Propagator, input_size, concept_names: List[str]) -> torch.nn.Module:
+    def _init_encoder(self, layer: Propagator, concept_names: List[str], in_features_embedding=None, in_features_exogenous=None) -> torch.nn.Module:
         output_annotations = self.annotations.select(axis=1, keep_labels=concept_names)
-        propagator = layer.build(input_size, output_annotations)
-        out_features = {}
-        for c_name in concept_names:
-            output_annotations = self.annotations.select(axis=1, keep_labels=[c_name])
-            out_features[c_name] = layer.build(input_size, output_annotations).out_features
-        return propagator, out_features
-    
-    # def _init_exogenous(self, layer: Propagator, input_size, concept_names: List[str]) -> torch.nn.Module:
-    #     output_annotations = self.annotations.select(axis=1, keep_labels=concept_names)
-    #     propagator = layer.build(input_size, output_annotations)
-    #     return propagator
+        propagator = layer.build(
+            in_features_embedding=in_features_embedding,
+            in_features_logits=None,
+            in_features_exogenous=in_features_exogenous,
+            out_annotations=output_annotations,
+        )
+        return propagator
 
     def _init_predictors(self, 
                          layer: Propagator, 
-                         concept_names: List[str], 
-                         out_features_roots: dict, 
-                         out_features_exog_internal: dict,
+                         concept_names: List[str],
                          parent_names: str = None) -> torch.nn.Module:
         if parent_names:
             _parent_names = parent_names
@@ -67,12 +61,16 @@ class BaseModel(torch.nn.Module):
             if parent_names is None:
                 _parent_names = self.model_graph.get_predecessors(c_name)
 
+            in_features_embedding = 0
+            in_features_logits = 0
+            in_features_exogenous = 0
             if self.has_exogenous:
-                in_features = [out_features_exog_internal[c_name]]
-            else:
-                in_features = []
+                in_features_exogenous = self.predictor_in_exogenous
 
-            in_features += [out_features for c, out_features in out_features_roots.items() if c in _parent_names]
+            for p in _parent_names:
+                in_features_embedding += self.predictor_in_embedding
+                in_features_logits += self.predictor_in_logits
+                in_features_exogenous += self.predictor_in_exogenous
 
             if parent_names is None:
                 for name, m in propagators.items():
@@ -80,9 +78,18 @@ class BaseModel(torch.nn.Module):
                     if name in _parent_names:
                         c = m.out_features
                     if c is not None:
-                        in_features += [c]
+                        in_features_logits += self.predictor_in_logits
 
-            propagators[c_name] = layer.build(in_features, output_annotations)
+            in_features_embedding = None if in_features_embedding == 0 else in_features_embedding
+            in_features_logits = None if in_features_logits == 0 else in_features_logits
+            in_features_exogenous = None if in_features_exogenous == 0 else in_features_exogenous
+
+            propagators[c_name] = layer.build(
+                in_features_embedding=in_features_embedding,
+                in_features_logits=in_features_logits,
+                in_features_exogenous=in_features_exogenous,
+                out_annotations=output_annotations,
+            )
 
         return propagators
     

@@ -18,7 +18,9 @@ class BipartiteModel(GraphModel):
                  annotations: Annotations,
                  encoder: Propagator,
                  predictor: Propagator,
-                 exogenous: Propagator = None
+                 predictor_in_embedding: int,
+                 predictor_in_exogenous: int,
+                 exogenous: Propagator = None,
                  ):
 
         # create bipartite graph from concepts and tasks
@@ -28,6 +30,10 @@ class BipartiteModel(GraphModel):
         graph.loc[:, task_names] = 1  # concepts point to tasks
         graph.loc[task_names, task_names] = 0  # tasks do not point to themselves
         bipartite_graph = AnnotatedAdjacencyMatrix(torch.FloatTensor(graph.values), annotations)
+
+        self.predictor_in_embedding = predictor_in_embedding
+        self.predictor_in_exogenous = predictor_in_exogenous
+        self.predictor_in_logits = 1
 
         super(BipartiteModel, self).__init__(
             input_size=input_size,
