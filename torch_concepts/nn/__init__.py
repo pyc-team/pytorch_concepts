@@ -16,7 +16,9 @@ from .modules.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
 # from .modules.encoders.stochastic import StochasticConceptLayer
 
 from .modules.predictors.linear import ProbPredictor
-from .modules.predictors.embedding import MixProbExogPredictor, HyperNetLinearPredictor
+from .modules.predictors.embedding import MixProbExogPredictor
+from .modules.predictors.hypernet import HyperLinearPredictor
+from .modules.selector import MemorySelector
 
 from .modules.cosmo import COSMOGraphLearner
 
@@ -67,7 +69,9 @@ __all__ = [
     # Predictor classes
     "ProbPredictor",
     "MixProbExogPredictor",
-    "HyperNetLinearPredictor",
+    "HyperLinearPredictor",
+
+    "MemorySelector",
 
     # COSMO
     "COSMOGraphLearner",

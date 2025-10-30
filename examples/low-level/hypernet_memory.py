@@ -3,13 +3,15 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptTensor
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor
+from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor, MemorySelector
 
 
 def main():
-    latent_dims = 20
+    latent_dims = 30
     n_epochs = 2000
     n_samples = 1000
+    memory_size = 11
+
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
@@ -29,14 +31,15 @@ def main():
     )
     encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
                                        out_annotations=c_annotations)
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
-                               out_annotations=y_annotations,
-                               embedding_size=latent_dims)
+    selector = MemorySelector(in_features_embedding=latent_dims,
+                              memory_size=memory_size,
+                              embedding_size=latent_dims,
+                              out_annotations=y_annotations)
     y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
-                                       in_features_exogenous=latent_dims*2,
+                                       in_features_exogenous=latent_dims,
                                        embedding_size=latent_dims,
                                        out_annotations=y_annotations)
-    model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)
+    model = torch.nn.Sequential(encoder, selector, encoder_layer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -47,7 +50,8 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         c_pred = encoder_layer(embedding=emb)
-        emb_rule = exog_encoder(embedding=emb)
+        emb_rule = selector(embedding=emb, sampling=False)
+        emb_rule = torch.nn.functional.leaky_relu(emb_rule)
         y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
 
         # compute loss
@@ -61,7 +65,13 @@ def main():
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred > 0.)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+
+            emb_rule = selector(embedding=emb, sampling=True)
+            emb_rule = torch.nn.functional.leaky_relu(emb_rule)
+            y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
+
+            task_accuracy_sampling = accuracy_score(y_train, y_pred > 0.)
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f} | Task Acc w/ Sampling: {task_accuracy_sampling:.2f}")
 
     return
 
