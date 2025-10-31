@@ -66,14 +66,19 @@ class BaseModel(torch.nn.Module):
         arity = []
         name2id = self.name2id  # pre-computed map name → concept-id
 
+        cardinalities = self.annotations.get_axis_annotation(axis=1).cardinalities
         for c_name in self.internal_nodes:
             parents = self.model_graph.get_predecessors(c_name)
 
             pids = tuple(name2id[p] for p in parents)
-            n = len(pids)
-            arity.append(n)
+            n_parents = len(pids)
+            if cardinalities is not None:
+                card = sum([cardinalities[p] for p in pids])
+            else:
+                card = n_parents
+            arity.append(card)
 
-            if n == 1:
+            if n_parents == 1:
                 fetchers.append(self._make_single_fetcher(pids[0]))  # 1-tuple
             else:
                 fetchers.append(itemgetter(*pids))  # tuple of tensors
