@@ -50,11 +50,12 @@ def main():
     exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
                                out_annotations=c_annotations,
                                embedding_size=latent_dims)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims*exog_encoder.n_states,
+    c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims,
                                     out_annotations=c_annotations)
     y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
-                                       out_annotations=y_annotations)
+                                       out_annotations=y_annotations,
+                                       in_annotations=c_annotations)
 
 
     model = torch.nn.Sequential(encoder, exog_encoder, c_encoder, y_predictor)

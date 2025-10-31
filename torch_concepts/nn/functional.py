@@ -11,6 +11,8 @@ from scipy.stats import chi2
 from torch_concepts.nn.minimize_constraint import minimize_constr
 from torch.distributions import MultivariateNormal
 
+import torch.nn.functional as F
+
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     concept_names = {}
@@ -81,6 +83,43 @@ def concept_embedding_mixture(
         (1 - c_scores.data.unsqueeze(-1)) * c_emb.data[:, :, emb_size:]
     )
     return c_mix
+
+
+def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
+                                      c_scores: torch.Tensor,
+                                      groups: list[int]) -> torch.Tensor:
+    """
+    Vectorised version of grouped logit mixture.
+    c_emb:    [B, n_concepts, emb_size * sum(groups)]
+    c_scores: [B, sum(groups)]
+    groups:   list of group sizes, e.g. [3, 4]
+    returns:  [B, n_concepts, emb_size * len(groups)]
+    """
+    B, C, D = c_emb.shape
+    assert sum(groups) == C, "group_sizes must sum to n_concepts"
+    assert D % 2 == 0, "embedding dim must be even (two halves)"
+    E = D // 2
+
+    # Split concept embeddings into two halves
+    emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
+    s = c_scores.unsqueeze(-1)                            # [B, C, 1]
+
+    # Build group ids per concept: [0,0,...,0, 1,1,...,1, ...]
+    device = c_emb.device
+    G = len(groups)
+    gs = torch.as_tensor(groups, device=device)
+    group_id = torch.repeat_interleave(torch.arange(G, device=device), gs)  # [C]
+
+    # For singleton groups, do the two-half mixture; otherwise use emb_a weighted by the score
+    is_singleton_concept = (gs == 1)[group_id].view(1, C, 1)               # [1, C, 1], bool
+    eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
+                      s * emb_a)                                           # multi: weight base embedding
+
+    # Sum weighted embeddings within each group (no loops)
+    out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
+    index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
+    out = out.scatter_add(1, index, eff)                                   # [B, G, E]
+    return out
 
 
 def intervene_on_concept_graph(

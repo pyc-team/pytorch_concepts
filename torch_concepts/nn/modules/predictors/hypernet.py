@@ -24,6 +24,7 @@ class HyperLinearPredictor(BasePredictor):
         *args,
         **kwargs,
     ):
+        in_features_exogenous = in_features_exogenous
         super().__init__(
             in_features_logits=in_features_logits,
             in_features_exogenous=in_features_exogenous,

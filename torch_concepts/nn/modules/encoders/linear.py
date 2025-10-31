@@ -64,6 +64,7 @@ class ProbEncoderFromExog(BaseEncoder):
         *args,
         **kwargs,
     ):
+        in_features_exogenous = in_features_exogenous * 2
         super().__init__(
             in_features_exogenous=in_features_exogenous,
             out_annotations=out_annotations,

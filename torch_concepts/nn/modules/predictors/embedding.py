@@ -3,7 +3,7 @@ import torch
 
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
 from ...base.layer import BasePredictor
-from torch_concepts.nn.functional import concept_embedding_mixture
+from torch_concepts.nn.functional import grouped_concept_embedding_mixture
 from typing import List, Dict, Callable, Union, Tuple
 
 
@@ -24,6 +24,7 @@ class MixProbExogPredictor(BasePredictor):
         in_features_exogenous: int,
         out_annotations: Annotations,
         in_activation: Callable = torch.sigmoid,
+        in_annotations: Annotations = None,
         *args,
         **kwargs,
     ):
@@ -33,9 +34,18 @@ class MixProbExogPredictor(BasePredictor):
             out_annotations=out_annotations,
             in_activation=in_activation,
         )
+        self.in_annotations = in_annotations
+        if self.in_annotations is None:
+            self.groups = [1] * in_features_logits
+            predictor_in_features = in_features_exogenous*in_features_logits
+        else:
+            self.groups = list(in_annotations.get_axis_annotation(1).cardinalities)
+            assert sum(self.groups) == in_features_logits
+            predictor_in_features = in_features_exogenous*len(self.groups)
+
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_exogenous*in_features_logits,
+                predictor_in_features,
                 out_annotations.shape[1],
                 *args,
                 **kwargs,
@@ -51,5 +61,5 @@ class MixProbExogPredictor(BasePredictor):
         **kwargs,
     ) -> torch.Tensor:
         in_probs = self.in_activation(logits)
-        c_mix = concept_embedding_mixture(exogenous, in_probs)
+        c_mix = grouped_concept_embedding_mixture(exogenous, in_probs, groups=self.groups)
         return self.predictor(c_mix.flatten(start_dim=1))
