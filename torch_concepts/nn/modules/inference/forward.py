@@ -23,24 +23,30 @@ class KnownGraphInference(BaseInference):
             c_exog_internal = self.model.exogenous_internal(x)
         
         # get roots
+        num_concepts = len(self.model.concept_names)
+        vals = [None] * num_concepts
         if self.model.has_exogenous:
-            input_obj = c_exog_roots.extract_by_annotation(self.model.root_nodes)
+            input_obj = c_exog_roots
         else:
             input_obj = x
         c_all = self.model.encoder(input_obj)
+        chunks = torch.chunk(c_all, chunks=c_all.shape[1], dim=1)
+        for cid, t in zip(self.model.root_nodes_idx, chunks):
+            vals[cid] = t
 
-        for c_name in self.model.internal_nodes:
+        for c_id, c_name in enumerate(self.model.internal_nodes):
             propagator = self.model.predictors[c_name]
-            parents = list(self.model.model_graph.get_predecessors(c_name))
-            input_obj = c_all.extract_by_annotation(parents)
+            fetcher = self.model.fetchers[c_id]
+            input_obj = torch.cat(fetcher(vals), dim=1)
 
             if self.model.has_exogenous:
-                exog = c_exog_internal.extract_by_annotation([c_name])
+                exog = c_exog_internal[:, c_id, None]
                 c_out = propagator(input_obj, exog)
             else:
                 c_out = propagator(input_obj)
 
-            c_all = c_all.join(c_out)
+            cid = self.model.name2id[c_name]
+            vals[cid] = c_out
         return c_all
 
 
@@ -55,39 +61,35 @@ class UnknownGraphInference(BaseInference):
         mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape)  # FIXME: get_by_nodes does not work!
         return c * mask.data
 
-    def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> List[ConceptTensor]:
+    def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> Tuple[torch.Tensor]:
         # --- maybe from embeddings to exogenous
         if self.model.has_exogenous:
             c_exog = self.model.exogenous(x)
         
         #  get roots
         if self.model.has_exogenous:
-            input_obj = c_exog.extract_by_annotation(self.model.root_nodes)
+            input_obj = c_exog
         else:
             input_obj = x
         c_encoder = self.model.encoder(input_obj)
 
         # --- from concepts to concepts copy
         model_graph = self.model.graph_learner()
-        c_predictor = ConceptTensor(self.model.annotations)
 
-        for c_name in self.model.annotations.get_axis_labels(axis=1):
+        vals = []
+        for c_id, c_name in enumerate(self.model.annotations.get_axis_labels(axis=1)):
             propagator = self.model.predictors[c_name]
-            # Mask the input concept object to get only parent concepts
-            c_encoder_masked = self.mask_concept_tensor(c_encoder, model_graph, c_name)
             c_masked = self.mask_concept_tensor(c, model_graph, c_name)
-            if c_encoder.concept_embs is None:
-                input_obj = ConceptTensor(self.model.annotations, concept_probs=c_masked)
-            else:
-                input_obj = ConceptTensor(self.model.annotations, concept_embs=c_encoder_masked, concept_probs=c_masked)
 
-            if self.model.has_exogenous:
-                exog = c_exog.extract_by_annotation([c_name])
-                c_out = propagator(input_obj, exog)
+            if self.model.predictor_in_exogenous:
+                exog = c_exog[:, c_id, None]
+                c_out = propagator(c_masked, exogenous=exog)
             else:
-                c_out = propagator(input_obj)
+                c_out = propagator(c_masked)
 
-            c_predictor = c_predictor.join(c_out)
+            vals.append(c_out)
+
+        c_predictor = torch.cat(vals, dim=1)
         return c_encoder, c_predictor
 
     def get_model_known_graph(self) -> GraphModel:

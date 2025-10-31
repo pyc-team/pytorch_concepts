@@ -19,6 +19,8 @@ class GraphModel(BaseModel):
                  encoder: Propagator,
                  predictor: Propagator,
                  model_graph: AnnotatedAdjacencyMatrix,
+                 predictor_in_embedding: int,
+                 predictor_in_exogenous: int,
                  exogenous: Propagator = None
                  ):
         super(GraphModel, self).__init__(
@@ -28,6 +30,9 @@ class GraphModel(BaseModel):
             predictor=predictor,
             model_graph=model_graph
         )
+        self.predictor_in_embedding = predictor_in_embedding
+        self.predictor_in_exogenous = predictor_in_exogenous
+        self.predictor_in_logits = 1
 
         self.has_exogenous = exogenous is not None
 
@@ -35,7 +40,10 @@ class GraphModel(BaseModel):
         assert model_graph.annotations.get_axis_labels(axis=1) == self.concept_names, "concept_names must match model_graph annotations."
         self.root_nodes = [r for r in model_graph.get_root_nodes()]
         self.graph_order = model_graph.topological_sort()  # TODO: group by graph levels?
-        self.internal_nodes = [c for c in self.graph_order if c not in self.root_nodes] 
+        self.internal_nodes = [c for c in self.graph_order if c not in self.root_nodes]
+        self.root_nodes_idx = [self.concept_names.index(r) for r in self.root_nodes]
+        self.graph_order_idx = [self.concept_names.index(i) for i in self.graph_order]
+        self.internal_node_idx = [self.concept_names.index(i) for i in self.internal_nodes]
 
         if self.has_exogenous:
             self.exogenous_roots = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
@@ -45,6 +53,8 @@ class GraphModel(BaseModel):
             self.exogenous_roots = None
             self.exogenous_internal = None
             self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)
+
+        self._init_fetchers()
         self.predictors = self._init_predictors(predictor, concept_names=self.internal_nodes)
         
     
@@ -59,6 +69,8 @@ class LearnedGraphModel(BaseModel):
                  encoder: Propagator,
                  predictor: Propagator,
                  model_graph: BaseGraphLearner,
+                 predictor_in_embedding: int,
+                 predictor_in_exogenous: int,
                  exogenous: Propagator = None
                  ):
         super(LearnedGraphModel, self).__init__(
@@ -69,26 +81,30 @@ class LearnedGraphModel(BaseModel):
             model_graph=model_graph  # learned graph
         )
 
+        self.predictor_in_embedding = predictor_in_embedding
+        self.predictor_in_exogenous = predictor_in_exogenous
+        self.predictor_in_logits = 1
+
         self.has_exogenous = exogenous is not None
 
         # if model_graph is None, create a fully connected graph, and sparsify this during training
         self.root_nodes = self.concept_names  # all concepts are roots in a fully connected graph
+        self.internal_nodes = self.concept_names
+        self.root_nodes_idx = [self.concept_names.index(r) for r in self.root_nodes]
+        self.graph_order_idx = [self.concept_names.index(i) for i in self.root_nodes]
+        self.internal_node_idx = [self.concept_names.index(i) for i in self.internal_nodes]
         self.graph_order = None
         self.graph_learner = model_graph(annotations=annotations)
 
 
         if self.has_exogenous:
-            self.exogenous, out_features_exog_2nd = self._init_encoder(exogenous, input_size, concept_names=self.concept_names)
-            self.encoder, out_features_1st = self._init_encoder(encoder, out_features_exog_2nd[self.root_nodes[0]], concept_names=self.concept_names) # FIXME: two different encoders. with and without exogenous
+            self.exogenous = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
+            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous.embedding_size*self.exogenous.n_states) # FIXME: two different encoders. with and without exogenous
         else:
             self.exogenous = None
-            out_features_exog_2nd = {}
-            self.encoder, out_features_1st = self._init_encoder(encoder, input_size, concept_names=self.concept_names)
-        self.predictors = self._init_predictors(predictor, 
-                                                concept_names=self.concept_names, 
-                                                out_features_roots=out_features_1st,
-                                                out_features_exog_internal=out_features_exog_2nd,
-                                                parent_names=self.concept_names)
+            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)
+        self._init_fetchers(parent_names=self.root_nodes)
+        self.predictors = self._init_predictors(predictor,  concept_names=self.concept_names)
             
     def get_model_known_graph(self) -> GraphModel:
         """
