@@ -48,7 +48,7 @@ class GraphModel(BaseModel):
         if self.has_exogenous:
             self.exogenous_roots = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
             self.exogenous_internal = self._init_encoder(exogenous, concept_names=self.internal_nodes, in_features_embedding=input_size)
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous_roots.embedding_size*self.exogenous_roots.n_states) # FIXME: two different encoders. with and without exogenous
+            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous_roots.embedding_size) # FIXME: two different encoders. with and without exogenous
         else:
             self.exogenous_roots = None
             self.exogenous_internal = None
@@ -99,7 +99,7 @@ class LearnedGraphModel(BaseModel):
 
         if self.has_exogenous:
             self.exogenous = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous.embedding_size*self.exogenous.n_states) # FIXME: two different encoders. with and without exogenous
+            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous.embedding_size) # FIXME: two different encoders. with and without exogenous
         else:
             self.exogenous = None
             self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)

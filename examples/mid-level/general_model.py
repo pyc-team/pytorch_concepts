@@ -31,7 +31,7 @@ def main():
                        predictor=Propagator(HyperLinearPredictor, embedding_size=11),
                        annotations=annotations,
                        predictor_in_embedding=0,
-                       predictor_in_exogenous=7*2,
+                       predictor_in_exogenous=7,
                        input_size=x.shape[1])
     inference_train = KnownGraphInference(model=model)
     cy_preds = inference_train.query(x)
@@ -54,7 +54,7 @@ def main():
                               predictor=Propagator(HyperLinearPredictor, embedding_size=11),
                               annotations=annotations,
                               predictor_in_embedding=0,
-                              predictor_in_exogenous=7*2,
+                              predictor_in_exogenous=7,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
     c_encoder, c_predictor = inference_train.query(x, c)
@@ -66,7 +66,7 @@ def main():
                               predictor=Propagator(MixProbExogPredictor),
                               annotations=annotations,
                               predictor_in_embedding=0,
-                              predictor_in_exogenous=7,
+                              predictor_in_exogenous=7*2,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
     c_encoder, c_predictor = inference_train.query(x, c)
@@ -92,7 +92,7 @@ def main():
                            predictor=Propagator(HyperLinearPredictor, embedding_size=11),
                            annotations=annotations,
                            predictor_in_embedding=0,
-                           predictor_in_exogenous=7*2,
+                           predictor_in_exogenous=7,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)
     cy_pred = inference_test.query(x)

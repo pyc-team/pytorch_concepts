@@ -30,7 +30,7 @@ def main():
                        predictor=Propagator(HyperLinearPredictor, embedding_size=11),
                        annotations=annotations,
                        predictor_in_embedding=0,
-                       predictor_in_exogenous=7*2,
+                       predictor_in_exogenous=7,
                        input_size=x.shape[1])
     inference_train = KnownGraphInference(model=model)
     cy_preds = inference_train.query(x)
@@ -59,30 +59,30 @@ def main():
     c_encoder, c_predictor = inference_train.query(x, concept_probs)
     print(c_encoder)
     print(c_predictor)
-    model = LearnedGraphModel(model_graph=COSMOGraphLearner,
-                              exogenous=Propagator(ExogEncoder, embedding_size=7),
-                              encoder=Propagator(ProbEncoderFromExog),
-                              predictor=Propagator(MixProbExogPredictor),
-                              annotations=annotations,
-                              predictor_in_embedding=0,
-                              predictor_in_exogenous=7,
-                              input_size=x.shape[1])
-    inference_train = UnknownGraphInference(model=model)
-    c_encoder, c_predictor = inference_train.query(x, concept_probs)
-    print(c_encoder)
-    print(c_predictor)
-
-    # CEM
-    model = BipartiteModel(task_names=['c', 'e'],
-                           exogenous=Propagator(ExogEncoder, embedding_size=7),
-                           encoder=Propagator(ProbEncoderFromExog),
-                           predictor=Propagator(MixProbExogPredictor),
-                           annotations=annotations,
-                           predictor_in_embedding=0,
-                           predictor_in_exogenous=7,
-                           input_size=x.shape[1])
-    inference_test = KnownGraphInference(model=model)
-    cy_pred = inference_test.query(x)
+    # model = LearnedGraphModel(model_graph=COSMOGraphLearner,
+    #                           exogenous=Propagator(ExogEncoder, embedding_size=7),
+    #                           encoder=Propagator(ProbEncoderFromExog),
+    #                           predictor=Propagator(MixProbExogPredictor),
+    #                           annotations=annotations,
+    #                           predictor_in_embedding=0,
+    #                           predictor_in_exogenous=7,
+    #                           input_size=x.shape[1])
+    # inference_train = UnknownGraphInference(model=model)
+    # c_encoder, c_predictor = inference_train.query(x, concept_probs)
+    # print(c_encoder)
+    # print(c_predictor)
+    #
+    # # CEM
+    # model = BipartiteModel(task_names=['c', 'e'],
+    #                        exogenous=Propagator(ExogEncoder, embedding_size=7),
+    #                        encoder=Propagator(ProbEncoderFromExog),
+    #                        predictor=Propagator(MixProbExogPredictor),
+    #                        annotations=annotations,
+    #                        predictor_in_embedding=0,
+    #                        predictor_in_exogenous=7,
+    #                        input_size=x.shape[1])
+    # inference_test = KnownGraphInference(model=model)
+    # cy_pred = inference_test.query(x)
 
     # CBM
     model = BipartiteModel(task_names=['c', 'e'],

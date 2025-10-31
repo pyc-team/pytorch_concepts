@@ -27,8 +27,8 @@ def main():
     )
     exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
                                out_annotations=c_annotations,
-                               embedding_size=embedding_size)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=embedding_size,
+                               embedding_size=embedding_size*2)
+    c_encoder = ProbEncoderFromExog(in_features_exogenous=embedding_size*2,
                                     out_annotations=c_annotations)
     y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
                                        in_features_exogenous=embedding_size,

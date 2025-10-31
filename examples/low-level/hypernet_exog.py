@@ -33,7 +33,7 @@ def main():
                                out_annotations=y_annotations,
                                embedding_size=latent_dims)
     y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
-                                       in_features_exogenous=latent_dims*2,
+                                       in_features_exogenous=latent_dims,
                                        embedding_size=latent_dims,
                                        out_annotations=y_annotations)
     model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)
