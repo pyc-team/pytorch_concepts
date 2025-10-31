@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, AnnotatedAdjacencyMatrix
+from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import ExogEncoder, ProbPredictor, ProbEncoderFromExog, BipartiteModel, Propagator, GraphModel, \
     COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEncoderFromEmb, HyperLinearPredictor, MixProbExogPredictor
 from torch_concepts.nn import KnownGraphInference, UnknownGraphInference, ProbEncoderFromEmb
@@ -19,11 +19,11 @@ def main():
 
     c = ConceptTensor(annotations, concept_probs)
 
-    model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
-                                                         [0, 0, 0, 0, 1],
-                                                         [0, 0, 0, 1, 0],
-                                                         [0, 1, 0, 0, 0],
-                                                         [0, 0, 0, 0, 0]]).float(),
+    model_graph = ConceptGraph(torch.tensor([[0, 1, 0, 0, 1],
+                                            [0, 0, 0, 0, 1],
+                                            [0, 0, 0, 1, 0],
+                                            [0, 1, 0, 0, 0],
+                                            [0, 0, 0, 0, 0]]).float(),
                                            annotations)
     model = GraphModel(model_graph=model_graph,
                        exogenous=Propagator(ExogEncoder, embedding_size=7),

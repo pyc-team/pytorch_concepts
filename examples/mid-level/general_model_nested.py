@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, AnnotatedAdjacencyMatrix
+from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import ExogEncoder, ProbPredictor, ProbEncoderFromExog, BipartiteModel, Propagator, GraphModel, \
     COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEncoderFromEmb, HyperLinearPredictor, MixProbExogPredictor
 from torch_concepts.nn import KnownGraphInference, UnknownGraphInference, ProbEncoderFromEmb
@@ -14,11 +14,11 @@ def main():
     cardinalities = (1, 2, 3, 5, 8)
 
     annotations = Annotations({1: AxisAnnotation(concept_names, cardinalities=cardinalities)})
-    model_graph = AnnotatedAdjacencyMatrix(torch.tensor([[0, 1, 0, 0, 1],
-                                                         [0, 0, 0, 0, 1],
-                                                         [0, 0, 0, 1, 0],
-                                                         [0, 1, 0, 0, 0],
-                                                         [0, 0, 0, 0, 0]]).float(),
+    model_graph = ConceptGraph(torch.tensor([[0, 1, 0, 0, 1],
+                                            [0, 0, 0, 0, 1],
+                                            [0, 0, 0, 1, 0],
+                                            [0, 1, 0, 0, 0],
+                                            [0, 0, 0, 0, 0]]).float(),
                                            Annotations({1: AxisAnnotation(concept_names)}))
 
     x = torch.randn(100, 13)

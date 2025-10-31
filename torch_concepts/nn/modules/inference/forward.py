@@ -4,7 +4,7 @@ from abc import ABC
 import torch
 from torch import nn
 
-from torch_concepts import AnnotatedTensor, ConceptTensor, Annotations, AnnotatedAdjacencyMatrix
+from torch_concepts import AnnotatedTensor, ConceptTensor, Annotations, ConceptGraph
 from typing import List, Union, Optional, Tuple, Mapping
 
 from ... import GraphModel
@@ -55,7 +55,7 @@ class UnknownGraphInference(BaseInference):
         super().__init__(model=model)
         self.train_mode = 'independent'
 
-    def mask_concept_tensor(self, c: ConceptTensor, model_graph: AnnotatedAdjacencyMatrix, c_name: str) -> torch.Tensor:
+    def mask_concept_tensor(self, c: ConceptTensor, model_graph: ConceptGraph, c_name: str) -> torch.Tensor:
         broadcast_shape = [1] * len(c.size())
         broadcast_shape[1] = c.size(1)
         mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape)  # FIXME: get_by_nodes does not work!
@@ -95,7 +95,7 @@ class UnknownGraphInference(BaseInference):
     def get_model_known_graph(self) -> GraphModel:
         if not hasattr(self, "graph_learner"):
             raise RuntimeError("This LearnedGraphModel was not initialised with a graph learner.")
-        known_graph: AnnotatedAdjacencyMatrix = self.graph_learner()
+        known_graph: ConceptGraph = self.graph_learner()
 
         # Build a GraphModel using the SAME builders -> predictors get the correct in_features
         gm = GraphModel(

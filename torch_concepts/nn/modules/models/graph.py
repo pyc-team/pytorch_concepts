@@ -4,7 +4,7 @@ from typing import List
 import torch
 from torch import nn
 
-from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
+from torch_concepts import ConceptGraph, Annotations
 from ....nn import BaseModel, Propagator, BaseGraphLearner
 
 
@@ -18,7 +18,7 @@ class GraphModel(BaseModel):
                  annotations: Annotations,
                  encoder: Propagator,
                  predictor: Propagator,
-                 model_graph: AnnotatedAdjacencyMatrix,
+                 model_graph: ConceptGraph,
                  predictor_in_embedding: int,
                  predictor_in_exogenous: int,
                  exogenous: Propagator = None
@@ -115,7 +115,7 @@ class LearnedGraphModel(BaseModel):
         """
         if not hasattr(self, "graph_learner"):
             raise RuntimeError("This LearnedGraphModel was not initialised with a graph learner.")
-        known_graph: AnnotatedAdjacencyMatrix = self.graph_learner()
+        known_graph: ConceptGraph = self.graph_learner()
 
         # Build a light GraphModel shell; we will overwrite encoders/predictors
         class _NoOpProp:

@@ -27,26 +27,12 @@ class AxisAnnotation:
     labels: Tuple[str, ...]
     states: Optional[Tuple[Tuple[str, ...], ...]] = field(default=None)
     cardinalities: Optional[Tuple[int, ...]] = field(default=None)
-    graph: Optional[pd.DataFrame] = field(default=None)
     metadata: Optional[Dict[str, Dict]] = field(default=None)
 
     def __setattr__(self, key, value):
         # Allow first assignment or initialization
         if key in self.__dict__ and self.__dict__[key] is not None:
             raise AttributeError(f"'{key}' is write-once and already set")
-
-        if key == 'graph' and value is not None:
-            from .tensor import AnnotatedAdjacencyMatrix
-
-            assert isinstance(value, pd.DataFrame)
-            names = value.columns.tolist()
-            assert names == value.index.tolist(), "Graph DataFrame must have matching index and columns"
-            assert names == list(self.labels), "Graph DataFrame labels must match AxisAnnotation labels"
-            value = AnnotatedAdjacencyMatrix(torch.from_numpy(value.values),
-                                             annotations=Annotations({
-                                                 0: AxisAnnotation(labels=names),
-                                                 1: AxisAnnotation(labels=names),
-                                             }))
         super().__setattr__(key, value)
 
     def __post_init__(self):
@@ -169,7 +155,6 @@ class AxisAnnotation:
             'is_nested': self.is_nested,
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
-            'graph': self.graph.to_dict() if isinstance(self.graph, pd.DataFrame) else None,
             'metadata': self.metadata,
         }
         return result
@@ -194,14 +179,10 @@ class AxisAnnotation:
         states = tuple(tuple(s) for s in data['states']) if data.get('states') else None
         cardinalities = tuple(data['cardinalities']) if data.get('cardinalities') else None
 
-        # Convert graph dict back to DataFrame if present
-        graph = pd.DataFrame.from_dict(data['graph']) if data.get('graph') else None
-
         return cls(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
-            graph=graph,
             metadata=data.get('metadata'),
         )
 
@@ -232,23 +213,16 @@ class AxisAnnotation:
             new_states = None
             new_cards = None
 
-        # 3) slice graph (if present as a DataFrame)
-        new_graph = None
-        if isinstance(self.graph, pd.DataFrame):
-            # use label names for square slice
-            new_graph = self.graph.loc[list(keep_labels), list(keep_labels)]
-
-        # 4) slice metadata (if present)
+        # 3) slice metadata (if present)
         new_metadata = None
         if self.metadata is not None:
             new_metadata = {lab: self.metadata[lab] for lab in keep_labels}
 
-        # 5) build a fresh object
+        # 4) build a fresh object
         return AxisAnnotation(
             labels=new_labels,
             states=new_states,
             cardinalities=new_cards,
-            graph=new_graph,
             metadata=new_metadata,
         )
 
@@ -257,7 +231,7 @@ class AxisAnnotation:
         left = tuple(self.labels)
         right_only = tuple(l for l in other.labels if l not in set(left))
         labels = left + right_only
-        # keep it simple: stay non-nested, drop graph; merge metadata left-win
+        # keep it simple: stay non-nested; merge metadata left-win
         meta = None
         if self.metadata or other.metadata:
             meta = {}
@@ -266,7 +240,7 @@ class AxisAnnotation:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return AxisAnnotation(labels=labels, states=None, cardinalities=None, graph=None, metadata=meta)
+        return AxisAnnotation(labels=labels, states=None, cardinalities=None, metadata=meta)
 
 
 class Annotations:

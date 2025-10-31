@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 import torch.nn.functional as F
-from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
+from torch_concepts import ConceptGraph, Annotations
 
 from ...nn.base.graph import BaseGraphLearner
 
@@ -98,11 +98,8 @@ class COSMOGraphLearner(BaseGraphLearner):
         # compute the orientation matrix
         model_graph = self.weighted_adj(symmetric=self.symmetric,
                                         monitor=self.monitor)  # nb_concepts, nb_tasks
-
-        self._model_graph = AnnotatedAdjacencyMatrix(data=model_graph,
-                                                     annotations=self.annotations)
-
-        return self._model_graph
+        self._model_graph = model_graph
+        return model_graph
 
 # 1 -> 5 -> 2 -> 3
 # 1, 2 -> 4

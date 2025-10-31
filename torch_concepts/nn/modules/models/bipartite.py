@@ -3,7 +3,7 @@ from typing import Dict
 import torch
 import pandas as pd
 
-from torch_concepts import AnnotatedAdjacencyMatrix, Annotations, AxisAnnotation
+from torch_concepts import ConceptGraph, Annotations, AxisAnnotation
 from .graph import GraphModel
 from ....nn import Propagator
 
@@ -29,7 +29,7 @@ class BipartiteModel(GraphModel):
         graph = pd.DataFrame(0, index=concept_names, columns=concept_names)
         graph.loc[:, task_names] = 1  # concepts point to tasks
         graph.loc[task_names, task_names] = 0  # tasks do not point to themselves
-        bipartite_graph = AnnotatedAdjacencyMatrix(torch.FloatTensor(graph.values), Annotations({1: AxisAnnotation(concept_names)}))
+        bipartite_graph = ConceptGraph(torch.FloatTensor(graph.values), node_names=list(concept_names))
 
         self.predictor_in_logits = 1
 

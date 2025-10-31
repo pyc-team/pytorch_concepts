@@ -3,7 +3,7 @@ from operator import itemgetter
 import numpy as np
 import torch
 
-from torch_concepts import AnnotatedAdjacencyMatrix, Annotations, nn
+from torch_concepts import ConceptGraph, Annotations, nn
 from typing import Union, List
 
 from ..modules.propagator import Propagator
@@ -20,7 +20,7 @@ class BaseModel(torch.nn.Module):
                  annotations: Annotations,
                  encoder: Propagator,  # layer for root concepts
                  predictor: Propagator,
-                 model_graph: Union[AnnotatedAdjacencyMatrix, BaseGraphLearner]
+                 model_graph: Union[ConceptGraph, BaseGraphLearner]
                  ):
         super(BaseModel, self).__init__()
         self.emb_size = input_size

@@ -902,284 +902,141 @@ class AnnotatedTensor(torch.Tensor):
         return self._wrap_result(sliced_tensor, annotations=new_annotations)
 
 
-class AnnotatedAdjacencyMatrix(AnnotatedTensor):
+class ConceptGraph:
     """
-    Adjacency matrix with semantic annotations for rows and columns.
+    Memory-efficient concept graph representation using sparse COO format.
 
-    This class extends AnnotatedTensor to provide specialized functionality for
-    graph structures, particularly adjacency matrices where rows and columns
-    represent nodes with meaningful names.
+    This class stores graphs in sparse format (edge list) internally, making it
+    efficient for large sparse graphs. It provides utilities for graph analysis
+    and conversions to dense/NetworkX/pandas formats.
 
-    The adjacency matrix A has shape (n_nodes, n_nodes) where:
-        A[i, j] = weight if there's an edge from node i to node j, else 0
+    The graph is stored as:
+        - edge_index: Tensor of shape (2, num_edges) with [source, target] indices
+        - edge_weight: Tensor of shape (num_edges,) with edge weights
+        - node_names: List of node names
 
     Attributes:
-        node_names: Names of nodes (from annotations)
-        n_nodes: Number of nodes in the graph
-        is_directed: Whether the graph is directed (default: True)
-        loc: Label-based indexer (like pandas DataFrame.loc)
-        iloc: Integer position-based indexer (like pandas DataFrame.iloc)
+        edge_index (Tensor): Edge list of shape (2, num_edges)
+        edge_weight (Tensor): Edge weights of shape (num_edges,)
+        node_names (List[str]): Names of nodes in the graph
+        n_nodes (int): Number of nodes in the graph
 
     Args:
-        data (Tensor): Adjacency matrix of shape (n_nodes, n_nodes)
-        annotations (Union[Annotations, List[str]]): Either an Annotations object with
-            axis 0 and 1 annotated, or a list of node names that will be used for both axes.
-            If a list is provided, it will be converted to an Annotations object.
-        is_directed (bool, optional): Whether graph is directed, default True
+        data (Tensor): Dense adjacency matrix of shape (n_nodes, n_nodes)
+        node_names (List[str], optional): Node names. If None, generates default names.
+
+    Example:
+        >>> adj = torch.tensor([[0., 1., 1.],
+        ...                     [0., 0., 1.],
+        ...                     [0., 0., 0.]])
+        >>> graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
+        >>> graph.get_root_nodes()
+        ['A']
     """
-    # TODO: check whether we can extend from networkx.DiGraph and pyg
-    def __new__(
-            cls,
-            data: Tensor,
-            annotations: Union[Annotations, List[str]] = None,
-            is_directed: bool = True,
-    ):
-        """Create new AnnotatedAdjacencyMatrix instance."""
+
+    def __init__(self, data: Tensor, node_names: Optional[List[str]] = None):
+        """Create new ConceptGraph instance from dense adjacency matrix."""
         # Validate shape
         if data.dim() != 2:
             raise ValueError(f"Adjacency matrix must be 2D, got {data.dim()}D")
         if data.shape[0] != data.shape[1]:
-            raise ValueError(
-                f"Adjacency matrix must be square, got shape {data.shape}"
-            )
+            raise ValueError(f"Adjacency matrix must be square, got shape {data.shape}")
 
-        # Convert list of node names to Annotations object if needed
-        if isinstance(annotations, list):
-            # Check if it's a list of lists (old API: [row_names, col_names])
-            if len(annotations) == 2 and isinstance(annotations[0], (list, tuple)):
-                # Old API: [row_names, col_names]
-                row_labels = tuple(annotations[0])
-                col_labels = tuple(annotations[1])
-                annotations = Annotations({
-                    0: AxisAnnotation(labels=row_labels),
-                    1: AxisAnnotation(labels=col_labels)
-                })
-            else:
-                # Single list of node names, use for both axes
-                node_labels = tuple(annotations)
-                annotations = Annotations({
-                    0: AxisAnnotation(labels=node_labels),
-                    1: AxisAnnotation(labels=node_labels)
-                })
-        elif annotations is None:
-            # Auto-annotate both axes with default node names
-            n_nodes = data.shape[0]
-            node_labels = tuple(f"node_{i}" for i in range(n_nodes))
-            annotations = Annotations({
-                0: AxisAnnotation(labels=node_labels),
-                1: AxisAnnotation(labels=node_labels)
-            })
+        self._n_nodes = data.shape[0]
+        self.node_names = node_names if node_names is not None else [f"node_{i}" for i in range(self._n_nodes)]
 
-        # Create AnnotatedTensor instance
-        obj = super().__new__(cls, data, annotations)
+        if len(self.node_names) != self._n_nodes:
+            raise ValueError(f"Number of node names ({len(self.node_names)}) must match matrix size ({self._n_nodes})")
 
-        # Add graph-specific attributes
-        # TODO: is this needed?
-        obj.is_directed = is_directed
-
-        return obj
-
-    @property
-    def node_names(self) -> List[str]:
-        """Get list of node names from annotations."""
-        # Get node names from axis 0 annotations
-        if hasattr(self, 'annotations') and 0 in self.annotations.annotated_axes:
-            return list(self.annotations[0].labels)
-        return []
+        # Convert to sparse format and store
+        self.edge_index, self.edge_weight = pyg.utils.dense_to_sparse(data)
+    
+    @classmethod
+    def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):
+        """
+        Create ConceptGraph directly from sparse format (more efficient).
+        
+        Args:
+            edge_index: Tensor of shape (2, num_edges) with [source, target] indices
+            edge_weight: Tensor of shape (num_edges,) with edge weights
+            n_nodes: Number of nodes in the graph
+            node_names: Optional node names
+            
+        Returns:
+            ConceptGraph instance
+            
+        Example:
+            >>> edge_index = torch.tensor([[0, 0, 1], [1, 2, 2]])
+            >>> edge_weight = torch.tensor([1.0, 1.0, 1.0])
+            >>> graph = ConceptGraph.from_sparse(edge_index, edge_weight, n_nodes=3)
+        """
+        # Create instance without going through __init__
+        instance = cls.__new__(cls)
+        instance._n_nodes = n_nodes
+        instance.node_names = node_names if node_names is not None else [f"node_{i}" for i in range(n_nodes)]
+        
+        if len(instance.node_names) != n_nodes:
+            raise ValueError(f"Number of node names ({len(instance.node_names)}) must match n_nodes ({n_nodes})")
+        
+        instance.edge_index = edge_index
+        instance.edge_weight = edge_weight
+        
+        return instance
 
     @property
     def n_nodes(self) -> int:
         """Get number of nodes in the graph."""
-        return self.shape[0]
+        return self._n_nodes
 
-    def __deepcopy__(self, memo):
+    @property
+    def data(self) -> Tensor:
         """
-        Custom deepcopy implementation for AnnotatedAdjacencyMatrix.
+        Get dense adjacency matrix representation.
         
-        Preserves is_directed attribute along with data and annotations.
+        Note: This reconstructs the dense matrix from sparse format.
+        For frequent dense access, consider caching the result.
         
-        Args:
-            memo: Dictionary of already copied objects
+        Returns:
+            Dense adjacency matrix of shape (n_nodes, n_nodes)
+        """
+        # Reconstruct dense matrix from sparse format
+        adj = torch.zeros(self._n_nodes, self._n_nodes, dtype=self.edge_weight.dtype, device=self.edge_weight.device)
+        adj[self.edge_index[0], self.edge_index[1]] = self.edge_weight
+        return adj
+
+    def _node_to_index(self, node: Union[str, int]) -> int:
+        """Convert node name or index to index."""
+        if isinstance(node, int):
+            if node < 0 or node >= self.n_nodes:
+                raise IndexError(f"Node index {node} out of range [0, {self.n_nodes})")
+            return node
+        elif isinstance(node, str):
+            if node not in self.node_names:
+                raise ValueError(f"Node '{node}' not found in graph")
+            return self.node_names.index(node)
+        else:
+            raise TypeError(f"Node must be str or int, got {type(node)}")
+
+    def __getitem__(self, key):
+        """
+        Allow indexing like graph[i, j] or graph['A', 'B'].
+        
+        For single edge queries (tuple of 2), uses sparse lookup.
+        For slice/advanced indexing, falls back to dense representation.
+        """
+        if isinstance(key, tuple) and len(key) == 2:
+            # Optimized path for single edge lookup
+            row = self._node_to_index(key[0])
+            col = self._node_to_index(key[1])
             
-        Returns:
-            Deep copy of the AnnotatedAdjacencyMatrix
-        """
-        # Create a deep copy of the underlying tensor data
-        new_data = self.data.clone().detach()
-        if self.requires_grad:
-            new_data.requires_grad_(True)
+            # Search in sparse edge list
+            mask = (self.edge_index[0] == row) & (self.edge_index[1] == col)
+            if mask.any():
+                return self.edge_weight[mask]
+            return torch.tensor(0.0, dtype=self.edge_weight.dtype, device=self.edge_weight.device)
         
-        # Deep copy annotations
-        import copy as copy_module
-        new_annotations = copy_module.deepcopy(self.annotations, memo)
-        
-        # Get is_directed attribute
-        is_directed = getattr(self, 'is_directed', True)
-        
-        # Create new instance with copied data, annotations, and is_directed
-        return AnnotatedAdjacencyMatrix(new_data, annotations=new_annotations, is_directed=is_directed)
-
-    def dense_to_sparse(self, threshold: float = 0.0) -> Tuple[Tensor, Tensor]:
-        """
-        Convert dense adjacency matrix to sparse edge representation (COO format).
-
-        This is similar to PyTorch Geometric's dense_to_sparse function.
-
-        Args:
-            threshold: Minimum value to consider as an edge (default: 0.0)
-
-        Returns:
-            edge_index: Tensor of shape (2, num_edges) with source and target indices
-            edge_weight: Tensor of shape (num_edges,) with edge weights
-
-        Example:
-            >>> edge_index, edge_weight = graph.dense_to_sparse()
-            >>> print(edge_index.shape)  # torch.Size([2, num_edges])
-            >>> print(edge_weight.shape)  # torch.Size([num_edges])
-        """
-        return dense_to_sparse(self, threshold=threshold)
-
-    def to_networkx(self) -> nx.DiGraph:
-        """
-        Convert to NetworkX directed graph.
-
-        Returns:
-            nx.DiGraph: NetworkX directed graph with node and edge attributes
-
-        Example:
-            >>> nx_graph = graph.to_networkx()
-            >>> print(list(nx_graph.nodes()))  # Node names
-            >>> print(list(nx_graph.edges()))  # Edges
-        """
-        return to_networkx_graph(self)
-
-    def get_root_nodes(self) -> List[str]:
-        """
-        Get nodes with no incoming edges (root nodes).
-
-        Returns:
-            List of root node names
-
-        Example:
-            >>> roots = graph.get_root_nodes()
-            >>> print(roots)  # ['input_node']
-        """
-        return get_root_nodes(self)
-
-    def get_leaf_nodes(self) -> List[str]:
-        """
-        Get nodes with no outgoing edges (leaf nodes).
-
-        Returns:
-            List of leaf node names
-
-        Example:
-            >>> leaves = graph.get_leaf_nodes()
-            >>> print(leaves)  # ['output_node']
-        """
-        return get_leaf_nodes(self)
-
-    def topological_sort(self) -> List[str]:
-        """
-        Compute topological ordering of nodes.
-
-        Only valid for directed acyclic graphs (DAGs).
-
-        Returns:
-            List of node names in topological order
-
-        Raises:
-            nx.NetworkXError: If graph contains cycles
-
-        Example:
-            >>> ordered = graph.topological_sort()
-            >>> print(ordered)  # ['A', 'B', 'C']
-        """
-        return topological_sort(self)
-
-    def get_predecessors(self, node: Union[str, int]) -> List[str]:
-        """
-        Get all predecessors (parents) of a node.
-
-        Args:
-            node: Node name (str) or index (int)
-
-        Returns:
-            List of predecessor node names
-
-        Example:
-            >>> preds = graph.get_predecessors('C')
-            >>> print(preds)  # ['A', 'B']
-        """
-        return get_predecessors(self, node)
-
-    def get_successors(self, node: Union[str, int]) -> List[str]:
-        """
-        Get all successors (children) of a node.
-
-        Args:
-            node: Node name (str) or index (int)
-
-        Returns:
-            List of successor node names
-
-        Example:
-            >>> succs = graph.get_successors('A')
-            >>> print(succs)  # ['B', 'C']
-        """
-        return get_successors(self, node)
-
-    def get_ancestors(self, node: Union[str, int]) -> Set[str]:
-        """
-        Get all ancestors of a node (recursive predecessors).
-
-        Args:
-            node: Node name (str) or index (int)
-
-        Returns:
-            Set of ancestor node names
-
-        Example:
-            >>> ancestors = graph.get_ancestors('D')
-            >>> print(ancestors)  # {'A', 'B', 'C'}
-        """
-        return get_ancestors(self, node)
-
-    def get_descendants(self, node: Union[str, int]) -> Set[str]:
-        """
-        Get all descendants of a node (recursive successors).
-
-        Args:
-            node: Node name (str) or index (int)
-
-        Returns:
-            Set of descendant node names
-
-        Example:
-            >>> descendants = graph.get_descendants('A')
-            >>> print(descendants)  # {'B', 'C', 'D'}
-        """
-        return get_descendants(self, node)
-
-    def is_directed_acyclic(self) -> bool:
-        """
-        Check if the graph is a directed acyclic graph (DAG).
-
-        Returns:
-            True if graph is a DAG, False otherwise
-        """
-        return is_directed_acyclic(self)
-
-    def is_dag(self) -> bool:
-        """
-        Check if the graph is a directed acyclic graph (DAG).
-
-        Alias for is_directed_acyclic() for convenience.
-
-        Returns:
-            True if graph is a DAG, False otherwise
-        """
-        return self.is_directed_acyclic()
+        # For advanced indexing, use dense representation
+        return self.data[key]
 
     def get_edge_weight(self, source: Union[str, int], target: Union[str, int]) -> float:
         """
@@ -1190,11 +1047,16 @@ class AnnotatedAdjacencyMatrix(AnnotatedTensor):
             target: Target node name or index
 
         Returns:
-            Edge weight, or 0.0 if no edge exists
+            Edge weight value (0.0 if edge doesn't exist)
         """
         source_idx = self._node_to_index(source)
         target_idx = self._node_to_index(target)
-        return self[source_idx, target_idx].item()
+        
+        # Search in sparse edge list
+        mask = (self.edge_index[0] == source_idx) & (self.edge_index[1] == target_idx)
+        if mask.any():
+            return self.edge_weight[mask].item()
+        return 0.0
 
     def has_edge(self, source: Union[str, int], target: Union[str, int], threshold: float = 0.0) -> bool:
         """
@@ -1211,114 +1073,203 @@ class AnnotatedAdjacencyMatrix(AnnotatedTensor):
         weight = self.get_edge_weight(source, target)
         return abs(weight) > threshold
 
-    def _node_to_index(self, node: Union[str, int]) -> int:
-        """Convert node name or index to index."""
-        if isinstance(node, int):
-            if node < 0 or node >= self.n_nodes:
-                raise IndexError(f"Node index {node} out of range [0, {self.n_nodes})")
-            return node
-        elif isinstance(node, str):
-            if node not in self.node_names:
-                raise ValueError(f"Node '{node}' not found in graph")
-            return self.node_names.index(node)
-        else:
-            raise TypeError(f"Node must be str or int, got {type(node)}")
-
-    def get_by_nodes(
-            self,
-            rows: Union[str, List[str]],
-            cols: Union[str, List[str]]
-    ) -> Tensor:
-        """
-        Get graph values by node names.
-
-        Args:
-            rows: Node name(s) for rows - single string or list of strings
-            cols: Node name(s) for columns - single string or list of strings
-
-        Returns:
-            Tensor with the requested values
-
-        Example:
-            >>> graph.get_by_nodes('A', 'B')  # Single edge weight
-            >>> graph.get_by_nodes('A', ['B', 'C'])  # Multiple edges from A
-            >>> graph.get_by_nodes(['A', 'B'], ['C', 'D'])  # 2x2 subgraph
-        """
-        # Convert names to indices
-        if isinstance(rows, str):
-            row_indices = self._node_to_index(rows)
-        else:
-            row_indices = [self._node_to_index(r) for r in rows]
-
-        if isinstance(cols, str):
-            col_indices = self._node_to_index(cols)
-        else:
-            col_indices = [self._node_to_index(c) for c in cols]
-
-        # Handle list indexing for 2D submatrix
-        if isinstance(row_indices, list) and isinstance(col_indices, list):
-            row_tensor = torch.tensor(row_indices).unsqueeze(1)
-            col_tensor = torch.tensor(col_indices).unsqueeze(0)
-            return self.data[row_tensor, col_tensor]
-        else:
-            return self.data[row_indices, col_indices]
-
-    def get_by_index(
-            self,
-            rows: Union[int, List[int]],
-            cols: Union[int, List[int]]
-    ) -> Tensor:
-        """
-        Get graph values by integer indices.
-
-        Args:
-            rows: Row index/indices - single int or list of ints
-            cols: Column index/indices - single int or list of ints
-
-        Returns:
-            Tensor with the requested values
-
-        Example:
-            >>> graph.get_by_index(0, 1)  # Single edge weight
-            >>> graph.get_by_index(0, [1, 2])  # Multiple edges from node 0
-            >>> graph.get_by_index([0, 1], [2, 3])  # 2x2 subgraph
-        """
-        # Handle list indexing for 2D submatrix
-        if isinstance(rows, list) and isinstance(cols, list):
-            row_tensor = torch.tensor(rows).unsqueeze(1)
-            col_tensor = torch.tensor(cols).unsqueeze(0)
-            return self.data[row_tensor, col_tensor]
-        else:
-            return self.data[rows, cols]
-
-    def to_pandas(self) -> DataFrame:
+    def to_pandas(self) -> pd.DataFrame:
         """
         Convert adjacency matrix to pandas DataFrame.
 
         Returns:
-            pd.DataFrame: DataFrame representation of the adjacency matrix
+            pd.DataFrame with node names as index and columns
         """
-        import pandas as pd
-        df = pd.DataFrame(
+        return pd.DataFrame(
             self.data.cpu().numpy(),
             index=self.node_names,
             columns=self.node_names
         )
-        return df
+
+    def to_networkx(self, threshold: float = 0.0) -> nx.DiGraph:
+        """
+        Convert to NetworkX directed graph.
+
+        Args:
+            threshold: Minimum absolute value to consider as an edge
+
+        Returns:
+            nx.DiGraph: NetworkX directed graph
+
+        Example:
+            >>> G = graph.to_networkx()
+            >>> list(G.nodes())
+            ['A', 'B', 'C']
+        """
+        # Create empty directed graph
+        G = nx.DiGraph()
+        
+        # Add all nodes with their names
+        G.add_nodes_from(self.node_names)
+        
+        # Add edges from sparse representation
+        edge_index_np = self.edge_index.cpu().numpy()
+        edge_weight_np = self.edge_weight.cpu().numpy()
+        
+        for i in range(edge_index_np.shape[1]):
+            source_idx = edge_index_np[0, i]
+            target_idx = edge_index_np[1, i]
+            weight = edge_weight_np[i]
+            
+            # Apply threshold
+            if abs(weight) > threshold:
+                source_name = self.node_names[source_idx]
+                target_name = self.node_names[target_idx]
+                G.add_edge(source_name, target_name, weight=weight)
+        
+        return G
+
+    def dense_to_sparse(self, threshold: float = 0.0) -> Tuple[Tensor, Tensor]:
+        """
+        Get sparse COO format (edge list) representation.
+
+        Args:
+            threshold: Minimum value to consider as an edge (default: 0.0)
+
+        Returns:
+            edge_index: Tensor of shape (2, num_edges) with source and target indices
+            edge_weight: Tensor of shape (num_edges,) with edge weights
+
+        Example:
+            >>> edge_index, edge_weight = graph.dense_to_sparse()
+            >>> edge_index.shape
+            torch.Size([2, num_edges])
+        """
+        if threshold > 0.0:
+            # Filter edges by threshold
+            mask = torch.abs(self.edge_weight) > threshold
+            return self.edge_index[:, mask], self.edge_weight[mask]
+        return self.edge_index, self.edge_weight
+
+    def get_root_nodes(self) -> List[str]:
+        """
+        Get nodes with no incoming edges (in-degree = 0).
+
+        Returns:
+            List of root node names
+        """
+        G = self.to_networkx()
+        return [node for node, degree in G.in_degree() if degree == 0]
+
+    def get_leaf_nodes(self) -> List[str]:
+        """
+        Get nodes with no outgoing edges (out-degree = 0).
+
+        Returns:
+            List of leaf node names
+        """
+        G = self.to_networkx()
+        return [node for node, degree in G.out_degree() if degree == 0]
+
+    def topological_sort(self) -> List[str]:
+        """
+        Compute topological ordering of nodes.
+
+        Only valid for directed acyclic graphs (DAGs).
+
+        Returns:
+            List of node names in topological order
+
+        Raises:
+            nx.NetworkXError: If graph contains cycles
+        """
+        G = self.to_networkx()
+        return list(nx.topological_sort(G))
+
+    def get_predecessors(self, node: Union[str, int]) -> List[str]:
+        """
+        Get immediate predecessors (parents) of a node.
+
+        Args:
+            node: Node name (str) or index (int)
+
+        Returns:
+            List of predecessor node names
+        """
+        G = self.to_networkx()
+        node_name = self.node_names[node] if isinstance(node, int) else node
+        return list(G.predecessors(node_name))
+
+    def get_successors(self, node: Union[str, int]) -> List[str]:
+        """
+        Get immediate successors (children) of a node.
+
+        Args:
+            node: Node name (str) or index (int)
+
+        Returns:
+            List of successor node names
+        """
+        G = self.to_networkx()
+        node_name = self.node_names[node] if isinstance(node, int) else node
+        return list(G.successors(node_name))
+
+    def get_ancestors(self, node: Union[str, int]) -> Set[str]:
+        """
+        Get all ancestors of a node (transitive predecessors).
+
+        Args:
+            node: Node name (str) or index (int)
+
+        Returns:
+            Set of ancestor node names
+        """
+        G = self.to_networkx()
+        node_name = self.node_names[node] if isinstance(node, int) else node
+        return nx.ancestors(G, node_name)
+
+    def get_descendants(self, node: Union[str, int]) -> Set[str]:
+        """
+        Get all descendants of a node (transitive successors).
+
+        Args:
+            node: Node name (str) or index (int)
+
+        Returns:
+            Set of descendant node names
+        """
+        G = self.to_networkx()
+        node_name = self.node_names[node] if isinstance(node, int) else node
+        return nx.descendants(G, node_name)
+
+    def is_directed_acyclic(self) -> bool:
+        """
+        Check if the graph is a directed acyclic graph (DAG).
+
+        Returns:
+            True if graph is a DAG, False otherwise
+        """
+        G = self.to_networkx()
+        return nx.is_directed_acyclic_graph(G)
+
+    def is_dag(self) -> bool:
+        """
+        Check if the graph is a directed acyclic graph (DAG).
+
+        Alias for is_directed_acyclic() for convenience.
+
+        Returns:
+            True if graph is a DAG, False otherwise
+        """
+        return self.is_directed_acyclic()
 
 
 def dense_to_sparse(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor],
+        adj_matrix: Union[ConceptGraph, Tensor],
         threshold: float = 0.0
 ) -> Tuple[Tensor, Tensor]:
     """
     Convert dense adjacency matrix to sparse COO format (edge list).
 
-    Uses PyTorch Geometric's native dense_to_sparse function if available,
-    otherwise falls back to manual implementation.
+    Uses PyTorch Geometric's native dense_to_sparse function.
 
     Args:
-        adj_matrix: Dense adjacency matrix of shape (n_nodes, n_nodes)
+        adj_matrix: Dense adjacency matrix (ConceptGraph or Tensor) of shape (n_nodes, n_nodes)
         threshold: Minimum absolute value to consider as an edge (only used in fallback)
 
     Returns:
@@ -1336,8 +1287,10 @@ def dense_to_sparse(
         >>> print(edge_weight)
         tensor([1., 1.])
     """
-    # Convert AnnotatedAdjacencyMatrix to regular tensor if needed
-    if isinstance(adj_matrix, AnnotatedTensor):
+    # Extract tensor data
+    if isinstance(adj_matrix, ConceptGraph):
+        adj_tensor = adj_matrix.data
+    elif isinstance(adj_matrix, AnnotatedTensor):
         adj_tensor = adj_matrix.as_subclass(Tensor)
     else:
         adj_tensor = adj_matrix
@@ -1346,7 +1299,7 @@ def dense_to_sparse(
 
 
 def to_networkx_graph(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor],
+        adj_matrix: Union[ConceptGraph, Tensor],
         node_names: Optional[List[str]] = None,
         threshold: float = 0.0
 ) -> nx.DiGraph:
@@ -1356,8 +1309,8 @@ def to_networkx_graph(
     Uses NetworkX's native from_numpy_array function for conversion.
 
     Args:
-        adj_matrix: Adjacency matrix (dense)
-        node_names: Optional node names. If adj_matrix is AnnotatedAdjacencyMatrix,
+        adj_matrix: Adjacency matrix (ConceptGraph or Tensor)
+        node_names: Optional node names. If adj_matrix is ConceptGraph,
                    uses its node_names. Otherwise uses integer indices.
         threshold: Minimum absolute value to consider as an edge
 
@@ -1372,11 +1325,11 @@ def to_networkx_graph(
         >>> print(list(G.nodes()))  # ['A', 'B', 'C']
         >>> print(list(G.edges()))  # [('A', 'B'), ('A', 'C'), ('B', 'C')]
     """
-    # Extract node names if AnnotatedAdjacencyMatrix
-    if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
+    # Extract node names and tensor data
+    if isinstance(adj_matrix, ConceptGraph):
         if node_names is None:
             node_names = adj_matrix.node_names
-        adj_tensor = adj_matrix.as_subclass(Tensor)
+        adj_tensor = adj_matrix.data
     else:
         adj_tensor = adj_matrix
         if node_names is None:
@@ -1391,11 +1344,7 @@ def to_networkx_graph(
     adj_numpy = adj_tensor.detach().cpu().numpy()
 
     # Use NetworkX's native conversion
-    # from_numpy_array creates a graph from adjacency matrix
-    G = nx.from_numpy_array(
-        adj_numpy,
-        create_using=nx.DiGraph
-    )
+    G = nx.from_numpy_array(adj_numpy, create_using=nx.DiGraph)
 
     # Relabel nodes with custom names if provided
     if node_names != list(range(len(node_names))):
@@ -1406,14 +1355,14 @@ def to_networkx_graph(
 
 
 def get_root_nodes(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
+        adj_matrix: Union[ConceptGraph, Tensor, nx.DiGraph],
         node_names: Optional[List[str]] = None
 ) -> List[str]:
     """
     Get nodes with no incoming edges (in-degree = 0).
 
     Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
+        adj_matrix: Adjacency matrix (ConceptGraph, Tensor) or NetworkX graph
         node_names: Optional node names (only needed if adj_matrix is Tensor)
 
     Returns:
@@ -1429,23 +1378,22 @@ def get_root_nodes(
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
     else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
+        if isinstance(adj_matrix, ConceptGraph):
+            node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
 
     return [node for node, degree in G.in_degree() if degree == 0]
 
 
 def get_leaf_nodes(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
+        adj_matrix: Union[ConceptGraph, Tensor, nx.DiGraph],
         node_names: Optional[List[str]] = None
 ) -> List[str]:
     """
     Get nodes with no outgoing edges (out-degree = 0).
 
     Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
+        adj_matrix: Adjacency matrix (ConceptGraph, Tensor) or NetworkX graph
         node_names: Optional node names (only needed if adj_matrix is Tensor)
 
     Returns:
@@ -1461,16 +1409,15 @@ def get_leaf_nodes(
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
     else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
+        if isinstance(adj_matrix, ConceptGraph):
+            node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
 
     return [node for node, degree in G.out_degree() if degree == 0]
 
 
 def topological_sort(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
+        adj_matrix: Union[ConceptGraph, Tensor, nx.DiGraph],
         node_names: Optional[List[str]] = None
 ) -> List[str]:
     """
@@ -1479,7 +1426,7 @@ def topological_sort(
     Uses NetworkX's native topological_sort function.
 
     Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
+        adj_matrix: Adjacency matrix (ConceptGraph, Tensor) or NetworkX graph
         node_names: Optional node names (only needed if adj_matrix is Tensor)
 
     Returns:
@@ -1498,17 +1445,15 @@ def topological_sort(
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
     else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
+        if isinstance(adj_matrix, ConceptGraph):
+            node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
 
-    # Use NetworkX's native implementation
     return list(nx.topological_sort(G))
 
 
 def get_predecessors(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
+        adj_matrix: Union[ConceptGraph, Tensor, nx.DiGraph],
         node: Union[str, int],
         node_names: Optional[List[str]] = None
 ) -> List[str]:
@@ -1518,7 +1463,7 @@ def get_predecessors(
     Uses NetworkX's native predecessors method.
 
     Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
+        adj_matrix: Adjacency matrix (ConceptGraph, Tensor) or NetworkX graph
         node: Node name (str) or index (int)
         node_names: Optional node names (only needed if adj_matrix is Tensor)
 
@@ -1537,19 +1482,17 @@ def get_predecessors(
         if isinstance(node, int) and node_names:
             node = node_names[node]
     else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
+        if isinstance(adj_matrix, ConceptGraph):
+            node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
         if isinstance(node, int):
             node = node_names[node]
 
-    # Use NetworkX's native implementation
     return list(G.predecessors(node))
 
 
 def get_successors(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
+        adj_matrix: Union[ConceptGraph, Tensor, nx.DiGraph],
         node: Union[str, int],
         node_names: Optional[List[str]] = None
 ) -> List[str]:
@@ -1559,7 +1502,7 @@ def get_successors(
     Uses NetworkX's native successors method.
 
     Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
+        adj_matrix: Adjacency matrix (ConceptGraph, Tensor) or NetworkX graph
         node: Node name (str) or index (int)
         node_names: Optional node names (only needed if adj_matrix is Tensor)
 
@@ -1578,147 +1521,10 @@ def get_successors(
         if isinstance(node, int) and node_names:
             node = node_names[node]
     else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
+        if isinstance(adj_matrix, ConceptGraph):
+            node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
         if isinstance(node, int):
             node = node_names[node]
 
-    # Use NetworkX's native implementation
     return list(G.successors(node))
-
-
-def get_ancestors(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
-        node: Union[str, int],
-        node_names: Optional[List[str]] = None
-) -> Set[str]:
-    """
-    Get all ancestors of a node (transitive predecessors).
-
-    Uses NetworkX's native ancestors function.
-
-    Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
-        node: Node name (str) or index (int)
-        node_names: Optional node names (only needed if adj_matrix is Tensor)
-
-    Returns:
-        Set of ancestor node names
-
-    Example:
-        >>> adj = torch.tensor([[0., 1., 1.],
-        ...                     [0., 0., 1.],
-        ...                     [0., 0., 0.]])
-        >>> ancestors = get_ancestors(adj, 'C', node_names=['A', 'B', 'C'])
-        >>> print(ancestors)  # {'A', 'B'}
-    """
-    if isinstance(adj_matrix, nx.DiGraph):
-        G = adj_matrix
-        if isinstance(node, int) and node_names:
-            node = node_names[node]
-    else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
-        G = to_networkx_graph(adj_matrix, node_names=node_names)
-        if isinstance(node, int):
-            node = node_names[node]
-
-    # Use NetworkX's native implementation
-    return nx.ancestors(G, node)
-
-
-def get_descendants(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
-        node: Union[str, int],
-        node_names: Optional[List[str]] = None
-) -> Set[str]:
-    """
-    Get all descendants of a node (transitive successors).
-
-    Uses NetworkX's native descendants function.
-
-    Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
-        node: Node name (str) or index (int)
-        node_names: Optional node names (only needed if adj_matrix is Tensor)
-
-    Returns:
-        Set of descendant node names
-
-    Example:
-        >>> adj = torch.tensor([[0., 1., 1.],
-        ...                     [0., 0., 1.],
-        ...                     [0., 0., 0.]])
-        >>> descendants = get_descendants(adj, 'A', node_names=['A', 'B', 'C'])
-        >>> print(descendants)  # {'B', 'C'}
-    """
-    if isinstance(adj_matrix, nx.DiGraph):
-        G = adj_matrix
-        if isinstance(node, int) and node_names:
-            node = node_names[node]
-    else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
-        G = to_networkx_graph(adj_matrix, node_names=node_names)
-        if isinstance(node, int):
-            node = node_names[node]
-
-    # Use NetworkX's native implementation
-    return nx.descendants(G, node)
-
-
-def is_directed_acyclic(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
-        node_names: Optional[List[str]] = None
-) -> bool:
-    """
-    Check if the graph is a directed acyclic graph (DAG).
-
-    Uses NetworkX's native is_directed_acyclic_graph function.
-
-    Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
-        node_names: Optional node names (only needed if adj_matrix is Tensor)
-
-    Returns:
-        True if graph is a DAG, False otherwise
-
-    Example:
-        >>> adj = torch.tensor([[0., 1., 0.],
-        ...                     [0., 0., 1.],
-        ...                     [1., 0., 0.]])  # Contains cycle
-        >>> print(is_directed_acyclic(adj))  # False
-    """
-    if isinstance(adj_matrix, nx.DiGraph):
-        G = adj_matrix
-    else:
-        if isinstance(adj_matrix, AnnotatedAdjacencyMatrix):
-            node_names = adj_matrix.annotations.get_axis_labels(axis=1)
-
-        G = to_networkx_graph(adj_matrix, node_names=node_names)
-
-    # Use NetworkX's native implementation
-    return nx.is_directed_acyclic_graph(G)
-
-
-def is_dag(
-        adj_matrix: Union[AnnotatedAdjacencyMatrix, Tensor, nx.DiGraph],
-        node_names: Optional[List[str]] = None
-) -> bool:
-    """
-    Check if the graph is a directed acyclic graph (DAG).
-
-    Alias for is_directed_acyclic() for convenience.
-
-    Args:
-        adj_matrix: Adjacency matrix or NetworkX graph
-        node_names: Optional node names (only needed if adj_matrix is Tensor)
-
-    Returns:
-        True if graph is a DAG, False otherwise
-    """
-    return is_directed_acyclic(adj_matrix, node_names=node_names)

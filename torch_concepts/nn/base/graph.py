@@ -2,7 +2,7 @@ import torch.nn as nn
 
 from abc import abstractmethod, ABC
 
-from torch_concepts import AnnotatedAdjacencyMatrix, Annotations
+from torch_concepts import ConceptGraph, Annotations
 
 
 class BaseGraphLearner(nn.Module, ABC):
@@ -13,7 +13,7 @@ class BaseGraphLearner(nn.Module, ABC):
         self.annotations = annotations
 
     @property
-    def model_graph(self) -> AnnotatedAdjacencyMatrix:
+    def model_graph(self) -> ConceptGraph:
         # Return the model's graph representation
         return self._model_graph
 
