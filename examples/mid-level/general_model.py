@@ -24,7 +24,7 @@ def main():
                                             [0, 0, 0, 1, 0],
                                             [0, 1, 0, 0, 0],
                                             [0, 0, 0, 0, 0]]).float(),
-                                           annotations)
+                                           list(annotations.get_axis_annotation(1).labels))
     model = GraphModel(model_graph=model_graph,
                        exogenous=Propagator(ExogEncoder, embedding_size=7),
                        encoder=Propagator(ProbEncoderFromExog),
@@ -32,6 +32,8 @@ def main():
                        annotations=annotations,
                        predictor_in_embedding=0,
                        predictor_in_exogenous=7,
+                       has_self_exogenous=True,
+                       has_parent_exogenous=False,
                        input_size=x.shape[1])
     inference_train = KnownGraphInference(model=model)
     cy_preds = inference_train.query(x)
@@ -42,6 +44,8 @@ def main():
                        predictor_in_embedding=0,
                        predictor_in_exogenous=0,
                        annotations=annotations,
+                       has_self_exogenous=False,
+                       has_parent_exogenous=False,
                        input_size=x.shape[1])
     inference_train = KnownGraphInference(model=model)
     cy_preds = inference_train.query(x)
@@ -55,18 +59,22 @@ def main():
                               annotations=annotations,
                               predictor_in_embedding=0,
                               predictor_in_exogenous=7,
+                              has_self_exogenous=True,
+                              has_parent_exogenous=False,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
     c_encoder, c_predictor = inference_train.query(x, c)
     print(c_encoder)
     print(c_predictor)
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
-                              exogenous=Propagator(ExogEncoder, embedding_size=7),
+                              exogenous=Propagator(ExogEncoder, embedding_size=7*2),
                               encoder=Propagator(ProbEncoderFromExog),
                               predictor=Propagator(MixProbExogPredictor),
                               annotations=annotations,
                               predictor_in_embedding=0,
-                              predictor_in_exogenous=7*2,
+                              predictor_in_exogenous=7,
+                              has_self_exogenous=False,
+                              has_parent_exogenous=True,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
     c_encoder, c_predictor = inference_train.query(x, c)
@@ -75,12 +83,14 @@ def main():
 
     # CEM
     model = BipartiteModel(task_names=['c', 'e'],
-                           exogenous=Propagator(ExogEncoder, embedding_size=7),
+                           exogenous=Propagator(ExogEncoder, embedding_size=7*2),
                            encoder=Propagator(ProbEncoderFromExog),
                            predictor=Propagator(MixProbExogPredictor),
                            annotations=annotations,
                            predictor_in_embedding=0,
                            predictor_in_exogenous=7,
+                           has_self_exogenous=False,
+                           has_parent_exogenous=True,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)
     cy_pred = inference_test.query(x)
@@ -93,6 +103,8 @@ def main():
                            annotations=annotations,
                            predictor_in_embedding=0,
                            predictor_in_exogenous=7,
+                           has_self_exogenous=True,
+                           has_parent_exogenous=False,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)
     cy_pred = inference_test.query(x)
@@ -102,6 +114,8 @@ def main():
                            annotations=annotations,
                            predictor_in_embedding=0,
                            predictor_in_exogenous=0,
+                           has_self_exogenous=False,
+                           has_parent_exogenous=False,
                            input_size=x.shape[1])
     inference_test = KnownGraphInference(model=model)
     cy_pred = inference_test.query(x)

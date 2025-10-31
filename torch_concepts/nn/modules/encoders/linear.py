@@ -61,10 +61,12 @@ class ProbEncoderFromExog(BaseEncoder):
         self,
         in_features_exogenous: int,
         out_annotations: Annotations,
+        n_exogenous_per_concept: int = 1,
         *args,
         **kwargs,
     ):
-        # in_features_exogenous = in_features_exogenous * 2
+        self.n_exogenous_per_concept = n_exogenous_per_concept
+        in_features_exogenous = in_features_exogenous * n_exogenous_per_concept
         super().__init__(
             in_features_exogenous=in_features_exogenous,
             out_annotations=out_annotations,

@@ -18,12 +18,21 @@ class KnownGraphInference(BaseInference):
 
     def query(self, x: torch.Tensor, *args, **kwargs) -> ConceptTensor:
         # get exogenous
+        num_concepts = len(self.model.concept_names)
         if self.model.has_exogenous:
             c_exog_roots = self.model.exogenous_roots(x)
             c_exog_internal = self.model.exogenous_internal(x)
-        
+
+            c_exog_vals = [None] * num_concepts
+            chunks = torch.chunk(c_exog_roots, chunks=c_exog_roots.shape[1], dim=1)
+            for cid, t in zip(self.model.root_nodes_idx, chunks):
+                c_exog_vals[cid] = t
+
+            chunks = torch.chunk(c_exog_internal, chunks=c_exog_internal.shape[1], dim=1)
+            for cid, t in zip(self.model.internal_node_idx, chunks):
+                c_exog_vals[cid] = t
+
         # get roots
-        num_concepts = len(self.model.concept_names)
         vals = [None] * num_concepts
         if self.model.has_exogenous:
             input_obj = c_exog_roots
@@ -39,9 +48,12 @@ class KnownGraphInference(BaseInference):
             fetcher = self.model.fetchers[c_id]
             input_obj = torch.cat(fetcher(vals), dim=1)
 
-            if self.model.has_exogenous:
+            if self.model.has_self_exogenous:
                 exog = c_exog_internal[:, c_id, None]
                 c_out = propagator(input_obj, exog)
+            elif self.model.has_parent_exogenous:
+                input_exog = torch.cat(fetcher(c_exog_vals), dim=1)
+                c_out = propagator(input_obj, input_exog)
             else:
                 c_out = propagator(input_obj)
 
@@ -81,9 +93,12 @@ class UnknownGraphInference(BaseInference):
             propagator = self.model.predictors[c_name]
             c_masked = self.mask_concept_tensor(c, model_graph, c_name)
 
-            if self.model.predictor_in_exogenous:
+            if self.model.has_self_exogenous:
                 exog = c_exog[:, c_id, None]
                 c_out = propagator(c_masked, exogenous=exog)
+            elif self.model.has_parent_exogenous:
+                c_exog_masked = self.mask_concept_tensor(c_exog, model_graph, c_name)
+                c_out = propagator(c_masked, c_exog_masked)
             else:
                 c_out = propagator(c_masked)
 

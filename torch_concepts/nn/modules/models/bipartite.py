@@ -20,6 +20,8 @@ class BipartiteModel(GraphModel):
                  predictor: Propagator,
                  predictor_in_embedding: int,
                  predictor_in_exogenous: int,
+                 has_self_exogenous: bool = False,
+                 has_parent_exogenous: bool = False,
                  exogenous: Propagator = None,
                  ):
 
@@ -31,8 +33,6 @@ class BipartiteModel(GraphModel):
         graph.loc[task_names, task_names] = 0  # tasks do not point to themselves
         bipartite_graph = ConceptGraph(torch.FloatTensor(graph.values), node_names=list(concept_names))
 
-        self.predictor_in_logits = 1
-
         super(BipartiteModel, self).__init__(
             input_size=input_size,
             annotations=annotations,
@@ -41,5 +41,7 @@ class BipartiteModel(GraphModel):
             model_graph=bipartite_graph,
             predictor_in_embedding=predictor_in_embedding,
             predictor_in_exogenous=predictor_in_exogenous,
+            has_self_exogenous=has_self_exogenous,
+            has_parent_exogenous=has_parent_exogenous,
             exogenous=exogenous
         )

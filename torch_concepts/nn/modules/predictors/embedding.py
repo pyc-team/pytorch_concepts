@@ -3,7 +3,7 @@ import torch
 
 from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
 from ...base.layer import BasePredictor
-from torch_concepts.nn.functional import grouped_concept_embedding_mixture
+from ...functional import grouped_concept_embedding_mixture
 from typing import List, Dict, Callable, Union, Tuple
 
 

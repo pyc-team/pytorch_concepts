@@ -20,7 +20,12 @@ class BaseModel(torch.nn.Module):
                  annotations: Annotations,
                  encoder: Propagator,  # layer for root concepts
                  predictor: Propagator,
-                 model_graph: Union[ConceptGraph, BaseGraphLearner]
+                 model_graph: Union[ConceptGraph, BaseGraphLearner],
+                 predictor_in_embedding: int,
+                 predictor_in_exogenous: int,
+                 has_self_exogenous: bool = False,
+                 has_parent_exogenous: bool = False,
+                 exogenous: Propagator = None
                  ):
         super(BaseModel, self).__init__()
         self.emb_size = input_size
@@ -28,6 +33,7 @@ class BaseModel(torch.nn.Module):
         self.name2id = {name: i for i, name in enumerate(self.concept_names)}
         self._encoder_builder = encoder
         self._predictor_builder = predictor
+        self._exogenous_builder = exogenous
         self.annotations = annotations
 
         # instantiate model graph
@@ -39,6 +45,14 @@ class BaseModel(torch.nn.Module):
         # else:
         #     self.tensor_mode = 'tensor'
         self.tensor_mode = 'tensor' # TODO: fixme
+
+        self.predictor_in_embedding = predictor_in_embedding
+        self.predictor_in_exogenous = predictor_in_exogenous
+        self.predictor_in_logits = 1
+        self.has_self_exogenous = has_self_exogenous
+        self.has_parent_exogenous = has_parent_exogenous
+
+        self.has_exogenous = exogenous is not None
 
     def _init_encoder(self, layer: Propagator, concept_names: List[str], in_features_embedding=None, in_features_exogenous=None) -> torch.nn.Module:
         output_annotations = self.annotations.select(axis=1, keep_labels=concept_names)

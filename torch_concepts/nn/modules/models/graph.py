@@ -21,6 +21,8 @@ class GraphModel(BaseModel):
                  model_graph: ConceptGraph,
                  predictor_in_embedding: int,
                  predictor_in_exogenous: int,
+                 has_self_exogenous: bool = False,
+                 has_parent_exogenous: bool = False,
                  exogenous: Propagator = None
                  ):
         super(GraphModel, self).__init__(
@@ -28,16 +30,16 @@ class GraphModel(BaseModel):
             annotations=annotations,
             encoder=encoder,
             predictor=predictor,
-            model_graph=model_graph
+            model_graph=model_graph,
+            predictor_in_embedding=predictor_in_embedding,
+            predictor_in_exogenous=predictor_in_exogenous,
+            has_self_exogenous=has_self_exogenous,
+            has_parent_exogenous=has_parent_exogenous,
+            exogenous=exogenous
         )
-        self.predictor_in_embedding = predictor_in_embedding
-        self.predictor_in_exogenous = predictor_in_exogenous
-        self.predictor_in_logits = 1
-
-        self.has_exogenous = exogenous is not None
 
         assert model_graph.is_directed_acyclic(), "Input model graph must be a directed acyclic graph."
-        assert model_graph.annotations.get_axis_labels(axis=1) == self.concept_names, "concept_names must match model_graph annotations."
+        assert model_graph.node_names == list(self.concept_names), "concept_names must match model_graph annotations."
         self.root_nodes = [r for r in model_graph.get_root_nodes()]
         self.graph_order = model_graph.topological_sort()  # TODO: group by graph levels?
         self.internal_nodes = [c for c in self.graph_order if c not in self.root_nodes]
@@ -71,6 +73,8 @@ class LearnedGraphModel(BaseModel):
                  model_graph: BaseGraphLearner,
                  predictor_in_embedding: int,
                  predictor_in_exogenous: int,
+                 has_self_exogenous: bool = False,
+                 has_parent_exogenous: bool = False,
                  exogenous: Propagator = None
                  ):
         super(LearnedGraphModel, self).__init__(
@@ -78,14 +82,13 @@ class LearnedGraphModel(BaseModel):
             annotations=annotations,
             encoder=encoder,
             predictor=predictor,
-            model_graph=model_graph  # learned graph
+            model_graph=model_graph,
+            predictor_in_embedding=predictor_in_embedding,
+            predictor_in_exogenous=predictor_in_exogenous,
+            has_self_exogenous=has_self_exogenous,
+            has_parent_exogenous=has_parent_exogenous,
+            exogenous=exogenous
         )
-
-        self.predictor_in_embedding = predictor_in_embedding
-        self.predictor_in_exogenous = predictor_in_exogenous
-        self.predictor_in_logits = 1
-
-        self.has_exogenous = exogenous is not None
 
         # if model_graph is None, create a fully connected graph, and sparsify this during training
         self.root_nodes = self.concept_names  # all concepts are roots in a fully connected graph
@@ -95,7 +98,6 @@ class LearnedGraphModel(BaseModel):
         self.internal_node_idx = [self.concept_names.index(i) for i in self.internal_nodes]
         self.graph_order = None
         self.graph_learner = model_graph(annotations=annotations)
-
 
         if self.has_exogenous:
             self.exogenous = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
