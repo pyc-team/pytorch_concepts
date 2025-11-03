@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, ConceptGraph
+from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import ExogEncoder, ProbPredictor, ProbEncoderFromExog, BipartiteModel, Propagator, GraphModel, \
     COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEncoderFromEmb, HyperLinearPredictor, MixProbExogPredictor
 from torch_concepts.nn import KnownGraphInference, UnknownGraphInference, ProbEncoderFromEmb
@@ -16,8 +16,6 @@ def main():
     residuals = torch.ones(100, n_concepts) * -1
 
     annotations = Annotations({1: AxisAnnotation(('c', 'b', 'a', 'd', 'e'))})
-
-    c = ConceptTensor(annotations, concept_probs)
 
     model_graph = ConceptGraph(torch.tensor([[0, 1, 0, 0, 1],
                                             [0, 0, 0, 0, 1],
@@ -63,7 +61,7 @@ def main():
                               has_parent_exogenous=False,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
-    c_encoder, c_predictor = inference_train.query(x, c)
+    c_encoder, c_predictor = inference_train.query(x, concept_probs)
     print(c_encoder)
     print(c_predictor)
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
@@ -77,7 +75,7 @@ def main():
                               has_parent_exogenous=True,
                               input_size=x.shape[1])
     inference_train = UnknownGraphInference(model=model)
-    c_encoder, c_predictor = inference_train.query(x, c)
+    c_encoder, c_predictor = inference_train.query(x, concept_probs)
     print(c_encoder)
     print(c_predictor)
 

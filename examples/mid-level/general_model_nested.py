@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-from torch_concepts import ConceptTensor, Annotations, AxisAnnotation, ConceptGraph
+from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import ExogEncoder, ProbPredictor, ProbEncoderFromExog, BipartiteModel, Propagator, GraphModel, \
     COSMOGraphLearner, LearnedGraphModel, BaseGraphLearner, ProbEncoderFromEmb, HyperLinearPredictor, MixProbExogPredictor
 from torch_concepts.nn import KnownGraphInference, UnknownGraphInference, ProbEncoderFromEmb

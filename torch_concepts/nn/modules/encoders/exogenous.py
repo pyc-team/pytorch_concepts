@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from torch_concepts import Annotations, ConceptTensor
+from torch_concepts import Annotations
 from torch_concepts.nn.base.layer import BaseEncoder
 from typing import List, Callable, Union, Dict, Tuple
 
@@ -31,10 +31,9 @@ class ExogEncoder(BaseEncoder):
             out_annotations=out_annotations,
         )
         self.embedding_size = embedding_size
-        # self.n_states = 2 # TODO: fix
 
         self.out_logits_dim = out_annotations.shape[1]
-        self.out_exogenous_shape = (self.out_logits_dim, embedding_size) # * self.n_states)
+        self.out_exogenous_shape = (self.out_logits_dim, embedding_size)
         self.out_encoder_dim = np.prod(self.out_exogenous_shape).item()
 
         self.encoder = torch.nn.Sequential(

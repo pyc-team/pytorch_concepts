@@ -1,6 +1,6 @@
 import torch
 
-from torch_concepts import Annotations, ConceptTensor
+from torch_concepts import Annotations
 from ....nn.base.layer import BaseConceptLayer
 from typing import List, Callable, Union, Dict, Tuple
 

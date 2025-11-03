@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from abc import ABC, abstractmethod
-from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
+from torch_concepts import AnnotatedTensor, Annotations
 
 
 class BaseConceptLayer(ABC, torch.nn.Module):

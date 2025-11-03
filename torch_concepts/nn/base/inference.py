@@ -4,8 +4,6 @@ from typing import Dict, List
 import torch
 import torch.nn as nn
 
-from torch_concepts import ConceptTensor
-
 
 class BaseInference(torch.nn.Module):
     """
@@ -18,13 +16,13 @@ class BaseInference(torch.nn.Module):
     def forward(self,
                 x: torch.Tensor,
                 *args,
-                **kwargs) -> ConceptTensor:
+                **kwargs) -> torch.Tensor:
         return self.query(x, *args, **kwargs)
 
     @abstractmethod
     def query(self,
               *args,
-              **kwargs) -> ConceptTensor:
+              **kwargs) -> torch.Tensor:
         """
         Query model to get concepts.
 

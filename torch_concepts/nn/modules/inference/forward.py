@@ -4,7 +4,7 @@ from abc import ABC
 import torch
 from torch import nn
 
-from torch_concepts import AnnotatedTensor, ConceptTensor, Annotations, ConceptGraph
+from torch_concepts import AnnotatedTensor, Annotations, ConceptGraph
 from typing import List, Union, Optional, Tuple, Mapping
 
 from ... import GraphModel
@@ -16,7 +16,7 @@ class KnownGraphInference(BaseInference):
         super().__init__(model=model)
         self.train_mode = 'joint'
 
-    def query(self, x: torch.Tensor, *args, **kwargs) -> ConceptTensor:
+    def query(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         # get exogenous
         num_concepts = len(self.model.concept_names)
         if self.model.has_exogenous:
@@ -67,7 +67,7 @@ class UnknownGraphInference(BaseInference):
         super().__init__(model=model)
         self.train_mode = 'independent'
 
-    def mask_concept_tensor(self, c: ConceptTensor, model_graph: ConceptGraph, c_name: str, cardinality: List[int]) -> torch.Tensor:
+    def mask_concept_tensor(self, c: torch.Tensor, model_graph: ConceptGraph, c_name: str, cardinality: List[int]) -> torch.Tensor:
         broadcast_shape = [1] * len(c.size())
         broadcast_shape[1] = c.size(1)
         mask = torch.repeat_interleave(
@@ -76,7 +76,7 @@ class UnknownGraphInference(BaseInference):
         ).view(*broadcast_shape)
         return c * mask.data
 
-    def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> Tuple[torch.Tensor]:
+    def query(self, x: torch.Tensor, c: torch.Tensor, *args, **kwargs) -> Tuple[torch.Tensor]:
         # --- maybe from embeddings to exogenous
         num_concepts = len(self.model.concept_names)
         if self.model.has_exogenous:

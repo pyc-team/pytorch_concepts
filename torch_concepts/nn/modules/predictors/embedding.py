@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from torch_concepts import AnnotatedTensor, Annotations, ConceptTensor
+from torch_concepts import AnnotatedTensor, Annotations
 from ...base.layer import BasePredictor
 from ...functional import grouped_concept_embedding_mixture
 from typing import List, Dict, Callable, Union, Tuple

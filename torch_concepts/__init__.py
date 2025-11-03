@@ -4,7 +4,6 @@ from typing import Any
 
 from .concepts.annotations import Annotations, AxisAnnotation
 from .concepts.tensor import AnnotatedTensor, ConceptGraph
-from .concepts.concept import ConceptTensor
 from . import nn
 from . import data
 
@@ -21,8 +20,6 @@ __all__ = [
     "AxisAnnotation",
     "AnnotatedTensor",
     "ConceptGraph",
-
-    "ConceptTensor",
 
     "nn",
     "data",
