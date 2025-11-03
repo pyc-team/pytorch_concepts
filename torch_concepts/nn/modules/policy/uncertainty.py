@@ -36,4 +36,4 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         *args,
         **kwargs,
     ) -> torch.Tensor:
-        return (-logits).abs()
+        return logits.abs()

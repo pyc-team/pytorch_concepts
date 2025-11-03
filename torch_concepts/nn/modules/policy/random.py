@@ -38,4 +38,4 @@ class RandomPolicy(BaseConceptLayer):
         *args,
         **kwargs,
     ) -> torch.Tensor:
-        return torch.rand_like(logits) * self.scale
+        return torch.rand_like(logits).abs() * self.scale
