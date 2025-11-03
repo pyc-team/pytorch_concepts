@@ -70,17 +70,31 @@ class BaseModel(torch.nn.Module):
 
     def _init_fetchers(self, parent_names = None):
         """Build fetchers that read tensors by fixed concept-id."""
+
+        name2id = self.name2id
+        cardinalities = self.annotations.get_axis_annotation(axis=1).cardinalities
+
+        if cardinalities is not None:
+            split_sizes_roots = [cardinalities[cid] for cid in self.root_nodes_idx]
+        else:
+            split_sizes_roots = [1] * len(self.root_nodes_idx)
+
         if parent_names:
-            self.arity = len(parent_names)
+            if cardinalities is not None:
+                self.arity = [sum(cardinalities)] * len(parent_names)
+            else:
+                self.arity = [len(parent_names)] * len(parent_names)
             pids = tuple(self.name2id[p] for p in parent_names)
             self.fetchers = itemgetter(*pids)
+
+            self.split_sizes_roots = split_sizes_roots
+            self.split_sizes_internal = split_sizes_roots
             return
 
         fetchers = []
         arity = []
-        name2id = self.name2id  # pre-computed map name → concept-id
+        split_sizes_internal = []
 
-        cardinalities = self.annotations.get_axis_annotation(axis=1).cardinalities
         for c_name in self.internal_nodes:
             parents = self.model_graph.get_predecessors(c_name)
 
@@ -88,8 +102,10 @@ class BaseModel(torch.nn.Module):
             n_parents = len(pids)
             if cardinalities is not None:
                 card = sum([cardinalities[p] for p in pids])
+                split_sizes_internal.append(cardinalities[name2id[c_name]])
             else:
                 card = n_parents
+                split_sizes_internal.append(1)
             arity.append(card)
 
             if n_parents == 1:
@@ -99,6 +115,8 @@ class BaseModel(torch.nn.Module):
 
         self.fetchers = fetchers
         self.arity = arity
+        self.split_sizes_roots = split_sizes_roots
+        self.split_sizes_internal = split_sizes_internal
         return
 
     def _init_predictors(self, 

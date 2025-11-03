@@ -24,11 +24,11 @@ class KnownGraphInference(BaseInference):
             c_exog_internal = self.model.exogenous_internal(x)
 
             c_exog_vals = [None] * num_concepts
-            chunks = torch.chunk(c_exog_roots, chunks=c_exog_roots.shape[1], dim=1)
+            chunks = torch.split_with_sizes(c_exog_roots, split_sizes=self.model.split_sizes_roots, dim=1)
             for cid, t in zip(self.model.root_nodes_idx, chunks):
                 c_exog_vals[cid] = t
 
-            chunks = torch.chunk(c_exog_internal, chunks=c_exog_internal.shape[1], dim=1)
+            chunks = torch.split_with_sizes(c_exog_internal, split_sizes=self.model.split_sizes_internal, dim=1)
             for cid, t in zip(self.model.internal_node_idx, chunks):
                 c_exog_vals[cid] = t
 
@@ -39,7 +39,7 @@ class KnownGraphInference(BaseInference):
         else:
             input_obj = x
         c_all = self.model.encoder(input_obj)
-        chunks = torch.chunk(c_all, chunks=c_all.shape[1], dim=1)
+        chunks = torch.split_with_sizes(c_all, split_sizes=self.model.split_sizes_roots, dim=1)
         for cid, t in zip(self.model.root_nodes_idx, chunks):
             vals[cid] = t
 
@@ -49,7 +49,7 @@ class KnownGraphInference(BaseInference):
             input_obj = torch.cat(fetcher(vals), dim=1)
 
             if self.model.has_self_exogenous:
-                exog = c_exog_internal[:, c_id, None]
+                exog = c_exog_vals[self.model.internal_node_idx[c_id]]
                 c_out = propagator(input_obj, exog)
             elif self.model.has_parent_exogenous:
                 input_exog = torch.cat(fetcher(c_exog_vals), dim=1)
@@ -67,16 +67,25 @@ class UnknownGraphInference(BaseInference):
         super().__init__(model=model)
         self.train_mode = 'independent'
 
-    def mask_concept_tensor(self, c: ConceptTensor, model_graph: ConceptGraph, c_name: str) -> torch.Tensor:
+    def mask_concept_tensor(self, c: ConceptTensor, model_graph: ConceptGraph, c_name: str, cardinality: List[int]) -> torch.Tensor:
         broadcast_shape = [1] * len(c.size())
         broadcast_shape[1] = c.size(1)
-        mask = model_graph[:, self.model.to_index(c_name)].view(*broadcast_shape)  # FIXME: get_by_nodes does not work!
+        mask = torch.repeat_interleave(
+            model_graph[:, self.model.to_index(c_name)],
+            torch.tensor(cardinality, device=c.device)
+        ).view(*broadcast_shape)
         return c * mask.data
 
     def query(self, x: torch.Tensor, c: ConceptTensor, *args, **kwargs) -> Tuple[torch.Tensor]:
         # --- maybe from embeddings to exogenous
+        num_concepts = len(self.model.concept_names)
         if self.model.has_exogenous:
             c_exog = self.model.exogenous(x)
+
+            c_exog_vals = [None] * num_concepts
+            chunks = torch.split_with_sizes(c_exog, split_sizes=self.model.split_sizes_roots, dim=1)
+            for cid, t in zip(self.model.root_nodes_idx, chunks):
+                c_exog_vals[cid] = t
         
         #  get roots
         if self.model.has_exogenous:
@@ -91,13 +100,13 @@ class UnknownGraphInference(BaseInference):
         vals = []
         for c_id, c_name in enumerate(self.model.annotations.get_axis_labels(axis=1)):
             propagator = self.model.predictors[c_name]
-            c_masked = self.mask_concept_tensor(c, model_graph, c_name)
+            c_masked = self.mask_concept_tensor(c, model_graph, c_name, self.model.split_sizes_roots)
 
             if self.model.has_self_exogenous:
-                exog = c_exog[:, c_id, None]
+                exog = c_exog_vals[self.model.internal_node_idx[c_id]]
                 c_out = propagator(c_masked, exogenous=exog)
             elif self.model.has_parent_exogenous:
-                c_exog_masked = self.mask_concept_tensor(c_exog, model_graph, c_name)
+                c_exog_masked = self.mask_concept_tensor(c_exog, model_graph, c_name, self.model.split_sizes_roots)
                 c_out = propagator(c_masked, c_exog_masked)
             else:
                 c_out = propagator(c_masked)

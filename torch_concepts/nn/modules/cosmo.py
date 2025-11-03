@@ -20,7 +20,7 @@ class COSMOGraphLearner(BaseGraphLearner):
             hard_threshold: bool = True,
     ):
         super(COSMOGraphLearner, self).__init__(annotations)
-        n_concepts = self.annotations.shape[1]
+        n_concepts = len(self.annotations.get_axis_labels(1))
         # define COSMO parameters
         self.adj_params = torch.nn.Parameter(torch.empty((n_concepts, n_concepts)))
         self.np_params = torch.nn.Parameter(torch.zeros((n_concepts, 1)))
