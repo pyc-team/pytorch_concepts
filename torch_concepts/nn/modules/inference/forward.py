@@ -64,7 +64,9 @@ class KnownGraphInference(BaseInference):
 
             cid = model.name2id[c_name]
             vals[cid] = c_out
-        return c_all
+
+        out = torch.cat(vals, dim=1)
+        return out
 
 
 class UnknownGraphInference(BaseInference):
