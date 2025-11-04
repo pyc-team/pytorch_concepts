@@ -9,9 +9,8 @@ class BaseInference(torch.nn.Module):
     """
     BaseInference is an abstract class for inference modules.
     """
-    def __init__(self, model: torch.nn.Module):
+    def __init__(self):
         super(BaseInference, self).__init__()
-        self.model = model
 
     def forward(self,
                 x: torch.Tensor,
@@ -43,4 +42,5 @@ class BaseIntervention(BaseInference, ABC):
     into `query(..., target_shape=...)`.
     """
     def __init__(self, model: nn.Module):
-        super().__init__(model=model)
+        super().__init__()
+        self.model = model

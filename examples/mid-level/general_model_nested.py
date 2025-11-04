@@ -34,8 +34,8 @@ def main():
                        has_self_exogenous=True,
                        has_parent_exogenous=False,
                        input_size=x.shape[1])
-    inference_train = KnownGraphInference(model=model)
-    cy_preds = inference_train.query(x)
+    inference_train = KnownGraphInference()
+    cy_preds = inference_train.query(x, model=model)
     print(cy_preds)
     model = GraphModel(model_graph=model_graph,
                        encoder=Propagator(ProbEncoderFromEmb),
@@ -46,8 +46,8 @@ def main():
                        has_parent_exogenous=False,
                        annotations=annotations,
                        input_size=x.shape[1])
-    inference_train = KnownGraphInference(model=model)
-    cy_preds = inference_train.query(x)
+    inference_train = KnownGraphInference()
+    cy_preds = inference_train.query(x, model=model)
     print(cy_preds)
 
     # CGM
@@ -61,8 +61,8 @@ def main():
                               has_self_exogenous=True,
                               has_parent_exogenous=False,
                               input_size=x.shape[1])
-    inference_train = UnknownGraphInference(model=model)
-    c_encoder, c_predictor = inference_train.query(x, concept_probs)
+    inference_train = UnknownGraphInference()
+    c_encoder, c_predictor = inference_train.query(x, concept_probs, model=model)
     print(c_encoder)
     print(c_predictor)
     model = LearnedGraphModel(model_graph=COSMOGraphLearner,
@@ -75,8 +75,8 @@ def main():
                               has_self_exogenous=False,
                               has_parent_exogenous=True,
                               input_size=x.shape[1])
-    inference_train = UnknownGraphInference(model=model)
-    c_encoder, c_predictor = inference_train.query(x, concept_probs)
+    inference_train = UnknownGraphInference()
+    c_encoder, c_predictor = inference_train.query(x, concept_probs, model=model)
     print(c_encoder)
     print(c_predictor)
 
@@ -91,8 +91,8 @@ def main():
                            has_self_exogenous=False,
                            has_parent_exogenous=True,
                            input_size=x.shape[1])
-    inference_test = KnownGraphInference(model=model)
-    cy_pred = inference_test.query(x)
+    inference_test = KnownGraphInference()
+    cy_pred = inference_test.query(x, model=model)
 
     # CBM
     model = BipartiteModel(task_names=['c', 'e'],
@@ -105,8 +105,8 @@ def main():
                            has_self_exogenous=True,
                            has_parent_exogenous=False,
                            input_size=x.shape[1])
-    inference_test = KnownGraphInference(model=model)
-    cy_pred = inference_test.query(x)
+    inference_test = KnownGraphInference()
+    cy_pred = inference_test.query(x, model=model)
     model = BipartiteModel(task_names=['c', 'e'],
                            encoder=Propagator(ProbEncoderFromEmb),
                            predictor=Propagator(ProbPredictor),
@@ -116,8 +116,8 @@ def main():
                            has_self_exogenous=False,
                            has_parent_exogenous=False,
                            input_size=x.shape[1])
-    inference_test = KnownGraphInference(model=model)
-    cy_pred = inference_test.query(x)
+    inference_test = KnownGraphInference()
+    cy_pred = inference_test.query(x, model=model)
 
     print(cy_pred)
 
