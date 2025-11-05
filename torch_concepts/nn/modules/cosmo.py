@@ -1,4 +1,5 @@
 import math
+from typing import Optional
 
 import torch
 import numpy as np
@@ -17,6 +18,8 @@ class COSMOGraphLearner(BaseGraphLearner):
             temperature: float = 1.0,
             symmetric: bool = False,
             monitor: bool = False,
+            adjacency_var: float = 0.0,
+            priority_var: Optional[float] = None,
             hard_threshold: bool = True,
     ):
         super(COSMOGraphLearner, self).__init__(annotations)
@@ -24,7 +27,10 @@ class COSMOGraphLearner(BaseGraphLearner):
         # define COSMO parameters
         self.adj_params = torch.nn.Parameter(torch.empty((n_concepts, n_concepts)))
         self.np_params = torch.nn.Parameter(torch.zeros((n_concepts, 1)))
+        self.priority_var = priority_var if priority_var is not None \
+            else shift / math.sqrt(2)
 
+        self.adjacency_var = adjacency_var
         self.shift = shift
         self.temperature = temperature
         self.symmetric = symmetric
@@ -34,9 +40,10 @@ class COSMOGraphLearner(BaseGraphLearner):
 
     def _reset_parameters(self):
         torch.nn.init.kaiming_uniform_(self.adj_params, nonlinearity='linear')
-        torch.nn.init.normal_(self.np_params, std=self.shift / math.sqrt(2.))
+        torch.nn.init.normal_(self.np_params, std=self.priority_var)
 
-    def orientation(self, hard_threshold=False) -> torch.Tensor:
+    @property
+    def orientation(self) -> torch.Tensor:
         """
         Computes the orientation matrix given the priority vectors.
         If the hard_threshold flag is set to True, the orientation
@@ -60,44 +67,43 @@ class COSMOGraphLearner(BaseGraphLearner):
         orient_mat = orient_mat * (1 - torch.eye(n_nodes).to(orient_mat.device))
 
         # Hard Thresholding
-        if hard_threshold:
+        if self.hard_threshold:
             # Compute the hard orientation
             hard_orient_mat = dif_mat > self.shift
             hard_orient_mat = hard_orient_mat.float()
 
             # Apply soft detaching trick
-            orient_mat = orient_mat + \
-                         (hard_orient_mat - orient_mat).detach()
+            orient_mat = orient_mat + (hard_orient_mat - orient_mat).detach()
 
         return orient_mat
 
-    def weighted_adj(self, symmetric=False, monitor=False) -> torch.Tensor:
+    @property
+    def weighted_adj(self) -> torch.Tensor:
         """
         Computes an explicit representation of the weight matrix
         given the undirected adjacency matrix and the orientation.
         """
-        orientation = self.orientation(hard_threshold=self.hard_threshold)  # nb_concepts, nb_tasks
+        # orientation = self.orientation(hard_threshold=self.hard_threshold)  # nb_concepts, nb_tasks
 
         # Compute the adjacency matrix
-        if symmetric:
+        if self.symmetric:
             adj = self.adj_params + self.adj_params.T
         else:
             adj = self.adj_params
 
-        if monitor:
+        if self.monitor:
             # Compute the weight matrix
-            _weight = adj * orientation
+            _weight = adj * self.orientation
             # Retain the gradient
             _weight.retain_grad()
             # Return the weight matrix
             return _weight
 
-        return adj * orientation
+        return adj * self.orientation
 
     def forward(self):
         # compute the orientation matrix
-        model_graph = self.weighted_adj(symmetric=self.symmetric,
-                                        monitor=self.monitor)  # nb_concepts, nb_tasks
+        model_graph = self.weighted_adj
         self._model_graph = model_graph
         return model_graph
 
