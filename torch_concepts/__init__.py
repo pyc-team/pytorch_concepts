@@ -4,7 +4,8 @@ from typing import Any
 
 from .concepts.annotations import Annotations, AxisAnnotation
 from .concepts.tensor import AnnotatedTensor, ConceptGraph
-from . import nn
+from .concepts.variable import Variable
+from . import nn, distributions
 from . import data
 
 def __getattr__(name: str) -> Any:
@@ -20,7 +21,9 @@ __all__ = [
     "AxisAnnotation",
     "AnnotatedTensor",
     "ConceptGraph",
+    "Variable",
 
     "nn",
     "data",
+    "distributions",
 ]

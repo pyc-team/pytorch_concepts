@@ -22,6 +22,8 @@ from .modules.selector import MemorySelector
 
 from .modules.cosmo import COSMOGraphLearner
 
+from .modules.models.factor import Factor
+from .modules.models.pgm import ProbabilisticGraphicalModel
 from .modules.models.bipartite import BipartiteModel
 from .modules.models.graph import (
     GraphModel,
@@ -29,6 +31,7 @@ from .modules.models.graph import (
 )
 
 from .modules.inference.forward import (
+    ForwardInference,
     KnownGraphInference,
     UnknownGraphInference,
 )
@@ -77,11 +80,14 @@ __all__ = [
     "COSMOGraphLearner",
 
     # Models
+    "Factor",
+    "ProbabilisticGraphicalModel",
     "BipartiteModel",
     "GraphModel",
     "LearnedGraphModel",
 
     # Inference
+    "ForwardInference",
     "KnownGraphInference",
     "UnknownGraphInference",
 
