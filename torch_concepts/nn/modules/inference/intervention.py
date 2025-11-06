@@ -1,6 +1,6 @@
 import math
 import contextlib
-from typing import List, Sequence, Union, Iterable
+from typing import List, Sequence, Union, Iterable, Optional
 import torch
 import torch.nn as nn
 
@@ -145,7 +145,6 @@ class _InterventionWrapper(nn.Module):
         original: nn.Module,
         policy: nn.Module,
         strategy: GroundTruthIntervention,
-        on_annotations,                   # Annotations (axis=1) subset for THIS layer
         quantile: float,
     ):
         super().__init__()
@@ -153,15 +152,14 @@ class _InterventionWrapper(nn.Module):
         self.policy = policy
         self.strategy = strategy
         self.quantile = float(quantile)
-        self.on_annotations = on_annotations
         self.concept_axis = 1
 
-    def _build_mask(self, policy_logits: torch.Tensor) -> torch.Tensor:
+    def _build_mask(self, policy_logits: torch.Tensor, subset: Optional[List[int]]) -> torch.Tensor:
         B, F = policy_logits.shape
         device = policy_logits.device
         dtype = policy_logits.dtype
 
-        sel_labels = self.on_annotations.get_axis_labels(1)
+        sel_labels = subset if subset is not None else []
         if len(sel_labels) == 0:
             return torch.ones_like(policy_logits)
 
@@ -209,7 +207,7 @@ class _InterventionWrapper(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.original(x)
         logits = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
-        mask = self._build_mask(logits)  # 1 keep, 0 replace
+        mask = self._build_mask(logits, self.policy.subset)  # 1 keep, 0 replace
 
         # 3) proxy that returns the cached y instead of recomputing
         class _CachedOutput(nn.Module):
@@ -233,7 +231,6 @@ def intervention(
     policies: Union[nn.Module, Sequence[nn.Module]],
     strategies: Union[RewiringIntervention, Sequence[RewiringIntervention]],
     on_layers: Union[str, Sequence[str]],
-    on_annotations,                         # Annotations or list[Annotations]
     quantiles: Union[float, Sequence[float]],
     model: nn.Module = None,                # optional; defaults to strategies[0].model
 ):
@@ -244,7 +241,6 @@ def intervention(
             policies=[int_policy_c, int_policy_y],
             strategies=[int_strategy_c, int_strategy_y],
             on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
-            on_annotations=[int_annotations_c, int_annotations_y],
             quantiles=[quantile, 1.0],
         ):
             ...
@@ -257,7 +253,6 @@ def intervention(
     # Broadcast/validate others
     policies   = _as_list(policies,   N)
     strategies = _as_list(strategies, N)
-    on_annotations = _as_list(on_annotations, N)
     quantiles  = _as_list(quantiles,  N)
 
     # Choose the reference model
@@ -266,14 +261,13 @@ def intervention(
     originals: List[nn.Module] = []
 
     try:
-        for path, pol, strat, ann, q in zip(on_layers, policies, strategies, on_annotations, quantiles):
+        for path, pol, strat, q in zip(on_layers, policies, strategies, quantiles):
             orig = _get_submodule(ref_model, path)
             originals.append((path, orig))
             wrap = _InterventionWrapper(
                 original=orig,
                 policy=pol,
                 strategy=strat,
-                on_annotations=ann,
                 quantile=q,
             )
             _set_submodule(ref_model, path, wrap)

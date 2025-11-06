@@ -48,14 +48,14 @@ def main():
         torch.nn.LeakyReLU(),
     )
     exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
-                               out_annotations=c_annotations,
+                               out_features=c_annotations.shape[1],
                                embedding_size=latent_dims*2)
     c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims*2,
-                                    out_annotations=c_annotations)
+                                    out_features=c_annotations.shape[1])
     y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
-                                       out_annotations=y_annotations,
-                                       in_annotations=c_annotations)
+                                       out_features=y_annotations.shape[1],
+                                       cardinalities=c_annotations.get_axis_annotation(1).cardinalities)
 
 
     model = torch.nn.Sequential(encoder, exog_encoder, c_encoder, y_predictor)

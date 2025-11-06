@@ -1,4 +1,5 @@
 import torch
+from fontTools.subset import subset
 from sklearn.metrics import accuracy_score
 from torch.distributions import Normal
 
@@ -27,8 +28,8 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims, out_annotations=c_annotations)
-    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1], out_annotations=y_annotations)
+    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=c_annotations.shape[1])
+    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1], out_features=y_annotations.shape[1])
 
     # all models in a ModuleDict for easier intervention
     model = torch.nn.ModuleDict({
@@ -70,17 +71,14 @@ def main():
         "y_predictor": y_predictor,
     })
     quantile = 0.8
-    int_policy_c = UniformPolicy(out_annotations=c_annotations)
+    int_policy_c = UniformPolicy(out_annotations=c_annotations, subset=["C1", "C4", "C5", "C6"])
     int_strategy_c = GroundTruthIntervention(model=model, ground_truth=torch.logit(c_train, eps=1e-6))
-    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C4", "C5", "C6"])
-    int_policy_y = UncertaintyInterventionPolicy(out_annotations=y_annotations)
+    int_policy_y = UncertaintyInterventionPolicy(out_annotations=y_annotations, subset=["xor"])
     int_strategy_y = DoIntervention(model=model, constants=100)
-    int_annotations_y = y_annotations.select(axis=1, keep_labels=["xor"])
     print("Uncertainty + DoIntervention")
     with intervention(policies=[int_policy_c, int_policy_y],
                       strategies=[int_strategy_c, int_strategy_y],
                       on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
-                      on_annotations=[int_annotations_c, int_annotations_y],
                       quantiles=[quantile, 1]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
@@ -89,13 +87,11 @@ def main():
         print(y_pred[:5])
 
     print("Do Intervention + UniformPolicy")
-    int_policy_c = UniformPolicy(out_annotations=c_annotations)
+    int_policy_c = UniformPolicy(out_annotations=c_annotations, subset=["C1", "C2", "C6"])
     int_strategy_c = DoIntervention(model=model, constants=-10)
-    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C2", "C6"])
     with intervention(policies=[int_policy_c],
                       strategies=[int_strategy_c],
                       on_layers=["encoder_layer.encoder"],
-                      on_annotations=[int_annotations_c],
                       quantiles=[quantile]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
@@ -103,13 +99,11 @@ def main():
         print(c_pred[:5])
 
     print("Do Intervention + RandomPolicy")
-    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100)
+    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["C1", "C2", "C6"])
     int_strategy_c = DoIntervention(model=model, constants=-10)
-    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C2", "C6"])
     with intervention(policies=[int_policy_c],
                       strategies=[int_strategy_c],
                       on_layers=["encoder_layer.encoder"],
-                      on_annotations=[int_annotations_c],
                       quantiles=[quantile]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
@@ -118,11 +112,9 @@ def main():
 
     print("Distribution Intervention")
     int_strategy_c = DistributionIntervention(model=model, dist=torch.distributions.Normal(loc=0, scale=1))
-    int_annotations_c = c_annotations.select(axis=1, keep_labels=["C1", "C5", "C6"])
     with intervention(policies=[int_policy_c],
                       strategies=[int_strategy_c],
                       on_layers=["encoder_layer.encoder"],
-                      on_annotations=[int_annotations_c],
                       quantiles=[quantile]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)
@@ -133,7 +125,6 @@ def main():
     with intervention(policies=[int_policy_c],
                       strategies=[int_strategy_c],
                       on_layers=["encoder_layer.encoder"],
-                      on_annotations=[int_annotations_c],
                       quantiles=[quantile]):
         emb = model["encoder"](x_train)
         c_pred = model["encoder_layer"](emb)

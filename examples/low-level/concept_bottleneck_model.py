@@ -25,9 +25,9 @@ def main():
         torch.nn.LeakyReLU(),
     )
     encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
-                                       out_annotations=c_annotations)
+                                       out_features=c_annotations.shape[1])
     y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1],
-                                out_annotations=y_annotations)
+                                out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, encoder_layer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)

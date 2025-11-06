@@ -1,10 +1,7 @@
-import numpy as np
 import torch
 
-from torch_concepts import AnnotatedTensor, Annotations
 from ...base.layer import BasePredictor
-from torch_concepts.nn.functional import concept_embedding_mixture
-from typing import List, Dict, Callable, Union, Tuple
+from typing import Callable
 
 
 class HyperLinearPredictor(BasePredictor):
@@ -15,20 +12,18 @@ class HyperLinearPredictor(BasePredictor):
         in_features_logits: int,
         in_features_exogenous: int,
         embedding_size: int,
-        out_annotations: Annotations,
+        out_features: int,
         in_activation: Callable = lambda x: x,
         use_bias : bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
-        min_std: float = 1e-6,  # numerical floor after softplus
-        *args,
-        **kwargs,
+        min_std: float = 1e-6
     ):
         in_features_exogenous = in_features_exogenous
         super().__init__(
             in_features_logits=in_features_logits,
             in_features_exogenous=in_features_exogenous,
-            out_annotations=out_annotations,
+            out_features=out_features,
             in_activation=in_activation,
         )
         self.embedding_size = embedding_size
@@ -40,9 +35,7 @@ class HyperLinearPredictor(BasePredictor):
             torch.nn.LeakyReLU(),
             torch.nn.Linear(
                 embedding_size,
-                in_features_logits,
-                *args,
-                **kwargs,
+                in_features_logits
             ),
         )
 
@@ -64,10 +57,8 @@ class HyperLinearPredictor(BasePredictor):
 
     def forward(
             self,
-            logits: torch.Tensor = None,
-            exogenous: torch.Tensor = None,
-            *args,
-            **kwargs,
+            logits: torch.Tensor,
+            exogenous: torch.Tensor
     ) -> torch.Tensor:
         weights = self.hypernet(exogenous)
 

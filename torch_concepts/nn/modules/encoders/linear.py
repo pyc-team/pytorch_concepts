@@ -1,8 +1,7 @@
 import torch
 
-from torch_concepts import Annotations
 from ...base.layer import BaseEncoder
-from typing import List, Callable, Union, Dict, Tuple
+from typing import List, Union
 
 
 class ProbEncoderFromEmb(BaseEncoder):
@@ -19,29 +18,27 @@ class ProbEncoderFromEmb(BaseEncoder):
     def __init__(
         self,
         in_features_embedding: int,
-        out_annotations: Annotations,
+        out_features: int,
         *args,
         **kwargs,
     ):
         super().__init__(
             in_features_embedding=in_features_embedding,
-            out_annotations=out_annotations,
+            out_features=out_features,
         )
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
                 in_features_embedding,
-                self.out_annotations.shape[1],
+                out_features,
                 *args,
                 **kwargs,
             ),
-            torch.nn.Unflatten(-1, (self.out_annotations.shape[1],)),
+            torch.nn.Unflatten(-1, (out_features,)),
         )
 
     def forward(
         self,
-        embedding: torch.Tensor = None,
-        *args,
-        **kwargs,
+        embedding: torch.Tensor,
     ) -> torch.Tensor:
         return self.encoder(embedding)
 
@@ -60,31 +57,25 @@ class ProbEncoderFromExog(BaseEncoder):
     def __init__(
         self,
         in_features_exogenous: int,
-        out_annotations: Annotations,
-        n_exogenous_per_concept: int = 1,
-        *args,
-        **kwargs,
+        out_features: int,
+        n_exogenous_per_concept: int = 1
     ):
         self.n_exogenous_per_concept = n_exogenous_per_concept
         in_features_exogenous = in_features_exogenous * n_exogenous_per_concept
         super().__init__(
             in_features_exogenous=in_features_exogenous,
-            out_annotations=out_annotations,
+            out_features=out_features,
         )
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
                 in_features_exogenous,
-                1,
-                *args,
-                **kwargs,
+                1
             ),
             torch.nn.Flatten(),
         )
 
     def forward(
         self,
-        exogenous: torch.Tensor = None,
-        *args,
-        **kwargs,
+        exogenous: torch.Tensor
     ) -> torch.Tensor:
         return self.encoder(exogenous)

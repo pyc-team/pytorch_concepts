@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 
-from torch_concepts import Annotations
 from torch_concepts.nn.base.layer import BaseEncoder
-from typing import List, Callable, Union, Dict, Tuple
+from typing import List, Union, Tuple
 
 
 class ExogEncoder(BaseEncoder):
@@ -21,27 +20,23 @@ class ExogEncoder(BaseEncoder):
     def __init__(
         self,
         in_features_embedding: int,
-        out_annotations: Annotations,
-        embedding_size: int,
-        *args,
-        **kwargs,
+        out_features: int,
+        embedding_size: int
     ):
         super().__init__(
             in_features_embedding=in_features_embedding,
-            out_annotations=out_annotations,
+            out_features=out_features,
         )
         self.embedding_size = embedding_size
 
-        self.out_logits_dim = out_annotations.shape[1]
+        self.out_logits_dim = out_features
         self.out_exogenous_shape = (self.out_logits_dim, embedding_size)
         self.out_encoder_dim = np.prod(self.out_exogenous_shape).item()
 
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
                 in_features_embedding,
-                self.out_encoder_dim,
-                *args,
-                **kwargs,
+                self.out_encoder_dim
             ),
             torch.nn.Unflatten(-1, self.out_exogenous_shape),
             torch.nn.LeakyReLU(),
@@ -49,8 +44,6 @@ class ExogEncoder(BaseEncoder):
 
     def forward(
         self,
-        embedding: torch.Tensor = None,
-        *args,
-        **kwargs,
+        embedding: torch.Tensor
     ) -> Tuple[torch.Tensor]:
         return self.encoder(embedding)

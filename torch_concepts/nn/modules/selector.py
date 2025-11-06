@@ -3,9 +3,8 @@ import torch
 import torch.nn.functional as F
 
 
-from ...concepts.annotations import Annotations
 from ..base.layer import BaseEncoder
-from typing import List, Callable, Union, Dict, Tuple
+from typing import List, Union
 
 
 class MemorySelector(BaseEncoder):
@@ -24,19 +23,19 @@ class MemorySelector(BaseEncoder):
         in_features_embedding: int,
         memory_size : int,
         embedding_size: int,
-        out_annotations: Annotations,
+        out_features: int,
         temperature: float = 1.0,
         *args,
         **kwargs,
     ):
         super().__init__(
             in_features_embedding=in_features_embedding,
-            out_annotations=out_annotations,
+            out_features=out_features,
         )
         self.temperature = temperature
         self.memory_size = memory_size
         self.embedding_size = embedding_size
-        self._annotation_out_features = self.out_annotations.shape[1]
+        self._annotation_out_features = out_features
         self._embedding_out_features = memory_size * embedding_size
         self._selector_out_shape = (self._annotation_out_features, memory_size)
         self._selector_out_features = np.prod(self._selector_out_shape).item()

@@ -1,10 +1,8 @@
-import numpy as np
 import torch
 
-from torch_concepts import AnnotatedTensor, Annotations
 from ...base.layer import BasePredictor
 from ...functional import grouped_concept_embedding_mixture
-from typing import List, Dict, Callable, Union, Tuple
+from typing import List, Callable, Union
 
 
 class MixProbExogPredictor(BasePredictor):
@@ -22,44 +20,37 @@ class MixProbExogPredictor(BasePredictor):
         self,
         in_features_logits: int,
         in_features_exogenous: int,
-        out_annotations: Annotations,
+        out_features: int,
         in_activation: Callable = torch.sigmoid,
-        in_annotations: Annotations = None,
-        *args,
-        **kwargs,
+        cardinalities: List[int] = None
     ):
         super().__init__(
             in_features_logits=in_features_logits,
             in_features_exogenous=in_features_exogenous,
-            out_annotations=out_annotations,
+            out_features=out_features,
             in_activation=in_activation,
         )
-        self.in_annotations = in_annotations
-        if self.in_annotations is None:
-            self.groups = [1] * in_features_logits
+        if cardinalities is None:
+            self.cardinalities = [1] * in_features_logits
             predictor_in_features = in_features_exogenous*in_features_logits
         else:
-            self.groups = list(in_annotations.get_axis_annotation(1).cardinalities)
-            assert sum(self.groups) == in_features_logits
-            predictor_in_features = in_features_exogenous*len(self.groups)
+            self.cardinalities = cardinalities
+            assert sum(self.cardinalities) == in_features_logits
+            predictor_in_features = in_features_exogenous*len(self.cardinalities)
 
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
                 predictor_in_features,
-                out_annotations.shape[1],
-                *args,
-                **kwargs,
+                out_features
             ),
-            torch.nn.Unflatten(-1, (out_annotations.shape[1],)),
+            torch.nn.Unflatten(-1, (out_features,)),
         )
 
     def forward(
         self,
-        logits: torch.Tensor = None,
-        exogenous: torch.Tensor = None,
-        *args,
-        **kwargs,
+        logits: torch.Tensor,
+        exogenous: torch.Tensor
     ) -> torch.Tensor:
         in_probs = self.in_activation(logits)
-        c_mix = grouped_concept_embedding_mixture(exogenous, in_probs, groups=self.groups)
+        c_mix = grouped_concept_embedding_mixture(exogenous, in_probs, groups=self.cardinalities)
         return self.predictor(c_mix.flatten(start_dim=1))

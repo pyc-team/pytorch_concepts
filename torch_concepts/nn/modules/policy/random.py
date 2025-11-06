@@ -1,8 +1,8 @@
 import torch
 
-from torch_concepts import Annotations
+from .... import Annotations
 from ....nn.base.layer import BaseConceptLayer
-from typing import List, Callable, Union, Dict, Tuple
+from typing import List, Union, Optional
 
 
 class RandomPolicy(BaseConceptLayer):
@@ -21,21 +21,17 @@ class RandomPolicy(BaseConceptLayer):
         self,
         out_annotations: Annotations,
         scale: float = 1.0,
-        *args,
-        **kwargs,
+        subset: Optional[List[str]] = None,
     ):
         super().__init__(
-            in_features_logits=None,
-            in_features_embedding=None,
-            in_features_exogenous=None,
-            out_annotations=out_annotations,
+            out_features=out_annotations.shape[1],
         )
+        self.out_annotations = out_annotations
+        self.subset = subset
         self.scale = scale
 
     def forward(
         self,
-        logits: torch.Tensor = None,
-        *args,
-        **kwargs,
+        logits: torch.Tensor
     ) -> torch.Tensor:
         return torch.rand_like(logits).abs() * self.scale
