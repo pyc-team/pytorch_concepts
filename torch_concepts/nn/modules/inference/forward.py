@@ -1,3 +1,5 @@
+import inspect
+
 import torch
 
 from torch_concepts import ConceptGraph, Variable
@@ -82,6 +84,8 @@ class ForwardInference(BaseInference):
                 # 2. Handle Child Nodes (has parents)
             else:
                 parent_kwargs = {}
+                parent_logits = []
+                parent_latent = []
                 for parent_var in var.parents:
                     parent_name = parent_var.concepts[0]
                     if parent_name not in results:
@@ -90,7 +94,34 @@ class ForwardInference(BaseInference):
                             f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
 
                     # Parent tensor is fed into the factor using the parent's concept name as the key
-                    parent_kwargs[parent_name] = results[parent_name]
+                    # parent_kwargs[parent_name] = results[parent_name]
+                    if parent_var.distribution in [torch.distributions.Bernoulli, torch.distributions.Categorical]:
+                        # For probabilistic parents, pass logits
+                        parent_logits.append(results[parent_name])
+                    else:
+                        # For continuous parents, pass latent features
+                        parent_latent.append(results[parent_name])
+
+                sig = inspect.signature(factor.module_class.forward)
+                params = sig.parameters
+                allowed = {
+                    name for name, p in params.items()
+                    if name != "self" and p.kind in (
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    )
+                }
+                if 'input' in allowed:
+                    # this is a standard torch layer: concatenate all inputs into 'x'
+                    parent_kwargs['input'] = torch.cat(parent_logits + parent_latent, dim=-1)
+                else:
+                    # this is a PyC layer: separate logits and latent inputs
+                    if 'logits' in allowed:
+                        parent_kwargs['logits'] = torch.cat(parent_logits, dim=-1)
+                    if 'embedding' in allowed:
+                        parent_kwargs['embedding'] = torch.cat(parent_latent, dim=-1)
+                    elif 'exogenous' in allowed:
+                        parent_kwargs['exogenous'] = torch.cat(parent_latent, dim=1)
 
                 # Child factors concatenate parent outputs based on the kwargs
                 output_tensor = factor.forward(**parent_kwargs)

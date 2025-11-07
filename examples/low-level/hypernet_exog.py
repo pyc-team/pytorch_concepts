@@ -13,6 +13,8 @@ def main():
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    y_train = torch.cat([y_train, 1 - y_train, y_train], dim=1)
+    task_names = task_names + task_names + task_names
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_classes = y_train.shape[1]
@@ -31,9 +33,9 @@ def main():
                                        out_features=c_annotations.shape[1])
     exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
                                out_features=y_annotations.shape[1],
-                               embedding_size=latent_dims)
+                               embedding_size=11)
     y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
-                                       in_features_exogenous=latent_dims,
+                                       in_features_exogenous=11,
                                        embedding_size=latent_dims,
                                        out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)

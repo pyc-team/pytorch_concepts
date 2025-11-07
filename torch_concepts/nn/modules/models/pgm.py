@@ -1,3 +1,4 @@
+import copy
 import inspect
 
 from torch.distributions import Distribution
@@ -78,9 +79,10 @@ class ProbabilisticGraphicalModel:
 
             if len(factor.concepts) > 1:
                 for concept in factor.concepts:
-                    atomic_var = self.concept_to_variable[concept]
-                    atomic_module = _reinitialize_with_new_param(original_module, 'out_features', atomic_var.size)
+                    # atomic_var = self.concept_to_variable[concept]
+                    # atomic_module = _reinitialize_with_new_param(original_module, 'out_features', atomic_var.size)
 
+                    atomic_module = copy.deepcopy(original_module)
                     atomic_factor = Factor(concepts=[concept], module_class=atomic_module)
                     new_factors.append(atomic_factor)
             else:
