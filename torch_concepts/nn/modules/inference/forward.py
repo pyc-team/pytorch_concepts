@@ -12,6 +12,7 @@ from ...base.inference import BaseInference
 
 class ForwardInference(BaseInference):
     def __init__(self, pgm: ProbabilisticGraphicalModel):
+        super().__init__()
         self.pgm = pgm
         self.concept_map = {var.concepts[0]: var for var in pgm.variables}
         self.sorted_variables = self._topological_sort()

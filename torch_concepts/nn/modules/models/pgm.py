@@ -1,11 +1,10 @@
 import copy
 import inspect
 
+from torch import nn
 from torch.distributions import Distribution
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Type
 
-from ..propagator import instantiate_adaptive, _filter_kwargs_for_ctor
-from ... import ExogEncoder, ProbEncoderFromEmb, MixProbExogPredictor, HyperLinearPredictor
 from ....concepts.variable import Variable
 from .factor import Factor
 
@@ -43,12 +42,17 @@ def _reinitialize_with_new_param(instance, key, new_value):
     return new_instance
 
 
-class ProbabilisticGraphicalModel:
+class ProbabilisticGraphicalModel(nn.Module):  # 1. Inherit from nn.Module
     def __init__(self, variables: List[Variable], factors: List[Factor]):
+        super().__init__()  # Initialize nn.Module base class
         self.variables = variables
         self.factors = factors
         self.concept_to_variable: Dict[str, Variable] = {}
         self.concept_to_factor: Dict[str, Factor] = {}
+
+        # 2. Add a ModuleDict to store the actual PyTorch modules from the factors
+        self.factor_modules = nn.ModuleDict()
+
         self._initialize_model()
 
     def _initialize_model(self):
@@ -56,6 +60,9 @@ class ProbabilisticGraphicalModel:
         new_factors = []
 
         temp_concept_to_variable: Dict[str, Variable] = {}
+
+        # ... (Variable initialization logic remains the same) ...
+        # (Assuming the original Variable initialization is correct and omitted here for brevity)
 
         for var in self.variables:
             if len(var.concepts) > 1:
@@ -73,22 +80,34 @@ class ProbabilisticGraphicalModel:
         self.variables = new_variables
         self.concept_to_variable = temp_concept_to_variable
 
+        # New list to temporarily hold new Factor objects
+        temp_new_factors = []
+
         for factor in self.factors:
             original_module = factor.module_class
-            original_module_class = original_module.__class__
+            # original_module_class = original_module.__class__ # This line isn't used
 
             if len(factor.concepts) > 1:
                 for concept in factor.concepts:
-                    # atomic_var = self.concept_to_variable[concept]
-                    # atomic_module = _reinitialize_with_new_param(original_module, 'out_features', atomic_var.size)
+                    # atomic_module = copy.deepcopy(original_module) # Original code
 
+                    # 3. Store the module in ModuleDict using the concept as the key
                     atomic_module = copy.deepcopy(original_module)
-                    atomic_factor = Factor(concepts=[concept], module_class=atomic_module)
-                    new_factors.append(atomic_factor)
-            else:
-                new_factors.append(factor)
+                    self.factor_modules[concept] = atomic_module
 
-        self.factors = new_factors
+                    # Create the Factor object with the module
+                    atomic_factor = Factor(concepts=[concept], module_class=atomic_module)
+                    temp_new_factors.append(atomic_factor)
+            else:
+                concept = factor.concepts[0]  # Get the single concept
+                # 3. Store the module in ModuleDict using the concept as the key
+                self.factor_modules[concept] = original_module
+                temp_new_factors.append(factor)  # The original factor object is kept
+
+        self.factors = temp_new_factors  # Update the instance's factors list
+
+        # ... (Parent resolution logic remains the same) ...
+        # (Assuming the original Parent resolution is correct and omitted here for brevity)
 
         for var in self.variables:
             resolved_parents = []
@@ -117,7 +136,7 @@ class ProbabilisticGraphicalModel:
             factor.parents = target_var.parents
             self.concept_to_factor[target_concept] = factor
 
-    def get_by_distribution(self, distribution_class: type[Distribution]) -> List[Variable]:
+    def get_by_distribution(self, distribution_class: Type[Distribution]) -> List[Variable]:
         return [var for var in self.variables if var.distribution is distribution_class]
 
     def get_factor_of_variable(self, concept_name: str) -> Optional[Factor]:
@@ -128,3 +147,7 @@ class ProbabilisticGraphicalModel:
         if var:
             return var.parents
         return []
+
+    def get_module_of_concept(self, concept_name: str) -> Optional[nn.Module]:
+        """Easily get the model (module_class) for a given concept name."""
+        return self.concept_to_module.get(concept_name)
