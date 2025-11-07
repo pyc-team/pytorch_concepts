@@ -1,0 +1,84 @@
+import torch
+from sklearn.metrics import accuracy_score
+from torch.distributions import Bernoulli, Categorical
+
+from torch_concepts import Annotations, AxisAnnotation, Variable
+from torch_concepts.data import ToyDataset
+from torch_concepts.distributions import Delta
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, ForwardInference, \
+    RandomPolicy, DoIntervention, intervention
+
+
+def main():
+    latent_dims = 10
+    n_epochs = 500
+    n_samples = 1000
+    concept_reg = 0.5
+    data = ToyDataset('xor', size=n_samples, random_state=42)
+    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    y_train = torch.cat([y_train, 1-y_train], dim=1)
+    cy_train = torch.cat([c_train, y_train], dim=1)
+
+    concept_names = ['c1', 'c2']
+    task_names = ['xor']
+
+    # Variable setup
+    latent_var = Variable(["emb"], parents=[], size=latent_dims)
+    concepts = Variable(concept_names, parents=["emb"], distribution=Bernoulli)
+    tasks = Variable(task_names, parents=concept_names, distribution=Categorical, size=2)
+
+    # Factor setup
+    backbone = Factor(["emb"], module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
+    c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
+    y_predictor = Factor(["xor"], module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+
+    # PGM Initialization
+    concept_model = ProbabilisticGraphicalModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
+
+    # Inference Initialization
+    inference_engine = ForwardInference(concept_model)
+    initial_input = {'emb': x_train}
+    query_concepts = ["c1", "c2", "xor"]
+
+    optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+    concept_model.train()
+    for epoch in range(n_epochs):
+        optimizer.zero_grad()
+
+        # generate concept and task predictions
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
+        c_pred = cy_pred[:, :c_train.shape[1]]
+        y_pred = cy_pred[:, c_train.shape[1]:]
+
+        # compute loss
+        concept_loss = loss_fn(c_pred, c_train)
+        task_loss = loss_fn(y_pred, y_train)
+        loss = concept_loss + concept_reg * task_loss
+
+        loss.backward()
+        optimizer.step()
+
+        if epoch % 100 == 0:
+            task_accuracy = accuracy_score(y_train, y_pred > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+
+    print("=== Interventions ===")
+    print(cy_pred[:5])
+
+    c_annotations = Annotations({1: AxisAnnotation(["c1"])})
+    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["c1"])
+    int_strategy_c = DoIntervention(model=concept_model.factor_modules, constants=-10)
+    with intervention(policies=[int_policy_c],
+                      strategies=[int_strategy_c],
+                      on_layers=["c1.encoder"],
+                      quantiles=[1]):
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
+        print(cy_pred[:5])
+
+    return
+
+
+if __name__ == "__main__":
+    main()

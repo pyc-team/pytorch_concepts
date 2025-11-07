@@ -1,7 +1,9 @@
+import copy
+
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union, Type
 from itertools import product
 
 from ....concepts.variable import Variable
@@ -9,7 +11,44 @@ from torch_concepts.distributions import Delta
 
 
 class Factor:
+    def __new__(cls, concepts: List[str],
+                module_class: Union[nn.Module, Type[nn.Module], List[Union[nn.Module, Type[nn.Module]]]]):
+
+        # 1. Handle the case for creating multiple Factor objects (e.g., c1_factor, c2_factor = Factor([...]))
+        if isinstance(concepts, list) and len(concepts) > 1:
+            n_concepts = len(concepts)
+
+            # Standardize module_class: single value -> list of N values
+            if not isinstance(module_class, list):
+                module_list = [module_class] * n_concepts
+            else:
+                module_list = module_class
+
+            # Validation checks for list length
+            if len(module_list) != n_concepts:
+                raise ValueError(
+                    "If concepts list has length N > 1, module_class must either be a single value or a list of length N.")
+
+            # Create and return a list of individual Factor instances
+            new_factors = []
+            for i in range(n_concepts):
+                # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
+                instance = object.__new__(cls)
+                instance.__init__(
+                    concepts=[concepts[i]],  # Pass as single-element list
+                    module_class=copy.deepcopy(module_list[i])
+                )
+                new_factors.append(instance)
+            return new_factors
+
+        # 2. Default: Single instance creation
+        return object.__new__(cls)
+
     def __init__(self, concepts: List[str], module_class: nn.Module):
+        # Ensure concepts is a list
+        if isinstance(concepts, str):
+            concepts = [concepts]
+
         self.concepts = concepts
         self.module_class = module_class
         self.variable: Optional[Variable] = None
