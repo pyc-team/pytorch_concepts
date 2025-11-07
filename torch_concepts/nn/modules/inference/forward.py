@@ -1,4 +1,5 @@
 import inspect
+from abc import abstractmethod
 
 import torch
 
@@ -19,6 +20,10 @@ class ForwardInference(BaseInference):
 
         if len(self.sorted_variables) != len(self.pgm.variables):
             raise RuntimeError("The PGM contains cycles and cannot be processed in topological order.")
+
+    @abstractmethod
+    def get_results(self, results: torch.tensor, parent_variable: Variable):
+        pass
 
     def _topological_sort(self) -> List[Variable]:
         """
@@ -95,8 +100,7 @@ class ForwardInference(BaseInference):
                             f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
 
                     # Parent tensor is fed into the factor using the parent's concept name as the key
-                    # parent_kwargs[parent_name] = results[parent_name]
-                    if parent_var.distribution in [torch.distributions.Bernoulli, torch.distributions.Categorical]:
+                    if parent_var.distribution in [torch.distributions.Bernoulli, torch.distributions.RelaxedOneHotCategorical]:
                         # For probabilistic parents, pass logits
                         parent_logits.append(results[parent_name])
                     else:
@@ -126,6 +130,7 @@ class ForwardInference(BaseInference):
 
                 # Child factors concatenate parent outputs based on the kwargs
                 output_tensor = factor.forward(**parent_kwargs)
+                output_tensor = self.get_results(output_tensor, var)
 
             results[concept_name] = output_tensor
 
@@ -179,6 +184,20 @@ class ForwardInference(BaseInference):
             )
 
         return final_tensor
+
+
+class DeterministicInference(ForwardInference):
+    def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+        return results
+
+
+class AncestralSamplingInference(ForwardInference):
+    def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+        if parent_variable.distribution in [torch.distributions.Bernoulli]:
+            return parent_variable.distribution(logits=results).sample()
+        elif parent_variable.distribution in [torch.distributions.RelaxedOneHotCategorical]:
+            return parent_variable.distribution(logits=results, temperature=1.).rsample()
+        return parent_variable.distribution(results).rsample()
 
 
 class KnownGraphInference(BaseInference):

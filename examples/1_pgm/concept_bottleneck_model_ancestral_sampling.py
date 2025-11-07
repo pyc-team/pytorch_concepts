@@ -6,7 +6,7 @@ from torch_concepts import Annotations, AxisAnnotation, Variable
 from torch_concepts.data import ToyDataset
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, ForwardInference, \
-    RandomPolicy, DoIntervention, intervention, DeterministicInference
+    RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
     concept_model = ProbabilisticGraphicalModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model)
+    inference_engine = AncestralSamplingInference(concept_model)
     initial_input = {'emb': x_train}
     query_concepts = ["c1", "c2", "xor"]
 

@@ -32,6 +32,8 @@ from .modules.models.graph import (
 
 from .modules.inference.forward import (
     ForwardInference,
+    DeterministicInference,
+    AncestralSamplingInference,
     KnownGraphInference,
     UnknownGraphInference,
 )
@@ -88,6 +90,8 @@ __all__ = [
 
     # Inference
     "ForwardInference",
+    "DeterministicInference",
+    "AncestralSamplingInference",
     "KnownGraphInference",
     "UnknownGraphInference",
 
