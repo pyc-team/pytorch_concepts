@@ -2,6 +2,7 @@ import inspect
 from abc import abstractmethod
 
 import torch
+from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import ConceptGraph, Variable
 from torch_concepts.nn import BaseModel
@@ -100,7 +101,7 @@ class ForwardInference(BaseInference):
                             f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
 
                     # Parent tensor is fed into the factor using the parent's concept name as the key
-                    if parent_var.distribution in [torch.distributions.Bernoulli, torch.distributions.RelaxedOneHotCategorical]:
+                    if parent_var.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
                         # For probabilistic parents, pass logits
                         parent_logits.append(results[parent_name])
                     else:
@@ -192,11 +193,15 @@ class DeterministicInference(ForwardInference):
 
 
 class AncestralSamplingInference(ForwardInference):
+    def __init__(self, pgm: ProbabilisticGraphicalModel, temperature: int = 1.):
+        super().__init__(pgm)
+        self.temperature = temperature
+
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
-        if parent_variable.distribution in [torch.distributions.Bernoulli]:
+        if parent_variable.distribution in [Bernoulli]:
             return parent_variable.distribution(logits=results).sample()
-        elif parent_variable.distribution in [torch.distributions.RelaxedOneHotCategorical]:
-            return parent_variable.distribution(logits=results, temperature=1.).rsample()
+        elif parent_variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
+            return parent_variable.distribution(logits=results, temperature=self.temperature).rsample()
         return parent_variable.distribution(results).rsample()
 
 

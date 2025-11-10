@@ -1,6 +1,6 @@
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, Variable
 from torch_concepts.data import ToyDataset
@@ -11,7 +11,7 @@ from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, Probabi
 
 def main():
     latent_dims = 10
-    n_epochs = 500
+    n_epochs = 10000
     n_samples = 1000
     concept_reg = 0.5
     data = ToyDataset('xor', size=n_samples, random_state=42)
@@ -24,7 +24,7 @@ def main():
 
     # Variable setup
     latent_var = Variable(["emb"], parents=[], size=latent_dims)
-    concepts = Variable(concept_names, parents=["emb"], distribution=Bernoulli)
+    concepts = Variable(concept_names, parents=["emb"], distribution=RelaxedBernoulli)
     tasks = Variable(task_names, parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # Factor setup
@@ -41,7 +41,7 @@ def main():
     query_concepts = ["c1", "c2", "xor"]
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.BCELoss()
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -54,14 +54,14 @@ def main():
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + concept_reg * task_loss
+        loss = concept_loss + 0 * task_loss
 
         loss.backward()
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
