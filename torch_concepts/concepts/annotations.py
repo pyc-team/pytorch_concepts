@@ -1,4 +1,4 @@
-from logging import warning
+import warnings
 import torch
 
 from copy import deepcopy
@@ -89,7 +89,7 @@ class AxisAnnotation:
 
         # Case 4: neither states nor cardinalities provided
         else:
-            print("Annotations: neither 'states' nor 'cardinalities' provided; "
+            warnings.warn("Annotations: neither 'states' nor 'cardinalities' provided; "
                          "assuming all concepts are binary.")
             cardinalities = tuple(1 for _ in self.labels)
             states = tuple(('0', '1') for _ in self.labels)
