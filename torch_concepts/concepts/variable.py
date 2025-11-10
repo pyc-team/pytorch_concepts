@@ -6,13 +6,26 @@ from torch_concepts.distributions import Delta
 
 
 class Variable:
-    def __new__(cls, concepts: Union[str, List[str]], parents: List[Union['Variable', str]],
+    def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
                 distribution: Optional[Union[Type[Distribution], List[Type[Distribution]]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
 
-        # 1. Handle the case for creating multiple Variable objects (e.g., c1_var, c2_var = Variable([...]))
-        if isinstance(concepts, str):
-            concepts = [concepts]
+        if isinstance(concepts, str) or (isinstance(concepts, list) and len(concepts) == 1):
+            # check that all other params are lists of length 1 or single values
+            if distribution is None:
+                distribution = Delta
+
+            if isinstance(distribution, list):
+                assert len(distribution) == 1
+            else:
+                assert not isinstance(distribution, list)
+
+            if isinstance(size, list):
+                assert len(size) == 1
+            else:
+                assert not isinstance(size, list)
+
+            return object.__new__(cls)
 
         n_concepts = len(concepts)
 
