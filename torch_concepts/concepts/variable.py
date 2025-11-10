@@ -10,21 +10,9 @@ class Variable:
                 distribution: Optional[Union[Type[Distribution], List[Type[Distribution]]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
 
-        if isinstance(concepts, str) or (isinstance(concepts, list) and len(concepts) == 1):
-            # check that all other params are lists of length 1 or single values
-            if distribution is None:
-                distribution = Delta
-
-            if isinstance(distribution, list):
-                assert len(distribution) == 1
-            else:
-                assert not isinstance(distribution, list)
-
-            if isinstance(size, list):
-                assert len(size) == 1
-            else:
-                assert not isinstance(size, list)
-
+        if isinstance(concepts, str):
+            assert not isinstance(distribution, list)
+            assert isinstance(size, int)
             return object.__new__(cls)
 
         n_concepts = len(concepts)

@@ -25,7 +25,7 @@ def main():
     # Variable setup
     latent_var = Variable(["emb"], parents=[], size=latent_dims)
     concepts = Variable(concept_names, parents=["emb"], distribution=Bernoulli)
-    tasks = Variable(task_names, parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    tasks = Variable(task_names, parents=concept_names, distribution=[RelaxedOneHotCategorical], size=[2])
 
     # Factor setup
     backbone = Factor(["emb"], module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
