@@ -51,8 +51,11 @@ class Variable:
             new_vars.append(instance)
         return new_vars
 
-    def __init__(self, concepts: Union[str, List[str]], parents: List[Union['Variable', str]], distribution: Optional[Type[Distribution]] = None,
-                 size: int = 1, metadata: Optional[Dict[str, Any]] = None):
+    def __init__(self, concepts: Union[str, List[str]],
+                 parents: List[Union['Variable', str]],
+                 distribution: Optional[Union[Type[Distribution]], List[Type[Distribution]]] = None,
+                 size: Union[int, List[int]] = 1,
+                 metadata: Optional[Dict[str, Any]] = None):
 
         # Ensure concepts is a list (important if called internally after __new__ splitting)
         if isinstance(concepts, str):

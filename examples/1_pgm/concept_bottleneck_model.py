@@ -23,14 +23,14 @@ def main():
     task_names = ['xor']
 
     # Variable setup
-    latent_var = Variable(["emb"], parents=[], size=latent_dims)
+    latent_var = Variable("emb", parents=[], size=latent_dims)
     concepts = Variable(concept_names, parents=["emb"], distribution=Bernoulli)
-    tasks = Variable(task_names, parents=concept_names, distribution=[RelaxedOneHotCategorical], size=[2])
+    tasks = Variable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # Factor setup
-    backbone = Factor(["emb"], module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
+    backbone = Factor("emb", module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
     c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
-    y_predictor = Factor(["xor"], module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+    y_predictor = Factor("xor", module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
 
     # PGM Initialization
     concept_model = ProbabilisticGraphicalModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
