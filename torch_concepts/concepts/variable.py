@@ -6,52 +6,51 @@ from torch_concepts.distributions import Delta
 
 
 class Variable:
-    def __new__(cls, concepts: List[str], parents: List[Union['Variable', str]],
+    def __new__(cls, concepts: Union[str, List[str]], parents: List[Union['Variable', str]],
                 distribution: Optional[Union[Type[Distribution], List[Type[Distribution]]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
 
         # 1. Handle the case for creating multiple Variable objects (e.g., c1_var, c2_var = Variable([...]))
-        if isinstance(concepts, list) and len(concepts) > 1:
-            n_concepts = len(concepts)
+        if isinstance(concepts, str):
+            concepts = [concepts]
 
-            # Standardize distribution: single value -> list of N values
-            if distribution is None:
-                distribution_list = [Delta] * n_concepts
-            elif not isinstance(distribution, list):
-                distribution_list = [distribution] * n_concepts
-            else:
-                distribution_list = distribution
+        n_concepts = len(concepts)
 
-            # Standardize size: single value -> list of N values
-            if not isinstance(size, list):
-                size_list = [size] * n_concepts
-            else:
-                size_list = size
+        # Standardize distribution: single value -> list of N values
+        if distribution is None:
+            distribution_list = [Delta] * n_concepts
+        elif not isinstance(distribution, list):
+            distribution_list = [distribution] * n_concepts
+        else:
+            distribution_list = distribution
 
-            # Validation checks for list lengths
-            if len(distribution_list) != n_concepts or len(size_list) != n_concepts:
-                raise ValueError(
-                    "If concepts list has length N > 1, distribution and size must either be single values or lists of length N.")
+        # Standardize size: single value -> list of N values
+        if not isinstance(size, list):
+            size_list = [size] * n_concepts
+        else:
+            size_list = size
 
-            # Create and return a list of individual Variable instances
-            new_vars = []
-            for i in range(n_concepts):
-                # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
-                instance = object.__new__(cls)
-                instance.__init__(
-                    concepts=[concepts[i]],  # Pass as single-element list
-                    parents=parents,
-                    distribution=distribution_list[i],
-                    size=size_list[i],
-                    metadata=metadata.copy() if metadata else None
-                )
-                new_vars.append(instance)
-            return new_vars
+        # Validation checks for list lengths
+        if len(distribution_list) != n_concepts or len(size_list) != n_concepts:
+            raise ValueError(
+                "If concepts list has length N > 1, distribution and size must either be single values or lists of length N.")
 
-        # 2. Default: Single instance creation (either from a direct call or a recursive call from step 1)
-        return object.__new__(cls)
+        # Create and return a list of individual Variable instances
+        new_vars = []
+        for i in range(n_concepts):
+            # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
+            instance = object.__new__(cls)
+            instance.__init__(
+                concepts=[concepts[i]],  # Pass as single-element list
+                parents=parents,
+                distribution=distribution_list[i],
+                size=size_list[i],
+                metadata=metadata.copy() if metadata else None
+            )
+            new_vars.append(instance)
+        return new_vars
 
-    def __init__(self, concepts: List[str], parents: List[Union['Variable', str]], distribution: Optional[Type[Distribution]] = None,
+    def __init__(self, concepts: Union[str, List[str]], parents: List[Union['Variable', str]], distribution: Optional[Type[Distribution]] = None,
                  size: int = 1, metadata: Optional[Dict[str, Any]] = None):
 
         # Ensure concepts is a list (important if called internally after __new__ splitting)
