@@ -12,7 +12,7 @@ from torch_concepts.distributions import Delta
 
 class Factor:
     def __new__(cls, concepts: Union[str, List[str]],
-                module_class: Union[nn.Module, Type[nn.Module], List[Union[nn.Module, Type[nn.Module]]]]):
+                module_class: Union[nn.Module, List[nn.Module]]):
 
         if isinstance(concepts, str):
             assert not isinstance(module_class, list)

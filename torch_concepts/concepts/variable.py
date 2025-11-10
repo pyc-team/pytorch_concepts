@@ -7,7 +7,7 @@ from torch_concepts.distributions import Delta
 
 class Variable:
     def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
-                distribution: Optional[Union[Type[Distribution], List[Type[Distribution]]]] = None,
+                distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
 
         if isinstance(concepts, str):
@@ -53,9 +53,9 @@ class Variable:
 
     def __init__(self, concepts: Union[str, List[str]],
                  parents: List[Union['Variable', str]],
-                 distribution: Optional[Union[Type[Distribution]], List[Type[Distribution]]] = None,
+                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
-                 metadata: Optional[Dict[str, Any]] = None):
+                 metadata: Dict[str, Any] = None):
 
         # Ensure concepts is a list (important if called internally after __new__ splitting)
         if isinstance(concepts, str):
