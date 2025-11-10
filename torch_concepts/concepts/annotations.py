@@ -135,10 +135,7 @@ class AxisAnnotation:
         if not (0 <= idx < len(self.labels)):
             raise IndexError(f"Index {idx} out of range")
 
-        if self.is_nested and self.states is not None:
-            return self.states[idx]
-        else:
-            return self.labels[idx]
+        return self.labels[idx]
 
     def get_index(self, label: str) -> int:
         """Get index of a label in this axis."""
