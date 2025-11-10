@@ -6,7 +6,7 @@ from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCatego
 
 from torch_concepts import ConceptGraph, Variable
 from torch_concepts.nn import BaseModel
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 
 from ..models.pgm import ProbabilisticGraphicalModel
 from ...base.inference import BaseInference
@@ -85,12 +85,12 @@ class ForwardInference(BaseInference):
 
                 input_tensor = external_inputs[concept_name]
 
-                # Root factors (like LinearModule) expect a single 'input' keyword argument
-                output_tensor = factor.forward(input=input_tensor)
+                parent_kwargs = self.get_parent_kwargs(factor, [input_tensor], [])
+                output_tensor = factor.forward(**parent_kwargs)
+                output_tensor = self.get_results(output_tensor, var)
 
                 # 2. Handle Child Nodes (has parents)
             else:
-                parent_kwargs = {}
                 parent_logits = []
                 parent_latent = []
                 for parent_var in var.parents:
@@ -108,34 +108,40 @@ class ForwardInference(BaseInference):
                         # For continuous parents, pass latent features
                         parent_latent.append(results[parent_name])
 
-                sig = inspect.signature(factor.module_class.forward)
-                params = sig.parameters
-                allowed = {
-                    name for name, p in params.items()
-                    if name != "self" and p.kind in (
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        inspect.Parameter.KEYWORD_ONLY,
-                    )
-                }
-                if 'input' in allowed:
-                    # this is a standard torch layer: concatenate all inputs into 'x'
-                    parent_kwargs['input'] = torch.cat(parent_logits + parent_latent, dim=-1)
-                else:
-                    # this is a PyC layer: separate logits and latent inputs
-                    if 'logits' in allowed:
-                        parent_kwargs['logits'] = torch.cat(parent_logits, dim=-1)
-                    if 'embedding' in allowed:
-                        parent_kwargs['embedding'] = torch.cat(parent_latent, dim=-1)
-                    elif 'exogenous' in allowed:
-                        parent_kwargs['exogenous'] = torch.cat(parent_latent, dim=1)
-
-                # Child factors concatenate parent outputs based on the kwargs
+                parent_kwargs = self.get_parent_kwargs(factor, parent_latent, parent_logits)
                 output_tensor = factor.forward(**parent_kwargs)
                 output_tensor = self.get_results(output_tensor, var)
 
             results[concept_name] = output_tensor
 
         return results
+
+    def get_parent_kwargs(self, factor,
+                          parent_latent: Union[List[torch.Tensor], torch.Tensor] = None,
+                          parent_logits: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        parent_kwargs = {}
+        sig = inspect.signature(factor.module_class.forward)
+        params = sig.parameters
+        allowed = {
+            name for name, p in params.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        if allowed not in [{'logits'}, {'logits', 'embedding'}, {'logits', 'exogenous'}, {'embedding'}, {'exogenous'}]:
+            # this is a standard torch layer: concatenate all inputs into 'x'
+            parent_kwargs[allowed.pop()] = torch.cat(parent_logits + parent_latent, dim=-1)
+        else:
+            # this is a PyC layer: separate logits and latent inputs
+            if 'logits' in allowed:
+                parent_kwargs['logits'] = torch.cat(parent_logits, dim=-1)
+            if 'embedding' in allowed:
+                parent_kwargs['embedding'] = torch.cat(parent_latent, dim=-1)
+            elif 'exogenous' in allowed:
+                parent_kwargs['exogenous'] = torch.cat(parent_latent, dim=1)
+
+        return parent_kwargs
 
     def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
