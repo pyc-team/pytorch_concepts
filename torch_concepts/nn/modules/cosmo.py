@@ -1,11 +1,11 @@
 import math
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import numpy as np
 
 import torch.nn.functional as F
-from torch_concepts import ConceptGraph, Annotations
+from torch_concepts import ConceptGraph, Annotations, Variable
 
 from ...nn.base.graph import BaseGraphLearner
 
@@ -13,7 +13,8 @@ from ...nn.base.graph import BaseGraphLearner
 class COSMOGraphLearner(BaseGraphLearner):
     def __init__(
             self,
-            annotations: Annotations,
+            row_labels: List[str],
+            col_labels: List[str],
             shift: float = 1.0,
             temperature: float = 1.0,
             symmetric: bool = False,
@@ -22,13 +23,16 @@ class COSMOGraphLearner(BaseGraphLearner):
             priority_var: Optional[float] = None,
             hard_threshold: bool = True,
     ):
-        super(COSMOGraphLearner, self).__init__(annotations)
-        n_concepts = len(self.annotations.get_axis_labels(1))
+        super(COSMOGraphLearner, self).__init__(row_labels, col_labels)
+
         # define COSMO parameters
-        self.adj_params = torch.nn.Parameter(torch.empty((n_concepts, n_concepts)))
-        self.np_params = torch.nn.Parameter(torch.zeros((n_concepts, 1)))
+        self.adj_params = torch.nn.Parameter(torch.empty((self.n_labels, self.n_labels)))
+        self.np_params = torch.nn.Parameter(torch.zeros((self.n_labels, 1)))
         self.priority_var = priority_var if priority_var is not None \
             else shift / math.sqrt(2)
+
+        # self.threshold = torch.nn.Parameter(torch.zeros(self.n_labels))
+        # self.temperature = torch.nn.Parameter(torch.ones(self.n_labels) * temperature)
 
         self.adjacency_var = adjacency_var
         self.shift = shift
@@ -41,6 +45,7 @@ class COSMOGraphLearner(BaseGraphLearner):
     def _reset_parameters(self):
         torch.nn.init.kaiming_uniform_(self.adj_params, nonlinearity='linear')
         torch.nn.init.normal_(self.np_params, std=self.priority_var)
+        # torch.nn.init.normal_(self.threshold, std=self.priority_var)
 
     @property
     def orientation(self) -> torch.Tensor:
@@ -61,7 +66,8 @@ class COSMOGraphLearner(BaseGraphLearner):
         # print(dif_mat)
 
         # Apply the shifted-tempered sigmoid
-        orient_mat = torch.sigmoid((dif_mat - self.shift) / self.temperature)
+        # orient_mat = torch.sigmoid((dif_mat - self.shift) / self.temperature)
+        orient_mat = dif_mat
 
         # Remove the diagonal
         orient_mat = orient_mat * (1 - torch.eye(n_nodes).to(orient_mat.device))
@@ -70,6 +76,7 @@ class COSMOGraphLearner(BaseGraphLearner):
         if self.hard_threshold:
             # Compute the hard orientation
             hard_orient_mat = dif_mat > self.shift
+            # hard_orient_mat = dif_mat > self.threshold
             hard_orient_mat = hard_orient_mat.float()
 
             # Apply soft detaching trick
