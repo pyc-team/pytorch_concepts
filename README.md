@@ -74,14 +74,22 @@ You can find further reading materials and tutorials in our book [Concept-based 
 
 ## Authors
 
-- [Pietro Barbiero](http://www.pietrobarbiero.eu/), Universita' della Svizzera Italiana (CH) and University of Cambridge (UK).
+### Core Contributors
+
+- [Pietro Barbiero](http://www.pietrobarbiero.eu/), IBM Research Zurich (CH) and University of Cambridge (UK).
 - [Gabriele Ciravegna](https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/), Politecnico di Torino (IT).
 - [David Debot](https://www.kuleuven.be/wieiswie/en/person/00165387), KU Leuven (BE).
 - [Michelangelo Diligenti](https://docenti.unisi.it/en/diligenti), Università degli Studi di Siena (IT).
 - [Gabriele Dominici](https://pc.inf.usi.ch/team/gabriele-dominici/), Universita' della Svizzera Italiana (CH).
-- [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/), University of Cambridge (UK).
+- [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/), University of Oxford (UK) and University of Cambridge (UK).
 - [Francesco Giannini](https://www.francescogiannini.eu/), Scuola Normale Superiore di Pisa (IT).
 - [Giuseppe Marra](https://www.giuseppemarra.com/), KU Leuven (BE).
+
+
+### External Contributors
+
+- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
+- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
 
 ## Licence
 
