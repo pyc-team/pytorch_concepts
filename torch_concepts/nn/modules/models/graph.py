@@ -1,10 +1,9 @@
-from copy import deepcopy
-from typing import List
+from typing import List, Tuple, Optional
+from torch.nn import Identity
 
-import torch
-from torch import nn
-
-from torch_concepts import ConceptGraph, Annotations
+from torch_concepts import ConceptGraph, Annotations, Variable
+from ... import Factor, ProbabilisticGraphicalModel
+from ....distributions import Delta
 from ....nn import BaseModel, Propagator, BaseGraphLearner
 
 
@@ -14,50 +13,171 @@ class GraphModel(BaseModel):
     The graph structure is provided as an adjacency matrix during initialization.
     """
     def __init__(self,
-                 input_size: int,
-                 annotations: Annotations,
-                 encoder: Propagator,
-                 predictor: Propagator,
                  model_graph: ConceptGraph,
-                 predictor_in_embedding: int,
-                 predictor_in_exogenous: int,
-                 has_self_exogenous: bool = False,
-                 has_parent_exogenous: bool = False,
-                 exogenous: Propagator = None
+                input_size: int,
+                annotations: Annotations,
+                encoder: Propagator,
+                predictor: Propagator,
+                use_source_exogenous: bool = None,
+                source_exogenous: Optional[Propagator] = None,
+                internal_exogenous: Optional[Propagator] = None,
                  ):
         super(GraphModel, self).__init__(
             input_size=input_size,
             annotations=annotations,
             encoder=encoder,
             predictor=predictor,
-            model_graph=model_graph,
-            predictor_in_embedding=predictor_in_embedding,
-            predictor_in_exogenous=predictor_in_exogenous,
-            has_self_exogenous=has_self_exogenous,
-            has_parent_exogenous=has_parent_exogenous,
-            exogenous=exogenous
         )
+        self._source_exogenous_class = source_exogenous
+        self._target_exogenous_class = internal_exogenous
+        self.use_source_exogenous = use_source_exogenous
 
         assert model_graph.is_directed_acyclic(), "Input model graph must be a directed acyclic graph."
-        assert model_graph.node_names == list(self.concept_names), "concept_names must match model_graph annotations."
+        assert model_graph.node_names == list(self.labels), "concept_names must match model_graph annotations."
+        self.model_graph = model_graph
         self.root_nodes = [r for r in model_graph.get_root_nodes()]
         self.graph_order = model_graph.topological_sort()  # TODO: group by graph levels?
         self.internal_nodes = [c for c in self.graph_order if c not in self.root_nodes]
-        self.root_nodes_idx = [self.concept_names.index(r) for r in self.root_nodes]
-        self.graph_order_idx = [self.concept_names.index(i) for i in self.graph_order]
-        self.internal_node_idx = [self.concept_names.index(i) for i in self.internal_nodes]
+        self.root_nodes_idx = [self.labels.index(r) for r in self.root_nodes]
+        self.graph_order_idx = [self.labels.index(i) for i in self.graph_order]
+        self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
-        if self.has_exogenous:
-            self.exogenous_roots = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
-            self.exogenous_internal = self._init_encoder(exogenous, concept_names=self.internal_nodes, in_features_embedding=input_size)
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous_roots.embedding_size) # FIXME: two different encoders. with and without exogenous
+        # embedding variable and factor
+        embedding_var = Variable('embedding', parents=[], size=self.input_size)
+        embedding_factor = Factor('embedding', module_class=Identity())
+
+        # concepts init
+        if source_exogenous is not None:
+            cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
+            source_exogenous_vars, source_exogenous_factors = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            encoder_vars, encoder_factors = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=source_exogenous_vars, cardinalities=cardinalities)
         else:
-            self.exogenous_roots = None
-            self.exogenous_internal = None
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)
+            source_exogenous_vars, source_exogenous_factors = [], []
+            encoder_vars, encoder_factors = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[embedding_var])
 
-        self._init_fetchers()
-        self.predictors = self._init_predictors(predictor, concept_names=self.internal_nodes)
+        # tasks init
+        if internal_exogenous is not None:
+            cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.internal_node_idx[idx]] for idx, c in enumerate(self.internal_nodes)]
+            internal_exogenous_vars, internal_exogenous_factors = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, self_exog_vars=internal_exogenous_vars, cardinalities=cardinalities)
+        elif use_source_exogenous:
+            cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
+            internal_exogenous_vars, internal_exogenous_factors = [], []
+            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, source_exog_vars=source_exogenous_vars, cardinalities=cardinalities)
+        else:
+            internal_exogenous_vars, internal_exogenous_factors = [], []
+            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars)
+
+        # PGM Initialization
+        self.pgm = ProbabilisticGraphicalModel(
+            variables=[embedding_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
+            factors=[embedding_factor, *source_exogenous_factors, *encoder_factors, *internal_exogenous_factors, *predictor_factors],
+        )
+
+    def _init_exog(self, layer: Propagator, label_names, parent_var, cardinalities) -> Tuple[Variable, Factor]:
+        exog_names = [f"exog_{c}_state_{i}" for cix, c in enumerate(label_names) for i in range(cardinalities[cix])]
+        exog_vars = Variable(exog_names,
+                            parents=parent_var.concepts,
+                            distribution = Delta,
+                            size = layer._module_kwargs['embedding_size'])
+
+        propagator = layer.build(
+            in_features_embedding=parent_var.size,
+            in_features_logits=None,
+            in_features_exogenous=None,
+            out_features=1,
+        )
+
+        exog_factors = Factor(exog_names, module_class=propagator)
+        return exog_vars, exog_factors
+
+    def _init_encoder(self, layer: Propagator, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, Factor]:
+        if parent_vars[0].concepts[0] == 'embedding':
+            encoder_vars = Variable(label_names,
+                                parents=['embedding'],
+                                distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
+                                size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
+            propagator = layer.build(
+                in_features_embedding=parent_vars[0].size,
+                in_features_logits=None,
+                in_features_exogenous=None,
+                out_features=encoder_vars[0].size,
+            )
+            encoder_factors = Factor(label_names, module_class=propagator)
+        else:
+            assert len(parent_vars) == sum(cardinalities)
+            encoder_vars = []
+            encoder_factors = []
+            for label_name in label_names:
+                exog_vars = [v for v in parent_vars if v.concepts[0].startswith(f"exog_{label_name}")]
+                exog_vars_names = [v.concepts[0] for v in exog_vars]
+                encoder_var = Variable(label_name,
+                                    parents=exog_vars_names,
+                                    distribution=self.annotations[1].metadata[label_name]['distribution'],
+                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
+                propagator = layer.build(
+                    in_features_embedding=None,
+                    in_features_logits=None,
+                    in_features_exogenous=exog_vars[0].size,
+                    out_features=encoder_var.size,
+                )
+                encoder_factor = Factor(label_name, module_class=propagator)
+                encoder_vars.append(encoder_var)
+                encoder_factors.append(encoder_factor)
+        return encoder_vars, encoder_factors
+
+    def _init_predictors(self,
+                         layer: Propagator,
+                         label_names: List[str],
+                         available_vars,
+                         cardinalities=None,
+                         self_exog_vars=None,
+                         source_exog_vars=None) -> Tuple[List[Variable], List[Factor]]:
+        available_vars = [] + available_vars
+        predictor_vars, predictor_factors = [], []
+        for c_name in label_names:
+            endogenous_parents_names = self.model_graph.get_predecessors(c_name)
+            endogenous_parents_vars = [v for v in available_vars if v.concepts[0] in endogenous_parents_names]
+            in_features_logits = sum([c.size for c in endogenous_parents_vars])
+
+            # check exogenous
+            if self_exog_vars is not None:
+                assert len(self_exog_vars) == sum(cardinalities)
+                used_exog_vars = [v for v in self_exog_vars if v.concepts[0].startswith(f"exog_{c_name}")]
+                exog_vars_names = [v.concepts[0] for v in used_exog_vars]
+                in_features_exogenous = used_exog_vars[0].size
+            elif source_exog_vars is not None:
+                assert len(source_exog_vars) == len(endogenous_parents_names)
+                exog_vars_names = [v.concepts[0] for v in source_exog_vars]
+                used_exog_vars = source_exog_vars
+                in_features_exogenous = used_exog_vars[0].size
+            else:
+                exog_vars_names = []
+                used_exog_vars = []
+                in_features_exogenous = None
+
+            predictor_var = Variable(c_name,
+                                     parents=endogenous_parents_names+exog_vars_names,
+                                    distribution=self.annotations[1].metadata[c_name]['distribution'],
+                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])
+
+            # TODO: we currently assume predictors can use exogenous vars if any, but not embedding
+            propagator = layer.build(
+                in_features_logits=in_features_logits,
+                in_features_exogenous=in_features_exogenous,
+                in_features_embedding=None,
+                out_features=predictor_var.size,
+                cardinalities=[predictor_var.size]
+            )
+
+            predictor_factor = Factor(c_name, module_class=propagator)
+
+            predictor_vars.append(predictor_var)
+            predictor_factors.append(predictor_factor)
+
+            available_vars.append(predictor_var)
+
+        return predictor_vars, predictor_factors
         
     
 class LearnedGraphModel(BaseModel):
@@ -107,142 +227,3 @@ class LearnedGraphModel(BaseModel):
             self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)
         self._init_fetchers(parent_names=self.root_nodes)
         self.predictors = self._init_predictors(predictor,  concept_names=self.concept_names)
-            
-    def get_model_known_graph(self) -> GraphModel:
-        """
-        Convert this LearnedGraphModel into a GraphModel with a fixed, materialised graph.
-        Each predictor is deep-copied and its FIRST Linear layer is physically pruned so that
-        in_features equals the sum of the kept parents' cardinalities; the kept columns and
-        bias are copied so behaviour matches the original when dropped inputs are zeroed.
-        """
-        if not hasattr(self, "graph_learner"):
-            raise RuntimeError("This LearnedGraphModel was not initialised with a graph learner.")
-        known_graph: ConceptGraph = self.graph_learner()
-
-        # Build a light GraphModel shell; we will overwrite encoders/predictors
-        class _NoOpProp:
-            def build(self, input_size: int, output_annotations: Annotations) -> nn.Module:
-                return nn.Identity()
-
-        gm = GraphModel(
-            input_size=self.emb_size,
-            annotations=self.annotations,
-            encoder=_NoOpProp(),
-            predictor=_NoOpProp(),
-            model_graph=known_graph,
-        )
-
-        # ---------------- helpers ---------------- #
-        full_order = list(self.concept_names)
-        cards = self.annotations.get_axis_cardinalities(axis=1)
-        per_card = {lab: (cards[i] if cards is not None else 1) for i, lab in enumerate(full_order)}
-
-        # flat offsets in the "all-concepts" parent layout used by the wide predictors
-        offsets = {}
-        cur = 0
-        for lab in full_order:
-            offsets[lab] = cur
-            cur += per_card[lab]
-
-        def expand_indices(labels: list[str]) -> list[int]:
-            """Expand parent concept labels to flat feature indices (respecting cardinalities)."""
-            keep = []
-            for lab in labels:
-                base = offsets[lab]
-                width = per_card[lab]
-                keep.extend(range(base, base + width))
-            return keep
-
-        def _find_first_linear(parent: nn.Module):
-            """
-            Depth-first search to locate the first nn.Linear and its parent + attr key
-            so we can replace it robustly (works for nested/Sequential/custom containers).
-            Returns (parent_module, key, linear_module) where key is either int (Sequential)
-            or str (attribute name). Returns (None, None, None) if not found.
-            """
-            # direct module is Linear
-            if isinstance(parent, nn.Linear):
-                return None, None, parent  # caller will handle root replacement
-
-            # search named children
-            for name, child in parent.named_children():
-                if isinstance(child, nn.Linear):
-                    return parent, name, child
-                # dive deeper
-                p, k, lin = _find_first_linear(child)
-                if lin is not None:
-                    return p if p is not None else parent, k, lin
-            return None, None, None
-
-        # FIXME: this runs but is untested
-        def _prune_first_linear_inplace(module: nn.Module, keep_idx: list[int]) -> nn.Module:
-            """
-            Return a new module where the first nn.Linear has been replaced by a pruned Linear
-            with in_features=len(keep_idx) and copied weight columns + bias.
-            Works even for deeply nested predictors. If no Linear is found, returns a deepcopy.
-            """
-            mod = deepcopy(module)
-            parent, key, lin = _find_first_linear(mod)
-
-            if lin is None:
-                # Nothing to prune generically; return a copy as-is
-                return mod
-
-            out_f, in_f = lin.weight.shape
-            new_in = len(keep_idx)
-
-            # Build pruned Linear; PyTorch supports in_features=0 (weight [out,0]) → output = bias
-            new_lin = nn.Linear(new_in, out_f, bias=(lin.bias is not None),
-                                dtype=lin.weight.dtype, device=lin.weight.device)
-            with torch.no_grad():
-                if new_in > 0:
-                    # safety: ensure indices are valid
-                    if keep_idx and max(keep_idx) >= in_f:
-                        raise RuntimeError(f"keep_idx contains invalid column (>= {in_f})")
-                    new_lin.weight.copy_(lin.weight[:, keep_idx])
-                else:
-                    new_lin.weight.zero_()
-                if new_lin.bias is not None and lin.bias is not None:
-                    new_lin.bias.copy_(lin.bias)
-
-            # Replace lin under its parent (root if parent is None)
-            if parent is None:
-                # module itself is Linear
-                mod = new_lin
-            else:
-                if isinstance(parent, nn.Sequential) and isinstance(key, str):
-                    # named_children on Sequential yields string keys; convert to int index
-                    idx = int(key)
-                    parent[idx] = new_lin
-                elif isinstance(key, int):
-                    parent[key] = new_lin
-                else:
-                    setattr(parent, key, new_lin)
-
-            return mod
-
-        # ---------------- copy encoders exactly ---------------- #
-        enc_out = nn.ModuleDict()
-        for c_name in gm.root_nodes:
-            enc_out[c_name] = deepcopy(self.encoders[c_name]) if hasattr(self,
-                                                                         "encoders") and c_name in self.encoders else nn.Identity()
-        gm.encoders = enc_out
-
-        # ---------------- prune predictors to known parents ---------------- #
-        pred_out = nn.ModuleDict()
-        for c_name in gm.internal_nodes:
-            parents = list(known_graph.get_predecessors(c_name))  # list of parent concept labels
-            keep_idx = expand_indices(parents)  # flat indices in the wide parent layout
-
-            if hasattr(self, "predictors") and c_name in self.predictors:
-                old_pred = self.predictors[c_name]
-                new_pred = _prune_first_linear_inplace(old_pred, keep_idx)
-                pred_out[c_name] = new_pred
-            else:
-                # no trained predictor → minimal compatible default
-                in_dim = len(keep_idx)
-                out_dim = per_card[c_name]
-                pred_out[c_name] = nn.Identity() if in_dim == 0 else nn.Sequential(nn.Linear(in_dim, out_dim))
-        gm.predictors = pred_out
-
-        return gm

@@ -34,8 +34,6 @@ from .modules.inference.forward import (
     ForwardInference,
     DeterministicInference,
     AncestralSamplingInference,
-    KnownGraphInference,
-    UnknownGraphInference,
 )
 from .modules.inference.intervention import (
     GroundTruthIntervention,
@@ -92,8 +90,6 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
-    "KnownGraphInference",
-    "UnknownGraphInference",
 
     # Interventions
     "GroundTruthIntervention",

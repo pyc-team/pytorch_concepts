@@ -2,9 +2,6 @@ from typing import Optional
 
 import torch
 
-from ...concepts.annotations import Annotations
-from ...nn.base.layer import BaseEncoder, BasePredictor
-
 import inspect
 
 def _filter_kwargs_for_ctor(cls, **kwargs):
@@ -12,9 +9,9 @@ def _filter_kwargs_for_ctor(cls, **kwargs):
     sig = inspect.signature(cls.__init__)
     params = sig.parameters
 
-    # If the class accepts **kwargs, we can pass everything through.
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return kwargs
+    # # If the class accepts **kwargs, we can pass everything through.
+    # if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+    #     return kwargs
 
     allowed = {
         name for name, p in params.items()
@@ -51,10 +48,11 @@ class Propagator(torch.nn.Module):
         self.module = None
 
     def build(self,
-              out_annotations: Annotations,  # Assuming Annotations is a defined type
+              out_features: int,  # Assuming Annotations is a defined type
               in_features_logits: Optional[int],
               in_features_embedding: Optional[int],
               in_features_exogenous: Optional[int],
+              **kwargs
               ) -> torch.nn.Module:
         """
         Constructor method to instantiate the underlying module with required arguments.
@@ -68,8 +66,9 @@ class Propagator(torch.nn.Module):
                 "in_features_logits": in_features_logits,
                 "in_features_embedding": in_features_embedding,
                 "in_features_exogenous": in_features_exogenous,
-                "out_annotations": out_annotations,
+                "out_features": out_features,
                 **self._module_kwargs,  # user-provided extras
+                **kwargs,  # additional kwargs if provided
             }
         )
 
