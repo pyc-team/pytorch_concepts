@@ -30,13 +30,14 @@ class MixProbExogPredictor(BasePredictor):
             out_features=out_features,
             in_activation=in_activation,
         )
+        assert in_features_exogenous % 2 == 0, "in_features_exogenous must be divisible by 2."
         if cardinalities is None:
             self.cardinalities = [1] * in_features_logits
             predictor_in_features = in_features_exogenous*in_features_logits
         else:
             self.cardinalities = cardinalities
             assert sum(self.cardinalities) == in_features_logits
-            predictor_in_features = in_features_exogenous*len(self.cardinalities)
+            predictor_in_features = in_features_exogenous//2#*len(self.cardinalities)
 
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
