@@ -1,0 +1,11 @@
+classification:
+  binary: 
+    path: "torch.nn.BCEWithLogitsLoss"
+    kwargs: {}
+  categorical: 
+    path: "torch.nn.CrossEntropyLoss"
+    kwargs: {}
+
+regression: 
+  path: "torch.nn.MSELoss"
+  kwargs: {}

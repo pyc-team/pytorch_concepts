@@ -1,0 +1,10 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "conceptarium.nn.models.c2bm.C2BM"
+
+exog_encoder_embedding_size: 16
+hyperlayer_hidden_size: 32
+
+default_train_inference: "torch_concepts.nn.KnownGraphInference"

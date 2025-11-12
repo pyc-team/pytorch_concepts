@@ -1,0 +1,5 @@
+_target_: "conceptarium.nn.models.blackbox_allconcepts.BB_AllConcepts"
+hidden_size: 64
+n_layers: 2
+activation: leaky_relu
+dropout: 0.0

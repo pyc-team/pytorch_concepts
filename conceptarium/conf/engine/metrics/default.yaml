@@ -1,0 +1,20 @@
+classification:
+  binary:
+    accuracy: 
+      path: "torchmetrics.classification.BinaryAccuracy"
+      kwargs: {}
+    # f1: 
+    #   path: "torchmetrics.classification.BinaryF1Score"
+    #   kwargs: {}
+  categorical:
+    accuracy: 
+      path: "torchmetrics.classification.MulticlassAccuracy"
+      kwargs: {}
+    
+regression: 
+  mae: 
+    path: "torchmetrics.regression.MeanAbsoluteError"
+    kwargs: {}
+  mse: 
+    path: "torchmetrics.regression.MeanSquaredError"
+    kwargs: {}

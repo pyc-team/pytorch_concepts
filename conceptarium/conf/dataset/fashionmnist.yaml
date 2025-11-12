@@ -1,0 +1,34 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: conceptarium.data.datamodules.fashionmnist.FashionMNISTDataModule
+
+seed: ${seed}
+
+coloring:
+  training_mode: "additional_concepts_custom"
+  training_kwargs:
+    concepts_used: ["scales", "degrees", "colors"] # there must be "colors"
+    values: [[[0.1, 0.25, 0.5], [0.75, 1.0]], [[60], [150]], [["green"], ["red"]]]
+    # If the first concept in concepts_used is not "clothing", its values are assigned randomly to the samples; otherwise, no changes are made.
+    # The second concept's values are assigned based on the first concept's intervals: concept_0_intervals[0] -> a random value among the ones in concept_1_values[0], etc...
+    # The third concept's values are assigned based on the second concept's values: concept_1_values[0] -> a random value among the ones in concept_2_values[0], etc...
+
+
+  test_mode: "additional_concepts_random"
+  test_kwargs:
+    concepts_used: ["scales", "degrees", "colors"] # there must be "colors"
+    values: [ [0.1, 0.25, 0.5, 0.75, 1.0], [60, 150], ["green", "red"]]
+    random_prob: [["uniform"], ["uniform"], ["uniform"]]
+    # Scales are randomly assigned to the samples from the provided values (all of them are possible).
+    # Degrees are randomly assigned to the samples from the provided values (all of them are possible).
+    # Colors are randomly assigned to the samples from the provided values (all of them are possible).
+
+
+label_descriptions: # update if concepts change
+  clothing: "a categorical variable (0-9) representing the type of clothing item, taking integer values from 0 to 9, each corresponding to a specific class."
+  scales: "a categorical variable representing the scale factor applied to the original image with possible values [0.1, 0.25, 0.5, 0.75, 1.0] where 1.0 indicates the original size."
+  degrees: "a categorical variable representing the rotation angle applied to the original image with possible values [60, 150] degrees."
+  colors: "a binary variable indicating a color, taking one of two possible values: 'red' (1) or 'green' (0) or 'blue' (2)."
+

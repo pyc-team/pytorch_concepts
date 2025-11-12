@@ -1,0 +1,11 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "conceptarium.nn.models.cem.CEM"
+
+task_names: ${dataset.default_task_names}
+
+embedding_size: 16
+
+default_train_inference: "torch_concepts.nn.KnownGraphInference"

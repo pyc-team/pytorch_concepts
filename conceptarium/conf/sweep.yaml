@@ -1,0 +1,33 @@
+defaults:
+  - _default
+  - _self_
+
+hydra:
+  job:
+    name: test
+  sweeper:
+    # standard grid search
+    params:
+      # cbm, cem, cgm, c2bm
+      model: cbm_factors #, cem, c2bm
+      # asia, sachs, insurance, alarm, hailfinder, pigs, andes
+      dataset: asia
+      seed: 1
+
+# load_data_embeddings: true
+
+engine:
+  enable_summary_metrics: true
+  enable_perconcept_metrics: false
+  train_interv_prob: 0.8
+  test_interv_noise: 0.8   # for bndatasets only
+  optim_kwargs:
+    lr: 0.00075
+
+trainer:
+  logger: null
+  devices: [0]
+  max_epochs: 100
+  patience: 30
+
+notes: test

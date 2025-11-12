@@ -1,0 +1,345 @@
+import os
+from typing import Literal, Mapping, Optional
+from pytorch_lightning import LightningDataModule
+from torch.utils.data import DataLoader, Dataset, Subset
+
+from torch_concepts.data.base import ConceptDataset
+
+from ..backbone import get_backbone_embs
+from ..scalers.standard import StandardScaler
+from ..splitters.random import RandomSplitter
+from ...typing import BackboneType
+
+StageOptions = Literal['fit', 'validate', 'test', 'predict']
+
+
+class ConceptDataModule(LightningDataModule):
+    r"""Base :class:`~pytorch_lightning.core.LightningDataModule` for
+    concept-based datasets.
+
+    Args:
+        dataset (ConceptDataset): The complete dataset.
+        scalers (dict, optional): Named mapping of scalers to be used for data
+            rescaling after splitting. Every scaler is given as input the attribute
+            of the dataset named as the scaler's key. If :obj:`None`, no scaling
+            is performed.
+            (default :obj:`None`)
+        splitter (Optional): A splitter object to be used for splitting
+            :obj:`dataset` into train/validation/test sets.
+            (default :obj:`None`)
+        precompute_embs: If True and backbone is provided, precomputes embeddings
+            and caches them to disk. If False, uses raw input data.
+                (default :obj:`False`)
+        batch_size (int): Size of the mini-batches for the dataloaders.
+            (default :obj:`32`)
+        workers (int): Number of workers to use in the dataloaders.
+            (default :obj:`0`)
+        pin_memory (bool): If :obj:`True`, then enable pinned GPU memory for
+            :meth:`train_dataloader`.
+            (default :obj:`False`)
+    """
+
+    def __init__(self,
+                 dataset: ConceptDataset,
+                 val_size: float = 0.1,
+                 test_size: float = 0.2,
+                 ftune_size: float = 0.0,
+                 ftune_val_size: float = 0.0,
+                 batch_size: int = 512,
+                 backbone: BackboneType = None,     # optional backbone
+                 precompute_embs: bool = False,
+                 force_recompute: bool = False,      # whether to recompute embeddings even if cached
+                 scalers: Optional[Mapping] = None, # optional custom scalers
+                 splitter: Optional[object] = None, # optional custom splitter
+                 workers: int = 0,
+                 pin_memory: bool = False):
+        super(ConceptDataModule, self).__init__()
+        self.dataset = dataset
+
+        # backbone and embedding precomputation
+        self.backbone = backbone
+        self.precompute_embs = precompute_embs
+        self.force_recompute = force_recompute
+
+        # data loaders
+        self.batch_size = batch_size
+        self.workers = workers
+        self.pin_memory = pin_memory
+
+        # init scalers
+        if scalers is not None:
+            self.scalers = scalers
+        else:
+            self.scalers = {
+                'input': StandardScaler(axis=0),
+                'concepts': StandardScaler(axis=0)
+            }
+            
+        # set splitter
+        self.trainset = self.valset = self.testset = None
+        if splitter is not None:
+            self.splitter = splitter
+        else:
+            self.splitter = RandomSplitter(
+                val_size=val_size,
+                test_size=test_size,
+                ftune_size=ftune_size,
+                ftune_val_size=ftune_val_size
+            )
+
+    def __len__(self) -> int:
+        return self.n_samples
+    
+    def __getattr__(self, item):
+        ds = self.__dict__.get('dataset')
+        if ds is not None and hasattr(ds, item):
+            return getattr(ds, item)
+        else:
+            raise AttributeError(item)
+
+    def __repr__(self):
+        return "{}(train_len={}, val_len={}, test_len={}, " \
+               "scalers=[{}], batch_size={}, n_features={}, n_concepts={})" \
+            .format(self.__class__.__name__,
+                   self.train_len, self.val_len, self.test_len,
+                   ', '.join(self.scalers.keys()), self.batch_size,
+                   self.n_features, self.n_concepts)
+
+    @property
+    def trainset(self):
+        return self._trainset
+
+    @property
+    def valset(self):
+        return self._valset
+
+    @property
+    def testset(self):
+        return self._testset
+
+    @property
+    def ftuneset(self):
+        return self._ftuneset
+    
+    @property
+    def ftune_valset(self):
+        return self._ftune_valset
+    
+    @trainset.setter
+    def trainset(self, value):
+        self._add_set('train', value)
+
+    @valset.setter
+    def valset(self, value):
+        self._add_set('val', value)
+
+    @testset.setter
+    def testset(self, value):
+        self._add_set('test', value)
+
+    @ftuneset.setter
+    def ftuneset(self, value):
+        self._add_set('ftune', value)
+    
+    @ftune_valset.setter
+    def ftune_valset(self, value):
+        self._add_set('ftune_val', value)
+
+    @property
+    def train_len(self):
+        return len(self.trainset) if self.trainset is not None else None
+
+    @property
+    def val_len(self):
+        return len(self.valset) if self.valset is not None else None
+
+    @property
+    def test_len(self):
+        return len(self.testset) if self.testset is not None else None
+
+    @property
+    def ftune_len(self):
+        return len(self.ftuneset) if self.ftuneset is not None else None
+    
+    @property
+    def ftune_val_len(self):
+        return len(self.ftune_valset) if self.ftune_valset is not None else None
+
+    @property
+    def n_samples(self) -> int:
+        """Number of samples (i.e., items) in the dataset."""
+        return len(self.dataset)
+    
+    @property
+    def bkb_embs_filename(self) -> str:
+        """Filename for precomputed embeddings based on backbone name."""
+        return f"bkb_embs_{self.backbone.__class__.__name__}.pt" if self.backbone is not None else None
+
+    def _add_set(self, split_type, _set):
+        """
+        Add a dataset or a sequence of indices as a specific split.
+        Args:
+            split_type: One of 'train', 'val', 'test', 'ftune', 'ftune_val'. 
+            _set: A Dataset or a sequence of indices.
+        """
+        assert split_type in ['train', 'val', 'test', 'ftune', 'ftune_val']
+        split_type = '_' + split_type
+        name = split_type + 'set'
+        
+        # If _set is None or already a Dataset, set it directly
+        if _set is None or isinstance(_set, Dataset):
+            setattr(self, name, _set)
+        else:
+            # Otherwise, treat it as a sequence of indices
+            indices = _set
+            assert isinstance(indices, (list, tuple)), \
+                f"type {type(indices)} of `{name}` is not a valid type. " \
+                "It must be a dataset or a sequence of indices."
+            
+            # Create a Subset only if there are indices
+            if len(indices) > 0:
+                _set = Subset(self.dataset, indices)
+            else:
+                _set = None  # Empty split
+            setattr(self, name, _set)
+
+    def maybe_use_backbone_embs(self, precompute_embs: bool = False):
+        print(f"Input shape: {tuple(self.dataset.input_data.shape)}")
+        if precompute_embs:
+            if self.backbone is not None:
+                # Precompute embeddings with automatic caching
+                embs = get_backbone_embs(
+                    path=os.path.join(self.dataset.root_dir, self.bkb_embs_filename) if self.bkb_embs_filename else None,
+                    dataset=self.dataset,
+                    backbone=self.backbone,
+                    batch_size=self.batch_size,
+                    force_recompute=self.force_recompute,  # whether to recompute embeddings even if cached
+                    workers=self.workers,
+                    show_progress=True,
+                )
+                self.dataset.input_data = embs
+                self.embs_precomputed = True
+                print(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
+            else:
+                self.embs_precomputed = False
+                print("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
+        else:
+            # Use raw input data without preprocessing
+            self.embs_precomputed = False
+            print("Using raw input data without backbone preprocessing.")
+            if self.backbone is not None:
+                print("Note: Backbone provided but precompute_embs=False. Using raw input data.")
+
+    def preprocess(self, precompute_embs: bool = False):
+        """
+        Preprocess the data. This method can be overridden by subclasses to
+        implement custom preprocessing logic.
+        """
+        # ----------------------------------
+        # Preprocess data with backbone if needed
+        # ----------------------------------
+        self.maybe_use_backbone_embs(precompute_embs)
+
+
+
+    def setup(self, stage: StageOptions = None):
+        """
+        Prepare the data. This method is called by Lightning with both
+        'fit' and 'test' stages.
+        
+        Args:
+            stage: Either 'fit', 'validate', 'test', or 'predict'.
+                (default :obj:`None`, which means both 'fit' and 'test' stages)
+        
+        Note:
+            When precompute_embs=True:
+                - If cached embeddings exist, they will be loaded automatically
+                - If not, embeddings will be computed and saved to cache
+                - Cache location: dataset.root_dir/embeddings_{backbone_name}.pt
+            
+            When precompute_embs=False:
+                - Uses the original input_data without any backbone preprocessing
+                - Backbone is ignored even if provided
+        """
+
+        # ----------------------------------
+        # Preprocess data with backbone if needed
+        # ----------------------------------
+        self.preprocess(self.precompute_embs)
+
+        # ----------------------------------
+        # Splitting
+        # ----------------------------------
+        if self.splitter is not None:
+            self.splitter.split(self.dataset)
+            self.trainset = self.splitter.train_idxs
+            self.valset = self.splitter.val_idxs
+            self.testset = self.splitter.test_idxs
+            self.ftuneset = self.splitter.ftune_idxs
+            self.ftune_valset = self.splitter.ftune_val_idxs
+
+        # ----------------------------------
+        # Fit scalers on training data only
+        # ----------------------------------
+        # if stage in ['fit', None]:
+        #     for key, scaler in self.scalers.items():
+        #         if not hasattr(self.dataset, key):
+        #             raise RuntimeError(f"setup(): Cannot find attribute '{key}' in dataset")
+            
+        #     train_data = getattr(self.dataset, key)
+        #     if isinstance(self.trainset, Subset):
+        #         train_data = train_data[self.trainset.indices]
+            
+        #     scaler.fit(train_data, dim=0)
+        #     self.dataset.add_scaler(key, scaler)
+
+
+
+    def get_dataloader(self, 
+                       split: Literal['train', 'val', 'test', 'ftune', 'ftune_val'] = None,
+                       shuffle: bool = False,
+                       batch_size: Optional[int] = None) -> Optional[DataLoader]:
+        """
+        Get the dataloader for a specific split.
+        Args:
+            split: One of 'train', 'val', 'test', or None. If None, returns
+                a dataloader for the whole dataset.
+                (default :obj:`None`, which means the whole dataset)
+            shuffle: Whether to shuffle the data. Only used if `split` is
+                'train'.
+                (default :obj:`False`)
+            batch_size: Size of the mini-batches. If :obj:`None`, uses
+                :obj:`self.batch_size`.
+                (default :obj:`None`)
+        Returns:
+            A DataLoader for the requested split, or :obj:`None` if the
+            requested split is not available.
+        """
+        if split is None:
+            dataset = self.dataset
+        elif split in ['train', 'val', 'test', 'ftune', 'ftune_val']:
+            dataset = getattr(self, f'{split}set')
+        else:
+            raise ValueError("Argument `split` must be one of "
+                             "'train', 'val', 'test', 'ftune', 'ftune_val', or None.")
+        if dataset is None: 
+            return None
+        pin_memory = self.pin_memory if split == 'train' else None
+        return DataLoader(dataset,
+                          batch_size=batch_size or self.batch_size,
+                          shuffle=shuffle,
+                          drop_last=split == 'train',
+                          num_workers=self.workers,
+                          pin_memory=pin_memory)
+
+    def train_dataloader(self, shuffle: bool = True,
+                        batch_size: Optional[int] = None) -> Optional[DataLoader]:
+        return self.get_dataloader('train', shuffle, batch_size)
+
+    def val_dataloader(self, shuffle: bool = False,
+                      batch_size: Optional[int] = None) -> Optional[DataLoader]:
+        return self.get_dataloader('val', shuffle, batch_size)
+
+    def test_dataloader(self, shuffle: bool = False,
+                       batch_size: Optional[int] = None) -> Optional[DataLoader]:
+        return self.get_dataloader('test', shuffle, batch_size)

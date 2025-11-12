@@ -1,0 +1,28 @@
+defaults:
+  - metrics: default
+  - loss: default
+  - _self_
+  
+_target_: "conceptarium.engines.predictor.Predictor"
+
+train_inference: 
+  _target_: ${model.default_train_inference}
+  _partial_: true
+
+optim_class:
+  _target_: "hydra.utils.get_class"
+  path: "torch.optim.AdamW"
+optim_kwargs:
+  lr: 0.00075
+
+enable_summary_metrics: true
+enable_perconcept_metrics: true
+
+# for continuous / regression concepts
+# TODO: implement this
+preprocess_inputs: false
+scale_concepts: false
+
+train_interv_prob: 0.1
+test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
+test_interv_noise: 0.

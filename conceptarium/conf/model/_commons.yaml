@@ -1,0 +1,21 @@
+encoder_kwargs:
+  hidden_size: 64
+  # output_size: 16
+  n_layers: 1
+  activation: leaky_relu
+  dropout: 0.
+
+variable_distributions:
+  discrete_card1: 
+    path: "torch.distributions.RelaxedBernoulli"
+    kwargs:
+      temperature: 0.1
+  discrete_cardn: 
+    path: "torch.distributions.RelaxedOneHotCategorical"
+    kwargs:
+      temperature: 0.1
+      # num_classes: to be set dynamically for each concept
+  continuous_card1: 
+    path: "torch_concepts.distributions.Delta"
+  continuous_cardn: 
+    path: "torch_concepts.distributions.Delta"

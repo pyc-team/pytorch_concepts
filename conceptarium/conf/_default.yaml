@@ -1,0 +1,25 @@
+defaults:
+  - dataset: asia
+  - model: blackbox_allconcepts
+  - engine: engine
+  - _self_
+
+hydra:
+  mode: MULTIRUN
+  job:
+    name: unnamed_sweep
+    chdir: true
+  sweep:
+    dir: "outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+    subdir: "${hydra.job.num}"
+
+trainer:
+  max_epochs: 200
+  # limit_train_batches: 600
+  # gradient_clip_val: 1.0
+  # gradient_clip_algorithm: norm
+  monitor: "val_loss"
+  patience: 20
+
+seed: 42
+notes: null

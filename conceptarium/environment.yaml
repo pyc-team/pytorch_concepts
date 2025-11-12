@@ -1,0 +1,38 @@
+name: conceptarium
+channels:
+  - pyg
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12.*
+
+  - pytorch:pytorch
+  - pytorch:pytorch-cuda
+  - torchvision>=0.17.1
+  - torchmetrics>=0.7
+
+  - lightning
+  - hydra-core
+  - wandb
+  - numpy
+  - pandas
+  - pytables
+  - tqdm
+  - scikit-learn
+  - scipy
+  - tqdm
+  - openpyxl
+
+  # graphs
+  - networkx
+  - pyg:pyg=*=*cu*
+  - pyg:pytorch-scatter
+  - pyg:pytorch-sparse
+
+  - pip
+  - pip:
+    - pytorch-concepts
+    - bnlearn
+    - hydra-list-sweeper
