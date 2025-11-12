@@ -75,3 +75,6 @@ lightning_logs/
 
 # results
 model_results.csv
+
+# conceptarium logs
+outputs/
