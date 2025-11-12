@@ -151,3 +151,17 @@ class ProbabilisticGraphicalModel(nn.Module):  # 1. Inherit from nn.Module
     def get_module_of_concept(self, concept_name: str) -> Optional[nn.Module]:
         """Easily get the model (module_class) for a given concept name."""
         return self.concept_to_module.get(concept_name)
+
+    def build_potentials(self):
+        potentials = {}
+        for factor in self.factors:
+            concept = factor.concepts[0]
+            potentials[concept] = factor.build_potential()
+        return potentials
+
+    def build_cpts(self):
+        cpts = {}
+        for factor in self.factors:
+            concept = factor.concepts[0]
+            cpts[concept] = factor.build_cpt()
+        return cpts
