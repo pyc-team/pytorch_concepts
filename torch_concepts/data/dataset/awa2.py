@@ -19,7 +19,6 @@ import torchvision.transforms as transforms
 
 from functools import reduce
 from PIL import Image
-from pytorch_lightning import seed_everything
 from torch.utils.data import Dataset, Subset, DataLoader
 
 ########################################################

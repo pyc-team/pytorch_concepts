@@ -1,0 +1,416 @@
+import os
+import numpy as np
+import pandas as pd
+from torch import Tensor
+from torch.utils.data import Dataset
+from copy import deepcopy
+from typing import Dict, List, Mapping, Optional, Union
+import warnings
+
+from torch_concepts import ConceptGraph, Annotations, AxisAnnotation
+from .utils import files_exist, parse_tensor, convert_precision
+
+# TODO: implement masks for missing values
+# TODO: add exogenous
+# TODO: range for continuous concepts
+# TODO: add possibility to annotate multiple axis (e.g., for relational concepts)
+
+
+class ConceptDataset(Dataset):
+    def __init__(self,
+                 input_data: Union[np.ndarray, pd.DataFrame, Tensor],
+                 concepts: Union[np.ndarray, pd.DataFrame, Tensor],
+                 annotations: Optional[Annotations] = None,
+                 graph: Optional[pd.DataFrame] = None,
+                 concept_names_subset: Optional[List[str]] = None,
+                 precision: Union[int, str] = 32,
+                 name: Optional[str] = None,
+                 # TODO
+                 exogenous: Optional[Mapping[str, Union[np.ndarray, pd.DataFrame, Tensor]]] = None,
+                 ):
+        super(ConceptDataset, self).__init__()
+
+        # Set info
+        self.name = name if name is not None else self.__class__.__name__
+        self.precision = precision
+
+        if concepts is None:
+            raise ValueError("Concepts must be provided for ConceptDataset.")
+
+        # sanity check on concept annotations and metadata
+        if annotations is None and concepts is not None:
+            warnings.warn("No concept annotations provided. These will be set to default numbered "
+                         "concepts 'concept_{i}'. All concepts will be treated as binary.")
+            annotations = Annotations({
+                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(concepts.shape[1])],
+                                      cardinalities=None, # assume binary
+                                      metadata={f"concept_{i}": {'type': 'discrete', # assume discrete (bernoulli)
+                                                                 'task': 'classification'} for i in range(concepts.shape[1])})
+                                      })
+        # assert first axis is annotated axis for concepts
+        if 1 not in annotations.annotated_axes:
+            raise ValueError("Concept annotations must include axis 1 for concepts.")
+
+        # sanity check
+        axis_annotation = annotations[1]
+        if axis_annotation.metadata is not None:
+            assert all('task' in v  for v in axis_annotation.metadata.values()), \
+                "Concept metadata must contain 'task' for each concept."
+            assert all(v['task'] in ['classification', 'regression'] for v in axis_annotation.metadata.values()), \
+                "Concept metadata 'task' must be either 'classification' or 'regression'."
+            assert all('type' in v  for v in axis_annotation.metadata.values()), \
+                "Concept metadata must contain 'type' for each concept."
+            assert all(v['type'] in ['discrete', 'continuous'] for v in axis_annotation.metadata.values()), \
+                "Concept metadata 'type' must be either 'discrete' or 'continuous'."
+
+        if axis_annotation.cardinalities is not None:
+            concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
+            concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
+            if concept_names_without_cardinality:
+                raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
+            
+            
+        # sanity check on unsupported concept types     
+        if axis_annotation.metadata is not None:
+            for name, meta in axis_annotation.metadata.items():
+                # raise error if type metadata contain 'continuous': this is not supported yet
+                # TODO: implement continuous concept types
+                if meta['type'] == 'continuous':
+                    raise NotImplementedError("Continuous concept types are not supported yet.")
+                # raise error if task metadata contain 'regression': this is not supported yet
+                # TODO: implement regression task types
+                if meta['task'] == 'regression':
+                    raise NotImplementedError("Regression task types are not supported yet.")
+
+
+        # set concept annotations
+        # this defines self.annotations property
+        self._annotations = annotations
+        # maybe reduce annotations based on subset of concept names
+        self.maybe_reduce_annotations(annotations,
+                                      concept_names_subset)
+
+        # Set dataset's input data X
+        # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
+        # allow more complex data structures in the future with a custom parser
+        self.input_data: Tensor = self._parse_tensor(input_data, 'input', self.precision)
+
+        # Store concept data C and task data Y
+        self.concepts = None
+        if concepts is not None:
+            self.set_concepts(concepts) # Annotat
+
+        # Store graph
+        self._graph = None
+        if graph is not None:
+            self.set_graph(graph)  # graph among all concepts (task included)
+
+        # Store exogenous variables
+        # self.exogenous = dict()
+        if exogenous is not None:
+            # for name, value in exogenous.items():
+            #     self.add_exogenous(name, value)
+            raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    def __repr__(self):
+        return "{}(n_samples={}, n_features={}, n_concepts={})" \
+            .format(self.name, self.n_samples, self.n_features, self.n_concepts)
+
+    def __len__(self) -> int:
+        return self.n_samples
+    
+    def __getitem__(self, item):
+        # Get raw input data and concepts
+        x = self.input_data[item]
+        c = self.concepts[item]
+
+        # TODO: handle missing values with masks
+
+        # Create sample dictionary
+        sample = {
+            'inputs': {'x': x},    # input data: multiple inputs can be stored in a dict
+            'concepts': {'c': c},  # concepts: multiple concepts can be stored in a dict
+        }
+
+        return sample
+
+
+    # Dataset properties #####################################################
+
+    @property
+    def n_samples(self) -> int:
+        """Number of samples in the dataset."""
+        return self.input_data.size(0)
+
+    @property
+    def n_features(self) -> tuple:
+        """Shape of features in dataset's input (excluding number of samples)."""
+        return tuple(self.input_data.size()[1:])
+
+    @property
+    def n_concepts(self) -> int:
+        """Number of concepts in the dataset."""
+        return len(self.concept_names) if self.has_concepts else 0
+
+    @property
+    def concept_names(self) -> List[str]:
+        """List of concept names in the dataset."""
+        if not self.has_concepts:
+            return []
+        return self.annotations.get_axis_labels(1)
+    
+    @property
+    def annotations(self) -> Optional[Annotations]:
+        """Annotations for the concepts in the dataset."""
+        return self._annotations if hasattr(self, '_annotations') else None
+
+    @property
+    def shape(self) -> tuple:
+        """Shape of the input tensor."""
+        return tuple(self.input_data.size())
+
+    @property
+    def exogenous(self) -> Dict[str, Tensor]:
+        """Mapping of dataset's exogenous variables."""
+        # return {name: attr['value'] for name, attr in self._exogenous.items()}
+        raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    @property
+    def n_exogenous(self) -> int:
+        """Number of exogenous variables in the dataset."""
+        # return len(self._exogenous)
+        raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    @property
+    def graph(self) -> Optional[ConceptGraph]:
+        """Adjacency matrix of the causal graph between concepts."""
+        return self._graph
+
+    # Dataset flags #####################################################
+
+    @property
+    def has_exogenous(self) -> bool:
+        """Whether the dataset has exogenous information."""
+        # return self.n_exogenous > 0
+        raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    @property
+    def has_concepts(self) -> bool:
+        """Whether the dataset has concept annotations."""
+        return self.concepts is not None
+
+    @property
+    def root_dir(self) -> str:
+        if isinstance(self.root, str):
+            root = os.path.expanduser(os.path.normpath(self.root))
+        else:
+            raise ValueError("Invalid root directory")
+        return root
+        
+    @property
+    def files_to_download_names(self) -> Mapping[str, str]:
+        """The name of the files in the :obj:`self.root_dir` folder that must be
+        present in order to skip downloading."""
+        raise NotImplementedError
+
+    @property
+    def files_to_build_names(self) -> Mapping[str, str]:
+        """The name of the files in the :obj:`self.root_dir` folder that must be
+        present in order to skip building."""
+        return {"input": "input.pt",
+                "concepts": "concepts.h5",
+                "graph": "graph.h5",
+                "concept_metadata": "concept_metadata.json"}
+
+    @property
+    def files_to_download_paths(self) -> Mapping[str, str]:
+        """The abs path of the files that must be present in order to skip downloading."""
+        files = self.files_to_download_names
+        return {
+            k: os.path.join(self.root_dir, f)
+            for k, f in files.items()
+        }
+
+    @property
+    def files_to_build_paths(self) -> Mapping[str, str]:
+        """The abs path of the files that must be present in order to skip building."""
+        files = self.files_to_build_names
+        return {
+            k: os.path.join(self.root_dir, f)
+            for k, f in files.items()
+        }
+
+    # Directory utilities ###########################################################
+
+    # Loading pipeline: load() → load_raw() → build() → download()
+
+    def maybe_download(self):
+        files = self.files_to_download_paths
+        files = list(files.values())        
+        if not files_exist(files):
+            os.makedirs(self.root_dir, exist_ok=True)
+            self.download()
+
+    def maybe_build(self):
+        files = self.files_to_build_paths
+        files = list(files.values())
+        if not files_exist(files):
+            os.makedirs(self.root_dir, exist_ok=True)
+            self.build()
+
+    def download(self) -> None:
+        """Downloads dataset's files to the :obj:`self.root_dir` folder."""
+        raise NotImplementedError
+
+    def build(self) -> None:
+        """Eventually build the dataset from raw data to :obj:`self.root_dir`
+        folder."""
+        pass
+
+    def load_raw(self, *args, **kwargs):
+        """Loads raw dataset without any data preprocessing."""
+        raise NotImplementedError
+
+    def load(self, *args, **kwargs):
+        """Loads raw dataset and preprocess data. 
+        Default to :obj:`load_raw`."""
+        return self.load_raw(*args, **kwargs)
+
+
+
+    # Setters ##############################################################
+
+    def maybe_reduce_annotations(self,
+                                annotations: Annotations,
+                                concept_names_subset: Optional[List[str]] = None):
+        """Set concept and task labels for the dataset.
+        Args:
+            annotations: Annotations object for all concepts.
+            concept_names_subset: List of strings naming the subset of concepts to use. 
+                                    If :obj:`None`, will use all concepts.
+        """
+        if concept_names_subset is not None:
+            # sanity check, all subset concepts must be in all concepts
+            concept_names_all = annotations.get_axis_labels(1)
+            assert set(concept_names_subset).issubset(set(concept_names_all)), "All subset concepts must be in all concepts."
+            to_select = deepcopy(concept_names_subset)
+            
+            # Get indices of selected concepts
+            indices = [concept_names_all.index(name) for name in to_select]
+            
+            # Reduce annotations by extracting only the selected concepts
+            axis_annotation = annotations[1]
+            reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
+            
+            # Reduce cardinalities if present
+            reduced_cardinalities = None
+            if axis_annotation.cardinalities is not None:
+                reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
+            
+            # Reduce metadata if present
+            reduced_metadata = None
+            if axis_annotation.metadata is not None:
+                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
+                                   for i in range(len(indices))}
+            
+            # Reduce states if present (for nested annotations)
+            reduced_states = None
+            if axis_annotation.states is not None:
+                reduced_states = tuple(axis_annotation.states[i] for i in indices)
+            
+            # Create reduced annotations
+            self._annotations = Annotations({
+                1: AxisAnnotation(
+                    labels=reduced_labels,
+                    cardinalities=reduced_cardinalities,
+                    states=reduced_states,
+                    metadata=reduced_metadata
+                )
+            })
+
+
+    def set_graph(self, graph: pd.DataFrame):
+        """Set the adjacency matrix of the causal graph between concepts 
+        as a pandas DataFrame.
+        
+        Args:
+            graph: A pandas DataFrame representing the adjacency matrix of the 
+                   causal graph. Rows and columns should be named after the 
+                   variables in the dataset.
+        """
+        if not isinstance(graph, pd.DataFrame):
+            raise TypeError("Graph must be a pandas DataFrame.")
+        concept_names = self.annotations.get_axis_labels(1)
+        self._graph = ConceptGraph(data=self._parse_tensor(graph, 'graph', self.precision),
+                                         node_names=concept_names)
+
+    def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
+        """Set concept annotations for the dataset.
+        
+        Args:
+            concepts: Tensor of shape (n_samples, n_concepts) containing concept values
+            concept_names: List of strings naming each concept. If None, will use
+                         numbered concepts like "concept_0", "concept_1", etc.
+        """
+        # Validate shape
+        # concepts' length must match dataset's length
+        concept_names = self.annotations.get_axis_labels(1)
+        if concepts.shape[0] != self.n_samples:
+            raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
+                             f"input_data has {self.n_samples}.")
+        if concepts.shape[1] != len(concept_names):
+            raise RuntimeError(f"Concepts has {concepts.shape[1]} concepts but "
+                             f"there are {len(concept_names)} concept names.")
+        
+        #########################################################################
+        ###### modify this to change convention for how to store concepts  ######
+        #########################################################################
+        # convert pd.Dataframe to tensor
+        concepts = self._parse_tensor(concepts, 'concepts', self.precision)
+        #########################################################################
+
+        self.concepts = concepts
+
+    def add_exogenous(self,
+                      name: str,
+                      value: Union[np.ndarray, pd.DataFrame, Tensor],
+                      convert_precision: bool = True):
+        raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    def remove_exogenous(self, name: str):
+        raise NotImplementedError("Exogenous variables are not supported for now.")
+
+    def add_scaler(self, key: str, scaler):
+        """Add a scaler for preprocessing a specific tensor.
+
+        Args:
+            key (str): The name of the tensor to scale ('input', 'concepts', or 'task').
+            scaler (Scaler): The fitted scaler to use.
+        """
+        if key not in ['input', 'concepts', 'task']:
+            raise KeyError(f"{key} not in dataset. Valid keys: 'input', 'concepts', 'task'")
+
+        self.scalers[key] = scaler
+
+    # Utilities ###########################################################
+
+    def _parse_tensor(self, 
+                      data: Union[np.ndarray, pd.DataFrame, Tensor],
+                      name: str,
+                      precision: Union[int, str]) -> Tensor:
+        """Convert input data to torch tensor with appropriate format."""
+        return parse_tensor(data, name, precision)
+
+    def _convert_precision(self, 
+                           tensor: Tensor,
+                           precision: Union[int, str]) -> Tensor:
+        """Convert tensor to the dataset's precision."""
+        return convert_precision(tensor, precision)
+
+    # def numpy(self) -> np.ndarray:
+    #     """Convert data tensor to numpy array."""
+    #     return self.input_data.numpy()
+
+    # def dataframe(self) -> pd.DataFrame:
+    #     """Convert data tensor to pandas DataFrame."""
+    #     return pd.DataFrame(self.input_data.numpy())

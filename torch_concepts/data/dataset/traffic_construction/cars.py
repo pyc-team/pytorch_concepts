@@ -3,7 +3,7 @@ import numpy as np
 
 from scipy.ndimage import rotate
 
-from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
+from .shared import SPRITES_DIRECTORY
 
 ################################################################################
 ## Load the sprites to memory

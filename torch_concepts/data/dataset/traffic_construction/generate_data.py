@@ -20,15 +20,15 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
 from tqdm import tqdm
 
-import torch_concepts.data.traffic_construction.utils as utils
+from . import utils
 
-from torch_concepts.data.traffic_construction.cars import (
+from .cars import (
     AMBULANCE, AVAILABLE_CAR_COLORS, CAR_SPRITES
 )
-from torch_concepts.data.traffic_construction.lights import (
+from .lights import (
     add_light_x_axis, add_light_y_axis
 )
-from torch_concepts.data.traffic_construction.intersection import (
+from .intersection import (
     AVAILABLE_LANES, INTERSECTION
 )
 

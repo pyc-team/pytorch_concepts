@@ -2,9 +2,9 @@ import cv2
 import matplotlib.image as mpimg
 import numpy as np
 
-import torch_concepts.data.traffic_construction.utils as utils
+from . import utils
 
-from torch_concepts.data.traffic_construction.shared import SPRITES_DIRECTORY
+from .shared import SPRITES_DIRECTORY
 
 ################################################################################
 ## Load the sprites to memory
