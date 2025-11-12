@@ -56,7 +56,7 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn_binary = torch.nn.BCEWithLogitsLoss()
-    loss_fn_categorical = torch.nn.NLLLoss()
+    loss_fn_categorical = torch.nn.CrossEntropyLoss()
     loss_fn_regression = torch.nn.MSELoss()
     model.train()
     for epoch in range(n_epochs):
