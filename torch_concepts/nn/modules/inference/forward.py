@@ -4,9 +4,9 @@ from abc import abstractmethod
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
-from torch_concepts import ConceptGraph, Variable
-from torch_concepts.nn import BaseModel, BaseGraphLearner
-from typing import List, Tuple, Dict, Union
+from torch_concepts import Variable
+from torch_concepts.nn import BaseGraphLearner
+from typing import List, Dict, Union
 
 from ..models.pgm import ProbabilisticGraphicalModel
 from ...base.inference import BaseInference
@@ -208,13 +208,25 @@ class DeterministicInference(ForwardInference):
 
 
 class AncestralSamplingInference(ForwardInference):
-    def __init__(self, pgm: ProbabilisticGraphicalModel, graph_learner: BaseGraphLearner = None, temperature: float = 1.):
+    def __init__(self, pgm: ProbabilisticGraphicalModel, graph_learner: BaseGraphLearner = None, **dist_kwargs):
         super().__init__(pgm, graph_learner)
-        self.temperature = temperature
+        self.dist_kwargs = dist_kwargs
 
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+        sig = inspect.signature(parent_variable.distribution.__init__)
+        params = sig.parameters
+        allowed = {
+            name for name, p in params.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        # retain only allowed dist kwargs
+        dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
+
         if parent_variable.distribution in [Bernoulli]:
-            return parent_variable.distribution(logits=results).sample()
+            return parent_variable.distribution(logits=results, **dist_kwargs).sample()
         elif parent_variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
-            return parent_variable.distribution(logits=results, temperature=self.temperature).rsample()
-        return parent_variable.distribution(results).rsample()
+            return parent_variable.distribution(logits=results, **dist_kwargs).rsample()
+        return parent_variable.distribution(results, **dist_kwargs).rsample()
