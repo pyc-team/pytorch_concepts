@@ -96,6 +96,7 @@ class AxisAnnotation:
         # Eventually convert categorical with card=2 to bernoulli (card=1)
         cardinalities = tuple(card if card > 1 else 1 for card in cardinalities)
         # Determine is_nested from cardinalities
+        # FIXME: should we consider nested also mix of continuous and discrete?
         is_nested = any(card > 1 for card in cardinalities)
 
         object.__setattr__(self, 'cardinalities', cardinalities)
@@ -120,6 +121,25 @@ class AxisAnnotation:
         if self.is_nested:
             return sum(self.cardinalities)
         return len(self.labels)
+
+    def groupby_metadata(self, key, layout) -> dict:
+        """Check if metadata contains a specific key for all labels."""
+        if self.metadata is None:
+            return {}
+        result = {}
+        for label in self.labels:
+            meta = self.metadata.get(label, {})
+            if key in meta:
+                group = meta[key]
+                if group not in result:
+                    result[group] = []
+                if layout == 'labels':
+                    result[group].append(label)
+                elif layout == 'indices':
+                    result[group].append(self.get_index(label))
+                else:
+                    raise ValueError(f"Unknown layout {layout}")
+        return result
 
     def __len__(self) -> int:
         """Return number of labels in this axis."""
