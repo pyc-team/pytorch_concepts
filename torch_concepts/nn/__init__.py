@@ -10,10 +10,8 @@ from .base.inference import BaseInference, BaseIntervention
 from .modules.propagator import Propagator
 
 from .modules.encoders.exogenous import ExogEncoder
-
 from .modules.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
-# from .modules.encoders.residual import LinearConceptResidualLayer
-# from .modules.encoders.stochastic import StochasticConceptLayer
+from .modules.encoders.stochastic import StochasticEncoderFromEmb
 
 from .modules.predictors.linear import ProbPredictor
 from .modules.predictors.embedding import MixProbExogPredictor
@@ -66,8 +64,7 @@ __all__ = [
     # Encoder classes
     "ProbEncoderFromEmb",
     "ProbEncoderFromExog",
-    # "LinearConceptResidualLayer",
-    # "StochasticConceptLayer",
+    "StochasticEncoderFromEmb",
 
     # Predictor classes
     "ProbPredictor",
