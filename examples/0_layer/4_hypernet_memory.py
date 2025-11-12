@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor, MemorySelector
+from torch_concepts.nn import ProbEncoderFromEmb, HyperLinearPredictor, MemorySelector
 
 
 def main():
@@ -16,12 +16,9 @@ def main():
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_classes = y_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names)})
     y_annotations = Annotations({1: AxisAnnotation(task_names)})
-    cy_annotations = c_annotations.join_union(y_annotations, axis=1)
 
     encoder = torch.nn.Sequential(
         torch.nn.Linear(n_features, latent_dims),

@@ -1,14 +1,11 @@
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical, RelaxedBernoulli
-from twine import metadata
+from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, Variable
+from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.distributions import Delta
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, ForwardInference, \
-    RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
-    MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, HyperLinearPredictor
+from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
+    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, HyperLinearPredictor
 
 
 def main():

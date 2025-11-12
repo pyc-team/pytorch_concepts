@@ -16,8 +16,6 @@ def main():
     y_train = torch.cat([y_train, 1 - y_train, y_train], dim=1)
     task_names = task_names + task_names + task_names
     n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_classes = y_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names)})
     y_annotations = Annotations({1: AxisAnnotation(task_names)})

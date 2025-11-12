@@ -1,12 +1,8 @@
-import numpy as np
 import torch
-from sklearn.metrics import accuracy_score
-from torch.nn.functional import one_hot
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor, ProbEncoderFromExog, \
-    MixProbExogPredictor
+from torch_concepts.nn import ExogEncoder, ProbEncoderFromExog, MixProbExogPredictor
 
 
 def main():
@@ -17,8 +13,6 @@ def main():
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_classes = y_train.shape[1]
 
     y = torch.stack([
         torch.randint(0, 2, (n_samples,)),  # C1 labels

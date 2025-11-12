@@ -1,12 +1,10 @@
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical, RelaxedBernoulli
-from twine import metadata
+from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, Variable
+from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.distributions import Delta
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, ForwardInference, \
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator
 
 
@@ -18,7 +16,6 @@ def main():
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
     y_train = torch.cat([y_train, 1-y_train], dim=1)
-    cy_train = torch.cat([c_train, y_train], dim=1)
 
     concept_names = ('c1', 'c2')
     task_names = ('xor',)

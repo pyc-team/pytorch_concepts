@@ -1,18 +1,14 @@
 from copy import deepcopy
 
 import torch
-from networkx.readwrite.json_graph.node_link import node_link_graph
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical, RelaxedBernoulli
-from twine import metadata
+from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, Variable, ConceptGraph
+from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data import ToyDataset
-from torch_concepts.distributions import Delta
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, ForwardInference, \
-    RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
-    MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearPredictor, GraphModel, AncestralSamplingInference, COSMOGraphLearner
+from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, Propagator, \
+    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
+    HyperLinearPredictor, GraphModel, COSMOGraphLearner
 
 
 def main():

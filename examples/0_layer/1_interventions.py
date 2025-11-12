@@ -1,11 +1,9 @@
 import torch
-from fontTools.subset import subset
 from sklearn.metrics import accuracy_score
-from torch.distributions import Normal
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, intervention, GroundTruthIntervention, \
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, GroundTruthIntervention, \
     UncertaintyInterventionPolicy, intervention, DoIntervention, DistributionIntervention, UniformPolicy, RandomPolicy
 
 
