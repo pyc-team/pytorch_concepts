@@ -1,7 +1,7 @@
 import unittest
 import torch
 from sklearn.metrics import f1_score
-from torch_concepts.metrics import completeness_score, intervention_score, cace_score
+from torch_concepts.nn.functional import completeness_score, intervention_score, cace_score
 
 
 class ANDModel(torch.nn.Module):
