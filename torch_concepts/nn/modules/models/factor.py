@@ -3,7 +3,7 @@ import copy
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
-from typing import List, Optional, Tuple, Union, Type
+from typing import List, Optional, Tuple, Union
 from itertools import product
 
 from ....concepts.variable import Variable

@@ -6,12 +6,6 @@ from torch import Tensor
 
 from torch_concepts.semantic import CMRSemantic
 from typing import List, Dict
-from torch_concepts.utils import numerical_stability_check
-from scipy.stats import chi2
-from torch_concepts.nn.minimize_constraint import minimize_constr
-from torch.distributions import MultivariateNormal
-
-import torch.nn.functional as F
 
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:

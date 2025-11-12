@@ -23,10 +23,7 @@ from .modules.cosmo import COSMOGraphLearner
 from .modules.models.factor import Factor
 from .modules.models.pgm import ProbabilisticGraphicalModel
 from .modules.models.bipartite import BipartiteModel
-from .modules.models.graph import (
-    GraphModel,
-    LearnedGraphModel,
-)
+from .modules.models.graph import GraphModel
 
 from .modules.inference.forward import (
     ForwardInference,
@@ -81,7 +78,6 @@ __all__ = [
     "ProbabilisticGraphicalModel",
     "BipartiteModel",
     "GraphModel",
-    "LearnedGraphModel",
 
     # Inference
     "ForwardInference",

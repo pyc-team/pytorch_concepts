@@ -1,5 +1,4 @@
 import warnings
-import torch
 
 from copy import deepcopy
 from dataclasses import dataclass, field

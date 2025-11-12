@@ -2,10 +2,6 @@ import math
 from typing import Optional, List
 
 import torch
-import numpy as np
-
-import torch.nn.functional as F
-from torch_concepts import ConceptGraph, Annotations, Variable
 
 from ...nn.base.graph import BaseGraphLearner
 
@@ -113,7 +109,3 @@ class COSMOGraphLearner(BaseGraphLearner):
         model_graph = self.weighted_adj
         self._model_graph = model_graph
         return model_graph
-
-# 1 -> 5 -> 2 -> 3
-# 1, 2 -> 4
-# 3 -> 1

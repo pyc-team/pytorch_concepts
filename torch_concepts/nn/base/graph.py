@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from abc import abstractmethod, ABC
 
-from torch_concepts import ConceptGraph, Annotations, Variable
+from torch_concepts import ConceptGraph
 
 
 class BaseGraphLearner(nn.Module, ABC):

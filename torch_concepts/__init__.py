@@ -3,7 +3,7 @@ from importlib import import_module
 from typing import Any
 
 from .concepts.annotations import Annotations, AxisAnnotation
-from .concepts.tensor import AnnotatedTensor, ConceptGraph
+from .concepts.tensor import ConceptGraph
 from .concepts.variable import Variable
 from . import nn, distributions
 from . import data
@@ -19,7 +19,6 @@ __all__ = [
 
     "Annotations",
     "AxisAnnotation",
-    "AnnotatedTensor",
     "ConceptGraph",
     "Variable",
 

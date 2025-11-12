@@ -1,15 +1,7 @@
-from operator import itemgetter
-
-import numpy as np
 import torch
 
-from torch_concepts import ConceptGraph, Annotations, nn, Variable
-from typing import Union, List, Optional, Tuple
-
-from ..modules.models.factor import Factor
+from torch_concepts import Annotations
 from ..modules.propagator import Propagator
-from .graph import BaseGraphLearner
-from ...distributions import Delta
 
 
 class BaseModel(torch.nn.Module):

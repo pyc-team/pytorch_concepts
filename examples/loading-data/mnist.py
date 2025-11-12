@@ -2,7 +2,7 @@ import torchvision.models as models
 from torchvision import transforms
 
 from torch_concepts.data import ColorMNISTDataset
-from .utils import preprocess_img_data, load_preprocessed_data
+from torch_concepts.data.utils import preprocess_img_data, load_preprocessed_data
 
 
 def main():
