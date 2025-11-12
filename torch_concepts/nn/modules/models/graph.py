@@ -4,7 +4,7 @@ from torch.nn import Identity
 from torch_concepts import ConceptGraph, Annotations, Variable
 from ... import Factor, ProbabilisticGraphicalModel
 from ....distributions import Delta
-from ....nn import BaseModel, Propagator, BaseGraphLearner
+from ....nn import BaseModel, Propagator
 
 
 class GraphModel(BaseModel):
@@ -178,52 +178,3 @@ class GraphModel(BaseModel):
             available_vars.append(predictor_var)
 
         return predictor_vars, predictor_factors
-        
-    
-class LearnedGraphModel(BaseModel):
-    """
-    Model using a graph structure between concepts and tasks.
-    The graph structure is learned during training.
-    """
-    def __init__(self,
-                 input_size: int,
-                 annotations: Annotations,
-                 encoder: Propagator,
-                 predictor: Propagator,
-                 model_graph: BaseGraphLearner,
-                 predictor_in_embedding: int,
-                 predictor_in_exogenous: int,
-                 has_self_exogenous: bool = False,
-                 has_parent_exogenous: bool = False,
-                 exogenous: Propagator = None
-                 ):
-        super(LearnedGraphModel, self).__init__(
-            input_size=input_size,
-            annotations=annotations,
-            encoder=encoder,
-            predictor=predictor,
-            model_graph=model_graph,
-            predictor_in_embedding=predictor_in_embedding,
-            predictor_in_exogenous=predictor_in_exogenous,
-            has_self_exogenous=has_self_exogenous,
-            has_parent_exogenous=has_parent_exogenous,
-            exogenous=exogenous
-        )
-
-        # if model_graph is None, create a fully connected graph, and sparsify this during training
-        self.root_nodes = self.concept_names  # all concepts are roots in a fully connected graph
-        self.internal_nodes = self.concept_names
-        self.root_nodes_idx = [self.concept_names.index(r) for r in self.root_nodes]
-        self.graph_order_idx = [self.concept_names.index(i) for i in self.root_nodes]
-        self.internal_node_idx = [self.concept_names.index(i) for i in self.internal_nodes]
-        self.graph_order = None
-        self.graph_learner = model_graph(annotations=annotations)
-
-        if self.has_exogenous:
-            self.exogenous = self._init_encoder(exogenous, concept_names=self.root_nodes, in_features_embedding=input_size)
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_exogenous=self.exogenous.embedding_size) # FIXME: two different encoders. with and without exogenous
-        else:
-            self.exogenous = None
-            self.encoder = self._init_encoder(encoder, concept_names=self.root_nodes, in_features_embedding=input_size)
-        self._init_fetchers(parent_names=self.root_nodes)
-        self.predictors = self._init_predictors(predictor,  concept_names=self.concept_names)
