@@ -1,6 +1,7 @@
 import math
 import contextlib
-from typing import List, Sequence, Union, Iterable, Optional
+from abc import abstractmethod
+from typing import List, Sequence, Union, Optional
 import torch
 import torch.nn as nn
 
@@ -30,13 +31,14 @@ def _as_list(x, n: int):
 # ---------------- strategy ----------------
 
 class RewiringIntervention(BaseIntervention):
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module, *args, **kwargs):
         super().__init__(model)
 
-    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+    @abstractmethod
+    def _make_target(self, y: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError
 
-    def query(self, original_module: nn.Module, mask: torch.Tensor) -> nn.Module:
+    def query(self, original_module: nn.Module, mask: torch.Tensor, *args, **kwargs) -> nn.Module:
         parent = self
 
         class _Rewire(nn.Module):
@@ -102,9 +104,7 @@ class DoIntervention(RewiringIntervention):
             else:
                 assert b == B, f"constants first dim must be B={B} or 1, got {b}"
         else:
-            raise ValueError(
-                "constants must be scalar, [F], [1, F], or [B, F]"
-            )
+            raise ValueError("constants must be scalar, [F], [1, F], or [B, F]")
 
         return v.to(dtype=y.dtype, device=y.device)
 
