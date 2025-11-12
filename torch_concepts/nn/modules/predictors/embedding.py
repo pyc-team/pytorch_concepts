@@ -37,7 +37,7 @@ class MixProbExogPredictor(BasePredictor):
         else:
             self.cardinalities = cardinalities
             assert sum(self.cardinalities) == in_features_logits
-            predictor_in_features = in_features_exogenous//2#*len(self.cardinalities)
+            predictor_in_features = (in_features_exogenous//2)*len(self.cardinalities)
 
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(

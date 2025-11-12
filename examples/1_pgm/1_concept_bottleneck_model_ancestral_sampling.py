@@ -36,7 +36,7 @@ def main():
     concept_model = ProbabilisticGraphicalModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model)
+    inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
     initial_input = {'emb': x_train}
     query_concepts = ["c1", "c2", "xor"]
 
