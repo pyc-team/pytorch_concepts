@@ -4,7 +4,7 @@
 
 # PyTorch Concepts
 
-PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train Concept-Based Deep Learning models.
+PyC (PyTorch Concepts) is a library built upon PyTorch to easily implement Interpretable and Causally Transparent Deep Learning models.
 
 You can install PyC along with all its dependencies from
 [PyPI](https://pypi.org/project/pytorch-concepts/):
@@ -14,36 +14,97 @@ You can install PyC along with all its dependencies from
 The folder [https://github.com/pyc-team/pytorch_concepts/tree/master/examples](https://github.com/pyc-team/pytorch_concepts/tree/master/examples)
  includes many examples showing how the library can be used.
 
-## Low-level APIs
 
-**Concept data types** (`pyc.base`):
+The library is organized to be modular and accessible at different levels of abstraction:
+- **No-code APIs. Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files.
+- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code.
+- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a probabilistic graphical model interface.
+- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain pytorch-like interface. These APIs also include metrics, losses, and datasets.
 
-- `AnnotatedTensor`: A subclass of `torch.Tensor` which assigns names to individual elements of each tensor dimension.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="40%">
+</p>
 
-**Base concept layers** (`pyc.nn.base`):
 
-- `Annotate`: A layer taking as input a common `tensor` and producing an `AnnotatedTensor` as output.
-- `LinearConceptLayer`: A layer which first applies a linear transformation to the input tensor, then it reshapes and annotates the output tensor.
+# API overview
 
-**Base functions** (`pyc.nn.functional`):
+## Design principles of low-level APIs
 
-- `intervene`: A function to intervene on concept scores.
-- `intervene_on_concept_graph`: A function to intervene on a concept adjacency matrix (it can be used to perform do-interventions).
-- `concept_embedding_mixture`: A function to generate a mixture of concept embeddings and concept predictions.
+### Objects
+In PyC there are three types of objects: 
+- **Embedding**: high-dimensional latent representations shared across all concepts.
+- **Exogenous**: high-dimensional latent representations related to a specific concept.
+- **Logits**: Concept scores before applying an activation function.
 
-## High-level APIs
+### Layers
+There are only three types of layers:
+- **Encoders**: layers that map latent representations (embeddings or exogenous) to logits.
+  - `ExogEncoder`: predicts exogenous representations from embeddings.
+  - `ProbEncoderFromEmb`: predicts concept logits from embeddings.
+  - `ProbEncoderFromExog`: predicts concept logits from exogenous representations.
+  - `StochasticEncoderFromEmb`: predicts concept logits sampled from a multivariate normal distribution whose parameters are predicted from embeddings.
 
-**Concept bottleneck layers** (`pyc.nn.bottleneck`):
+- **Predictors**: layers that map logits (plus optionally latent representations) to other logits.
+  - `ProbPredictor`: predicts output logits from input logits.
+  - `MixProbExogPredictor`: predicts output logits mixing parent logits and exogenous representations of the parent concepts.
+  - `HyperLinearPredictor`: generates a linear equation using the exogenous representations of the output concepts and applies it to the input logits to predict output logits.
 
+- **Special layers**
+  - `MemorySelector`: uses an embedding to select an exogenous representation from a fixed-size memory bank (useful to implement verifiable architectures).
+  - `COSMOGraphLearner`: learns a directed acyclic graph (useful to learn concept dependencies).
+
+### Models
+A model is built as a ModuleDict which may include standard PyTorch layers + PyC encoders and predictors.
+
+### Inference
+At this API level, there are two types of inference that can be performed:
+- **Standard forward pass**: a standard forward pass using the forward method of each layer in the ModuleDict.
+- **Interventions**: interventions are context managers that temporarily modify a layer in the ModuleDict. So, when a forward pass is performed within an intervention context, the intervened layer behaves differently with  a cascading effect on all subsequent layers.
+ - `intervention`: a context manager to intervene on concept scores.
+ - **Intervention strategies**: define how the intervened layer behaves within an intervention context.
+   - `GroundTruthIntervention`: replaces the concept logits with ground truth values.
+   - `DoIntervention`: performs a do-intervention on the concept logits with a constant value.
+   - `DistributionIntervention`: replaces the concept logits with samples from a given distribution.
+ - **Intervention Policies**: define the order/set of concepts to intervene on.
+   - `UniformPolicy`: applies interventions on all concepts uniformly.
+   - `RandomPolicy`: randomly selects concepts to intervene on.
+   - `UncertaintyInterventionPolicy`: selects concepts to intervene on based on the uncertainty represented by their logits.
+
+
+## Design principles of mid-level APIs
+
+### Probabilistic Graphical Models
+At this API level, models are represented as probabilistic graphical models (PGMs) where:
+- **Variables**: represent random variables in the probabilistic graphical model. Variables are defined by their name, parents, and distribution type.
+- **Factors**: represent conditional probability distributions (CPDs) between variables in the probabilistic graphical model and are parameterized by PyC layers.
+- **Probabilistic Graphical Model**: a collection of variables and factors.
+
+### Inference
+Inference is performed using efficient tensorial probabilistic inference algorithms. We currently support:
+- `DeterministicInference`: standard forward pass through the PGM from the source variables to the sink variables of a DAG.
+- `AncestralSampling`: ancestral sampling from the PGM from the source variables to the sink variables of a DAG.
+
+
+## Design principles of high-level APIs
+
+### Objects
+- `Annotations`: A class to handle concept and task annotations.
+- `ConceptGraph`: A class to handle concept graphs defining dependencies among concepts and tasks.
+
+### Out-of-the-box Models
 - `BaseConceptBottleneck`: A base class you can extend to build new concept bottlenecks.
 - `LinearConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
 - `LinearConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
 - `ConceptEmbeddingBottleneck`: A bottleneck of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
 - `StochasticConceptBottleneck`: A bottleneck of supervised concepts with their covariance matrix ["Stochastic Concept Bottleneck Models"](https://arxiv.org/pdf/2406.19272) (NeurIPS 2024).
 
+
+## Design principles of no-code APIs
+
+
 ## Evaluation APIs
 
-**Datasets** (`pyc.data`):
+### Datasets
 
 - `TrafficLights`: A dataset loader for traffic scenarios representing road intersections.
 - `ToyDataset`: A toy dataset loader. XOR, Trigonometry, and Dot datasets are from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022). The Checkmark dataset is from ["Causal Concept Graph Models: Beyond Causal Opacity in Deep Learning"](https://arxiv.org/abs/2405.16507) (ICLR 2025).
@@ -54,7 +115,7 @@ The folder [https://github.com/pyc-team/pytorch_concepts/tree/master/examples](h
 - `AwA2`: A dataset loader for AwA2 dataset where concepts are animal attributes from ["Zero-Shot Learning - A Comprehensive Evaluation of the Good, the Bad and the Ugly"](https://arxiv.org/abs/1707.00600) (CVPR 2017).
 - `CEBaB`: A dataset loader for CEBaB dataset where concepts describe restaurant reviews from ["CEBaB: Estimating the Causal Effects of Real-World Concepts on NLP Model Behavior"](https://arxiv.org/abs/2205.14140) (NeurIPS 2022).
 
-**Metrics** (`pyc.metrics`):
+### Metrics
 
 - `intervention_score`: A score measuring the effectiveness of concept interventions from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
 - `completeness_score`: A score measuring concept completeness from ["On Completeness-aware Concept-Based Explanations in Deep Neural Networks"](https://arxiv.org/abs/1910.07969) (NeurIPS 2020).
