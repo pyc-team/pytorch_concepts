@@ -54,6 +54,7 @@ class AxisAnnotation:
                 )
             # check states length matches cardinalities
             inferred_cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
+            inferred_cardinalities = tuple(1 if card == 2 else card for card in inferred_cardinalities)
             if self.cardinalities != inferred_cardinalities:
                 raise ValueError(
                     f"Provided cardinalities {self.cardinalities} don't match "
@@ -94,7 +95,7 @@ class AxisAnnotation:
             states = tuple(('0', '1') for _ in self.labels)
 
         # Eventually convert categorical with card=2 to bernoulli (card=1)
-        cardinalities = tuple(card if card > 1 else 1 for card in cardinalities)
+        cardinalities = tuple(1 if card == 2 else card for card in cardinalities)
         # Determine is_nested from cardinalities
         # FIXME: should we consider nested also mix of continuous and discrete?
         is_nested = any(card > 1 for card in cardinalities)
@@ -122,7 +123,7 @@ class AxisAnnotation:
             return sum(self.cardinalities)
         return len(self.labels)
 
-    def groupby_metadata(self, key, layout) -> dict:
+    def groupby_metadata(self, key, layout: str='labels') -> dict:
         """Check if metadata contains a specific key for all labels."""
         if self.metadata is None:
             return {}

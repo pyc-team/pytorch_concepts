@@ -1,17 +1,19 @@
-classification:
+discrete:
   binary:
     accuracy: 
       path: "torchmetrics.classification.BinaryAccuracy"
-      kwargs: {}
+      kwargs: 
+        threshold: 0.0 # Use 0.0 as threshold for logits instead of 0.5 for probabilities
     # f1: 
     #   path: "torchmetrics.classification.BinaryF1Score"
     #   kwargs: {}
   categorical:
     accuracy: 
       path: "torchmetrics.classification.MulticlassAccuracy"
-      kwargs: {}
+      kwargs: 
+        average: 'micro'
     
-regression: 
+continuous: 
   mae: 
     path: "torchmetrics.regression.MeanAbsoluteError"
     kwargs: {}

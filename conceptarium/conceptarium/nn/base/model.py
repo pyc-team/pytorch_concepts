@@ -59,7 +59,7 @@ class BaseModel(nn.Module, ABC):
             else "None"
         )
         return (
-            f"{cls_name}(backbone={backbone_repr}"
+            f"{cls_name}(backbone={backbone_repr})"
         )
 
     # @property

@@ -45,7 +45,7 @@ class ConceptDataset(Dataset):
                     1: AxisAnnotation(labels=[f"concept_{i}" for i in range(concepts.shape[1])],
                                       cardinalities=None, # assume binary
                                       metadata={f"concept_{i}": {'type': 'discrete', # assume discrete (bernoulli)
-                                                                 'task': 'classification'} for i in range(concepts.shape[1])})
+                                                                } for i in range(concepts.shape[1])})
                                       })
         # assert first axis is annotated axis for concepts
         if 1 not in annotations.annotated_axes:
@@ -54,10 +54,6 @@ class ConceptDataset(Dataset):
         # sanity check
         axis_annotation = annotations[1]
         if axis_annotation.metadata is not None:
-            assert all('task' in v  for v in axis_annotation.metadata.values()), \
-                "Concept metadata must contain 'task' for each concept."
-            assert all(v['task'] in ['classification', 'regression'] for v in axis_annotation.metadata.values()), \
-                "Concept metadata 'task' must be either 'classification' or 'regression'."
             assert all('type' in v  for v in axis_annotation.metadata.values()), \
                 "Concept metadata must contain 'type' for each concept."
             assert all(v['type'] in ['discrete', 'continuous'] for v in axis_annotation.metadata.values()), \
@@ -77,10 +73,6 @@ class ConceptDataset(Dataset):
                 # TODO: implement continuous concept types
                 if meta['type'] == 'continuous':
                     raise NotImplementedError("Continuous concept types are not supported yet.")
-                # raise error if task metadata contain 'regression': this is not supported yet
-                # TODO: implement regression task types
-                if meta['task'] == 'regression':
-                    raise NotImplementedError("Regression task types are not supported yet.")
 
 
         # set concept annotations
@@ -95,7 +87,7 @@ class ConceptDataset(Dataset):
         # allow more complex data structures in the future with a custom parser
         self.input_data: Tensor = self._parse_tensor(input_data, 'input', self.precision)
 
-        # Store concept data C and task data Y
+        # Store concept data C
         self.concepts = None
         if concepts is not None:
             self.set_concepts(concepts) # Annotat
@@ -103,7 +95,7 @@ class ConceptDataset(Dataset):
         # Store graph
         self._graph = None
         if graph is not None:
-            self.set_graph(graph)  # graph among all concepts (task included)
+            self.set_graph(graph)  # graph among all concepts
 
         # Store exogenous variables
         # self.exogenous = dict()
@@ -155,8 +147,6 @@ class ConceptDataset(Dataset):
     @property
     def concept_names(self) -> List[str]:
         """List of concept names in the dataset."""
-        if not self.has_concepts:
-            return []
         return self.annotations.get_axis_labels(1)
     
     @property
@@ -283,40 +273,38 @@ class ConceptDataset(Dataset):
     def maybe_reduce_annotations(self,
                                 annotations: Annotations,
                                 concept_names_subset: Optional[List[str]] = None):
-        """Set concept and task labels for the dataset.
+        """Set concept and labels for the dataset.
         Args:
             annotations: Annotations object for all concepts.
             concept_names_subset: List of strings naming the subset of concepts to use. 
                                     If :obj:`None`, will use all concepts.
         """
+        self.concept_names_all = annotations.get_axis_labels(1)
         if concept_names_subset is not None:
             # sanity check, all subset concepts must be in all concepts
-            concept_names_all = annotations.get_axis_labels(1)
-            assert set(concept_names_subset).issubset(set(concept_names_all)), "All subset concepts must be in all concepts."
+            assert set(concept_names_subset).issubset(set(self.concept_names_all)), "All subset concepts must be in all concepts."
             to_select = deepcopy(concept_names_subset)
             
             # Get indices of selected concepts
-            indices = [concept_names_all.index(name) for name in to_select]
+            indices = [self.concept_names_all.index(name) for name in to_select]
             
             # Reduce annotations by extracting only the selected concepts
             axis_annotation = annotations[1]
             reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
             
-            # Reduce cardinalities if present
+            # Reduce cardinalities
             reduced_cardinalities = None
-            if axis_annotation.cardinalities is not None:
-                reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
-            
+            reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
+        
+            # Reduce states
+            reduced_states = None
+            reduced_states = tuple(axis_annotation.states[i] for i in indices)
+
             # Reduce metadata if present
             reduced_metadata = None
             if axis_annotation.metadata is not None:
                 reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
                                    for i in range(len(indices))}
-            
-            # Reduce states if present (for nested annotations)
-            reduced_states = None
-            if axis_annotation.states is not None:
-                reduced_states = tuple(axis_annotation.states[i] for i in indices)
             
             # Create reduced annotations
             self._annotations = Annotations({
@@ -327,6 +315,7 @@ class ConceptDataset(Dataset):
                     metadata=reduced_metadata
                 )
             })
+
 
 
     def set_graph(self, graph: pd.DataFrame):
@@ -340,10 +329,10 @@ class ConceptDataset(Dataset):
         """
         if not isinstance(graph, pd.DataFrame):
             raise TypeError("Graph must be a pandas DataFrame.")
-        concept_names = self.annotations.get_axis_labels(1)
+        # eventually extract subset
+        graph = graph.loc[self.concept_names, self.concept_names]
         self._graph = ConceptGraph(data=self._parse_tensor(graph, 'graph', self.precision),
-                                         node_names=concept_names)
-
+                                         node_names=self.concept_names)
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
         """Set concept annotations for the dataset.
         
@@ -354,13 +343,18 @@ class ConceptDataset(Dataset):
         """
         # Validate shape
         # concepts' length must match dataset's length
-        concept_names = self.annotations.get_axis_labels(1)
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
                              f"input_data has {self.n_samples}.")
-        if concepts.shape[1] != len(concept_names):
-            raise RuntimeError(f"Concepts has {concepts.shape[1]} concepts but "
-                             f"there are {len(concept_names)} concept names.")
+        
+        # eventually extract subset
+        if isinstance(concepts, pd.DataFrame):
+            concepts = concepts.loc[:, self.concept_names]
+        elif isinstance(concepts, np.ndarray) or isinstance(concepts, Tensor):
+            rows = [self.concept_names_all.index(name) for name in self.concept_names]
+            concepts = concepts[:, rows]
+        else:
+            raise TypeError("Concepts must be a np.ndarray, pd.DataFrame, or Tensor.")
         
         #########################################################################
         ###### modify this to change convention for how to store concepts  ######
@@ -384,12 +378,11 @@ class ConceptDataset(Dataset):
         """Add a scaler for preprocessing a specific tensor.
 
         Args:
-            key (str): The name of the tensor to scale ('input', 'concepts', or 'task').
+            key (str): The name of the tensor to scale ('input', 'concepts').
             scaler (Scaler): The fitted scaler to use.
         """
-        if key not in ['input', 'concepts', 'task']:
-            raise KeyError(f"{key} not in dataset. Valid keys: 'input', 'concepts', 'task'")
-
+        if key not in ['input', 'concepts']:
+            raise KeyError(f"{key} not in dataset. Valid keys: 'input', 'concepts'")
         self.scalers[key] = scaler
 
     # Utilities ###########################################################

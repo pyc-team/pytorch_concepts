@@ -107,11 +107,11 @@ class BnLearnDataset(ConceptDataset):
         # get concept annotations
         concept_names = list(self.bn_model.nodes())
         # get concept metadata, store as many objects as you need.
-        # at least store the 'task' and the 'type'!
+        # at least store the variable 'type'! ('discrete' or 'continuous')
         concept_metadata = {node: {'type': 'discrete',
-                                   'task': 'classification',
-                                   'description': self.label_descriptions.get(node, "") 
-                                                  if self.label_descriptions is not None else ""}
+                                #    'description': self.label_descriptions.get(node, "") 
+                                #                   if self.label_descriptions is not None else ""
+                                }
                             for node in concept_names}
         
         cardinalities = [int(self.bn_model.get_cardinality()[node]) for node in concept_names]

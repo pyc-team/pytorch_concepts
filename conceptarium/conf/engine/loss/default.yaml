@@ -1,4 +1,4 @@
-classification:
+discrete:
   binary: 
     path: "torch.nn.BCEWithLogitsLoss"
     kwargs: {}
@@ -6,6 +6,6 @@ classification:
     path: "torch.nn.CrossEntropyLoss"
     kwargs: {}
 
-regression: 
+continuous: 
   path: "torch.nn.MSELoss"
   kwargs: {}
