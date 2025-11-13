@@ -3,7 +3,7 @@ encoder_kwargs:
   # output_size: 16
   n_layers: 1
   activation: leaky_relu
-  dropout: 0.
+  dropout: 0.2
 
 variable_distributions:
   discrete_card1: 

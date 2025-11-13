@@ -10,16 +10,18 @@ from conceptarium.nn.base.model import BaseModel
 class CBM(BaseModel):
     def __init__(
         self,
-        task_names: Union[List[str], List[int]],
+        task_names: Union[List[str], str, List[int]],
         input_size: int,
-        concept_annotations: Annotations,
+        annotations: Annotations,
+        variable_distributions: Mapping,
         embs_precomputed: bool = False,
         backbone: Optional[callable] = None,
         encoder_kwargs: Dict = None,
         **kwargs
     ) -> None:
         super().__init__(
-            concept_annotations=concept_annotations,
+            annotations=annotations,
+            variable_distributions=variable_distributions,
             # encoder params
             input_size=input_size,
             embs_precomputed=embs_precomputed,
