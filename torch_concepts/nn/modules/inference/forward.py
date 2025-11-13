@@ -1,12 +1,12 @@
 import inspect
 from abc import abstractmethod
-
+from concurrent.futures import ThreadPoolExecutor
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Variable
 from torch_concepts.nn import BaseGraphLearner
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Tuple
 
 from ..models.pgm import ProbabilisticGraphicalModel
 from ...base.inference import BaseInference
@@ -18,7 +18,9 @@ class ForwardInference(BaseInference):
         self.pgm = pgm
         self.graph_learner = graph_learner
         self.concept_map = {var.concepts[0]: var for var in pgm.variables}
-        self.sorted_variables = self._topological_sort()
+
+        # topological order + levels (list of lists of Variables)
+        self.sorted_variables, self.levels = self._topological_sort()
 
         if graph_learner is not None:
             self.row_labels2id = {var: idx for idx, var in enumerate(self.graph_learner.row_labels)}
@@ -31,9 +33,10 @@ class ForwardInference(BaseInference):
     def get_results(self, results: torch.tensor, parent_variable: Variable):
         pass
 
-    def _topological_sort(self) -> List[Variable]:
+    def _topological_sort(self):
         """
-        Sorts the variables topologically (parents before children).
+        Sort variables topologically and compute levels
+        (variables that share the same topological depth).
         """
         in_degree = {var.concepts[0]: 0 for var in self.pgm.variables}
         adj = {var.concepts[0]: [] for var in self.pgm.variables}
@@ -45,83 +48,132 @@ class ForwardInference(BaseInference):
                 adj[parent_name].append(child_name)
                 in_degree[child_name] += 1
 
-        # Start with nodes having zero incoming edges (root nodes)
-        queue = [self.concept_map[name] for name, degree in in_degree.items() if degree == 0]
+        # Nodes with zero inbound edges = level 0
+        queue = [self.concept_map[name] for name, deg in in_degree.items() if deg == 0]
+
         sorted_variables = []
+        levels = []
 
-        while queue:
-            var = queue.pop(0)
-            sorted_variables.append(var)
+        # Track current BFS frontier
+        current_level = queue.copy()
+        while current_level:
+            levels.append(current_level)
+            next_level = []
 
-            for neighbor_name in adj[var.concepts[0]]:
-                in_degree[neighbor_name] -= 1
-                if in_degree[neighbor_name] == 0:
-                    queue.append(self.concept_map[neighbor_name])
+            for var in current_level:
+                sorted_variables.append(var)
 
-        return sorted_variables
+                for neighbour_name in adj[var.concepts[0]]:
+                    in_degree[neighbour_name] -= 1
+                    if in_degree[neighbour_name] == 0:
+                        next_level.append(self.concept_map[neighbour_name])
 
-    def predict(self, external_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            current_level = next_level
+
+        return sorted_variables, levels
+
+    def _compute_single_variable(
+            self,
+            var: Variable,
+            external_inputs: Dict[str, torch.Tensor],
+            results: Dict[str, torch.Tensor],
+    ) -> Tuple[str, torch.Tensor]:
         """
-        Performs a forward pass prediction across the entire PGM using the topological order.
+        Compute the output tensor for a single variable, given the current results.
+        Returns (concept_name, output_tensor) without mutating `results`.
+        """
+        concept_name = var.concepts[0]
+        factor = self.pgm.get_factor_of_variable(concept_name)
+
+        if factor is None:
+            raise RuntimeError(f"Missing factor for variable/concept: {concept_name}")
+
+        # 1. Root nodes (no parents)
+        if not var.parents:
+            if concept_name not in external_inputs:
+                raise ValueError(f"Root variable '{concept_name}' requires an external input tensor in the 'external_inputs' dictionary.")
+            input_tensor = external_inputs[concept_name]
+            parent_kwargs = self.get_parent_kwargs(factor, [input_tensor], [])
+            output_tensor = factor.forward(**parent_kwargs)
+            output_tensor = self.get_results(output_tensor, var)
+
+        # 2. Child nodes (has parents)
+        else:
+            parent_logits = []
+            parent_latent = []
+            for parent_var in var.parents:
+                parent_name = parent_var.concepts[0]
+                if parent_name not in results:
+                    # Should not happen with correct topological sort
+                    raise RuntimeError(f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
+
+                if parent_var.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
+                    # For probabilistic parents, pass logits
+                    weight = 1
+                    if self.graph_learner is not None:
+                        weight = self.graph_learner.weighted_adj[self.row_labels2id[parent_name], self.col_labels2id[concept_name]]
+                    parent_logits.append(results[parent_name] * weight)
+                else:
+                    # For continuous parents, pass latent features
+                    parent_latent.append(results[parent_name])
+
+            parent_kwargs = self.get_parent_kwargs(factor, parent_latent, parent_logits)
+            output_tensor = factor.forward(**parent_kwargs)
+            output_tensor = self.get_results(output_tensor, var)
+
+        return concept_name, output_tensor
+
+    def predict(self, external_inputs: Dict[str, torch.Tensor], debug: bool = False) -> Dict[str, torch.Tensor]:
+        """
+        Performs a forward pass prediction across the entire PGM using the topological level structure.
 
         Args:
-            external_inputs: A dictionary of {root_concept_name: input_tensor} for the root variables.
-                           E.g., {'emb': torch.randn(87, 10)}.
+            external_inputs: external inputs for root variables.
+            debug: if True, disables parallelism and executes sequentially for easier debugging.
 
         Returns:
-            A dictionary of {concept_name: predicted_feature_tensor} for all concepts.
+            A dictionary {concept_name: output_tensor}.
         """
 
-        results = {}
+        results: Dict[str, torch.Tensor] = {}
 
-        # Iterate in topological order
-        for var in self.sorted_variables:
-            concept_name = var.concepts[0]
-            factor = self.pgm.get_factor_of_variable(concept_name)
+        levels = getattr(self, "levels", None)
+        if levels is None:
+            levels = [self.sorted_variables]
 
-            if factor is None:
-                raise RuntimeError(f"Missing factor for variable/concept: {concept_name}")
+        for level in levels:
 
-            # 1. Handle Root Nodes (no parents)
-            if not var.parents:
-                if concept_name not in external_inputs:
-                    raise ValueError(
-                        f"Root variable '{concept_name}' requires an external input tensor in the 'external_inputs' dictionary.")
+            # === DEBUG MODE: always run sequentially ===
+            if debug or len(level) <= 1:
+                for var in level:
+                    concept_name, output_tensor = self._compute_single_variable(var, external_inputs, results)
+                    results[concept_name] = output_tensor
+                continue
 
-                input_tensor = external_inputs[concept_name]
+            # === PARALLEL MODE ===
+            level_outputs = []
 
-                parent_kwargs = self.get_parent_kwargs(factor, [input_tensor], [])
-                output_tensor = factor.forward(**parent_kwargs)
-                output_tensor = self.get_results(output_tensor, var)
+            # GPU: parallel via CUDA streams
+            if torch.cuda.is_available():
+                streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
 
-                # 2. Handle Child Nodes (has parents)
+                for var, stream in zip(level, streams):
+                    with torch.cuda.stream(stream):
+                        concept_name, output_tensor = self._compute_single_variable(var, external_inputs, results)
+                        level_outputs.append((concept_name, output_tensor))
+
+                torch.cuda.synchronize()
+
+            # CPU: parallel via threads
             else:
-                parent_logits = []
-                parent_latent = []
-                for parent_var in var.parents:
-                    parent_name = parent_var.concepts[0]
-                    if parent_name not in results:
-                        # Should not happen with correct topological sort
-                        raise RuntimeError(
-                            f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
+                with ThreadPoolExecutor(max_workers=len(level)) as executor:
+                    futures = [executor.submit(self._compute_single_variable, var, external_inputs, results) for var in level]
+                    for fut in futures:
+                        level_outputs.append(fut.result())
 
-                    # Parent tensor is fed into the factor using the parent's concept name as the key
-                    if parent_var.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
-                        # For probabilistic parents, pass logits
-                        weight = 1
-                        if self.graph_learner is not None:
-                            weight = self.graph_learner.weighted_adj[self.row_labels2id[parent_name], self.col_labels2id[concept_name]]
-
-                        parent_logits.append(results[parent_name] * weight)
-                    else:
-                        # For continuous parents, pass latent features
-                        parent_latent.append(results[parent_name])
-
-                parent_kwargs = self.get_parent_kwargs(factor, parent_latent, parent_logits)
-                output_tensor = factor.forward(**parent_kwargs)
-                output_tensor = self.get_results(output_tensor, var)
-
-            results[concept_name] = output_tensor
+            # Update results
+            for concept_name, output_tensor in level_outputs:
+                results[concept_name] = output_tensor
 
         return results
 
@@ -152,7 +204,7 @@ class ForwardInference(BaseInference):
 
         return parent_kwargs
 
-    def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False) -> torch.Tensor:
         """
         Executes a forward pass and returns only the specified concepts concatenated
         into a single tensor, in the order requested.
@@ -166,7 +218,7 @@ class ForwardInference(BaseInference):
             requested concepts, ordered as requested (Batch x TotalFeatures).
         """
         # 1. Run the full forward pass to get all necessary predictions
-        all_predictions = self.predict(evidence)
+        all_predictions = self.predict(evidence, debug=debug)
 
         # 2. Filter and concatenate results
         result_tensors = []
