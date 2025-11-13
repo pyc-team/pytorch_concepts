@@ -27,7 +27,7 @@ class COSMOGraphLearner(BaseGraphLearner):
         self.priority_var = priority_var if priority_var is not None \
             else shift / math.sqrt(2)
 
-        # self.threshold = torch.nn.Parameter(torch.zeros(self.n_labels))
+        self.threshold = torch.nn.Parameter(torch.zeros(self.n_labels))
         # self.temperature = torch.nn.Parameter(torch.ones(self.n_labels) * temperature)
 
         self.adjacency_var = adjacency_var
@@ -71,8 +71,8 @@ class COSMOGraphLearner(BaseGraphLearner):
         # Hard Thresholding
         if self.hard_threshold:
             # Compute the hard orientation
-            hard_orient_mat = dif_mat > self.shift
-            # hard_orient_mat = dif_mat > self.threshold
+            # hard_orient_mat = dif_mat > self.shift
+            hard_orient_mat = dif_mat > self.threshold
             hard_orient_mat = hard_orient_mat.float()
 
             # Apply soft detaching trick
