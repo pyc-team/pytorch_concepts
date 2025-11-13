@@ -7,3 +7,5 @@ pgmpy
 bnlearn
 pandas
 torchvision
+datasets
+transformers
