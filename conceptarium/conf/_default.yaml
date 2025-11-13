@@ -1,6 +1,6 @@
 defaults:
   - dataset: asia
-  - model: blackbox_allconcepts
+  - model: cbm
   - engine: engine
   - _self_
 

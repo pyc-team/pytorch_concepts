@@ -42,7 +42,10 @@ class Predictor(pl.LightningModule):
         # FIXME: fix naming convention for models. model
         # is both the wrapper and the internal model 
         # also fix class names
-        self.train_inference_engine = train_inference(self.model.pgm)
+        if train_inference is not None:
+            self.train_inference_engine = train_inference(self.model.pgm)
+        else:
+            self.train_inference_engine = None
 
         # transforms
         self.preprocess_inputs = preprocess_inputs

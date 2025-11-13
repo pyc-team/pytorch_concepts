@@ -5,6 +5,8 @@ encoder_kwargs:
   activation: leaky_relu
   dropout: 0.2
 
+default_train_inference: "torch_concepts.nn.DeterministicInference"
+
 variable_distributions:
   discrete_card1: 
     path: "torch.distributions.RelaxedBernoulli"

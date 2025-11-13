@@ -1,0 +1,5 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "conceptarium.nn.models.blackbox.BlackBox"

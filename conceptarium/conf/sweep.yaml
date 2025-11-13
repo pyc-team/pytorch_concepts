@@ -8,10 +8,10 @@ hydra:
   sweeper:
     # standard grid search
     params:
-      # cbm, cem, cgm, c2bm
-      model: cbm_factors #, cem, c2bm
+      # blackbox, cbm, cem, cgm, c2bm
+      model: cbm_factors
       # asia, sachs, insurance, alarm, hailfinder, pigs, andes
-      dataset: insurance
+      dataset: asia #, sachs, insurance
       seed: 1
 
 # load_data_embeddings: true
