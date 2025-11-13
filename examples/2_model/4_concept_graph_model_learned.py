@@ -8,7 +8,7 @@ from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, Propagator, \
     ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearPredictor, GraphModel, COSMOGraphLearner
+    HyperLinearPredictor, GraphModel, COSMOGraphLearner, ProbabilisticGraphicalModel
 
 
 def main():
@@ -25,15 +25,15 @@ def main():
     cy_train_one_hot = torch.cat([c_train_one_hot, c_train_one_hot], dim=1)
 
     concept_names = ('c1', 'c2', 'xor')
-    task_names = ('copy_c1', 'copy_c2', 'copy_xor')
+    task_names = ('c1_copy', 'c2_copy', 'xor_copy')
     cardinalities = (1, 1, 2, 1, 1, 2)
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
         'xor': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task'},
-        'copy_c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1 Copy'},
-        'copy_c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2 Copy'},
-        'copy_xor': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task Copy'},
+        'c1_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1 Copy'},
+        'c2_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2 Copy'},
+        'xor_copy': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task Copy'},
     }
     annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
@@ -49,17 +49,17 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=12),
+                                   source_exogenous=Propagator(ExogEncoder, embedding_size=13),
                                    internal_exogenous=Propagator(ExogEncoder, embedding_size=13),
                                    encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(HyperLinearPredictor, embedding_size=11))
+                                   predictor=Propagator(ProbEncoderFromExog, embedding_size=11))
 
     # graph learning init
-    graph_learner = COSMOGraphLearner(concept_names, task_names, hard_threshold=False, temperature=0.01)
+    graph_learner = COSMOGraphLearner(concept_names, task_names, hard_threshold=True, temperature=0.01)
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.pgm, graph_learner)
-    query_concepts = ["c1", "c2", "xor", "copy_c1", "copy_c2", "copy_xor"]
+    query_concepts = ["c1", "c2", "xor", "c1_copy", "c2_copy", "xor_copy"]
 
     model = torch.nn.Sequential(encoder, concept_model)
 
@@ -88,41 +88,44 @@ def main():
             concept_accuracy = accuracy_score(c_train_one_hot.ravel(), c_pred.ravel() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
-        # if epoch > 500:
-        #     graph_learner.hard_threshold = True
-
     with torch.no_grad():
-        # graph_learner.hard_threshold = True
         print(graph_learner.weighted_adj)
 
+        concept_model_new = inference_engine.unrolled_pgm()
+        inference_engine = DeterministicInference(concept_model_new)
+        query_concepts = [c for c in query_concepts if c in inference_engine.available_query_vars]
+
+        # generate concept and task predictions
+        emb = encoder(x_train)
+        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+
+        task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+        print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
+
+        intervened_concept = query_concepts[0]
+
         print("=== Interventions ===")
-        int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation(["c1"])}), subset=["c1"])
-        int_strategy_c1 = DoIntervention(model=concept_model.pgm.factor_modules, constants=-10)
+        int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation([intervened_concept])}), subset=[intervened_concept])
+        int_strategy_c1 = DoIntervention(model=concept_model_new.factor_modules, constants=-10)
         with intervention(policies=[int_policy_c1],
                           strategies=[int_strategy_c1],
-                          on_layers=["c1.encoder"],
+                          on_layers=[f"{intervened_concept}.encoder"],
                           quantiles=[1]):
             cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
-            c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
-            y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
-            task_accuracy = accuracy_score(c_train_one_hot.ravel(), y_pred.ravel() > 0.)
-            concept_accuracy = accuracy_score(c_train_one_hot.ravel(), c_pred.ravel() > 0.)
-            print(f"Do intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+            task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+            print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
             print(cy_pred[:5])
             print()
 
-            int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation(["c1"])}), subset=["c1"])
-            int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factor_modules, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+            int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation([intervened_concept])}), subset=[intervened_concept])
+            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factor_modules, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=[int_policy_c1],
                               strategies=[int_strategy_c1],
-                              on_layers=["c1.encoder"],
+                              on_layers=[f"{intervened_concept}.encoder"],
                               quantiles=[1]):
                 cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
-                c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
-                y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
-                task_accuracy = accuracy_score(c_train_one_hot.ravel(), y_pred.ravel() > 0.)
-                concept_accuracy = accuracy_score(c_train_one_hot.ravel(), c_pred.ravel() > 0.)
-                print(f"Ground truth intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+                task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+                print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
                 print(cy_pred[:5])
 
     return

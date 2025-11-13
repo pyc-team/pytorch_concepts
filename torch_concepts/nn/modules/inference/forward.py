@@ -1,12 +1,13 @@
 import inspect
 from abc import abstractmethod
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Variable
 from torch_concepts.nn import BaseGraphLearner
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union, Tuple, Set
 
 from ..models.pgm import ProbabilisticGraphicalModel
 from ...base.inference import BaseInference
@@ -252,6 +253,172 @@ class ForwardInference(BaseInference):
             )
 
         return final_tensor
+
+    @property
+    def available_query_vars(self) -> Set[str]:
+        """
+        A tuple of all variable names available for querying.
+
+        After calling `unrolled_pgm`, this reflects the unrolled variables;
+        before that, it reflects the original PGM variables.
+        """
+        if hasattr(self, "_unrolled_query_vars"):
+            return self._unrolled_query_vars
+        return set(var.concepts[0] for var in self.pgm.variables)
+
+    def unrolled_pgm(self) -> ProbabilisticGraphicalModel:
+        """
+        Build an 'unrolled' view of the PGM based on the graph_learner adjacency.
+
+        Rules:
+        - For root columns in the adjacency (no incoming edges), keep the row factor,
+          drop the corresponding column factor.
+        - For non-root columns, keep the column factor, drop the corresponding row factor,
+          and replace usages of that row factor as a parent with the kept column factor.
+        - Recursively drop any variable X if all its direct children are dropped.
+        """
+
+        if self.graph_learner is None or not hasattr(self.graph_learner, "weighted_adj"):
+            raise RuntimeError("unrolled_pgm requires a graph_learner with a 'weighted_adj' attribute.")
+
+        adj = self.graph_learner.weighted_adj
+        row_labels = list(self.graph_learner.row_labels)
+        col_labels = list(self.graph_learner.col_labels)
+
+        n_rows, n_cols = adj.shape
+        if n_rows != len(row_labels) or n_cols != len(col_labels):
+            raise RuntimeError("Mismatch between adjacency shape and row/col labels length.")
+
+        # --- 0) Build children map from the raw PGM (no adjacency, no renaming) ---
+        # children_map[parent_name] -> set(child_name)
+        children_map: Dict[str, Set[str]] = defaultdict(set)
+        for var in self.pgm.variables:
+            child_name = var.concepts[0]
+            for parent in var.parents:
+                parent_name = parent.concepts[0]
+                children_map[parent_name].add(child_name)
+
+        # All variable names in the PGM
+        all_names: Set[str] = {var.concepts[0] for var in self.pgm.variables}
+
+        # --- 1) Determine which side we keep for each row/col pair (using adjacency) ---
+        # Root factor (in adjacency sense) = column with no incoming edges
+        col_has_parent = (adj != 0).any(dim=0)  # bool per column
+
+        rename_map: Dict[str, str] = {}   # old_name -> new_name
+        keep_names_initial: Set[str] = set()
+        drop_names: Set[str] = set()
+
+        # For each index i, (row_labels[i], col_labels[i]) is a pair of copies
+        for idx in range(min(n_rows, n_cols)):
+            src = row_labels[idx]  # "row" factor
+            dst = col_labels[idx]  # "column" factor
+
+            is_root = not bool(col_has_parent[idx].item())
+            if is_root:
+                # Root column: keep row factor, drop its column copy
+                rename_map[dst] = src
+                keep_names_initial.add(src)
+                drop_names.add(dst)
+            else:
+                # Non-root column: keep column factor, drop original row factor
+                rename_map[src] = dst
+                keep_names_initial.add(dst)
+                drop_names.add(src)
+
+        # Add all other variables that are not explicitly dropped
+        keep_names_initial |= {name for name in all_names if name not in drop_names}
+
+        # --- 2) GENERAL RECURSIVE PRUNING RULE ---
+        # If X has children Yi and ALL Yi are in drop_names -> drop X as well.
+        drop: Set[str] = set(drop_names)
+
+        while True:
+            changed = False
+            for parent_name, children in children_map.items():
+                if parent_name in drop:
+                    continue
+                if not children:
+                    continue  # no children: do not auto-drop (could be sink / output)
+                # Only consider children that actually exist as variables
+                eff_children = {c for c in children if c in all_names}
+                if not eff_children:
+                    continue
+                if eff_children.issubset(drop):
+                    drop.add(parent_name)
+                    changed = True
+            if not changed:
+                break
+
+        # Final kept names: everything not in drop
+        keep_names: Set[str] = {name for name in all_names if name not in drop}
+
+        # --- 3) Rewrite parents using keep_names, rename_map, and adjacency gating ---
+        for var in self.pgm.variables:
+            child_name = var.concepts[0]
+            new_parents: List[Variable] = []
+            seen: Set[str] = set()
+
+            for parent in var.parents:
+                parent_orig = parent.concepts[0]
+
+                # 3a) Adjacency gating: if adj defines this edge and it's zero, drop it
+                keep_edge = True
+                if (
+                    hasattr(self, "row_labels2id")
+                    and hasattr(self, "col_labels2id")
+                    and parent_orig in self.row_labels2id
+                    and child_name in self.col_labels2id
+                ):
+                    r = self.row_labels2id[parent_orig]
+                    c = self.col_labels2id[child_name]
+                    if adj[r, c].item() == 0:
+                        keep_edge = False
+
+                if not keep_edge:
+                    continue
+
+                # 3b) Apply renaming: map parent_orig through rename_map chain
+                mapped_parent = parent_orig
+                while mapped_parent in rename_map:
+                    mapped_parent = rename_map[mapped_parent]
+
+                # 3c) Drop if final parent is not kept
+                if mapped_parent not in keep_names:
+                    continue
+
+                if mapped_parent in seen:
+                    continue  # avoid duplicates
+
+                new_parents.append(self.concept_map[mapped_parent])
+                seen.add(mapped_parent)
+
+            var.parents = new_parents
+
+        # --- 4) Build final ordered list of variables (unique, no duplicates) ---
+        new_variables: List[Variable] = []
+        seen_var_names: Set[str] = set()
+
+        for var in self.sorted_variables:
+            name = var.concepts[0]
+            if name in keep_names and name not in seen_var_names:
+                new_variables.append(var)
+                seen_var_names.add(name)
+
+        # --- 5) Unique list of factors corresponding to these variables ---
+        new_factors: List[object] = []
+        seen_factors: Set[object] = set()
+
+        for var in new_variables:
+            factor = self.pgm.get_factor_of_variable(var.concepts[0])
+            if factor is not None and factor not in seen_factors:
+                new_factors.append(factor)
+                seen_factors.add(factor)
+
+        # --- 6) Update available_query_vars to reflect the unrolled graph ---
+        self._unrolled_query_vars = set(v.concepts[0] for v in new_variables)
+
+        return ProbabilisticGraphicalModel(new_variables, new_factors)
 
 
 class DeterministicInference(ForwardInference):
