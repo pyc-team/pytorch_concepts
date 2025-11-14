@@ -3,6 +3,8 @@ import torch
 from ...base.layer import BasePredictor
 from typing import List, Callable, Union
 
+from ...functional import prune_linear_layer
+
 
 class ProbPredictor(BasePredictor):
     """
@@ -42,3 +44,7 @@ class ProbPredictor(BasePredictor):
         in_probs = self.in_activation(logits)
         probs = self.predictor(in_probs)
         return probs
+
+    def prune(self, mask: torch.Tensor):
+        self.in_features_logits = sum(mask.int())
+        self.predictor[0] = prune_linear_layer(self.predictor[0], mask, dim=0)

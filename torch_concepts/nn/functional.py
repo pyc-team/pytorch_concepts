@@ -2,6 +2,7 @@ import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
 from typing import Callable, List, Union, Dict
+from torch.nn import Linear
 
 from ..semantic import CMRSemantic
 
@@ -695,3 +696,72 @@ def hamming_distance(first, second):
     
     # cost = cost / (N*(N-1))/2
     return cost, count
+
+
+def prune_linear_layer(linear: Linear, mask: torch.Tensor, dim: int = 0) -> Linear:
+    """
+    Return a new nn.Linear where inputs (dim=0) or outputs (dim=1)
+    have been pruned according to `mask`.
+
+    Args
+    ----
+    linear : nn.Linear
+        Layer to prune.
+    mask : 1D Tensor[bool] or 0/1
+        Mask over features. True/1 = keep, False/0 = drop.
+        - If dim=0: length == in_features
+        - If dim=1: length == out_features
+    dim : int
+        0 -> prune input features (columns of weight)
+        1 -> prune output units (rows of weight)
+    """
+    if not isinstance(linear, Linear):
+        raise TypeError("`linear` must be an nn.Linear")
+
+    mask = mask.to(dtype=torch.bool)
+    weight = linear.weight
+    device = weight.device
+    dtype = weight.dtype
+
+    idx = mask.nonzero(as_tuple=False).view(-1)  # indices to KEEP
+
+    if dim == 0:
+        if mask.numel() != linear.in_features:
+            raise ValueError("mask length must equal in_features when dim=0")
+
+        new_in = idx.numel()
+        new_linear = Linear(
+            in_features=new_in,
+            out_features=linear.out_features,
+            bias=linear.bias is not None,
+            device=device,
+            dtype=dtype,
+        )
+        with torch.no_grad():
+            # keep all rows (outputs), select only kept input columns
+            new_linear.weight.copy_(weight[:, idx])
+            if linear.bias is not None:
+                new_linear.bias.copy_(linear.bias)
+
+    elif dim == 1:
+        if mask.numel() != linear.out_features:
+            raise ValueError("mask length must equal out_features when dim=1")
+
+        new_out = idx.numel()
+        new_linear = Linear(
+            in_features=linear.in_features,
+            out_features=new_out,
+            bias=linear.bias is not None,
+            device=device,
+            dtype=dtype,
+        )
+        with torch.no_grad():
+            # select only kept output rows
+            new_linear.weight.copy_(weight[idx, :])
+            if linear.bias is not None:
+                new_linear.bias.copy_(linear.bias[idx])
+
+    else:
+        raise ValueError("dim must be 0 (inputs) or 1 (outputs)")
+
+    return new_linear

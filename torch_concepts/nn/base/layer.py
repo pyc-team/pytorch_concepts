@@ -68,3 +68,11 @@ class BasePredictor(BaseConceptLayer):
             out_features=out_features,
         )
         self.in_activation = in_activation
+
+    def prune(self, mask: torch.Tensor):
+        """
+        Prune the predictor by removing connections based on the given mask.
+        Args:
+            mask (torch.Tensor): A binary mask indicating which connections to keep.
+        """
+        raise NotImplementedError(f"Pruning is not yet supported for {self.__class__.__name__}.")

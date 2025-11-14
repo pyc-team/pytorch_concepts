@@ -3,6 +3,8 @@ import torch
 from ...base.layer import BasePredictor
 from typing import Callable
 
+from ...functional import prune_linear_layer
+
 
 class HyperLinearPredictor(BasePredictor):
     """
@@ -73,3 +75,7 @@ class HyperLinearPredictor(BasePredictor):
             out_logits = out_logits + mean + std * eps
 
         return out_logits
+
+    def prune(self, mask: torch.Tensor):
+        self.in_features_logits = mask.int().sum().item()
+        self.hypernet[-1] = prune_linear_layer(self.hypernet[-1], mask, dim=1)

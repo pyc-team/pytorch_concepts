@@ -412,6 +412,13 @@ class ForwardInference(BaseInference):
         for var in new_variables:
             factor = self.pgm.get_factor_of_variable(var.concepts[0])
             if factor is not None and factor not in seen_factors:
+                if factor.concepts[0] in rename_map.values() and factor.concepts[0] in col_labels:
+                    col_id = self.col_labels2id[factor.concepts[0]]
+                    mask = adj[:, col_id] != 0
+                    mask_without_self_loop = torch.cat((mask[:col_id], mask[col_id + 1:]))
+                    repeats = [p.size for p in factor.parents if p.concepts[0] in row_labels]
+                    mask_with_cardinalities = torch.repeat_interleave(mask_without_self_loop, torch.tensor(repeats))
+                    factor.module_class.prune(mask_with_cardinalities)
                 new_factors.append(factor)
                 seen_factors.add(factor)
 
