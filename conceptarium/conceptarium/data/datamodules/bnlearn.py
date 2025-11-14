@@ -1,4 +1,4 @@
-from env import CACHE
+from env import DATA_ROOT
 
 from torch_concepts.data import BnLearnDataset
 
@@ -47,7 +47,7 @@ class BnLearnDataModule(ConceptDataModule):
         **kwargs
     ):
         dataset = BnLearnDataset(name=name,
-                                 root=str(CACHE / name),
+                                 root=str(DATA_ROOT / name),
                                  seed=seed,
                                  n_gen=n_gen,
                                  concept_subset=concept_subset,
