@@ -5,10 +5,6 @@ defaults:
   
 _target_: "conceptarium.engines.predictor.Predictor"
 
-train_inference: 
-  _target_: ${model.default_train_inference}
-  _partial_: true
-
 optim_class:
   _target_: "hydra.utils.get_class"
   path: "torch.optim.AdamW"

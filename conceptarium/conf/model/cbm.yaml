@@ -6,4 +6,6 @@ _target_: "conceptarium.nn.models.cbm.CBM"
 
 task_names: ${dataset.default_task_names}
 
-default_train_inference: "torch_concepts.nn.KnownGraphInference"
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true

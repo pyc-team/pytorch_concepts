@@ -1,3 +1,3 @@
-from .models.cbm_factors import CBM
+from .models.cbm import CBM
 
 __all__ = ['CBM']

@@ -8,15 +8,13 @@ from torchmetrics.collections import _remove_prefix
 import pytorch_lightning as pl
 
 from torch_concepts import AxisAnnotation
-from torch_concepts.nn import BaseInference
 
 from ..utils import instantiate_from_string
 
 
-class Predictor(pl.LightningModule):    
+class Predictor(pl.LightningModule):
     def __init__(self,
                 model: nn.Module,
-                train_inference: BaseInference,
                 loss: Mapping,
                 metrics: Mapping,
                 preprocess_inputs: bool = False,
@@ -37,15 +35,6 @@ class Predictor(pl.LightningModule):
  
         # instantiate model
         self.model = model
-        
-        # set training inference
-        # FIXME: fix naming convention for models. model
-        # is both the wrapper and the internal model 
-        # also fix class names
-        if train_inference is not None:
-            self.train_inference_engine = train_inference(self.model.pgm)
-        else:
-            self.train_inference_engine = None
 
         # transforms
         self.preprocess_inputs = preprocess_inputs
@@ -120,7 +109,6 @@ class Predictor(pl.LightningModule):
         self.continuous_idx = []
         for c_id in self.continuous_concept_idx:
             self.continuous_idx.extend(range(self.cumulative_indices[c_id], self.cumulative_indices[c_id + 1]))
-
 
     def _check_collection(self, 
                           annotations: AxisAnnotation, 
@@ -518,8 +506,6 @@ class Predictor(pl.LightningModule):
                     metric_collection[key].update(c_hat[:, start_idx:end_idx], 
                                                   c_true[:, c_id:c_id+1])
             
-                        
-        
     def log_metrics(self, metrics, **kwargs):
         self.log_dict(metrics, 
                       on_step=False, 
@@ -553,6 +539,7 @@ class Predictor(pl.LightningModule):
         inputs = batch['inputs']
         concepts = batch['concepts']
         transform = batch.get('transform')
+        inputs, concepts = self.model.preprocess_batch(inputs, concepts)
         return inputs, concepts, transform
 
     def predict_batch(self, 
@@ -570,19 +557,14 @@ class Predictor(pl.LightningModule):
         if forward_kwargs is None:
             forward_kwargs = dict()
         
-        # inference query
+        # model forward (containing inference query)
         # TODO: implement train interventions using the context manager 'with ...'
-        if self.train_inference_engine is None:
-            # assume the full inference is implemented in the model forward
-            out = self.model(**inputs)
-        else:
-            # model forward (just backbone)
-            features = self.model(**inputs)
-            # inference
-            # TODO: add option to semi-supervise a subset of concepts
-            out = self.train_inference_engine.query(self.concept_names, 
-                                                    evidence={'emb': features})
-
+        # TODO: add option to semi-supervise a subset of concepts
+        # TODO: handle backbone kwargs when present
+        out = self.model.forward(x=inputs['x'],
+                                 query=self.concept_names, 
+                                 **forward_kwargs)
+            
         # # TODO: implement scaling only for continuous concepts 
         # # apply batch postprocess
         # if postprocess:
