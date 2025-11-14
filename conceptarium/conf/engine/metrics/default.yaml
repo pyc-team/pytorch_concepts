@@ -1,4 +1,4 @@
-classification:
+discrete:
   binary:
     accuracy: 
       path: "torchmetrics.classification.BinaryAccuracy"
@@ -9,9 +9,10 @@ classification:
   categorical:
     accuracy: 
       path: "torchmetrics.classification.MulticlassAccuracy"
-      kwargs: {}
+      kwargs: 
+        average: 'micro'
     
-regression: 
+continuous: 
   mae: 
     path: "torchmetrics.regression.MeanAbsoluteError"
     kwargs: {}

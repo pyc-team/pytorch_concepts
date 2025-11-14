@@ -1,0 +1,7 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "conceptarium.nn.models.blackbox.BlackBox_torch"
+
+default_train_inference: null

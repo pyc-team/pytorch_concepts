@@ -28,7 +28,7 @@ class GradientMonitor_afterB(pl.Callback):
 def _get_logger(cfg: DictConfig):
     name = f"seed{cfg.get('seed', '')}.{int(time())}"
     group_format = (
-        "{dataset}.{model}.h{hidden_size}.lr{lr}"
+        "{dataset}.{model}.lr{lr}"
     )
     group = group_format.format(**parse_hyperparams(cfg))
     if cfg.get("notes") is not None:

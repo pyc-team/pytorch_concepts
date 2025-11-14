@@ -5,5 +5,3 @@ defaults:
 _target_: "conceptarium.nn.models.cbm_factors.CBM"
 
 task_names: ${dataset.default_task_names}
-
-default_train_inference: "torch_concepts.nn.DeterministicInference"

@@ -1,9 +1,9 @@
-from typing import Optional, Mapping, Type, Tuple, Callable, Union
+from typing import Optional, Mapping, Type, Callable, Union
 import warnings
 
 import torch
 from torch import nn
-from torchmetrics import Metric, MetricCollection
+from torchmetrics import MetricCollection
 from torchmetrics.collections import _remove_prefix
 import pytorch_lightning as pl
 
@@ -22,7 +22,7 @@ class Predictor(pl.LightningModule):
                 preprocess_inputs: bool = False,
                 scale_concepts: bool = False,
                 enable_summary_metrics: bool = True,
-                enable_perconcept_metrics: bool = False,
+                enable_perconcept_metrics: Union[bool, list] = False,
                 *,
                 optim_class: Type,
                 optim_kwargs: Mapping,
@@ -42,7 +42,10 @@ class Predictor(pl.LightningModule):
         # FIXME: fix naming convention for models. model
         # is both the wrapper and the internal model 
         # also fix class names
-        self.train_inference_engine = train_inference(self.model.pgm)
+        if train_inference is not None:
+            self.train_inference_engine = train_inference(self.model.pgm)
+        else:
+            self.train_inference_engine = None
 
         # transforms
         self.preprocess_inputs = preprocess_inputs
@@ -89,9 +92,35 @@ class Predictor(pl.LightningModule):
         cardinalities = self.concept_annotations.cardinalities
         
         # Store per-concept info
-        self.tasks = [metadata[name]['task'] for name in self.concept_names]
+        self.types = [metadata[name]['type'] for name in self.concept_names]
         self.cardinalities = cardinalities
-        self.is_nested = self.concept_annotations.is_nested
+
+        self.type_groups = self.concept_annotations.groupby_metadata('type', layout='indices')
+
+        # group concepts by type
+        discrete_concept_idx = self.type_groups.get('discrete', [])
+        self.binary_concept_idx = [idx for idx in discrete_concept_idx if self.cardinalities[idx] == 1]
+        self.categorical_concept_idx = [idx for idx in discrete_concept_idx if self.cardinalities[idx] > 1]
+        self.continuous_concept_idx = self.type_groups.get('continuous', [])
+
+        # Pre-compute tensor-slicing indices for each type
+        self.cumulative_indices = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
+
+        # Binary
+        self.binary_idx = []
+        for c_id in self.binary_concept_idx:
+            self.binary_idx.extend(range(self.cumulative_indices[c_id], self.cumulative_indices[c_id + 1]))
+        
+        # Categorical
+        self.categorical_idx = []
+        for c_id in self.categorical_concept_idx:
+            self.categorical_idx.extend(range(self.cumulative_indices[c_id], self.cumulative_indices[c_id + 1]))
+        
+        # Continuous
+        self.continuous_idx = []
+        for c_id in self.continuous_concept_idx:
+            self.continuous_idx.extend(range(self.cumulative_indices[c_id], self.cumulative_indices[c_id + 1]))
+
 
     def _check_collection(self, 
                           annotations: AxisAnnotation, 
@@ -106,22 +135,22 @@ class Predictor(pl.LightningModule):
         # Extract annotation properties
         metadata = annotations.metadata
         cardinalities = annotations.cardinalities
-        tasks = [c_meta['task'] for _, c_meta in metadata.items()]
+        types = [c_meta['type'] for _, c_meta in metadata.items()]
         
-        # Categorize concepts by task and cardinality
-        is_binary = [t == 'classification' and card == 1 for t, card in zip(tasks, cardinalities)]
-        is_categorical = [t == 'classification' and card > 1 for t, card in zip(tasks, cardinalities)]
-        is_regression = [t == 'regression' for t in tasks]
+        # Categorize concepts by type and cardinality
+        is_binary = [t == 'discrete' and card == 1 for t, card in zip(types, cardinalities)]
+        is_categorical = [t == 'discrete' and card > 1 for t, card in zip(types, cardinalities)]
+        is_continuous = [t == 'continuous' for t in types]
         
         has_binary = any(is_binary)
         has_categorical = any(is_categorical)
-        has_regression = any(is_regression)
-        all_same_task = all(t == tasks[0] for t in tasks)
+        has_continuous = any(is_continuous)
+        all_same_type = all(t == types[0] for t in types)
         
         # Determine required collection items
         needs_binary = has_binary
         needs_categorical = has_categorical
-        needs_regression = has_regression
+        needs_continuous = has_continuous
         
         # Helper to get collection item or None
         def get_item(path):
@@ -134,9 +163,9 @@ class Predictor(pl.LightningModule):
                 return None
         
         # Extract items from collection
-        binary = get_item(['classification', 'binary'])
-        categorical = get_item(['classification', 'categorical'])
-        regression = get_item(['regression'])
+        binary = get_item(['discrete', 'binary'])
+        categorical = get_item(['discrete', 'categorical'])
+        continuous = get_item(['continuous'])
         
         # Validation rules
         errors = []
@@ -145,18 +174,18 @@ class Predictor(pl.LightningModule):
         if all(is_binary):
             if annotations.is_nested:
                 errors.append("Annotations for all-binary concepts should NOT be nested.")
-            if not all_same_task:
-                errors.append("Annotations for all-binary concepts should share the same task.")
+            if not all_same_type:
+                errors.append("Annotations for all-binary concepts should share the same type.")
         
         elif all(is_categorical):
             if not annotations.is_nested:
                 errors.append("Annotations for all-categorical concepts should be nested.")
-            if not all_same_task:
-                errors.append("Annotations for all-categorical concepts should share the same task.")
+            if not all_same_type:
+                errors.append("Annotations for all-categorical concepts should share the same type.")
         
-        elif all(is_regression):
+        elif all(is_continuous):
             if annotations.is_nested:
-                errors.append("Annotations for all-regression concepts should NOT be nested.")
+                errors.append("Annotations for all-continuous concepts should NOT be nested.")
         
         elif has_binary or has_categorical:
             if not annotations.is_nested:
@@ -164,11 +193,11 @@ class Predictor(pl.LightningModule):
         
         # Check required items are present
         if needs_binary and binary is None:
-            errors.append(f"{collection_name} missing 'classification.binary' for binary concepts.")
+            errors.append(f"{collection_name} missing 'discrete.binary' for binary concepts.")
         if needs_categorical and categorical is None:
-            errors.append(f"{collection_name} missing 'classification.categorical' for categorical concepts.")
-        if needs_regression and regression is None:
-            errors.append(f"{collection_name} missing 'regression' for regression concepts.")
+            errors.append(f"{collection_name} missing 'discrete.categorical' for categorical concepts.")
+        if needs_continuous and continuous is None:
+            errors.append(f"{collection_name} missing 'continuous' for continuous concepts.")
         
         if errors:
             raise ValueError(f"{collection_name} validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
@@ -178,42 +207,42 @@ class Predictor(pl.LightningModule):
             warnings.warn(f"Binary {collection_name} will be ignored (no binary concepts).")
         if not needs_categorical and categorical is not None:
             warnings.warn(f"Categorical {collection_name} will be ignored (no categorical concepts).")
-        if not needs_regression and regression is not None:
-            warnings.warn(f"Regression {collection_name} will be ignored (no regression concepts).")
+        if not needs_continuous and continuous is not None:
+            warnings.warn(f"continuous {collection_name} will be ignored (no continuous concepts).")
         
         # Log configuration
         concept_types = []
         if has_binary and has_categorical:
-            concept_types.append("mixed classification")
+            concept_types.append("mixed discrete")
         elif has_binary:
             concept_types.append("all binary")
         elif has_categorical:
             concept_types.append("all categorical")
         
-        if has_regression:
-            concept_types.append("regression" if not (has_binary or has_categorical) else "with regression")
+        if has_continuous:
+            concept_types.append("continuous" if not (has_binary or has_categorical) else "with continuous")
         
         print(f"{collection_name} configuration validated ({', '.join(concept_types)}):")
         print(f"  Binary (card=1): {binary if needs_binary else 'unused'}")
         print(f"  Categorical (card>1): {categorical if needs_categorical else 'unused'}")
-        print(f"  Regression: {regression if needs_regression else 'unused'}")
+        print(f"  continuous: {continuous if needs_continuous else 'unused'}")
         
         # Return only needed items (others set to None)
         return (binary if needs_binary else None,
                 categorical if needs_categorical else None,
-                regression if needs_regression else None)
+                continuous if needs_continuous else None)
     
     def _setup_losses(self, loss_config: Mapping):
         """Setup and instantiate loss functions."""
         # Validate and extract needed losses
-        binary_cfg, categorical_cfg, regression_cfg = self._check_collection(
+        binary_cfg, categorical_cfg, continuous_cfg = self._check_collection(
             self.concept_annotations, loss_config, 'loss'
         )
         
         # Instantiate loss functions
         self.binary_loss_fn = instantiate_from_string(binary_cfg['path'], **binary_cfg.get('kwargs', {})) if binary_cfg else None
         self.categorical_loss_fn = instantiate_from_string(categorical_cfg['path'], **categorical_cfg.get('kwargs', {})) if categorical_cfg else None
-        self.regression_loss_fn = instantiate_from_string(regression_cfg['path'], **regression_cfg.get('kwargs', {})) if regression_cfg else None
+        self.continuous_loss_fn = instantiate_from_string(continuous_cfg['path'], **continuous_cfg.get('kwargs', {})) if continuous_cfg else None
 
     @staticmethod
     def _check_metric(metric):
@@ -228,49 +257,51 @@ class Predictor(pl.LightningModule):
             metrics_config = {}
         
         # Validate and extract needed metrics
-        binary_metrics_cfg, categorical_metrics_cfg, regression_metrics_cfg = self._check_collection(
+        binary_metrics_cfg, categorical_metrics_cfg, continuous_metrics_cfg = self._check_collection(
             self.concept_annotations, metrics_config, 'metrics'
         )
         
-        # Identify which concepts belong to which type
-        self.binary_concept_ids = [i for i, (t, c) in enumerate(zip(self.tasks, self.cardinalities)) 
-                                   if t == 'classification' and c == 1]
-        self.categorical_concept_ids = [i for i, (t, c) in enumerate(zip(self.tasks, self.cardinalities)) 
-                                        if t == 'classification' and c > 1]
-        self.regression_concept_ids = [i for i, t in enumerate(self.tasks) if t == 'regression']
-        
         # Initialize metric storage
-        self.summary_metrics = {}
-        self.perconcept_metrics = []
+        summary_metrics = {}
+        perconcept_metrics = []
         
         # Setup summary metrics (one per type group)
         if self.enable_summary_metrics:
-            if binary_metrics_cfg and self.binary_concept_ids:
-                self.summary_metrics['binary'] = self._instantiate_metric_dict(binary_metrics_cfg)
+            if binary_metrics_cfg:
+                summary_metrics['binary'] = self._instantiate_metric_dict(binary_metrics_cfg)
             
-            if categorical_metrics_cfg and self.categorical_concept_ids:
+            if categorical_metrics_cfg:
                 # For categorical, we'll average over individual concept metrics
-                self.summary_metrics['categorical'] = self._instantiate_metric_dict(
+                self.max_card = max([self.cardinalities[i] for i in self.categorical_concept_idx])
+                summary_metrics['categorical'] = self._instantiate_metric_dict(
                     categorical_metrics_cfg, 
-                    num_classes=max([self.cardinalities[i] for i in self.categorical_concept_ids])
+                    num_classes=self.max_card
                 )
             
-            if regression_metrics_cfg and self.regression_concept_ids:
-                self.summary_metrics['regression'] = self._instantiate_metric_dict(regression_metrics_cfg)
+            if continuous_metrics_cfg:
+                summary_metrics['continuous'] = self._instantiate_metric_dict(continuous_metrics_cfg)
         
         # Setup per-concept metrics (one per concept)
+        perconcept_metrics = {}
         if self.enable_perconcept_metrics:
-            for c_id, concept_name in enumerate(self.concept_names):
-                task = self.tasks[c_id]
+            if isinstance(self.enable_perconcept_metrics, bool):
+                self.concepts_to_trace = self.concept_names
+            elif isinstance(self.enable_perconcept_metrics, list):
+                self.concepts_to_trace = self.enable_perconcept_metrics
+            else:
+                raise ValueError("enable_perconcept_metrics must be either a bool or a list of concept names.")
+            for concept_name in self.concepts_to_trace:
+                c_id = self.concept_names.index(concept_name)
+                c_type = self.types[c_id]
                 card = self.cardinalities[c_id]
                 
                 # Select the appropriate metrics config for this concept
-                if task == 'classification' and card == 1:
+                if c_type == 'discrete' and card == 1:
                     metrics_cfg = binary_metrics_cfg
-                elif task == 'classification' and card > 1:
+                elif c_type == 'discrete' and card > 1:
                     metrics_cfg = categorical_metrics_cfg
-                elif task == 'regression':
-                    metrics_cfg = regression_metrics_cfg
+                elif c_type == 'continuous':
+                    metrics_cfg = continuous_metrics_cfg
                 else:
                     metrics_cfg = None
                 
@@ -279,17 +310,14 @@ class Predictor(pl.LightningModule):
                 if metrics_cfg is not None:
                     for metric_name, metric_dict in metrics_cfg.items():
                         kwargs = metric_dict.get('kwargs', {})
-                        if task == 'classification' and card > 1:
+                        if c_type == 'discrete' and card > 1:
                             kwargs['num_classes'] = card
                         concept_metric_dict[metric_name] = instantiate_from_string(metric_dict['path'], **kwargs)
                 
-                self.perconcept_metrics.append(concept_metric_dict)
-        else:
-            # Empty dicts for all concepts if per-concept metrics disabled
-            self.perconcept_metrics = [{} for _ in range(self.n_concepts)]
+                perconcept_metrics[concept_name] = concept_metric_dict
         
         # Create metric collections for train/val/test
-        self._create_metric_collections()
+        self._set_metrics(summary_metrics, perconcept_metrics)
     
     def _instantiate_metric_dict(self, metrics_cfg: Mapping, num_classes: int = None) -> dict:
         """Instantiate a dictionary of metrics from config."""
@@ -304,26 +332,23 @@ class Predictor(pl.LightningModule):
             metrics[metric_name] = instantiate_from_string(metric_path['path'], **kwargs)
         return metrics
 
-    def _create_metric_collections(self):
+    def _set_metrics(self, summary_metrics: Mapping = None, perconcept_metrics: Mapping = None):
         """Create MetricCollection for train/val/test from summary and per-concept metrics."""
         all_metrics = {}
         
         # Add summary metrics
-        if self.enable_summary_metrics:
-            for group_name, metric_dict in self.summary_metrics.items():
+        if summary_metrics:
+            for group_name, metric_dict in summary_metrics.items():
                 for metric_name, metric in metric_dict.items():
-                    key = f"{group_name}_{metric_name}"
+                    key = f"SUMMARY-{group_name}_{metric_name}"
                     all_metrics[key] = metric
         
         # Add per-concept metrics
-        if self.enable_perconcept_metrics:
-            for c_id, concept_name in enumerate(self.concept_names):
-                for metric_name, metric in self.perconcept_metrics[c_id].items():
+        if perconcept_metrics:
+            for concept_name, metric_dict in perconcept_metrics.items():
+                for metric_name, metric in metric_dict.items():
                     key = f"{concept_name}_{metric_name}"
                     all_metrics[key] = metric
-        
-        if not all_metrics:
-            all_metrics = {}
         
         # Create collections
         self.train_metrics = MetricCollection(
@@ -346,60 +371,63 @@ class Predictor(pl.LightningModule):
                          c_true: torch.Tensor,
                          binary_fn: Optional[Callable],
                          categorical_fn: Optional[Callable],
-                         regression_fn: Optional[Callable],
-                         is_metric: bool = False) -> Union[torch.Tensor, None]:
+                         continuous_fn: Optional[Callable],
+                         is_loss: bool) -> Union[torch.Tensor, None]:
         """
-        Apply loss or metric functions by looping over concepts.
+        Apply loss or metric functions by looping over concept groups.
         
         Args:
             c_hat: Predicted concepts
             c_true: Ground truth concepts
             binary_fn: Function to apply to binary concepts
             categorical_fn: Function to apply to categorical concepts
-            regression_fn: Function to apply to regression concepts
-            is_metric: If True, updates metrics; if False, computes loss
+            continuous_fn: Function to apply to continuous concepts
             
         Returns:
             For losses: scalar tensor
             For metrics: None (metrics are updated in-place)
         """
-        if not self.is_nested:
-            # Dense format: apply to all concepts at once
-            task = self.tasks[0]  # All tasks are the same in dense format
-            card = self.cardinalities[0]
-            
-            if task == 'classification' and card == 1 and binary_fn:
-                result = binary_fn(c_hat, c_true.float())
-            elif task == 'regression' and regression_fn:
-                result = regression_fn(c_hat, c_true)
+        if is_loss:
+            loss = 0.0
+
+        if binary_fn:
+            c_hat_binary = c_hat[:, self.binary_idx]
+            c_true_binary = c_true[:, self.binary_concept_idx].float()
+            if is_loss:
+                loss += binary_fn(c_hat_binary, c_true_binary)
             else:
-                result = None
+                binary_fn.update(c_hat_binary, c_true_binary)
+
+        if categorical_fn:
+            # Pad all tensors to max cardinality and stack
+            # FIXME: optimize this operation, could this for loop be avoided?
+            split_tuple = torch.split(c_hat[:, self.categorical_idx], 
+                                      [self.cardinalities[i] for i in self.categorical_concept_idx], dim=1)
+            padded_logits = [
+                torch.nn.functional.pad(logits, (0, self.max_card - logits.shape[1]), value=float('-inf'))
+                for logits in split_tuple
+            ]
+            c_hat_group = torch.cat(padded_logits, dim=0)
+            c_true_group = c_true[:, self.categorical_concept_idx].T.reshape(-1).long()
             
-            return None if is_metric else result
+            if is_loss:
+                loss += categorical_fn(c_hat_group, c_true_group)
+            else:
+                categorical_fn.update(c_hat_group, c_true_group)
+
+        if continuous_fn:
+            # TODO: verify correctness
+            c_hat_continuous = c_hat[:, self.continuous_idx]
+            c_true_continuous = c_true[:, self.continuous_concept_idx]
+            if is_loss:
+                loss += continuous_fn(c_hat_continuous, c_true_continuous)
+            else:
+                continuous_fn.update(c_hat_continuous, c_true_continuous)
+
+        if is_loss:  
+            return loss
         else:
-            # Nested format: loop over concepts with different sizes
-            concept_tensors = torch.split(c_hat, self.cardinalities, dim=1)
-            total_loss = 0.0 if not is_metric else None
-            
-            for c_id, concept_tensor in enumerate(concept_tensors):
-                task = self.tasks[c_id]
-                card = self.cardinalities[c_id]
-                c_true_i = c_true[:, c_id]
-                
-                if task == 'classification' and card == 1 and binary_fn:
-                    result = binary_fn(concept_tensor, c_true_i.float().unsqueeze(1))
-                    if not is_metric:
-                        total_loss += result
-                elif task == 'classification' and card > 1 and categorical_fn:
-                    result = categorical_fn(concept_tensor, c_true_i.long())
-                    if not is_metric:
-                        total_loss += result
-                elif task == 'regression' and regression_fn:
-                    result = regression_fn(concept_tensor, c_true_i.unsqueeze(1))
-                    if not is_metric:
-                        total_loss += result
-            
-            return total_loss
+            return None
 
     def _compute_loss(self, c_hat: torch.Tensor, c_true: torch.Tensor) -> torch.Tensor:
         """
@@ -416,8 +444,8 @@ class Predictor(pl.LightningModule):
             c_hat, c_true,
             self.binary_loss_fn,
             self.categorical_loss_fn,
-            self.regression_loss_fn,
-            is_metric=False
+            self.continuous_loss_fn, 
+            is_loss=True
         )
     
     def _update_metrics(self, c_hat: torch.Tensor, c_true: torch.Tensor, 
@@ -430,99 +458,68 @@ class Predictor(pl.LightningModule):
             c_true: Ground truth concepts
             metric_collection: MetricCollection to update
         """
-        # Update summary metrics (one per type group)
-        if self.enable_summary_metrics:
-            if not self.is_nested:
-                # Dense format: apply to all concepts at once
-                if self.binary_concept_ids:
-                    for metric_name in self.summary_metrics.get('binary', {}).keys():
-                        key = f"binary_{metric_name}"
-                        if key in metric_collection:
-                            metric_collection[key](c_hat, c_true.float())
+        for key in metric_collection:
+
+            # Update summary metrics (compute metrics relative to each group)
+            if self.enable_summary_metrics:
+                if 'SUMMARY-binary_' in key and self.binary_concept_idx:
+                    self._apply_fn_by_type(
+                        c_hat, c_true,
+                        binary_fn=metric_collection[key],
+                        categorical_fn=None,
+                        continuous_fn=None,
+                        is_loss=False
+                    )
+                    continue
                 
-                if self.regression_concept_ids:
-                    for metric_name in self.summary_metrics.get('regression', {}).keys():
-                        key = f"regression_{metric_name}"
-                        if key in metric_collection:
-                            metric_collection[key](c_hat, c_true)
-            else:
-                # Nested format: handle each type group
-                concept_tensors = torch.split(c_hat, self.cardinalities, dim=1)
+                elif 'SUMMARY-categorical_' in key and self.categorical_concept_idx:
+                    self._apply_fn_by_type(
+                        c_hat, c_true,
+                        binary_fn=None,
+                        categorical_fn=metric_collection[key],
+                        continuous_fn=None,
+                        is_loss=False
+                    )
+                    continue
                 
-                # Binary group
-                if self.binary_concept_ids:
-                    binary_hats = [concept_tensors[i] for i in self.binary_concept_ids]
-                    binary_trues = [c_true[:, i].float().unsqueeze(1) for i in self.binary_concept_ids]
-                    
-                    for metric_name in self.summary_metrics.get('binary', {}).keys():
-                        key = f"binary_{metric_name}"
-                        if key in metric_collection:
-                            # Update with all binary concepts at once
-                            for c_hat_i, c_true_i in zip(binary_hats, binary_trues):
-                                metric_collection[key](c_hat_i, c_true_i)
+                elif 'SUMMARY-continuous_' in key and self.continuous_concept_idx:
+                    self._apply_fn_by_type(
+                        c_hat, c_true,
+                        binary_fn=None,
+                        categorical_fn=None,
+                        continuous_fn=metric_collection[key],
+                        is_loss=False
+                    )
+                    continue
+
+            # Update per-concept metrics
+            if self.enable_perconcept_metrics:
+                # Extract concept name from key
+                key_noprefix = _remove_prefix(key, prefix=metric_collection.prefix)
+                concept_name = '_'.join(key_noprefix.split('_')[:-1])  # Handle multi-word concept names
+                if concept_name not in self.concept_names:
+                    concept_name = key_noprefix.split('_')[0]  # Fallback to simple split
                 
-                # Categorical group (average over concepts)
-                if self.categorical_concept_ids:
-                    for c_id in self.categorical_concept_ids:
-                        concept_tensor = concept_tensors[c_id]
-                        c_true_i = c_true[:, c_id].long()
+                c_id = self.concept_names.index(concept_name)
+                c_type = self.types[c_id]
+                card = self.cardinalities[c_id]
+
+                start_idx = self.cumulative_indices[c_id]
+                end_idx = self.cumulative_indices[c_id + 1]
+
+                if c_type == 'discrete' and card == 1:
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id:c_id+1].float())
+                elif c_type == 'discrete' and card > 1:
+                    # Extract logits for this categorical concept
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id].long())
+                elif c_type == 'continuous':
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id:c_id+1])
+            
                         
-                        for metric_name in self.summary_metrics.get('categorical', {}).keys():
-                            key = f"categorical_{metric_name}"
-                            if key in metric_collection:
-                                metric_collection[key](concept_tensor, c_true_i)
-                
-                # Regression group
-                if self.regression_concept_ids:
-                    regression_hats = [concept_tensors[i] for i in self.regression_concept_ids]
-                    regression_trues = [c_true[:, i].unsqueeze(1) for i in self.regression_concept_ids]
-                    
-                    for metric_name in self.summary_metrics.get('regression', {}).keys():
-                        key = f"regression_{metric_name}"
-                        if key in metric_collection:
-                            # Update with all regression concepts at once
-                            for c_hat_i, c_true_i in zip(regression_hats, regression_trues):
-                                metric_collection[key](c_hat_i, c_true_i)
         
-        # Update per-concept metrics
-        if self.enable_perconcept_metrics:
-            if not self.is_nested:
-                # Dense format: each concept is a single column
-                for c_id, concept_name in enumerate(self.concept_names):
-                    c_hat_i = c_hat[:, c_id:c_id+1]
-                    c_true_i = c_true[:, c_id:c_id+1]
-                    
-                    # Update all metrics for this concept
-                    for metric_name in self.perconcept_metrics[c_id].keys():
-                        key = f"{concept_name}_{metric_name}"
-                        if key in metric_collection:
-                            task = self.tasks[c_id]
-                            
-                            if task == 'classification':
-                                metric_collection[key](c_hat_i, c_true_i.float())
-                            elif task == 'regression':
-                                metric_collection[key](c_hat_i, c_true_i)
-            else:
-                # Nested format: concepts have different sizes
-                concept_tensors = torch.split(c_hat, self.cardinalities, dim=1)
-                
-                for c_id, (concept_name, concept_tensor) in enumerate(zip(self.concept_names, concept_tensors)):
-                    c_true_i = c_true[:, c_id]
-                    
-                    # Update all metrics for this concept
-                    for metric_name in self.perconcept_metrics[c_id].keys():
-                        key = f"{concept_name}_{metric_name}"
-                        if key in metric_collection:
-                            task = self.tasks[c_id]
-                            card = self.cardinalities[c_id]
-                            
-                            if task == 'classification' and card == 1:
-                                metric_collection[key](concept_tensor, c_true_i.float().unsqueeze(1))
-                            elif task == 'classification' and card > 1:
-                                metric_collection[key](concept_tensor, c_true_i.long())
-                            elif task == 'regression':
-                                metric_collection[key](concept_tensor, c_true_i.unsqueeze(1))
-          
     def log_metrics(self, metrics, **kwargs):
         self.log_dict(metrics, 
                       on_step=False, 
@@ -539,11 +536,6 @@ class Predictor(pl.LightningModule):
                  logger=True,
                  prog_bar=True,
                  **kwargs)
-    
-    # def on_after_batch_transfer(self, batch, dataloader_idx):
-    #     # add batch_size to batch
-    #     batch['batch_size'] = batch['x'].shape[0]
-    #     return batch
 
     def update_and_log_metrics(self, step, c_hat, c, batch_size):
         """Update and log metrics for the current step."""
@@ -552,21 +544,10 @@ class Predictor(pl.LightningModule):
         if len(collection) == 0:
             return  # No metrics configured
         
-        # Update metrics using unified approach
-        self._update_metrics(c_hat, c, collection)
-        
-        # Compute and log results
-        results = collection.compute()
-        if results:
-            formatted_results = {f"{step}/{k}": v for k, v in results.items()}
-            self.log_metrics(formatted_results, batch_size=batch_size)
-
-    # def forward(self, *args, **kwargs):
-    
-    # def predict(self, *args, **kwargs):
-    #     h = self.model(*args, **kwargs)
-    #     out = self.train_inference.query(h, model=self.model, **kwargs)
-    #     return out
+        # Update metrics by groups and per-concept
+        self._update_metrics(c_hat.detach(), c, collection)
+        # log metrics
+        self.log_metrics(collection, batch_size=batch_size)
 
     def _unpack_batch(self, batch):
         inputs = batch['inputs']
@@ -579,7 +560,7 @@ class Predictor(pl.LightningModule):
                       preprocess: bool = False, 
                       postprocess: bool = True,
                       **forward_kwargs):
-        inputs, concepts, transform = self._unpack_batch(batch)
+        inputs, _, transform = self._unpack_batch(batch)
 
         # apply batch preprocessing
         if preprocess:
@@ -590,7 +571,7 @@ class Predictor(pl.LightningModule):
             forward_kwargs = dict()
         
         # inference query
-        # TODO: train interventions
+        # TODO: implement train interventions using the context manager 'with ...'
         if self.train_inference_engine is None:
             # assume the full inference is implemented in the model forward
             out = self.model(**inputs)
@@ -602,14 +583,13 @@ class Predictor(pl.LightningModule):
             out = self.train_inference_engine.query(self.concept_names, 
                                                     evidence={'emb': features})
 
-        # apply batch postprocess
-        # TODO: implement scaling only for continuous / regression concepts 
+        # # TODO: implement scaling only for continuous concepts 
+        # # apply batch postprocess
         # if postprocess:
         #     transf = transform.get('c')
         #     if transf is not None:
         #         out = transf.inverse_transform(out)
         return out
-
 
     def shared_step(self, batch, step):
         c = c_loss = batch['concepts']['c']
@@ -620,16 +600,17 @@ class Predictor(pl.LightningModule):
         c_hat = self.model.filter_output_for_metric(out)
         if self.scale_concepts:
             raise NotImplementedError("Scaling of concepts is not implemented yet.")
+            # # TODO: implement scaling only for continuous concepts 
             # c_loss = batch.transform['c'].transform(c)
             # c_hat = batch.transform['c'].inverse_transform(c_hat)
 
         # Compute loss   
         loss = self._compute_loss(c_hat_loss, c_loss)
-    
+
         # Logging
         batch_size = batch['inputs']['x'].size(0)
-        self.update_and_log_metrics(step, c_hat, c, batch_size)
         self.log_loss(step, loss, batch_size=batch_size)
+        self.update_and_log_metrics(step, c_hat, c, batch_size)
 
         return loss
 
