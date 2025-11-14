@@ -3,3 +3,7 @@ defaults:
   - _self_
   
 _target_: "conceptarium.nn.models.blackbox.BlackBox"
+
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true

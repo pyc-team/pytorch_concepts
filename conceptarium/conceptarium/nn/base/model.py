@@ -2,10 +2,9 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple, Mapping, Dict
 import torch
 import torch.nn as nn
-from torch_concepts.distributions import Delta
 
-from torch_concepts import Variable, Annotations
-from torch_concepts.nn import BaseInference, Factor
+from torch_concepts import Annotations
+from torch_concepts.nn import BaseInference
 
 from ...nn.dense_layers import MLP
 from ...typing import BackboneType
@@ -28,26 +27,22 @@ class BaseModel(nn.Module, ABC):
         annotations = add_distribution_to_annotations(
             annotations, variable_distributions
         )
+        # store annotations, these will be used outside the model to track metrics and loss
+        # if you extend these annotations, keep in mind that
+        # the annotations used for metrics and loss computation should remain consistent
+        # you can use the 'preprocess_batch' method to adapt data to your model
         self.annotations = annotations
 
         self.embs_precomputed = embs_precomputed
         self.backbone = backbone
 
         if encoder_kwargs is not None:
-            self.encoder = MLP(input_size=input_size,
+            self._encoder = MLP(input_size=input_size,
                                **encoder_kwargs)
         else:
-            self.encoder = nn.Identity()
+            self._encoder = nn.Identity()
 
         self.encoder_out_features = encoder_kwargs.get('hidden_size') if encoder_kwargs else input_size
-
-        # init variable for the latent embedding from the encoder
-        self.emb = Variable("emb", 
-                            parents=[], 
-                            distribution=Delta, 
-                            size=self.encoder_out_features)
-        
-        self.emb_factor = Factor("emb", module_class=self.encoder)
 
     def __repr__(self) -> str:
         cls_name = self.__class__.__name__
@@ -62,17 +57,10 @@ class BaseModel(nn.Module, ABC):
             f"{cls_name}(backbone={backbone_repr})"
         )
 
-    # @property
-    # @abstractmethod
-    # def encoder(self) -> nn.Module:
-    #     """The encoder mapping inputs to latent code(s)."""
-    #     pass
-
-    # @property
-    # @abstractmethod
-    # def reasoner(self) -> nn.Module:  
-    #     """The reasoner operating in the concept space."""
-    #     pass
+    @property
+    def encoder(self) -> nn.Module:
+        """The encoder mapping backbone output to latent code(s)."""
+        return self._encoder
 
     # TODO: add decoder?
     # @property
@@ -88,7 +76,9 @@ class BaseModel(nn.Module, ABC):
                 **kwargs):
         """"""
         features = self.maybe_apply_backbone(x, backbone_kwargs)
-        return features
+        out = self.encoder(features)
+        return out
+
 
     # ------------------------------------------------------------------
     # Embeddings extraction helpers
@@ -119,8 +109,9 @@ class BaseModel(nn.Module, ABC):
 
         return self.backbone(x, **backbone_kwargs)
 
+
     # ------------------------------------------------------------------
-    # Task configuration helpers
+    # Output helpers
     # ------------------------------------------------------------------
     
     def filter_output_for_loss(self, out_concepts):
@@ -129,11 +120,36 @@ class BaseModel(nn.Module, ABC):
     def filter_output_for_metric(self, out_concepts):
         return out_concepts
     
+
     # ------------------------------------------------------------------
-    # Inference configuration helpers
+    # Model-specific data processing
+    # ------------------------------------------------------------------
+
+    def preprocess_batch(
+        self,
+        inputs: torch.Tensor,
+        concepts: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Model-specific preprocessing of a batch.
+
+        Parameters
+        ----------
+        inputs: Raw input tensor.
+        concepts: Ground-truth concepts tensor.
+
+        Returns
+        -------
+        preprocessed_inputs: Preprocessed input tensor.
+        preprocessed_concepts: Preprocessed concepts tensor.
+        """
+        return inputs, concepts
+
+
+    # ------------------------------------------------------------------
+    # Inference configuration
     # ------------------------------------------------------------------
     def set_inference(self, inference: BaseInference) -> None:
         self.inference = inference
 
     def set_and_instantiate_inference(self, inference: BaseInference) -> None:
-        self.inference = inference(model=self.model)
+        self.inference = inference(pgm=self.pgm)

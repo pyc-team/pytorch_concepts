@@ -37,10 +37,6 @@ def clean_empty_configs(cfg: DictConfig) -> DictConfig:
             cfg.update(llm = None)
         if not cfg.get('rag'):
             cfg.update(rag = None)
-    
-    if cfg.engine.train_inference['_target_'] is None:
-        with open_dict(cfg):
-            cfg.engine.update(train_inference = None)
     return cfg
 
 def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:

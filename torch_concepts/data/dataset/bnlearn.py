@@ -115,7 +115,7 @@ class BnLearnDataset(ConceptDataset):
                             for node in concept_names}
         
         cardinalities = [int(self.bn_model.get_cardinality()[node]) for node in concept_names]
-        # categorical concepts with card=2 are treated as Bernoulli (card=1)
+        # categorical concepts with card=2 will be treated as Bernoulli (card=1)
         cardinalities = [1 if card == 2 else card for card in cardinalities]
 
         annotations = Annotations({

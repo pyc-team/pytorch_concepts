@@ -2,6 +2,10 @@ defaults:
   - _commons
   - _self_
   
-_target_: "conceptarium.nn.models.cbm_factors.CBM"
+_target_: "conceptarium.nn.models.cbm.CBM_factors"
 
 task_names: ${dataset.default_task_names}
+
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true
