@@ -1,6 +1,5 @@
 encoder_kwargs:
   hidden_size: 64
-  # output_size: 16
   n_layers: 1
   activation: leaky_relu
   dropout: 0.2

@@ -470,6 +470,7 @@ class Predictor(pl.LightningModule):
                         continuous_fn=None,
                         is_loss=False
                     )
+                    continue
                 
                 elif 'SUMMARY-categorical_' in key and self.categorical_concept_idx:
                     self._apply_fn_by_type(
@@ -479,6 +480,7 @@ class Predictor(pl.LightningModule):
                         continuous_fn=None,
                         is_loss=False
                     )
+                    continue
                 
                 elif 'SUMMARY-continuous_' in key and self.continuous_concept_idx:
                     self._apply_fn_by_type(
@@ -488,35 +490,35 @@ class Predictor(pl.LightningModule):
                         continuous_fn=metric_collection[key],
                         is_loss=False
                     )
+                    continue
 
-                else:
-                    # Update per-concept metrics
-                    if self.enable_perconcept_metrics:
-                        # Extract concept name from key
-                        key_noprefix = _remove_prefix(key, prefix=metric_collection.prefix)
-                        concept_name = '_'.join(key_noprefix.split('_')[:-1])  # Handle multi-word concept names
-                        if concept_name not in self.concept_names:
-                            concept_name = key_noprefix.split('_')[0]  # Fallback to simple split
+            # Update per-concept metrics
+            if self.enable_perconcept_metrics:
+                # Extract concept name from key
+                key_noprefix = _remove_prefix(key, prefix=metric_collection.prefix)
+                concept_name = '_'.join(key_noprefix.split('_')[:-1])  # Handle multi-word concept names
+                if concept_name not in self.concept_names:
+                    concept_name = key_noprefix.split('_')[0]  # Fallback to simple split
+                
+                c_id = self.concept_names.index(concept_name)
+                c_type = self.types[c_id]
+                card = self.cardinalities[c_id]
+
+                start_idx = self.cumulative_indices[c_id]
+                end_idx = self.cumulative_indices[c_id + 1]
+
+                if c_type == 'discrete' and card == 1:
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id:c_id+1].float())
+                elif c_type == 'discrete' and card > 1:
+                    # Extract logits for this categorical concept
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id].long())
+                elif c_type == 'continuous':
+                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
+                                                  c_true[:, c_id:c_id+1])
+            
                         
-                        c_id = self.concept_names.index(concept_name)
-                        c_type = self.types[c_id]
-                        card = self.cardinalities[c_id]
-
-                        start_idx = self.cumulative_indices[c_id]
-                        end_idx = self.cumulative_indices[c_id + 1]
-
-                        if c_type == 'discrete' and card == 1:
-                            metric_collection[key](c_hat[:, start_idx:end_idx], 
-                                                   c_true[:, c_id:c_id+1].float())
-                        elif c_type == 'discrete' and card > 1:
-                            # Extract logits for this categorical concept
-                            metric_collection[key](c_hat[:, start_idx:end_idx], 
-                                                   c_true[:, c_id].long())
-                        elif c_type == 'continuous':
-                            metric_collection[key](c_hat[:, start_idx:end_idx], 
-                                                   c_true[:, c_id:c_id+1])
-                    
-                            
         
     def log_metrics(self, metrics, **kwargs):
         self.log_dict(metrics, 
@@ -558,7 +560,7 @@ class Predictor(pl.LightningModule):
                       preprocess: bool = False, 
                       postprocess: bool = True,
                       **forward_kwargs):
-        inputs, concepts, transform = self._unpack_batch(batch)
+        inputs, _, transform = self._unpack_batch(batch)
 
         # apply batch preprocessing
         if preprocess:
@@ -604,7 +606,7 @@ class Predictor(pl.LightningModule):
 
         # Compute loss   
         loss = self._compute_loss(c_hat_loss, c_loss)
-    
+
         # Logging
         batch_size = batch['inputs']['x'].size(0)
         self.log_loss(step, loss, batch_size=batch_size)

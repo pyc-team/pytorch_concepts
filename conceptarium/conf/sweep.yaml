@@ -11,15 +11,10 @@ hydra:
       # blackbox, cbm, cem, cgm, c2bm
       model: cbm_factors
       # asia, sachs, insurance, alarm, hailfinder, pigs, andes
-      dataset: asia #, sachs, insurance
+      dataset: asia
       seed: 1
 
 # load_data_embeddings: true
-
-# dataset:
-#   # concept_subset: ['asia', 'dysp']
-#   concept_subset: ['Akt', 'Mek', 'PKC']
-#   batch_size: 4
 
 engine:
   enable_summary_metrics: true
@@ -32,7 +27,7 @@ engine:
 trainer:
   logger: null
   devices: [0]
-  max_epochs: 20
+  max_epochs: 500
   patience: 30
 
 notes: test
