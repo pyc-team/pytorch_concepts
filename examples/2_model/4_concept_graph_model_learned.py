@@ -1,6 +1,5 @@
-from copy import deepcopy
-
 import torch
+from copy import deepcopy
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
@@ -8,7 +7,7 @@ from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, Propagator, \
     ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearPredictor, GraphModel, COSMOGraphLearner, ProbabilisticGraphicalModel
+    HyperLinearPredictor, GraphModel, WANDAGraphLearner
 
 
 def main():
@@ -49,13 +48,13 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=13),
-                                   internal_exogenous=Propagator(ExogEncoder, embedding_size=13),
+                                   source_exogenous=Propagator(ExogEncoder, embedding_size=11),
+                                   internal_exogenous=Propagator(ExogEncoder, embedding_size=7),
                                    encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(ProbEncoderFromExog, embedding_size=11))
+                                   predictor=Propagator(HyperLinearPredictor, embedding_size=20),)
 
     # graph learning init
-    graph_learner = COSMOGraphLearner(concept_names, task_names, hard_threshold=True, temperature=0.01)
+    graph_learner = WANDAGraphLearner(concept_names, task_names)
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.pgm, graph_learner)
@@ -89,27 +88,41 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     with torch.no_grad():
+        print("=== Learned Graph ===")
         print(graph_learner.weighted_adj)
+        print()
 
         concept_model_new = inference_engine.unrolled_pgm()
-        inference_engine = DeterministicInference(concept_model_new)
+        # identify available query concepts in the unrolled model
         query_concepts = [c for c in query_concepts if c in inference_engine.available_query_vars]
+        concept_idx = {v: i for i, v in enumerate(concept_names)}
+        reverse_c2t_mapping = dict(zip(task_names, concept_names))
+        query_concepts = sorted(query_concepts, key=lambda x: concept_idx[x] if x in concept_idx else concept_idx[reverse_c2t_mapping[x]])
 
+        inference_engine = DeterministicInference(concept_model_new)
+
+        print("=== Unrolled Model Predictions ===")
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
-
         task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
         print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
 
-        intervened_concept = query_concepts[0]
 
         print("=== Interventions ===")
+        intervened_concept = query_concepts[0]
+        if hasattr(concept_model_new.concept_to_factor[intervened_concept].module_class, 'encoder'):
+            layer_name = f"{intervened_concept}.encoder"
+        elif hasattr(concept_model_new.concept_to_factor[intervened_concept].module_class, 'hypernet'):
+            layer_name = f"{intervened_concept}"
+        else:
+            raise NotImplementedError("Intervention layer not found in either encoder or predictor.")
+
         int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation([intervened_concept])}), subset=[intervened_concept])
         int_strategy_c1 = DoIntervention(model=concept_model_new.factor_modules, constants=-10)
         with intervention(policies=[int_policy_c1],
                           strategies=[int_strategy_c1],
-                          on_layers=[f"{intervened_concept}.encoder"],
+                          on_layers=[layer_name],
                           quantiles=[1]):
             cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
             task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
@@ -121,7 +134,7 @@ def main():
             int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factor_modules, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=[int_policy_c1],
                               strategies=[int_strategy_c1],
-                              on_layers=[f"{intervened_concept}.encoder"],
+                              on_layers=[layer_name],
                               quantiles=[1]):
                 cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
                 task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
