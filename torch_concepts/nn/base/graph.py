@@ -1,5 +1,6 @@
 from typing import List
 
+import torch
 import torch.nn as nn
 
 from abc import abstractmethod, ABC
@@ -17,12 +18,7 @@ class BaseGraphLearner(nn.Module, ABC):
         self.col_labels = col_labels
         self.n_labels = len(row_labels) # TODO: check what happens when cardinality > 1
 
-    @property
-    def model_graph(self) -> ConceptGraph:
+    @abstractmethod
+    def weighted_adj(self) -> torch.Tensor:
         # Return the model's graph representation
         return self._model_graph
-
-    @abstractmethod
-    def forward(self, x):
-        # Define the forward pass logic here
-        pass

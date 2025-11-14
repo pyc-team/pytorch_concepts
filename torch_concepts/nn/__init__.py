@@ -18,7 +18,7 @@ from .modules.predictors.embedding import MixProbExogPredictor
 from .modules.predictors.hypernet import HyperLinearPredictor
 from .modules.selector import MemorySelector
 
-from .modules.cosmo import COSMOGraphLearner
+from .modules.wanda import WANDAGraphLearner
 
 from .modules.models.factor import Factor
 from .modules.models.pgm import ProbabilisticGraphicalModel
@@ -71,7 +71,7 @@ __all__ = [
     "MemorySelector",
 
     # COSMO
-    "COSMOGraphLearner",
+    "WANDAGraphLearner",
 
     # Models
     "Factor",
