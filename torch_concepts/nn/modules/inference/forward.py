@@ -9,6 +9,7 @@ from torch_concepts import Variable
 from torch_concepts.nn import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
+from .intervention import _InterventionWrapper
 from ..models.pgm import ProbabilisticGraphicalModel
 from ...base.inference import BaseInference
 
@@ -84,7 +85,7 @@ class ForwardInference(BaseInference):
         Returns (concept_name, output_tensor) without mutating `results`.
         """
         concept_name = var.concepts[0]
-        factor = self.pgm.get_factor_of_variable(concept_name)
+        factor = self.pgm.get_module_of_concept(concept_name)
 
         if factor is None:
             raise RuntimeError(f"Missing factor for variable/concept: {concept_name}")
@@ -182,7 +183,12 @@ class ForwardInference(BaseInference):
                           parent_latent: Union[List[torch.Tensor], torch.Tensor] = None,
                           parent_logits: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         parent_kwargs = {}
-        sig = inspect.signature(factor.module_class.forward)
+        if isinstance(factor.module_class, _InterventionWrapper):
+            forward_to_check = factor.module_class.original.module_class.forward
+        else:
+            forward_to_check = factor.module_class.forward
+
+        sig = inspect.signature(forward_to_check)
         params = sig.parameters
         allowed = {
             name for name, p in params.items()
@@ -192,7 +198,7 @@ class ForwardInference(BaseInference):
             )
         }
         if allowed not in [{'logits'}, {'logits', 'embedding'}, {'logits', 'exogenous'}, {'embedding'}, {'exogenous'}]:
-            # this is a standard torch layer: concatenate all inputs into 'x'
+             #standard torch module
             parent_kwargs[allowed.pop()] = torch.cat(parent_logits + parent_latent, dim=-1)
         else:
             # this is a PyC layer: separate logits and latent inputs

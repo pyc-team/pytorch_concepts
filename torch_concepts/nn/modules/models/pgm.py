@@ -42,35 +42,30 @@ def _reinitialize_with_new_param(instance, key, new_value):
     return new_instance
 
 
-class ProbabilisticGraphicalModel(nn.Module):  # 1. Inherit from nn.Module
+class ProbabilisticGraphicalModel(nn.Module):
     def __init__(self, variables: List[Variable], factors: List[Factor]):
-        super().__init__()  # Initialize nn.Module base class
+        super().__init__()
         self.variables = variables
-        self.factors = factors
+
+        # single source of truth: concept -> module
+        self.factors = nn.ModuleDict()
+
         self.concept_to_variable: Dict[str, Variable] = {}
-        self.concept_to_factor: Dict[str, Factor] = {}
 
-        # 2. Add a ModuleDict to store the actual PyTorch modules from the factors
-        self.factor_modules = nn.ModuleDict()
+        # initialize using the input factors list; we don't store that list
+        self._initialize_model(factors)
 
-        self._initialize_model()
-
-    def _initialize_model(self):
+    def _initialize_model(self, input_factors: List[Factor]):
         new_variables = []
-        new_factors = []
-
         temp_concept_to_variable: Dict[str, Variable] = {}
 
-        # ... (Variable initialization logic remains the same) ...
-        # (Assuming the original Variable initialization is correct and omitted here for brevity)
-
+        # ---- Variable splitting (unchanged) ----
         for var in self.variables:
             if len(var.concepts) > 1:
                 for concept in var.concepts:
                     atomic_var = var[[concept]]
                     atomic_var.parents = var.parents
                     atomic_var.metadata = var.metadata.copy()
-
                     new_variables.append(atomic_var)
                     temp_concept_to_variable[concept] = atomic_var
             else:
@@ -80,44 +75,24 @@ class ProbabilisticGraphicalModel(nn.Module):  # 1. Inherit from nn.Module
         self.variables = new_variables
         self.concept_to_variable = temp_concept_to_variable
 
-        # New list to temporarily hold new Factor objects
-        temp_new_factors = []
-
-        for factor in self.factors:
+        # ---- Factor modules: fill only self.factors (ModuleDict) ----
+        for factor in input_factors:
             original_module = factor.module_class
-            # original_module_class = original_module.__class__ # This line isn't used
-
             if len(factor.concepts) > 1:
                 for concept in factor.concepts:
-                    # atomic_module = copy.deepcopy(original_module) # Original code
-
-                    # 3. Store the module in ModuleDict using the concept as the key
-                    atomic_module = copy.deepcopy(original_module)
-                    self.factor_modules[concept] = atomic_module
-
-                    # Create the Factor object with the module
-                    atomic_factor = Factor(concepts=[concept], module_class=atomic_module)
-                    temp_new_factors.append(atomic_factor)
+                    self.factors[concept] = copy.deepcopy(original_module)
             else:
-                concept = factor.concepts[0]  # Get the single concept
-                # 3. Store the module in ModuleDict using the concept as the key
-                self.factor_modules[concept] = original_module
-                temp_new_factors.append(factor)  # The original factor object is kept
+                concept = factor.concepts[0]
+                self.factors[concept] = factor
 
-        self.factors = temp_new_factors  # Update the instance's factors list
-
-        # ... (Parent resolution logic remains the same) ...
-        # (Assuming the original Parent resolution is correct and omitted here for brevity)
-
+        # ---- Parent resolution (unchanged) ----
         for var in self.variables:
             resolved_parents = []
-
             for parent_ref in var.parents:
                 if isinstance(parent_ref, str):
                     if parent_ref not in self.concept_to_variable:
                         raise ValueError(f"Parent concept '{parent_ref}' not found in any variable.")
                     resolved_parents.append(self.concept_to_variable[parent_ref])
-
                 elif isinstance(parent_ref, Variable):
                     resolved_parents.append(parent_ref)
                 else:
@@ -125,43 +100,38 @@ class ProbabilisticGraphicalModel(nn.Module):  # 1. Inherit from nn.Module
 
             var.parents = list({id(p): p for p in resolved_parents}.values())
 
-        for factor in self.factors:
-            if not factor.concepts:
-                raise ValueError("Factor must model at least one concept.")
-
-            target_concept = factor.concepts[0]
-            target_var = self.concept_to_variable[target_concept]
-
-            factor.variable = target_var
-            factor.parents = target_var.parents
-            self.concept_to_factor[target_concept] = factor
-
     def get_by_distribution(self, distribution_class: Type[Distribution]) -> List[Variable]:
         return [var for var in self.variables if var.distribution is distribution_class]
 
-    def get_factor_of_variable(self, concept_name: str) -> Optional[Factor]:
-        return self.concept_to_factor.get(concept_name)
-
+    # concept_to_factor removed; if you need the module, use the method below
     def get_variable_parents(self, concept_name: str) -> List[Variable]:
         var = self.concept_to_variable.get(concept_name)
-        if var:
-            return var.parents
-        return []
+        return var.parents if var else []
 
     def get_module_of_concept(self, concept_name: str) -> Optional[nn.Module]:
-        """Easily get the model (module_class) for a given concept name."""
-        return self.concept_to_module.get(concept_name)
+        """Return the nn.Module for a given concept name."""
+        return self.factors[concept_name] if concept_name in self.factors else None
+
+    def _make_temp_factor(self, concept: str, module: nn.Module) -> Factor:
+        """
+        Small helper to reuse existing Factor.build_* logic without keeping a Factor list.
+        """
+        f = Factor(concepts=[concept], module_class=module)
+        target_var = self.concept_to_variable[concept]
+        f.variable = target_var
+        f.parents = target_var.parents
+        return f
 
     def build_potentials(self):
         potentials = {}
-        for factor in self.factors:
-            concept = factor.concepts[0]
-            potentials[concept] = factor.build_potential()
+        for concept, module in self.factors.items():
+            temp_factor = self._make_temp_factor(concept, module)
+            potentials[concept] = temp_factor.build_potential()
         return potentials
 
     def build_cpts(self):
         cpts = {}
-        for factor in self.factors:
-            concept = factor.concepts[0]
-            cpts[concept] = factor.build_cpt()
+        for concept, module in self.factors.items():
+            temp_factor = self._make_temp_factor(concept, module)
+            cpts[concept] = temp_factor.build_cpt()
         return cpts

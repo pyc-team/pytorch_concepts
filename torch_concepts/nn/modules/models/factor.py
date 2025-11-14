@@ -10,7 +10,7 @@ from ....concepts.variable import Variable
 from torch_concepts.distributions import Delta
 
 
-class Factor:
+class Factor(nn.Module):
     def __new__(cls, concepts: Union[str, List[str]],
                 module_class: Union[nn.Module, List[nn.Module]]):
 
@@ -26,18 +26,14 @@ class Factor:
         else:
             module_list = module_class
 
-        # Validation checks for list length
         if len(module_list) != n_concepts:
-            raise ValueError(
-                "If concepts list has length N > 1, module_class must either be a single value or a list of length N.")
+            raise ValueError("If concepts list has length N > 1, module_class must either be a single value or a list of length N.")
 
-        # Create and return a list of individual Factor instances
         new_factors = []
         for i in range(n_concepts):
-            # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
             instance = object.__new__(cls)
             instance.__init__(
-                concepts=[concepts[i]],  # Pass as single-element list
+                concepts=[concepts[i]],
                 module_class=copy.deepcopy(module_list[i])
             )
             new_factors.append(instance)
@@ -45,7 +41,8 @@ class Factor:
 
     def __init__(self, concepts: Union[str, List[str]],
                  module_class: Union[nn.Module, List[nn.Module]]):
-        # Ensure concepts is a list
+        super().__init__()
+
         if isinstance(concepts, str):
             concepts = [concepts]
 

@@ -5,6 +5,7 @@ from typing import List, Sequence, Union, Optional
 import torch
 import torch.nn as nn
 
+from ... import Factor
 from ...base.inference import BaseIntervention
 
 # ---------------- core helpers ----------------
@@ -18,7 +19,13 @@ def _get_submodule(model: nn.Module, dotted: str) -> nn.Module:
 def _set_submodule(model: nn.Module, dotted: str, new: nn.Module) -> None:
     parts = dotted.split(".")
     parent = model.get_submodule(".".join(parts[:-1])) if len(parts) > 1 else model
-    setattr(parent, parts[-1], new)
+    if len(parts) > 1:
+        setattr(parent, parts[-1], new)
+    elif len(parts) == 1:
+        setattr(parent, parts[0], Factor(concepts="__intervention__", module_class=new))
+    else:
+        raise ValueError("Dotted path must not be empty")
+
 
 def _as_list(x, n: int):
     # broadcast a singleton to length n; if already a list/tuple, validate length
@@ -47,8 +54,8 @@ class RewiringIntervention(BaseIntervention):
                 self.orig = orig
                 self.register_buffer("mask", mask_.clone())
 
-            def forward(self, x: torch.Tensor) -> torch.Tensor:
-                y = self.orig(x)  # [B, F]
+            def forward(self, **kwargs) -> torch.Tensor:
+                y = self.orig(**kwargs)  # [B, F]
                 assert y.dim() == 2, "RewiringIntervention expects 2-D tensors [Batch, N_concepts]"
                 t = parent._make_target(y)  # [B, F]
                 m = self.mask.to(dtype=y.dtype)
@@ -204,8 +211,8 @@ class _InterventionWrapper(nn.Module):
         mask = (mask - soft_proxy).detach() + soft_proxy
         return mask
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.original(x)
+    def forward(self, **kwargs) -> torch.Tensor:
+        y = self.original(**kwargs)
         logits = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
         mask = self._build_mask(logits, self.policy.subset)  # 1 keep, 0 replace
 
@@ -214,14 +221,14 @@ class _InterventionWrapper(nn.Module):
             def __init__(self, y_cached: torch.Tensor):
                 super().__init__()
                 self.y_cached = y_cached        # keep graph-connected tensor; do NOT detach
-            def forward(self, _x: torch.Tensor) -> torch.Tensor:
+            def forward(self, **kwargs) -> torch.Tensor:
                 return self.y_cached
 
         cached = _CachedOutput(y)
 
         # 4) use existing strategy API; no changes to GroundTruthIntervention
         replacer = self.strategy.query(cached, mask)
-        return replacer(x)
+        return replacer(**kwargs)
 
 # ---------------- context manager (now multi-layer) ----------------
 
