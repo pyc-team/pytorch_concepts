@@ -47,6 +47,12 @@ You can install PyC along with all its dependencies from
 
 ```pip install pytorch-concepts ```
 
+and then import it in your Python scripts as:
+
+```python
+import torch_concepts as pyc
+```
+
 - Examples: https://github.com/pyc-team/pytorch_concepts/tree/master/examples
 - Book: https://pyc-team.github.io/pyc-book/
 
@@ -185,31 +191,46 @@ To be completed...
 
 
 ## No-code APIs
-- `BaseModel`: A base class you can extend to build new concept bottlenecks.
-- `ConceptBottleneckModel`: A vanilla concept bottleneck model from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
-- `ResidualConceptBottleneckModel`: A residual concept bottleneck model composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
-- `ConceptEmbeddingModel`: A bottleneck of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
-- `StochasticConceptBottleneckModel`: A bottleneck of supervised concepts with their covariance matrix ["Stochastic Concept Bottleneck Models"](https://arxiv.org/pdf/2406.19272) (NeurIPS 2024).
+All models implemented in PyC can be instantiated with 1 line of code inheriting from the `BaseModel` class.
+
+Out-of-the-box models include:
+
+| Model                              | Description | Reference |
+|------------------------------------| --- |  --- |
+| `ConceptBottleneckModel`           | Vanilla concept bottleneck model. | ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020) |
+| `ResidualConceptBottleneckModel`   | Residual concept bottleneck model with supervised concepts and residual unsupervised embedding. | ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop) |
+| `ConceptEmbeddingModel`            | Concept embedding bottleneck model. | ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022) |
+| `StochasticConceptBottleneckModel` | Stochastic concept bottleneck model with concept covariance matrix. | ["Stochastic Concept Bottleneck Models"](https://arxiv.org/pdf/2406.19272) (NeurIPS 2024) |
 
 
 ## Evaluation APIs
 
 ### Datasets
 
-- `TrafficLights`: A dataset loader for traffic scenarios representing road intersections.
-- `ToyDataset`: A toy dataset loader. XOR, Trigonometry, and Dot datasets are from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022). The Checkmark dataset is from ["Causal Concept Graph Models: Beyond Causal Opacity in Deep Learning"](https://arxiv.org/abs/2405.16507) (ICLR 2025).
-- `CompletenessDataset`: A dataset loader for the completeness score from ["Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?"](https://arxiv.org/abs/2401.13544) (NeurIPS 2024).
-- `ColorMNISTDataset`: A dataset loader for MNIST Even/Odd where colors act as confounders inspired from ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165) and ["Interpretable Concept-Based Memory Reasoning"](https://arxiv.org/abs/2407.15527) (NeurIPS 2024).
-- `CelebA`: A dataset loader for CelebA dataset with attributes as concepts from ["Deep Learning Face Attributes in the Wild"](https://arxiv.org/abs/1411.7766) (ICCV 2015).
-- `CUB`: A dataset loader for CUB dataset to predict bird species from ["The Caltech-UCSD Birds-200-2011 Dataset"](https://authors.library.caltech.edu/records/cvm3y-5hh21).
-- `AwA2`: A dataset loader for AwA2 dataset where concepts are animal attributes from ["Zero-Shot Learning - A Comprehensive Evaluation of the Good, the Bad and the Ugly"](https://arxiv.org/abs/1707.00600) (CVPR 2017).
-- `CEBaB`: A dataset loader for CEBaB dataset where concepts describe restaurant reviews from ["CEBaB: Estimating the Causal Effects of Real-World Concepts on NLP Model Behavior"](https://arxiv.org/abs/2205.14140) (NeurIPS 2022).
+Out-of-the-box datasets include:
+
+| Dataset               | Description                                                                                                                                                                                                                                                                                                                                                        | Reference                                                                                                                                                                                                                                                                                            |
+|-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TrafficLights`       | A dataset loader for traffic scenarios representing road intersections.                                                                                                                                                                                                                                                                                            | N/A                                                                                                                                                                                                                                                                                                  |
+| `ToyDataset`          | A toy dataset loader (XOR, Trigonometry, Dot, and Checkmark). | ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022) and ["Causal Concept Graph Models: Beyond Causal Opacity in Deep Learning"](https://arxiv.org/abs/2405.16507) (ICLR 2025). |
+| `CompletenessDataset` | A dataset loader to assess the impact of concept completeness on model performance.                                                                                                                                                                                                                                                        | ["Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?"](https://arxiv.org/abs/2401.13544) (NeurIPS 2024)                                                                                                                                                                        |
+| `ColorMNISTDataset`   | A dataset loader for MNIST Even/Odd where colors act as confounders. | ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165) and ["Interpretable Concept-Based Memory Reasoning"](https://arxiv.org/abs/2407.15527) (NeurIPS 2024). |
+| `CelebA`              | A dataset loader for CelebA dataset with attributes as concepts.                                                                                                                                                                                                                                                                                            | ["Deep Learning Face Attributes in the Wild"](https://arxiv.org/abs/1411.7766) (ICCV 2015)                                                                                                                                                                                                                                  |
+| `CUB`                 | A dataset loader for CUB dataset to predict bird species. | ["The Caltech-UCSD Birds-200-2011 Dataset"](https://authors.library.caltech.edu/records/cvm3y-5hh21). |
+| `AwA2`                | A dataset loader for AwA2 dataset where concepts are animal attributes.                                                                                                                                                                                                                                                                                            | ["Zero-Shot Learning - A Comprehensive Evaluation of the Good, the Bad and the Ugly"](https://arxiv.org/abs/1707.00600) (CVPR 2017)                                                                                                                                                                                                                                  |
+| `CEBaB`               | A dataset loader for CEBaB dataset where concepts describe restaurant reviews. | ["CEBaB: Estimating the Causal Effects of Real-World Concepts on NLP Model Behavior"](https://arxiv.org/abs/2205.14140) (NeurIPS 2022). |
+
 
 ### Metrics
 
-- `intervention_score`: A score measuring the effectiveness of concept interventions from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
-- `completeness_score`: A score measuring concept completeness from ["On Completeness-aware Concept-Based Explanations in Deep Neural Networks"](https://arxiv.org/abs/1910.07969) (NeurIPS 2020).
-- `cace_score`: A score measuring causal concept effects (CaCE) from ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165).
+Out-of-the-box metrics include:
+
+| Metric                 | Description                                                                                                                                                                                                                       | Reference                                                                                                                                                                                                                           |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `intervention_score`      | A score measuring the effectiveness of concept interventions from Concept Bottleneck Models.                                                                                                                                    | ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020)                                                                                                                                                          |
+| `completeness_score`      | A score measuring concept completeness from On Completeness-aware Concept-Based Explanations in Deep Neural Networks.                                                                                                                  | ["On Completeness-aware Concept-Based Explanations in Deep Neural Networks"](https://arxiv.org/abs/1910.07969) (NeurIPS 2020)                                                                                                                                                          |
+| `cace_score`              | A score measuring causal concept effects (CaCE) from Explaining Classifiers with Causal Concept Effect (CaCE).                                                                                                                        | ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165)                                                                                                                                                          |
+
 
 # Contributing
 
