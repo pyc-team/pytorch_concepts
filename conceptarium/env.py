@@ -5,7 +5,7 @@ from pathlib import Path
 PROJECT_NAME = "conceptarium" 
 
 # specify your wandb identity (used for logging)
-WANDB_ENTITY = "" 
+WANDB_ENTITY = "gdefe" 
 
 CACHE = Path(
     env.get(
@@ -17,6 +17,9 @@ CACHE = Path(
     )
 ).expanduser()
 CACHE.mkdir(exist_ok=True)
+
+# specify a different path for datasets if needed
+DATA_ROOT = CACHE
 
 # if needed, set your huggingface token here
 HUGGINGFACEHUB_TOKEN=''   
