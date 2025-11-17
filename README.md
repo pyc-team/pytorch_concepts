@@ -12,7 +12,6 @@ The name of the library stands for both
 - $P(y|C)$: as the main purpose of the library is to support sound probabilistic modeling of the conditional distribution of targets $y$ given concepts $C$.
 
 
-- [More About PyTorch](#more-about-pytorch)
 - [Quick start](#quick-start)
 - [PyC software stack](#pyc-software-stack)
 - [Design principles](#design-principles)
@@ -121,14 +120,6 @@ At this API level, there are two types of inference that can be performed:
   logits_tasks = concept_bottleneck_model['predictor'](logits=logits_concepts)
   ```
 
-int_policy_c = UniformPolicy(out_features=c_train.shape[1])
-    int_strategy_c = GroundTruthIntervention(model=encoder_layer, ground_truth=torch.logit(c_train, eps=1e-6))
-
-    print("Uncertainty + Ground Truth Intervention:")
-    with intervention(policies=int_policy_c,
-                      strategies=int_strategy_c,
-                      target_concepts=[0, 1]) as new_encoder_layer:
-
 - **Interventions**: interventions are context managers that temporarily modify a layer.
   **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept logits to a constant value:
   ```python
@@ -232,6 +223,8 @@ Out-of-the-box metrics include:
 | `cace_score`              | A score measuring causal concept effects (CaCE) from Explaining Classifiers with Causal Concept Effect (CaCE).                                                                                                                        | ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165)                                                                                                                                                          |
 
 
+---
+
 # Contributing
 
 - Use the `dev` branch to write and test your contributions locally.
@@ -240,9 +233,14 @@ Out-of-the-box metrics include:
 - Make sure all tests pass before submitting the pull request.
 - Submit a pull request to the `main` branch.
 
+
+---
+
 # PyC Book
 
 You can find further reading materials and tutorials in our book [Concept-based Interpretable Deep Learning in Python](https://pyc-team.github.io/pyc-book/).
+
+---
 
 # Authors
 
@@ -255,6 +253,8 @@ You can find further reading materials and tutorials in our book [Concept-based 
 - [Francesco Giannini](https://www.francescogiannini.eu/), Scuola Normale Superiore di Pisa (IT).
 - [Giuseppe Marra](https://www.giuseppemarra.com/), KU Leuven (BE).
 
+---
+
 # Licence
 
 Copyright 2024 Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra.
@@ -265,6 +265,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 See the License for the specific language governing permissions and limitations under the License.
 
+---
 
 # Cite this library
 
