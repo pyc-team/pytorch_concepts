@@ -12,7 +12,7 @@ precompute_embs: false
 force_recompute: false 
 
 autoencoder_kwargs:
-  noise: 0.5
+  noise: 0.
   latent_dim: 32
   lr: 0.0005
   epochs: 2000

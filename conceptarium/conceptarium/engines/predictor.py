@@ -68,10 +68,10 @@ class Predictor(pl.LightningModule):
         self._setup_metrics(metrics)
 
     def __repr__(self):
-        return "{}(model={}, n_concepts={}, train_interv_prob={}, " \
-               "test_interv_policy={}, optimizer={}, scheduler={})" \
+        return "{}(model={}, n_concepts={}, optimizer={}, scheduler={})" \
             .format(self.__class__.__name__,
                     self.model.__class__.__name__,
+                    self.n_concepts,
                     self.optim_class.__name__,
                     self.scheduler_class.__name__ if self.scheduler_class else None)
 

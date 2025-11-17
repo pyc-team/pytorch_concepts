@@ -185,6 +185,8 @@ class ConceptDataset(Dataset):
         sample = {
             'inputs': {'x': x},    # input data: multiple inputs can be stored in a dict
             'concepts': {'c': c},  # concepts: multiple concepts can be stored in a dict
+            # 'transform': {'x': self.scalers.get('input', None),
+            #               'c': self.scalers.get('concepts', None)}
         }
 
         return sample

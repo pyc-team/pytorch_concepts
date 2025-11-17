@@ -9,6 +9,7 @@ from omegaconf import DictConfig, open_dict
 from typing import Mapping
 
 from torch_concepts import Annotations
+import warnings
 
 def seed_everything(seed: int):
     print(f"Seed set to {seed}")
@@ -79,7 +80,11 @@ def add_distribution_to_annotations(annotations: Annotations,
     cardinalities = concepts_annotations.cardinalities
     for (concept_name, metadata), cardinality in zip(metadatas.items(), cardinalities):
         if 'distribution' in metadata:
-            raise ValueError(f"Concept {concept_name} already has a 'distribution' field.")
+            warnings.warn(
+                f"Distribution field of concept {concept_name} already set; leaving existing value unchanged.",
+                RuntimeWarning
+            )
+            continue
         else:
             if metadata['type'] == 'discrete' and cardinality==1: distribution_flag = 'discrete_card1'
             elif metadata['type'] == 'discrete' and cardinality>1: distribution_flag = 'discrete_cardn'
@@ -87,7 +92,7 @@ def add_distribution_to_annotations(annotations: Annotations,
             elif metadata['type'] == 'continuous' and cardinality>1: distribution_flag = 'continuous_cardn'
             else: raise ValueError(f"Cannot set distribution type for concept {concept_name}.")
 
-            metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
+        metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
 
     annotations[1].metadata = metadatas
     return annotations
