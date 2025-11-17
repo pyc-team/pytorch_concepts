@@ -1,3 +1,9 @@
+"""Random data splitting for train/validation/test splits.
+
+This module provides RandomSplitter for randomly dividing datasets with
+support for standard splits plus optional fine-tuning subsets.
+"""
+
 from typing import Union
 import numpy as np
 
@@ -9,7 +15,8 @@ class RandomSplitter(Splitter):
     """Random splitting strategy for datasets.
     
     Randomly divides a dataset into train, validation, test, and optionally
-    fine-tuning splits. Ensures reproducibility when a seed is provided.
+    fine-tuning splits. Ensures reproducibility when numpy's random seed is set
+    externally before calling fit().
     
     The splitting is done in the following order:
     1. Fine-tuning validation (if ftune_val_size > 0)
@@ -18,15 +25,35 @@ class RandomSplitter(Splitter):
     4. Validation (if val_size > 0)
     5. Training (remaining samples)
     
+    Args:
+        val_size (Union[int, float], optional): Size of validation set.
+            If float, represents fraction of dataset. If int, represents
+            absolute number of samples. Defaults to 0.1.
+        test_size (Union[int, float], optional): Size of test set.
+            If float, represents fraction of dataset. If int, represents
+            absolute number of samples. Defaults to 0.2.
+        ftune_size (Union[int, float], optional): Size of fine-tuning set.
+            If float, represents fraction of dataset. If int, represents
+            absolute number of samples. Defaults to 0.0.
+        ftune_val_size (Union[int, float], optional): Size of fine-tuning
+            validation set. If float, represents fraction of dataset. If int,
+            represents absolute number of samples. Defaults to 0.0.
+            
     Example:
+        >>> # 70% train, 10% val, 20% test
+        >>> splitter = RandomSplitter(val_size=0.1, test_size=0.2)
+        >>> splitter.fit(dataset)
+        >>> print(f"Train: {splitter.train_len}, Val: {splitter.val_len}, Test: {splitter.test_len}")
+        Train: 700, Val: 100, Test: 200
+        
+        >>> # With fine-tuning splits
         >>> splitter = RandomSplitter(
         ...     val_size=0.1,
         ...     test_size=0.2,
         ...     ftune_size=0.05,
         ...     ftune_val_size=0.05
         ... )
-        >>> splitter.split(dataset)
-        >>> print(f"Train: {splitter.n_train}, Val: {splitter.n_val}")
+        >>> splitter.fit(dataset)
     """
 
     def __init__(
@@ -41,18 +68,16 @@ class RandomSplitter(Splitter):
         Args:
             val_size: Size of validation set. If float, represents fraction
                 of dataset. If int, represents absolute number of samples.
-                (default: 0.1)
+                Defaults to 0.1.
             test_size: Size of test set. If float, represents fraction
                 of dataset. If int, represents absolute number of samples.
-                (default: 0.2)
+                Defaults to 0.2.
             ftune_size: Size of fine-tuning set. If float, represents fraction
                 of dataset. If int, represents absolute number of samples.
-                (default: 0.0)
+                Defaults to 0.0.
             ftune_val_size: Size of fine-tuning validation set. If float,
                 represents fraction of dataset. If int, represents absolute
-                number of samples. (default: 0.0)
-            seed: Random seed for reproducibility. If None, splits will be
-                non-deterministic. (default: None)
+                number of samples. Defaults to 0.0.
         """
         super().__init__()
         self.val_size = val_size
@@ -62,11 +87,17 @@ class RandomSplitter(Splitter):
 
     def _resolve_size(self, size: Union[int, float], n_samples: int) -> int:
         """Convert size specification to absolute number of samples.
+        
         Args:
-            size: Either an integer (absolute count) or float (fraction).
+            size: Either an integer (absolute count) or float (fraction in [0, 1]).
             n_samples: Total number of samples in dataset.
+            
         Returns:
-            Absolute number of samples.
+            int: Absolute number of samples.
+            
+        Raises:
+            ValueError: If fractional size is not in [0, 1] or absolute size is negative.
+            TypeError: If size is neither int nor float.
         """
         if isinstance(size, float):
             if not 0.0 <= size <= 1.0:
@@ -83,8 +114,16 @@ class RandomSplitter(Splitter):
 
     def fit(self, dataset: ConceptDataset) -> None:
         """Randomly split the dataset into train/val/test/ftune sets.
+        
+        Creates a random permutation of dataset indices and divides them
+        according to specified split sizes. Sets the _fitted flag to True
+        upon completion.
+        
         Args:
-            dataset: The dataset to split.
+            dataset: The ConceptDataset to split.
+            
+        Raises:
+            ValueError: If split sizes exceed dataset size.
         """
         n_samples = len(dataset)
         

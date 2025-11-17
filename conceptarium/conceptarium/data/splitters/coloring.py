@@ -1,4 +1,10 @@
-"""Data splitting utilities for train/validation/test splits."""
+"""Coloring-based data splitting for distribution shift experiments.
+
+This module provides ColoringSplitter which divides datasets based on
+pre-computed coloring schemes. Useful for controlled distribution shift
+experiments where training and test sets should have different characteristics.
+"""
+
 import json
 from abc import ABC, abstractmethod
 import os
@@ -10,24 +16,46 @@ from torch_concepts.data.base import ConceptDataset
 from ..base.splitter import Splitter
 
 class ColoringSplitter(Splitter):
-    """ Coloring-based splitting strategy for datasets.
+    """Coloring-based splitting strategy for distribution shift experiments.
     
-    It divides a dataset into train, validation, test, and optionally
-    fine-tuning splits considering the coloring scheme used in the dataset.
-    Specifically, it ensures that the training set and the validation set contains samples
-    colored with the 'training_mode', while the test set and the fine_tune sets contains samples
-    colored with the 'test_mode'.
-    NOTE: it assumes the dataset is already shuffled.
+    Divides a dataset into train/val/test/ftune splits based on a pre-computed
+    coloring scheme stored in a JSON file. This ensures that training and
+    validation sets contain samples with 'training' coloring, while test and
+    fine-tuning sets contain samples with 'test' coloring.
     
+    This is useful for:
+    - Out-of-distribution (OOD) evaluation
+    - Domain adaptation experiments
+    - Controlled distribution shift scenarios
+    
+    Note: Assumes the dataset is already shuffled and that a coloring file
+    exists at {root}/coloring_mode_seed_{seed}.json
+    
+    Args:
+        root (str): Root directory containing the coloring mode JSON file.
+        seed (int, optional): Random seed used to identify the coloring file.
+            Defaults to None.
+        val_size (Union[int, float], optional): Validation set size (from 'training'
+            colored samples). Defaults to 0.1.
+        test_size (Union[int, float], optional): Test set size (from 'test'
+            colored samples). Defaults to 0.2.
+        ftune_size (Union[int, float], optional): Fine-tuning set size (from 'test'
+            colored samples). Defaults to 0.0.
+        ftune_val_size (Union[int, float], optional): Fine-tuning validation size
+            (from 'test' colored samples). Defaults to 0.0.
+            
     Example:
+        >>> # Create a coloring file first: coloring_mode_seed_42.json
+        >>> # Format: {"0": "training", "1": "training", "2": "test", ...}
+        >>> 
         >>> splitter = ColoringSplitter(
+        ...     root='data/my_dataset',
+        ...     seed=42,
         ...     val_size=0.1,
-        ...     test_size=0.2,
-        ...     ftune_size=0.05,
-        ...     ftune_val_size=0.05
+        ...     test_size=0.2
         ... )
-        >>> splitter.split(dataset)
-        >>> print(f"Train: {splitter.n_train}, Val: {splitter.n_val}")
+        >>> splitter.fit(dataset)
+        >>> # Train/val from 'training' samples, test from 'test' samples
     """
 
     def __init__(
@@ -42,22 +70,18 @@ class ColoringSplitter(Splitter):
         """Initialize the ColoringSplitter.
         
         Args:
-            val_size: Size of validation set. If float, represents fraction
-                of dataset. If int, represents absolute number of samples.
-                (default: 0.1)
-            test_size: Size of test set. If float, represents fraction
-                of dataset. If int, represents absolute number of samples.
-                (default: 0.2)
-            ftune_size: Size of fine-tuning set. If float, represents fraction
-                of dataset. If int, represents absolute number of samples.
-                (default: 0.0)
-            ftune_val_size: Size of fine-tuning validation set. If float,
-                represents fraction of dataset. If int, represents absolute
-                number of samples. (default: 0.0)
-            coloring_mode_path: Path to the JSON file containing the coloring mode
-                for each sample in the dataset. (default: None)
-            seed: Random seed for reproducibility. If None, splits will be
-                non-deterministic. (default: None)
+            root (str): Root directory containing coloring mode JSON file.
+            seed (int, optional): Random seed to identify coloring file.
+                File expected at {root}/coloring_mode_seed_{seed}.json.
+                Defaults to None.
+            val_size: Validation set size (from 'training' samples). 
+                If float, represents fraction. If int, absolute count. Defaults to 0.1.
+            test_size: Test set size (from 'test' samples).
+                If float, represents fraction. If int, absolute count. Defaults to 0.2.
+            ftune_size: Fine-tuning set size (from 'test' samples).
+                If float, represents fraction. If int, absolute count. Defaults to 0.0.
+            ftune_val_size: Fine-tuning validation size (from 'test' samples).
+                If float, represents fraction. If int, absolute count. Defaults to 0.0.
         """
         super().__init__()
         self.root = root
@@ -89,9 +113,18 @@ class ColoringSplitter(Splitter):
             raise TypeError(f"Size must be int or float, got {type(size).__name__}")
 
     def fit(self, dataset: ConceptDataset) -> None:
-        """Split the dataset into train/val/test/ftune sets based on percentages.
+        """Split dataset based on coloring scheme from JSON file.
+        
+        Loads the coloring mode file and divides indices into 'training' and
+        'test' groups. Then allocates samples from each group to the appropriate
+        splits (train/val from 'training', test/ftune from 'test').
+        
         Args:
-            dataset: The dataset to split.
+            dataset: The ConceptDataset to split.
+            
+        Raises:
+            ValueError: If coloring file doesn't exist, or if there aren't enough
+                samples of a particular coloring mode to satisfy the requested splits.
         """
         n_samples = len(dataset)
         

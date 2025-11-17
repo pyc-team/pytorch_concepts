@@ -1,3 +1,9 @@
+"""Base LightningDataModule for concept-based datasets.
+
+Provides data splitting, scaling, embedding precomputation, and DataLoader
+configuration for concept-based learning tasks.
+"""
+
 import os
 from typing import Literal, Mapping, Optional
 from pytorch_lightning import LightningDataModule
@@ -14,29 +20,53 @@ StageOptions = Literal['fit', 'validate', 'test', 'predict']
 
 
 class ConceptDataModule(LightningDataModule):
-    r"""Base :class:`~pytorch_lightning.core.LightningDataModule` for
-    concept-based datasets.
+    """PyTorch Lightning DataModule for concept-based datasets.
+    
+    Handles the complete data pipeline:
+    1. Data splitting (train/val/test + optional fine-tuning splits)
+    2. Optional backbone embedding precomputation and caching
+    3. Data scaling/normalization
+    4. DataLoader creation with appropriate configurations
 
     Args:
-        dataset (ConceptDataset): The complete dataset.
-        scalers (dict, optional): Named mapping of scalers to be used for data
-            rescaling after splitting. Every scaler is given as input the attribute
-            of the dataset named as the scaler's key. If :obj:`None`, no scaling
-            is performed.
-            (default :obj:`None`)
-        splitter (Optional): A splitter object to be used for splitting
-            :obj:`dataset` into train/validation/test sets.
-            (default :obj:`None`)
-        precompute_embs: If True and backbone is provided, precomputes embeddings
-            and caches them to disk. If False, uses raw input data.
-                (default :obj:`False`)
-        batch_size (int): Size of the mini-batches for the dataloaders.
-            (default :obj:`32`)
-        workers (int): Number of workers to use in the dataloaders.
-            (default :obj:`0`)
-        pin_memory (bool): If :obj:`True`, then enable pinned GPU memory for
-            :meth:`train_dataloader`.
-            (default :obj:`False`)
+        dataset (ConceptDataset): Complete dataset to be split.
+        val_size (float, optional): Validation set fraction. Defaults to 0.1.
+        test_size (float, optional): Test set fraction. Defaults to 0.2.
+        ftune_size (float, optional): Fine-tuning set fraction. Defaults to 0.0.
+        ftune_val_size (float, optional): Fine-tuning validation fraction. Defaults to 0.0.
+        batch_size (int, optional): Mini-batch size. Defaults to 512.
+        backbone (BackboneType, optional): Feature extraction model. If provided
+            with precompute_embs=True, embeddings are computed and cached. Defaults to None.
+        precompute_embs (bool, optional): Cache backbone embeddings to disk for
+            faster training. Defaults to False.
+        force_recompute (bool, optional): Recompute embeddings even if cached. 
+            Defaults to False.
+        scalers (Mapping, optional): Dict of scalers for data normalization 
+            (keys: 'input', 'concepts'). If None, uses StandardScaler. Defaults to None.
+        splitter (object, optional): Custom splitter for train/val/test splits.
+            If None, uses RandomSplitter. Defaults to None.
+        workers (int, optional): Number of DataLoader workers. Defaults to 0.
+        pin_memory (bool, optional): Enable pinned memory for GPU. Defaults to False.
+        
+    Example:
+        >>> from torch_concepts.data.dataset import MNISTDataset
+        >>> from torchvision.models import resnet18
+        >>> 
+        >>> dataset = MNISTDataset(...)
+        >>> backbone = nn.Sequential(*list(resnet18(pretrained=True).children())[:-1])
+        >>> 
+        >>> datamodule = ConceptDataModule(
+        ...     dataset=dataset,
+        ...     val_size=0.1,
+        ...     test_size=0.2,
+        ...     batch_size=256,
+        ...     backbone=backbone,
+        ...     precompute_embs=True,  # Cache embeddings for faster training
+        ...     workers=4
+        ... )
+        >>> 
+        >>> datamodule.setup('fit')
+        >>> train_loader = datamodule.train_dataloader()
     """
 
     def __init__(self,

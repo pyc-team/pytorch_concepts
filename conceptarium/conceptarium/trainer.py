@@ -1,3 +1,10 @@
+"""PyTorch Lightning Trainer configuration and setup utilities.
+
+This module extends PyTorch Lightning's Trainer class with project-specific
+configurations including W&B logging, model checkpointing, early stopping,
+and automatic device selection.
+"""
+
 from time import time
 
 from omegaconf import DictConfig
@@ -18,7 +25,21 @@ from conceptarium.hydra import parse_hyperparams
 from wandb.sdk.lib.runid import generate_id
 
 class GradientMonitor_afterB(pl.Callback):
+    """Debug callback to monitor gradient norms after backward pass.
+    
+    Prints the L2 norm of gradients for all model parameters after each
+    backward pass. Useful for debugging gradient flow issues.
+    
+    Note:
+        Currently commented out in Trainer by default. Uncomment to enable.
+    """
     def on_after_backward(self, trainer, pl_module):
+        """Print gradient norms after backward pass.
+        
+        Args:
+            trainer: PyTorch Lightning trainer instance.
+            pl_module: LightningModule being trained.
+        """
         norms = []
         for p in pl_module.parameters():
             if p.grad is not None:
@@ -26,6 +47,25 @@ class GradientMonitor_afterB(pl.Callback):
         print(f"Gradient Norms after backward: {norms}")       
         
 def _get_logger(cfg: DictConfig):
+    """Create and configure a W&B logger from Hydra config.
+    
+    Sets up W&B logging with automatic experiment naming and grouping based
+    on dataset, model, and hyperparameters.
+    
+    Args:
+        cfg (DictConfig): Full Hydra configuration containing trainer.logger,
+            seed, dataset, model, and hyperparameter settings.
+    
+    Returns:
+        WandbLogger: Configured W&B logger instance.
+        
+    Raises:
+        ValueError: If logger type is not "wandb".
+        
+    Note:
+        Run naming format: "seed{seed}.{timestamp}"
+        Group format: "{dataset}.{model}.lr{lr}.{notes}"
+    """
     name = f"seed{cfg.get('seed', '')}.{int(time())}"
     group_format = (
         "{dataset}.{model}.lr{lr}"
@@ -49,6 +89,37 @@ def _get_logger(cfg: DictConfig):
 
 
 class Trainer(_Trainer_):
+    """Extended PyTorch Lightning Trainer with project-specific defaults.
+    
+    Automatically configures:
+    - Model checkpointing (saves best model based on monitored metric)
+    - Early stopping (if patience is specified)
+    - Learning rate monitoring
+    - W&B logging (if logger is specified)
+    - GPU/CPU device selection
+    
+    Args:
+        cfg (DictConfig): Hydra configuration containing trainer settings:
+            - trainer.monitor: Metric to monitor for checkpointing/early stopping
+            - trainer.patience: Early stopping patience (epochs)
+            - trainer.logger: Logger type ("wandb" or None for DummyLogger)
+            - Other pytorch_lightning.Trainer arguments
+            
+    Example:
+        >>> cfg = OmegaConf.create({
+        ...     "trainer": {
+        ...         "max_epochs": 100,
+        ...         "monitor": "val_loss",
+        ...         "patience": 10,
+        ...         "logger": "wandb"
+        ...     },
+        ...     "seed": 42,
+        ...     "dataset": {"_target_": "..."},
+        ...     "model": {"_target_": "..."}
+        ... })
+        >>> trainer = Trainer(cfg)
+        >>> trainer.fit(model, datamodule)
+    """
     def __init__(self, cfg: DictConfig):
         callbacks = []
         if cfg.trainer.get("monitor", None) is not None:

@@ -1,3 +1,10 @@
+"""Abstract base class for dataset splitting strategies.
+
+This module defines the Splitter interface for dividing datasets into
+train/val/test splits with optional fine-tuning subsets. Splitters manage
+indices and ensure reproducible splits through random seeds.
+"""
+
 from abc import ABC, abstractmethod
 
 from torch_concepts.data.base import ConceptDataset
@@ -5,9 +12,32 @@ from torch_concepts.data.base import ConceptDataset
 class Splitter(ABC):
     """Abstract base class for dataset splitting strategies.
     
-    Splitters divide a dataset into train, validation, test, and optionally
-    fine-tuning splits. They maintain reproducibility through random seeds
-    and can handle both absolute (int) and relative (float) split sizes.
+    Splitters divide a ConceptDataset into train, validation, test, and optionally
+    fine-tuning splits. They store indices for each split and provide properties
+    to access split sizes and indices. All concrete splitter implementations
+    should inherit from this class and implement the fit() method.
+    
+    Attributes:
+        train_idxs (list): Training set indices.
+        val_idxs (list): Validation set indices.
+        test_idxs (list): Test set indices.
+        ftune_idxs (list): Fine-tuning set indices (optional).
+        ftune_val_idxs (list): Fine-tuning validation set indices (optional).
+        
+    Example:
+        >>> class CustomSplitter(Splitter):
+        ...     def fit(self, dataset):
+        ...         n = len(dataset)
+        ...         self.set_indices(
+        ...             train=list(range(int(0.7*n))),
+        ...             val=list(range(int(0.7*n), int(0.9*n))),
+        ...             test=list(range(int(0.9*n), n))
+        ...         )
+        ...         self._fitted = True
+        >>> 
+        >>> splitter = CustomSplitter()
+        >>> splitter.fit(my_dataset)
+        >>> print(f"Train: {splitter.train_len}, Val: {splitter.val_len}")
     """
 
     def __init__(self):
