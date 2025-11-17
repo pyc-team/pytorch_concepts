@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://github.com/gdefe/conceptarium/blob/main/logo.png" style="width: 30cm">
+<img src="https://github.com/pyc-team/pytorch_concepts/blob/master/conceptarium/logo.png" style="width: 30cm">
 <br>
 
 

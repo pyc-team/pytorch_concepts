@@ -5,7 +5,7 @@ from pathlib import Path
 PROJECT_NAME = "conceptarium" 
 
 # specify your wandb identity (used for logging)
-WANDB_ENTITY = "gdefe" 
+WANDB_ENTITY = "" 
 
 CACHE = Path(
     env.get(
@@ -18,6 +18,8 @@ CACHE = Path(
 ).expanduser()
 CACHE.mkdir(exist_ok=True)
 
+# directory where datasets are stored
+# default is CACHE
 # specify a different path for datasets if needed
 DATA_ROOT = CACHE
 
