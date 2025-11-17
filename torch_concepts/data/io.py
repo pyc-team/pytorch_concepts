@@ -1,3 +1,9 @@
+"""
+Input/output utilities for data handling.
+
+This module provides utilities for downloading, extracting, and saving/loading
+data files, including support for zip/tar archives and pickle files.
+"""
 import os
 import pickle
 import tarfile
@@ -9,13 +15,13 @@ from tqdm import tqdm
 
 
 def extract_zip(path: str, folder: str, log: bool = True):
-    r"""Extracts a zip archive to a specific folder.
+    """
+    Extract a zip archive to a specific folder.
 
     Args:
-        path (string): The path to the zip archive.
-        folder (string): The folder.
-        log (bool, optional): If :obj:`False`, will not log anything.
-            (default: :obj:`True`)
+        path: The path to the zip archive.
+        folder: The destination folder.
+        log: If False, will not log anything (default: True).
     """
     print(f"Extracting {path}")
     with zipfile.ZipFile(path, 'r') as f:
@@ -23,13 +29,13 @@ def extract_zip(path: str, folder: str, log: bool = True):
 
 
 def extract_tar(path: str, folder: str, log: bool = True):
-    r"""Extracts a tar (or tar.gz) archive to a specific folder.
+    """
+    Extract a tar (or tar.gz) archive to a specific folder.
 
     Args:
-        path (string): The path to the tar(gz) archive.
-        folder (string): The destination folder.
-        log (bool, optional): If :obj:`False`, will not log anything.
-            (default: :obj:`True`)
+        path: The path to the tar(gz) archive.
+        folder: The destination folder.
+        log: If False, will not log anything (default: True).
     """
     print(f"Extracting {path}")
     with tarfile.open(path, 'r') as tar:
@@ -39,14 +45,15 @@ def extract_tar(path: str, folder: str, log: bool = True):
 
 
 def save_pickle(obj: Any, filename: str) -> str:
-    """Save obj to path as pickle.
+    """
+    Save object to file as pickle.
 
     Args:
         obj: Object to be saved.
-        filename (string): Where to save the file.
+        filename: Where to save the file.
 
     Returns:
-        path (string): The absolute path to the saved pickle
+        str: The absolute path to the saved pickle.
     """
     abspath = os.path.abspath(filename)
     directory = os.path.dirname(abspath)
@@ -57,41 +64,37 @@ def save_pickle(obj: Any, filename: str) -> str:
 
 
 def load_pickle(filename: str) -> Any:
-    """Load object from pickle filename.
+    """
+    Load object from pickle file.
 
     Args:
-        filename (string): The absolute path to the saved pickle.
+        filename: The absolute path to the saved pickle.
 
     Returns:
-        data (any): The loaded object.
+        Any: The loaded object.
     """
     with open(filename, 'rb') as fp:
         data = pickle.load(fp)
     return data
 
 
-# def save_figure(fig, filename: str, as_html=False, as_pickle=False):
-#     if filename.endswith('.html'):
-#         as_html = True
-#         filename = filename[:-5]
-#     elif filename.endswith('.pkl'):
-#         as_pickle = True
-#         filename = filename[:-4]
-#     if not (as_html or as_pickle):
-#         as_html = False  # save as html if nothing is specified
-#     if as_html:
-#         import mpld3
-#         with open(filename + '.html', 'w') as fp:
-#             mpld3.save_html(fig, fp)
-#     if as_pickle:
-#         import pickle
-#         with open(filename + '.pkl', 'wb') as fp:
-#             pickle.dump(fig, fp)
-
-
 class DownloadProgressBar(tqdm):
-    # From https://stackoverflow.com/a/53877507
+    """
+    Progress bar for file downloads.
+
+    Extends tqdm to show download progress with file size information.
+    Adapted from https://stackoverflow.com/a/53877507
+    """
+
     def update_to(self, b=1, bsize=1, tsize=None):
+        """
+        Update progress bar based on download progress.
+
+        Args:
+            b: Number of blocks transferred so far (default: 1).
+            bsize: Size of each block in bytes (default: 1).
+            tsize: Total size in blocks (default: None).
+        """
         if tsize is not None:
             self.total = tsize
         self.update(b * bsize - self.n)

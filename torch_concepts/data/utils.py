@@ -1,3 +1,9 @@
+"""
+Data utility functions for tensor manipulation and transformation.
+
+This module provides utility functions for data processing, including tensor
+conversion, image colorization, and affine transformations.
+"""
 import os
 import numpy as np
 import pandas as pd
@@ -9,6 +15,18 @@ from torchvision.transforms import v2
 
 
 def ensure_list(value: Any) -> List:
+    """
+    Ensure a value is converted to a list.
+
+    If the value is iterable (but not a string), converts it to a list.
+    Otherwise, wraps it in a list.
+
+    Args:
+        value: Any value to convert to list.
+
+    Returns:
+        List: The value as a list.
+    """
     # if isinstance(value, Sequence) and not isinstance(value, str):
     if hasattr(value, '__iter__') and not isinstance(value, str):
         return list(value)
@@ -16,13 +34,37 @@ def ensure_list(value: Any) -> List:
         return [value]
 
 def files_exist(files: Sequence[str]) -> bool:
+    """
+    Check if all files in a sequence exist.
+
+    Args:
+        files: Sequence of file paths to check.
+
+    Returns:
+        bool: True if all files exist, False otherwise.
+    """
     files = ensure_list(files)
     return len(files) != 0 and all([os.path.exists(f) for f in files])
 
 def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
                 name: str,
                 precision: Union[int, str]) -> Tensor:
-    """Convert input data to torch tensor with appropriate format."""
+    """
+    Convert input data to torch tensor with appropriate format.
+
+    Supports conversion from numpy arrays, pandas DataFrames, or existing tensors.
+
+    Args:
+        data: Input data as numpy array, DataFrame, or Tensor.
+        name: Name of the data (for error messages).
+        precision: Desired numerical precision (16, 32, or 64).
+
+    Returns:
+        Tensor: Converted tensor with specified precision.
+
+    Raises:
+        AssertionError: If data is not in a supported format.
+    """
     if isinstance(data, np.ndarray):
         data = torch.from_numpy(data)
     elif isinstance(data, pd.DataFrame):
@@ -34,7 +76,16 @@ def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
 
 def convert_precision(tensor: Tensor,
                        precision: Union[int, str]) -> Tensor:
-    """Convert tensor to the dataset's precision., 16, 32, 64"""
+    """
+    Convert tensor to specified precision.
+
+    Args:
+        tensor: Input tensor.
+        precision: Target precision ("float16", "float32", or "float64", or 16, 32, 64).
+
+    Returns:
+        Tensor: Tensor converted to specified precision.
+    """
     if precision == "float32":
         tensor = tensor.to(torch.float32)
     elif precision == "float64":
@@ -44,12 +95,21 @@ def convert_precision(tensor: Tensor,
     return tensor
 
 def colorize(images, colors):
-    """Colorize grayscale images based on specified colors.
+    """
+    Colorize grayscale images based on specified colors.
+
+    Converts grayscale images to RGB by assigning the intensity to one
+    of three color channels (red, green, or blue).
+
     Args:
-        images: Tensor of shape (N, H, W) containing grayscale MNIST images.
-        colors: Tensor of shape (N) containing color labels (0, 1, or 2).   
+        images: Tensor of shape (N, H, W) containing grayscale images.
+        colors: Tensor of shape (N) containing color labels (0=red, 1=green, 2=blue).
+
     Returns:
-        colored_images: Tensor of shape (N, 3, H, W) containing colorized images.
+        Tensor: Colored images of shape (N, 3, H, W).
+
+    Raises:
+        AssertionError: If colors contain values other than 0, 1, or 2.
     """
     assert torch.unique(colors).shape[0] <= 3, "colors must be 0, 1, or 2 (red, green, blue)."
     N = images.shape[0]
@@ -59,13 +119,19 @@ def colorize(images, colors):
     return colored_images
 
 def affine_transform(images, degrees, scales, batch_size=512):
-    """Apply affine transformations to a batch of images.   
+    """
+    Apply affine transformations to a batch of images.
+
+    Applies rotation and scaling transformations to each image.
+
     Args:
-        images: Tensor of shape (N, H, W) or (N, 3, H, W)
+        images: Tensor of shape (N, H, W) or (N, 3, H, W).
         degrees: Tensor of shape (N) containing rotation degrees.
         scales: Tensor of shape (N) containing scaling factors.
+        batch_size: Number of images to process at once (default: 512).
+
     Returns:
-        transformed_images: Tensor of shape (N, H, W) or (N, 3, H, W)
+        Tensor: Transformed images with same shape as input.
     """
     if degrees is None:
         print("Degrees for affine transformation of images not provided, setting to 0.")
@@ -96,14 +162,16 @@ def affine_transform(images, degrees, scales, batch_size=512):
 def transform_images(images, transformations, colors=None, degrees=None, scales=None):
     """
     Apply a sequence of transformations to a batch of images.
+
     Args:
-        images: Tensor [N, H, W] or [N, 3, H, W]
-        transformations: list of str, e.g. ['colorize', 'affine']
-        colors: Tensor [N] (for colorize)
-        degrees: Tensor [N] (for affine)
-        scales: Tensor [N] (for affine)
+        images: Tensor of shape [N, H, W] or [N, 3, H, W].
+        transformations: List of transformation names (e.g., ['colorize', 'affine']).
+        colors: Optional color labels for colorization.
+        degrees: Optional rotation degrees for affine transform.
+        scales: Optional scaling factors for affine transform.
+
     Returns:
-        transformed_images: Tensor [N, H, W] or [N, 3, H, W]
+        Tensor: Transformed images.
     """
     for t in transformations:
         if t == 'colorize':

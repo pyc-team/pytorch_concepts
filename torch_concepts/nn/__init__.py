@@ -1,3 +1,9 @@
+"""
+Neural network modules for concept-based models.
+
+This module provides neural network components for building concept-based architectures.
+"""
+
 from .base.graph import BaseGraphLearner
 from .base.model import BaseModel
 from .base.layer import (

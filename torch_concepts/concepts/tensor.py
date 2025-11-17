@@ -1,3 +1,10 @@
+"""
+Concept graph representation and utilities.
+
+This module provides a memory-efficient implementation of concept graphs using
+sparse tensor representations. It includes utilities for graph analysis, conversions,
+and topological operations.
+"""
 import torch
 
 import pandas as pd

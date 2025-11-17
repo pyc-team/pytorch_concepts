@@ -1,3 +1,11 @@
+"""
+Data module for concept-based datasets.
+
+This module provides dataset classes and utilities for working with concept-annotated
+data, including various benchmark datasets (MNIST, CelebA, CUB, etc.) and custom
+concept datasets.
+"""
+
 from .dataset.awa2 import AwA2Dataset
 from .dataset.bnlearn import BnLearnDataset
 from .dataset.cebab import CEBaBDataset

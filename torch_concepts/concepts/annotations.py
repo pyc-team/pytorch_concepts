@@ -1,3 +1,11 @@
+"""
+Concept annotations for tensors.
+
+This module provides annotation structures for concept-based tensors, allowing
+semantic labeling of tensor dimensions and their components. It supports both
+simple (flat) and nested (hierarchical) concept structures.
+"""
+
 import warnings
 
 from copy import deepcopy

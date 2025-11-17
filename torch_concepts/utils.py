@@ -1,3 +1,10 @@
+"""
+Utility functions for the torch_concepts package.
+
+This module provides various utility functions for working with concept-based models,
+including concept name validation, output size computation, explanation analysis,
+and numerical stability checks.
+"""
 from collections import Counter
 from typing import Dict, Union, List
 import torch, math
@@ -90,6 +97,19 @@ def get_most_common_expl(
 
 
 def compute_temperature(epoch, num_epochs):
+    """
+    Compute temperature for annealing schedules.
+
+    Computes a temperature value that exponentially decreases from an initial
+    temperature of 1.0 to a final temperature of 0.5 over the course of training.
+
+    Args:
+        epoch (int): Current training epoch.
+        num_epochs (int): Total number of training epochs.
+
+    Returns:
+        torch.Tensor: The computed temperature value for the current epoch.
+    """
     final_temp = torch.tensor([0.5])
     init_temp = torch.tensor([1.0])
     rate = (math.log(final_temp) - math.log(init_temp)) / float(num_epochs)

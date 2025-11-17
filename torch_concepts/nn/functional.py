@@ -1,3 +1,9 @@
+"""
+Functional utilities for concept-based neural networks.
+
+This module provides functional operations for concept manipulation, intervention,
+embedding mixture, and evaluation metrics for concept-based models.
+"""
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
@@ -7,8 +13,16 @@ from torch.nn import Linear
 from ..semantic import CMRSemantic
 
 
-
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
+    """
+    Generate default concept names for a given shape.
+
+    Args:
+        shape: List of integers representing the shape of concept dimensions.
+
+    Returns:
+        Dict mapping dimension index to list of concept names.
+    """
     concept_names = {}
     for dim in range(len(shape)):
         concept_names[dim+1] = [
@@ -17,77 +31,32 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     return concept_names
 
 
-def intervene(
-    c_pred: torch.Tensor,
-    c_true: torch.Tensor,
-    indexes: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Intervene on concept embeddings.
-
-    Args:
-        c_pred (Tensor): Predicted concepts.
-        c_true (Tensor): Ground truth concepts.
-        indexes (Tensor): Boolean Tensor indicating which concepts to intervene
-            on.
-
-    Returns:
-        Tensor: Intervened concepts.
-    """
-    if c_true is None or indexes is None:
-        return c_pred
-
-    if c_pred.shape != c_true.shape:
-        raise ValueError(
-            "Predicted and true concepts must have the same shape."
-        )
-
-    if c_true is not None and indexes is not None:
-        if indexes.max() >= c_pred.shape[1]:
-            raise ValueError(
-                "Intervention indices must be less than the number of concepts."
-            )
-
-    return torch.where(indexes, c_true, c_pred)
-
-
-def concept_embedding_mixture(
-    c_emb: torch.Tensor,
-    c_scores: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Mixes concept embeddings and concept predictions.
-    Main reference: `"Concept Embedding Models: Beyond the
-    Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
-
-    Args:
-        c_emb (Tensor): Concept embeddings with shape (batch_size, n_concepts,
-            emb_size).
-        c_scores (Tensor): Concept scores with shape (batch_size, n_concepts).
-        concept_names (List[str]): Concept names.
-
-    Returns:
-        Tensor: Mix of concept embeddings and concept scores with shape
-            (batch_size, n_concepts, emb_size//2)
-    """
-    # FIXME: fix .data in AnnotatedTensor
-    emb_size = c_emb.data[0].shape[1] // 2
-    c_mix = (
-        c_scores.data.unsqueeze(-1) * c_emb.data[:, :, :emb_size] +
-        (1 - c_scores.data.unsqueeze(-1)) * c_emb.data[:, :, emb_size:]
-    )
-    return c_mix
-
-
 def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
                                       c_scores: torch.Tensor,
                                       groups: list[int]) -> torch.Tensor:
     """
-    Vectorised version of grouped logit mixture.
-    c_emb:    [B, n_concepts, emb_size * sum(groups)]
-    c_scores: [B, sum(groups)]
-    groups:   list of group sizes, e.g. [3, 4]
-    returns:  [B, n_concepts, emb_size * len(groups)]
+    Vectorized version of grouped concept embedding mixture.
+
+    Extends concept_embedding_mixture to handle grouped concepts where
+    some groups may contain multiple related concepts. Adapted from "Concept Embedding Models:
+    Beyond the Accuracy-Explainability Trade-Off" (Espinosa Zarlenga et al., 2022).
+
+    Args:
+        c_emb: Concept embeddings of shape (B, n_concepts, emb_size * sum(groups)).
+        c_scores: Concept scores of shape (B, sum(groups)).
+        groups: List of group sizes (e.g., [3, 4] for two groups).
+
+    Returns:
+        Tensor: Mixed embeddings of shape (B, n_concepts, emb_size * len(groups)).
+
+    Raises:
+        AssertionError: If group sizes don't sum to n_concepts.
+        AssertionError: If embedding dimension is not even.
+
+    References:
+        Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
+        Accuracy-Explainability Trade-Off", NeurIPS 2022.
+        https://arxiv.org/abs/2209.09056
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, "group_sizes must sum to n_concepts"
@@ -116,50 +85,19 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
     return out
 
 
-def intervene_on_concept_graph(
-    c_adj: torch.Tensor,
-    indexes: List[int],
-) -> torch.Tensor:
-    """
-    Intervene on a Tensor adjacency matrix by zeroing out specified
-    concepts representing parent nodes.
-
-    Args:
-        c_adj: torch.Tensor adjacency matrix.
-        indexes: List of indices to zero out.
-
-    Returns:
-        Tensor: Intervened Tensor adjacency matrix.
-    """
-    # Check if the tensor is a square matrix
-    if c_adj.shape[0] != c_adj.shape[1]:
-        raise ValueError(
-            "The Tensor must be a square matrix (it represents an "
-            "adjacency matrix)."
-        )
-
-    # Zero out specified columns
-    c_adj = c_adj.clone()
-    c_adj[:, indexes] = 0
-
-    return c_adj
-
-
 def selection_eval(
     selection_weights: torch.Tensor,
     *predictions: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Evaluate predictions as a weighted product based on selection weights.
+    Evaluate concept selection by computing weighted predictions.
 
     Args:
-        selection_weights (Tensor): Selection weights with at least two
-            dimensions (D1, ..., Dn).
-        predictions (Tensor): Arbitrary number of prediction tensors, each with
-            the same shape as selection_weights (D1, ..., Dn).
+        selection_weights: Weights for selecting between predictions.
+        *predictions: Variable number of prediction tensors to combine.
 
     Returns:
-        Tensor: Weighted product sum with shape (D1, ...).
+        Tensor: Weighted combination of predictions.
     """
     if len(predictions) == 0:
         raise ValueError("At least one prediction tensor must be provided.")

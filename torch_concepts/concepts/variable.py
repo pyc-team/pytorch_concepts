@@ -1,3 +1,10 @@
+"""
+Variable representation for concept-based probabilistic graphical models.
+
+This module defines the Variable class, which represents random variables in
+concept-based models. Variables can have different probability distributions
+and support hierarchical concept structures.
+"""
 import torch
 from torch.distributions import Distribution, Bernoulli, Categorical
 from typing import List, Dict, Any, Union, Optional, Type
@@ -6,10 +13,61 @@ from torch_concepts.distributions import Delta
 
 
 class Variable:
+    """
+    Represents a random variable in a concept-based probabilistic graphical model.
+
+    A Variable encapsulates one or more concepts along with their associated
+    probability distribution, parent variables, and metadata. It supports
+    multiple distribution types including Delta (deterministic), Bernoulli,
+    Categorical, and Normal distributions.
+
+    The Variable class implements a special __new__ method that allows creating
+    multiple Variable instances when initialized with multiple concepts, or a
+    single instance for a single concept.
+
+    Attributes:
+        concepts (List[str]): List of concept names represented by this variable.
+        parents (List[Variable]): List of parent variables in the graphical model.
+        distribution (Type[Distribution]): PyTorch distribution class for this variable.
+        size (int): Size/cardinality of the variable (e.g., number of classes for Categorical).
+        metadata (Dict[str, Any]): Additional metadata associated with the variable.
+
+    Properties:
+        out_features (int): Number of output features this variable produces.
+        in_features (int): Total input features from all parent variables.
+
+    Examples:
+        >>> # Create a binary concept variable
+        >>> var = Variable(concepts=['has_wheels'], parents=[], distribution=Bernoulli, size=1)
+        >>>
+        >>> # Create a categorical variable with 3 classes
+        >>> var = Variable(concepts=['color'], parents=[], distribution=Categorical, size=3)
+        >>>
+        >>> # Create multiple variables at once
+        >>> vars = Variable(concepts=['A', 'B', 'C'], parents=[], distribution=Delta, size=1)
+        >>> len(vars)  # Returns 3 Variable instances
+        3
+    """
+
     def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Create new Variable instance(s).
 
+        If concepts is a list with multiple elements, returns a list of Variable
+        instances (one per concept). Otherwise, returns a single Variable instance.
+
+        Args:
+            concepts: Single concept name or list of concept names.
+            parents: List of parent Variable instances.
+            distribution: Distribution type or list of distribution types.
+            size: Size parameter(s) for the distribution.
+            metadata: Optional metadata dictionary.
+
+        Returns:
+            Variable instance or list of Variable instances.
+        """
         if isinstance(concepts, str):
             assert not isinstance(distribution, list)
             assert isinstance(size, int)
@@ -56,7 +114,20 @@ class Variable:
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
                  metadata: Dict[str, Any] = None):
+        """
+        Initialize a Variable instance.
 
+        Args:
+            concepts: Single concept name or list of concept names.
+            parents: List of parent Variable instances.
+            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
+            size: Size parameter for the distribution.
+            metadata: Optional metadata dictionary.
+
+        Raises:
+            ValueError: If Categorical variable doesn't have size > 1.
+            ValueError: If Bernoulli variable doesn't have size=1.
+        """
         # Ensure concepts is a list (important if called internally after __new__ splitting)
         if isinstance(concepts, str):
             concepts = [concepts]
@@ -86,6 +157,17 @@ class Variable:
 
     @property
     def out_features(self) -> int:
+        """
+        Calculate the number of output features for this variable.
+
+        The calculation depends on the distribution type:
+        - Delta/Normal: size * n_concepts
+        - Bernoulli: n_concepts (binary per concept)
+        - Categorical: size (single multi-class variable)
+
+        Returns:
+            int: Number of output features.
+        """
         if self._out_features is not None:
             return self._out_features
 
@@ -103,6 +185,15 @@ class Variable:
 
     @property
     def in_features(self) -> int:
+        """
+        Calculate total input features from all parent variables.
+
+        Returns:
+            int: Sum of out_features from all parent variables.
+
+        Raises:
+            TypeError: If any parent is not a Variable instance.
+        """
         total_in = 0
         for parent in self.parents:
             if isinstance(parent, Variable):
@@ -112,6 +203,19 @@ class Variable:
         return total_in
 
     def __getitem__(self, key: Union[str, List[str]]) -> 'Variable':
+        """
+        Slice the variable to create a new variable with subset of concepts.
+
+        Args:
+            key: Single concept name or list of concept names.
+
+        Returns:
+            Variable: New variable instance with specified concepts.
+
+        Raises:
+            ValueError: If concepts not found in this variable.
+            ValueError: If slicing a Categorical variable with multiple concepts.
+        """
         if isinstance(key, str):
             concepts = [key]
         else:
@@ -146,5 +250,11 @@ class Variable:
         return new_var
 
     def __repr__(self):
+        """
+        Return string representation of the Variable.
+
+        Returns:
+            str: String representation including concepts, distribution, size, and metadata.
+        """
         meta_str = f", metadata={self.metadata}" if self.metadata else ""
         return f"Variable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{meta_str})"

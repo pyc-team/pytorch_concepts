@@ -1,3 +1,8 @@
+"""
+torch_concepts: A PyTorch library for concept-based machine learning.
+
+This package provides tools and modules for building concept-based neural networks.
+"""
 from ._version import __version__
 from importlib import import_module
 from typing import Any

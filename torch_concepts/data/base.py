@@ -1,3 +1,9 @@
+"""
+Base dataset class for concept-annotated datasets.
+
+This module provides the ConceptDataset class, which serves as the foundation
+for all concept-based datasets in the torch_concepts package.
+"""
 import os
 import numpy as np
 import pandas as pd
@@ -17,6 +23,42 @@ from .utils import files_exist, parse_tensor, convert_precision
 
 
 class ConceptDataset(Dataset):
+    """
+    Base class for concept-annotated datasets.
+
+    This class extends PyTorch's Dataset to support concept annotations,
+    concept graphs, and various metadata. It provides a unified interface
+    for working with datasets that have both input features and concept labels.
+
+    Attributes:
+        name (str): Name of the dataset.
+        precision (int or str): Numerical precision for tensors (16, 32, or 64).
+        input_data (Tensor): Input features/images.
+        concepts (Tensor): Concept annotations.
+        annotations (Annotations): Detailed concept annotations with metadata.
+
+    Args:
+        input_data: Input features as numpy array, pandas DataFrame, or Tensor.
+        concepts: Concept annotations as numpy array, pandas DataFrame, or Tensor.
+        annotations: Optional Annotations object with concept metadata.
+        graph: Optional concept graph as pandas DataFrame or tensor.
+        concept_names_subset: Optional list to select subset of concepts.
+        precision: Numerical precision (16, 32, or 64, default: 32).
+        name: Optional dataset name.
+        exogenous: Optional exogenous variables (not yet implemented).
+
+    Raises:
+        ValueError: If concepts is None or annotations don't include axis 1.
+        NotImplementedError: If continuous concepts or exogenous variables are used.
+
+    Example:
+        >>> X = torch.randn(100, 28, 28)  # 100 images
+        >>> C = torch.randint(0, 2, (100, 5))  # 5 binary concepts
+        >>> annotations = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'c3', 'c4', 'c5'])})
+        >>> dataset = ConceptDataset(X, C, annotations=annotations)
+        >>> len(dataset)
+        100
+    """
     def __init__(self,
                  input_data: Union[np.ndarray, pd.DataFrame, Tensor],
                  concepts: Union[np.ndarray, pd.DataFrame, Tensor],
@@ -105,13 +147,34 @@ class ConceptDataset(Dataset):
             raise NotImplementedError("Exogenous variables are not supported for now.")
 
     def __repr__(self):
+        """
+        Return string representation of the dataset.
+
+        Returns:
+            str: String showing dataset name and dimensions.
+        """
         return "{}(n_samples={}, n_features={}, n_concepts={})" \
             .format(self.name, self.n_samples, self.n_features, self.n_concepts)
 
     def __len__(self) -> int:
+        """
+        Return number of samples in the dataset.
+
+        Returns:
+            int: Number of samples.
+        """
         return self.n_samples
     
     def __getitem__(self, item):
+        """
+        Get a single sample from the dataset.
+
+        Args:
+            item (int): Index of the sample to retrieve.
+
+        Returns:
+            dict: Dictionary containing 'inputs' and 'concepts' sub-dictionaries.
+        """
         # Get raw input data and concepts
         x = self.input_data[item]
         c = self.concepts[item]
@@ -131,22 +194,42 @@ class ConceptDataset(Dataset):
 
     @property
     def n_samples(self) -> int:
-        """Number of samples in the dataset."""
+        """
+        Number of samples in the dataset.
+
+        Returns:
+            int: Number of samples.
+        """
         return self.input_data.size(0)
 
     @property
     def n_features(self) -> tuple:
-        """Shape of features in dataset's input (excluding number of samples)."""
+        """
+        Shape of features in dataset's input (excluding number of samples).
+
+        Returns:
+            tuple: Shape of input features.
+        """
         return tuple(self.input_data.size()[1:])
 
     @property
     def n_concepts(self) -> int:
-        """Number of concepts in the dataset."""
+        """
+        Number of concepts in the dataset.
+
+        Returns:
+            int: Number of concepts, or 0 if no concepts.
+        """
         return len(self.concept_names) if self.has_concepts else 0
 
     @property
     def concept_names(self) -> List[str]:
-        """List of concept names in the dataset."""
+        """
+        List of concept names in the dataset.
+
+        Returns:
+            List[str]: Names of all concepts.
+        """
         return self.annotations.get_axis_labels(1)
     
     @property
