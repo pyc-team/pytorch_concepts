@@ -71,13 +71,11 @@ def main():
 
     emb = encoder(x_train)
 
-    c_annotations = Annotations({1: AxisAnnotation(["c1"])})
-    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["c1"])
+    int_policy_c = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size, scale=100)
     int_strategy_c = DoIntervention(model=concept_model.pgm.factors, constants=-10)
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["c1"],
-                      quantiles=[1]):
+    with intervention(policies=int_policy_c,
+                      strategies=int_strategy_c,
+                      target_concepts=["c1", "c2"]):
         cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
         print(cy_pred[:5])
 

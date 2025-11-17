@@ -64,13 +64,12 @@ def main():
     print("=== Interventions ===")
     print(cy_pred[:5])
 
-    c_annotations = Annotations({1: AxisAnnotation(["c1"])})
-    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["c1"])
-    int_strategy_c = DoIntervention(model=concept_model.factor_modules, constants=-10)
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["c1.encoder"],
-                      quantiles=[1]):
+    int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
+    int_strategy_c = DoIntervention(model=concept_model.factors, constants=-10)
+    with intervention(policies=int_policy_c,
+                      strategies=int_strategy_c,
+                      target_concepts=["c1", "c2"],
+                      quantiles=1):
         cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
         print(cy_pred[:5])
 

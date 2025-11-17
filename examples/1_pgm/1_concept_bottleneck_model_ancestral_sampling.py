@@ -10,7 +10,7 @@ from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, Probabi
 
 def main():
     latent_dims = 10
-    n_epochs = 10000
+    n_epochs = 1000
     n_samples = 1000
     data = ToyDataset('xor', size=n_samples, random_state=42)
     x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
@@ -64,13 +64,11 @@ def main():
     print("=== Interventions ===")
     print(cy_pred[:5])
 
-    c_annotations = Annotations({1: AxisAnnotation(["c1"])})
-    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["c1"])
-    int_strategy_c = DoIntervention(model=concept_model.factor_modules, constants=-10)
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["c1.encoder"],
-                      quantiles=[1]):
+    int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
+    int_strategy_c = DoIntervention(model=concept_model.factors, constants=-10)
+    with intervention(policies=int_policy_c,
+                      strategies=int_strategy_c,
+                      target_concepts=["c1", "c2"]):
         cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
         print(cy_pred[:5])
 

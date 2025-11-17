@@ -111,31 +111,23 @@ def main():
 
         print("=== Interventions ===")
         intervened_concept = query_concepts[0]
-        if hasattr(concept_model_new.concept_to_factor[intervened_concept].module_class, 'encoder'):
-            layer_name = f"{intervened_concept}.encoder"
-        elif hasattr(concept_model_new.concept_to_factor[intervened_concept].module_class, 'hypernet'):
-            layer_name = f"{intervened_concept}"
-        else:
-            raise NotImplementedError("Intervention layer not found in either encoder or predictor.")
 
-        int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation([intervened_concept])}), subset=[intervened_concept])
-        int_strategy_c1 = DoIntervention(model=concept_model_new.factor_modules, constants=-10)
-        with intervention(policies=[int_policy_c1],
-                          strategies=[int_strategy_c1],
-                          on_layers=[layer_name],
-                          quantiles=[1]):
+        int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable[intervened_concept].size)
+        int_strategy_c1 = DoIntervention(model=concept_model_new.factors, constants=-10)
+        with intervention(policies=int_policy_c1,
+                          strategies=int_strategy_c1,
+                          target_concepts=[intervened_concept]):
             cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
             task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
             print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
             print(cy_pred[:5])
             print()
 
-            int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation([intervened_concept])}), subset=[intervened_concept])
-            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factor_modules, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
-            with intervention(policies=[int_policy_c1],
-                              strategies=[int_strategy_c1],
-                              on_layers=[layer_name],
-                              quantiles=[1]):
+            int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable[intervened_concept].size)
+            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+            with intervention(policies=int_policy_c1,
+                              strategies=int_strategy_c1,
+                              target_concepts=[intervened_concept]):
                 cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
                 task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
                 print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")

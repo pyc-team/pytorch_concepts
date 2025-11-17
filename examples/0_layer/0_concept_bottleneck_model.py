@@ -1,9 +1,10 @@
 import torch
 from sklearn.metrics import accuracy_score
+from torch.nn import ModuleDict
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, RandomPolicy, DoIntervention, intervention
 
 
 def main():
@@ -26,7 +27,11 @@ def main():
                                        out_features=c_annotations.shape[1])
     y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
-    model = torch.nn.Sequential(encoder, encoder_layer, y_predictor)
+    model = ModuleDict(
+        {"encoder": encoder,
+         "encoder_layer": encoder_layer,
+         "y_predictor": y_predictor}
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -51,6 +56,18 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+
+    int_policy_c = RandomPolicy(out_features=c_train.shape[1], scale=100)
+    int_strategy_c = DoIntervention(model=encoder_layer, constants=-10)
+    with intervention(policies=int_policy_c,
+                      strategies=int_strategy_c,
+                      target_concepts=[1],
+                      quantiles=1) as new_encoder:
+        emb = encoder(x_train)
+        c_pred = new_encoder(embedding=emb)
+        y_pred = y_predictor(logits=c_pred)
+        cy_pred = torch.cat([c_pred, y_pred], dim=1)
+        print(cy_pred[:5])
 
     return
 

@@ -59,75 +59,66 @@ def main():
             concept_accuracy = accuracy_score(c_train, c_pred > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
+    int_policy_c = UniformPolicy(out_features=c_train.shape[1])
+    int_strategy_c = GroundTruthIntervention(model=encoder_layer, ground_truth=torch.logit(c_train, eps=1e-6))
 
-    print(c_pred[:5])
-    print(y_pred[:5])
-    model = torch.nn.ModuleDict({
-        "encoder": encoder,
-        "encoder_layer": encoder_layer,
-        "y_predictor": y_predictor,
-    })
-    quantile = 0.8
-    int_policy_c = UniformPolicy(out_annotations=c_annotations, subset=["C1", "C4", "C5", "C6"])
-    int_strategy_c = GroundTruthIntervention(model=model, ground_truth=torch.logit(c_train, eps=1e-6))
-    int_policy_y = UncertaintyInterventionPolicy(out_annotations=y_annotations, subset=["xor"])
-    int_strategy_y = DoIntervention(model=model, constants=100)
-    print("Uncertainty + DoIntervention")
-    with intervention(policies=[int_policy_c, int_policy_y],
-                      strategies=[int_strategy_c, int_strategy_y],
-                      on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
-                      quantiles=[quantile, 1]):
+    print("Uncertainty + Ground Truth Intervention:")
+    with intervention(policies=int_policy_c,
+                      strategies=int_strategy_c,
+                      target_concepts=[0, 1]) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](emb)
-        y_pred = model["y_predictor"](c_pred)
+        c_pred = new_encoder_layer(embedding=emb)
+        y_pred = model["y_predictor"](logits=c_pred)
+        print("\nConcept predictions (first 5):")
         print(c_pred[:5])
-        print(y_pred[:5])
+        print("\nGround truth (first 5):")
+        print(torch.logit(c_train, eps=1e-6)[:5])
 
-    print("Do Intervention + UniformPolicy")
-    int_policy_c = UniformPolicy(out_annotations=c_annotations, subset=["C1", "C2", "C6"])
-    int_strategy_c = DoIntervention(model=model, constants=-10)
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["encoder_layer.encoder"],
-                      quantiles=[quantile]):
-        emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](emb)
-        y_pred = model["y_predictor"](c_pred)
-        print(c_pred[:5])
+    int_policy_c = UniformPolicy(out_features=c_train.shape[1])
+    int_strategy_c = DoIntervention(model=model["encoder_layer"], constants=-10)
 
-    print("Do Intervention + RandomPolicy")
-    int_policy_c = RandomPolicy(out_annotations=c_annotations, scale=100, subset=["C1", "C2", "C6"])
-    int_strategy_c = DoIntervention(model=model, constants=-10)
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["encoder_layer.encoder"],
-                      quantiles=[quantile]):
+    print("Do Intervention + Uniform Policy:")
+    with intervention(
+            policies=int_policy_c,
+            strategies=int_strategy_c,
+            target_concepts=[1],
+    ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](emb)
-        y_pred = model["y_predictor"](c_pred)
-        print(c_pred[:5])
+        c_pred = new_encoder_layer(embedding=emb)
+        y_pred = model["y_predictor"](logits=c_pred)
+        print("\nConcept predictions (first 5):")
+        print(c_pred[:5, :2])
 
-    print("Distribution Intervention")
-    int_strategy_c = DistributionIntervention(model=model, dist=torch.distributions.Normal(loc=0, scale=1))
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["encoder_layer.encoder"],
-                      quantiles=[quantile]):
-        emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](emb)
-        y_pred = model["y_predictor"](c_pred)
-        print(c_pred[:5])
+    int_policy_c = RandomPolicy(out_features=c_train.shape[1])
+    int_strategy_c = DoIntervention(model=encoder_layer, constants=-10)
 
-    print("Single Intervention")
-    with intervention(policies=[int_policy_c],
-                      strategies=[int_strategy_c],
-                      on_layers=["encoder_layer.encoder"],
-                      quantiles=[quantile]):
+    print("Do Intervention + Random Policy:")
+    with intervention(
+            policies=int_policy_c,
+            strategies=int_strategy_c,
+            target_concepts=[0, 1],
+            quantiles=0.5
+    ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = model["encoder_layer"](emb)
+        c_pred = new_encoder_layer(embedding=emb)
+        y_pred = model["y_predictor"](logits=c_pred)
+        print("\nConcept predictions (first 5):")
+        print(c_pred[:5, :2])
+
+    int_strategy_c = DistributionIntervention(model=encoder_layer, dist=torch.distributions.Normal(loc=50, scale=1))
+
+    print("Distribution Intervention:")
+    with intervention(
+            policies=int_policy_c,
+            strategies=int_strategy_c,
+            target_concepts=[1, 3],
+            quantiles=.5
+    ) as new_encoder_layer:
+        emb = model["encoder"](x_train)
+        c_pred = new_encoder_layer(embedding=emb)
         y_pred = model["y_predictor"](c_pred)
+        print("\nConcept predictions (first 5):")
         print(c_pred[:5])
-        print(y_pred[:5])
 
     return
 

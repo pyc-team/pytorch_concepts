@@ -4,8 +4,10 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
-    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, HyperLinearPredictor
+from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, \
+    Propagator, \
+    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, HyperLinearPredictor, \
+    AncestralSamplingInference
 
 
 def main():
@@ -39,13 +41,16 @@ def main():
                                    predictor=Propagator(HyperLinearPredictor, embedding_size=11))
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model.pgm)
+    inference_engine = AncestralSamplingInference(concept_model.pgm, temperature=1.0)
     query_concepts = ["c1", "c2", "xor"]
+    int_policy_c = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size, scale=100)
+    int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=c_train[:, 0:1])
+    int_strategy_c2 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=c_train[:, 1:2])
 
     model = torch.nn.Sequential(encoder, concept_model)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.BCELoss()
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -56,46 +61,55 @@ def main():
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
+        with intervention(policies=[int_policy_c, int_policy_c],
+                          strategies=[int_strategy_c1, int_strategy_c2],
+                          target_concepts=["c1", "c2"]):
+            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            c_pred_int = cy_pred[:, :c_train.shape[1]]
+            y_pred_int = cy_pred[:, c_train.shape[1]:]
+
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + concept_reg * task_loss
+        concept_loss_int = loss_fn(c_pred_int, c_train)
+        task_loss_int = loss_fn(y_pred_int, y_train)
+        loss = concept_loss + concept_reg * task_loss + concept_loss_int + concept_reg * task_loss_int
 
         loss.backward()
         optimizer.step()
 
         if epoch % 50 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
+    print("=== No Intervention ===")
+    print(cy_train[:5])
+
     print("=== Interventions ===")
-    int_policy_c1 = UniformPolicy(out_annotations=Annotations({1: AxisAnnotation(["c1"])}), subset=["c1"])
-    int_strategy_c1 = DoIntervention(model=concept_model.pgm.factor_modules, constants=-10)
-    with intervention(policies=[int_policy_c1],
-                      strategies=[int_strategy_c1],
-                      on_layers=["c1.encoder"],
-                      quantiles=[1]):
+
+    int_policy_random = UniformPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size)
+    int_strategy_random = DoIntervention(model=concept_model.pgm.factors, constants=0)
+    with intervention(policies=int_policy_random,
+                      strategies=int_strategy_random,
+                      target_concepts=["c1", "c2"]):
         cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
-        task_accuracy = accuracy_score(y_train, y_pred > 0.)
-        concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+        task_accuracy = accuracy_score(y_train, y_pred > 0.5)
+        concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
         print(f"Do intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
         print(cy_pred[:5])
         print()
 
-        int_policy_c1 = RandomPolicy(out_annotations=Annotations({1: AxisAnnotation(["c1"])}), scale=100, subset=["c1"])
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factor_modules, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
-        with intervention(policies=[int_policy_c1],
-                          strategies=[int_strategy_c1],
-                          on_layers=["c1.encoder"],
-                          quantiles=[1]):
+        with intervention(policies=[int_policy_c, int_policy_c],
+                          strategies=[int_strategy_c1, int_strategy_c2],
+                          target_concepts=["c1", "c2"]):
             cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:]
-            task_accuracy = accuracy_score(y_train, y_pred > 0.)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
+            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
             print(f"Ground truth intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
             print(cy_pred[:5])
 
