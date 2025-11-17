@@ -1,6 +1,5 @@
 import torch
 
-from .... import Annotations
 from ....nn.base.layer import BaseConceptLayer
 from typing import List, Union, Optional
 
@@ -19,15 +18,12 @@ class RandomPolicy(BaseConceptLayer):
 
     def __init__(
         self,
-        out_annotations: Annotations,
+        out_features: int,
         scale: float = 1.0,
-        subset: Optional[List[str]] = None,
     ):
         super().__init__(
-            out_features=out_annotations.shape[1],
+            out_features=out_features,
         )
-        self.out_annotations = out_annotations
-        self.subset = subset
         self.scale = scale
 
     def forward(

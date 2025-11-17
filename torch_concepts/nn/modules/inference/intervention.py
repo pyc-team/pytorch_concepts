@@ -22,10 +22,12 @@ def _set_submodule(model: nn.Module, dotted: str, new: nn.Module) -> None:
     if len(parts) > 1:
         setattr(parent, parts[-1], new)
     elif len(parts) == 1:
-        setattr(parent, parts[0], Factor(concepts="__intervention__", module_class=new))
+        if isinstance(new, Factor):
+            setattr(parent, parts[0], new)
+        else:
+            setattr(parent, parts[0], Factor(concepts=dotted, module_class=new))
     else:
         raise ValueError("Dotted path must not be empty")
-
 
 def _as_list(x, n: int):
     # broadcast a singleton to length n; if already a list/tuple, validate length
@@ -75,7 +77,7 @@ class GroundTruthIntervention(RewiringIntervention):
         super().__init__(model)
         self.register_buffer("ground_truth", ground_truth)
 
-    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+    def _make_target(self, y: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return self.ground_truth.to(dtype=y.dtype, device=y.device)
 
 class DoIntervention(RewiringIntervention):
@@ -94,7 +96,8 @@ class DoIntervention(RewiringIntervention):
         const = constants if torch.is_tensor(constants) else torch.tensor(constants)
         self.register_buffer("constants", const)
 
-    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+    # unified signature matching base
+    def _make_target(self, y: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         B, F = y.shape
         v = self.constants
 
@@ -127,7 +130,8 @@ class DistributionIntervention(RewiringIntervention):
         super().__init__(model)
         self.dist = dist
 
-    def _make_target(self, y: torch.Tensor) -> torch.Tensor:
+    # unified signature matching base
+    def _make_target(self, y: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         B, F = y.shape
         device, dtype = y.device, y.dtype
 
@@ -151,29 +155,33 @@ class _InterventionWrapper(nn.Module):
         self,
         original: nn.Module,
         policy: nn.Module,
-        strategy: GroundTruthIntervention,
+        strategy: RewiringIntervention,
         quantile: float,
+        subset: Optional[List[int]] = None,
     ):
         super().__init__()
         self.original = original
         self.policy = policy
         self.strategy = strategy
         self.quantile = float(quantile)
-        self.concept_axis = 1
+        self.subset = subset
+        if hasattr(original, "module_class"):
+            if hasattr(original.module_class, "forward_to_check"):
+                self.forward_to_check = original.module_class.forward_to_check
+            elif hasattr(original.module_class, "forward"):
+                self.forward_to_check = original.module_class.forward
+        else:
+            self.forward_to_check = original.forward
 
-    def _build_mask(self, policy_logits: torch.Tensor, subset: Optional[List[int]]) -> torch.Tensor:
+    def _build_mask(self, policy_logits: torch.Tensor) -> torch.Tensor:
         B, F = policy_logits.shape
         device = policy_logits.device
         dtype = policy_logits.dtype
 
-        sel_labels = subset if subset is not None else []
-        if len(sel_labels) == 0:
+        sel_idx = torch.tensor(self.subset, device=device, dtype=torch.long) if self.subset is not None else torch.arange(F, device=device, dtype=torch.long)
+        if len(sel_idx) == 0:
             return torch.ones_like(policy_logits)
 
-        sel_idx = torch.tensor(
-            [self.policy.out_annotations.get_index(1, lab) for lab in sel_labels],
-            device=device, dtype=torch.long
-        )
         K = sel_idx.numel()
         sel = policy_logits.index_select(dim=1, index=sel_idx)  # [B, K]
 
@@ -214,7 +222,7 @@ class _InterventionWrapper(nn.Module):
     def forward(self, **kwargs) -> torch.Tensor:
         y = self.original(**kwargs)
         logits = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
-        mask = self._build_mask(logits, self.policy.subset)  # 1 keep, 0 replace
+        mask = self._build_mask(logits)  # 1 keep, 0 replace
 
         # 3) proxy that returns the cached y instead of recomputing
         class _CachedOutput(nn.Module):
@@ -237,8 +245,8 @@ def intervention(
     *,
     policies: Union[nn.Module, Sequence[nn.Module]],
     strategies: Union[RewiringIntervention, Sequence[RewiringIntervention]],
-    on_layers: Union[str, Sequence[str]],
-    quantiles: Union[float, Sequence[float]],
+    target_concepts: Union[str, int, Sequence[Union[str, int]]],
+    quantiles: Optional[Union[float, Sequence[float]]] = 1.,
     model: nn.Module = None,                # optional; defaults to strategies[0].model
 ):
     """
@@ -253,32 +261,50 @@ def intervention(
             ...
     """
     # Normalise on_layers to list and compute N
-    if isinstance(on_layers, str):
-        on_layers = [on_layers]
-    N = len(on_layers)
-
-    # Broadcast/validate others
-    policies   = _as_list(policies,   N)
-    strategies = _as_list(strategies, N)
-    quantiles  = _as_list(quantiles,  N)
+    if isinstance(target_concepts, str):
+        target_concepts = [target_concepts]
+    N = len(target_concepts)
 
     # Choose the reference model
-    ref_model = model if model is not None else strategies[0].model
+    if isinstance(strategies, Sequence):
+        ref_model = strategies[0].model
+    else:
+        ref_model = strategies.model
 
     originals: List[nn.Module] = []
 
     try:
-        for path, pol, strat, q in zip(on_layers, policies, strategies, quantiles):
-            orig = _get_submodule(ref_model, path)
-            originals.append((path, orig))
+        if isinstance(target_concepts[0], int):
+            # in this case we expect a single module to replace
+            assert not isinstance(policies, Sequence), "When target_concepts are indices, only a single policy is supported"
+            assert not isinstance(strategies, Sequence), "When target_concepts are indices, only a single strategy is supported"
+            assert not isinstance(quantiles, Sequence), "When target_concepts are indices, only a single quantile is supported"
             wrap = _InterventionWrapper(
-                original=orig,
-                policy=pol,
-                strategy=strat,
-                quantile=q,
+                original=strategies.model,
+                policy=policies,
+                strategy=strategies,
+                quantile=quantiles,
+                subset=target_concepts
             )
-            _set_submodule(ref_model, path, wrap)
-        yield
+            yield wrap
+
+        else:
+            # Broadcast/validate others
+            policies = _as_list(policies, N)
+            strategies = _as_list(strategies, N)
+            quantiles = _as_list(quantiles, N)
+
+            for path, pol, strat, q in zip(target_concepts, policies, strategies, quantiles):
+                orig = _get_submodule(ref_model, path)
+                originals.append((path, orig))
+                wrap = _InterventionWrapper(
+                    original=orig,
+                    policy=pol,
+                    strategy=strat,
+                    quantile=q,
+                )
+                _set_submodule(ref_model, path, wrap)
+            yield
     finally:
         # restore originals
         for path, orig in originals:

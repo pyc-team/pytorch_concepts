@@ -1,8 +1,7 @@
 import torch
 
-from .... import Annotations
 from ....nn.base.layer import BaseConceptLayer
-from typing import List, Union, Optional
+from typing import List, Union
 
 
 class UncertaintyInterventionPolicy(BaseConceptLayer):
@@ -19,14 +18,11 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
 
     def __init__(
         self,
-        out_annotations: Annotations,
-        subset: Optional[List[str]] = None,
+        out_features: int,
     ):
         super().__init__(
-            out_features=out_annotations.shape[1],
+            out_features=out_features,
         )
-        self.out_annotations = out_annotations
-        self.subset = subset
 
     def forward(
         self,

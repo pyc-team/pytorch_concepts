@@ -121,7 +121,8 @@ class ForwardInference(BaseInference):
 
             parent_kwargs = self.get_parent_kwargs(factor, parent_latent, parent_logits)
             output_tensor = factor.forward(**parent_kwargs)
-            output_tensor = self.get_results(output_tensor, var)
+            if not isinstance(factor.module_class, _InterventionWrapper):
+                output_tensor = self.get_results(output_tensor, var)
 
         return concept_name, output_tensor
 
@@ -184,7 +185,7 @@ class ForwardInference(BaseInference):
                           parent_logits: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         parent_kwargs = {}
         if isinstance(factor.module_class, _InterventionWrapper):
-            forward_to_check = factor.module_class.original.module_class.forward
+            forward_to_check = factor.module_class.forward_to_check
         else:
             forward_to_check = factor.module_class.forward
 
@@ -198,7 +199,7 @@ class ForwardInference(BaseInference):
             )
         }
         if allowed not in [{'logits'}, {'logits', 'embedding'}, {'logits', 'exogenous'}, {'embedding'}, {'exogenous'}]:
-             #standard torch module
+             # standard torch module
             parent_kwargs[allowed.pop()] = torch.cat(parent_logits + parent_latent, dim=-1)
         else:
             # this is a PyC layer: separate logits and latent inputs
@@ -415,15 +416,16 @@ class ForwardInference(BaseInference):
         new_factors: List[object] = []
         seen_factors: Set[object] = set()
 
+        repeats = [self.pgm.concept_to_variable[p].size for p in row_labels]
         for var in new_variables:
-            factor = self.pgm.get_factor_of_variable(var.concepts[0])
+            factor = self.pgm.factors[var.concepts[0]]
             if factor is not None and factor not in seen_factors:
                 if factor.concepts[0] in rename_map.values() and factor.concepts[0] in col_labels:
                     col_id = self.col_labels2id[factor.concepts[0]]
                     mask = adj[:, col_id] != 0
                     mask_without_self_loop = torch.cat((mask[:col_id], mask[col_id + 1:]))
-                    repeats = [p.size for p in factor.parents if p.concepts[0] in row_labels]
-                    mask_with_cardinalities = torch.repeat_interleave(mask_without_self_loop, torch.tensor(repeats))
+                    rep = repeats[:col_id] + repeats[col_id + 1:]
+                    mask_with_cardinalities = torch.repeat_interleave(mask_without_self_loop, torch.tensor(rep))
                     factor.module_class.prune(mask_with_cardinalities)
                 new_factors.append(factor)
                 seen_factors.add(factor)
