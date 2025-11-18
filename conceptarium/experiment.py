@@ -34,17 +34,15 @@ def main(cfg: DictConfig) -> None:
     # 
     # 1. Instantiate the model
     # ----------------------------------
-    model = instantiate(cfg.model, _convert_="all", 
-                        _partial_=True)(annotations=datamodule.annotations,
-                                        graph=datamodule.graph)
+    model = instantiate(cfg.model, _convert_="all", _partial_=True)(annotations=datamodule.annotations,
+                                                                    graph=datamodule.graph)
 
     # ----------------------------------
     # Engine
     #
     # 1. Instantiate the engine, passing the model as argument
     # ----------------------------------
-    engine = instantiate(cfg.engine, _convert_="all", 
-                         _partial_=True)(model=model)
+    engine = instantiate(cfg.engine, _convert_="all", _partial_=True)(model=model)
 
     print("-------------------------------------------------------")
     try:
@@ -55,7 +53,7 @@ def main(cfg: DictConfig) -> None:
         # Train
         trainer.fit(engine, datamodule=datamodule)
         # ----------------------------------
-        # Finetune
+        # TODO: implement finetuning
         # if cfg.get("finetune") is not None:
         #     trainer = maybe_finetune_model(trainer, cfg.finetune)
         # ----------------------------------

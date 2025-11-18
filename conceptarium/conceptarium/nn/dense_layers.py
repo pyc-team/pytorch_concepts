@@ -1,9 +1,13 @@
+"""Simple fully-connected neural network layers.
+
+This module provides Dense, MLP, and ResidualMLP layers adapted from the 
+torch-spatiotemporal library. These layers serve as building blocks for 
+neural network architectures in concept-based models.
+
+Reference: https://torch-spatiotemporal.readthedocs.io/en/latest/
+"""
+
 from torch import nn
-
-
-"""simple fully-connected layers adapted from 
-adapted from the 'torch spatiotemporal' library: 
-https://torch-spatiotemporal.readthedocs.io/en/latest/"""
 
 
 _torch_activations_dict = {
@@ -26,6 +30,26 @@ _torch_activations_dict = {
 }
 
 def get_layer_activation(activation):
+    """Get PyTorch activation layer class from string name.
+    
+    Args:
+        activation (str or None): Activation function name (case-insensitive).
+            Supported: 'elu', 'leaky_relu', 'prelu', 'relu', 'rrelu', 'selu',
+            'celu', 'gelu', 'glu', 'mish', 'sigmoid', 'softplus', 'tanh', 
+            'silu', 'swish', 'linear'. None returns Identity.
+    
+    Returns:
+        torch.nn.Module: Activation layer class (uninstantiated).
+        
+    Raises:
+        ValueError: If activation name is not recognized.
+        
+    Example:
+        >>> act_class = get_layer_activation('relu')
+        >>> activation = act_class()  # ReLU()
+        >>> act_class = get_layer_activation(None)
+        >>> activation = act_class()  # Identity()
+    """
     if activation is None:
         return nn.Identity
     activation = activation.lower()
@@ -72,11 +96,18 @@ class Dense(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0. else nn.Identity()
 
     def reset_parameters(self) -> None:
-        """"""
+        """Reset layer parameters to initial random values."""
         self.affinity.reset_parameters()
 
     def forward(self, x):
-        """"""
+        """Apply linear transformation, activation, and dropout.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, output_size).
+        """
         out = self.activation(self.affinity(x))
         return self.dropout(out)
 
@@ -117,14 +148,22 @@ class MLP(nn.Module):
             self.register_parameter('readout', None)
 
     def reset_parameters(self) -> None:
-        """"""
+        """Reset all layer parameters to initial random values."""
         for module in self.mlp._modules.values():
             module.reset_parameters()
         if self.readout is not None:
             self.readout.reset_parameters()
 
     def forward(self, x):
-        """"""
+        """Forward pass through MLP layers with optional readout.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, output_size) 
+                if readout is defined, else (batch_size, hidden_size).
+        """
         out = self.mlp(x)
         if self.readout is not None:
             return self.readout(out)
@@ -182,7 +221,19 @@ class ResidualMLP(nn.Module):
             self.register_parameter('readout', None)
 
     def forward(self, x):
-        """"""
+        """Forward pass with residual connections.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, output_size) 
+                if readout is defined, else (batch_size, hidden_size).
+                
+        Note:
+            Each layer applies: x = layer(x) + skip(x), where skip is either
+            Identity, a projection layer, or a parametrized transformation.
+        """
         for layer, skip in zip(self.layers, self.skip_connections):
             x = layer(x) + skip(x)
         if self.readout is not None:

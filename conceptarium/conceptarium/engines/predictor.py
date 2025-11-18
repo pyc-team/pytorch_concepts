@@ -1,3 +1,14 @@
+"""PyTorch Lightning training engine for concept-based models.
+
+This module provides the Predictor class, which orchestrates the training, 
+validation, and testing of concept-based models. It handles:
+- Loss computation with type-aware losses (binary/categorical/continuous)
+- Metric tracking (summary and per-concept)
+- Optimizer and scheduler configuration
+- Batch preprocessing and transformations
+- Concept interventions (experimental)
+"""
+
 from typing import Optional, Mapping, Type, Callable, Union
 import warnings
 
@@ -13,6 +24,64 @@ from ..utils import instantiate_from_string
 
 
 class Predictor(pl.LightningModule):
+    """PyTorch Lightning module for training concept-based models.
+    
+    Manages the full training pipeline including loss computation, metric tracking,
+    and optimization. Automatically handles different concept types (binary, 
+    categorical, continuous) with appropriate loss functions and metrics.
+    
+    Args:
+        model (nn.Module): Concept-based model (e.g., CBM, CEM, CGM) with 
+            'annotations' attribute.
+        loss (Mapping): Nested dict defining loss functions by concept type:
+            {'discrete': {'binary': {...}, 'categorical': {...}}, 'continuous': {...}}
+        metrics (Mapping): Nested dict defining metrics by concept type, same 
+            structure as loss.
+        preprocess_inputs (bool, optional): Whether to apply input transformations 
+            from batch['transform']. Defaults to False.
+        scale_concepts (bool, optional): Whether to scale concepts (experimental, 
+            not fully implemented). Defaults to False.
+        enable_summary_metrics (bool, optional): Compute aggregated metrics per 
+            concept type. Defaults to True.
+        enable_perconcept_metrics (Union[bool, list], optional): Compute metrics 
+            per concept. If list, only track specified concepts. Defaults to False.
+        optim_class (Type): Optimizer class (e.g., torch.optim.Adam).
+        optim_kwargs (Mapping): Optimizer arguments (e.g., {'lr': 0.001}).
+        scheduler_class (Type, optional): LR scheduler class. Defaults to None.
+        scheduler_kwargs (Mapping, optional): Scheduler arguments. Defaults to None.
+        
+    Example:
+        >>> # Configure loss and metrics
+        >>> loss_cfg = {
+        ...     'discrete': {
+        ...         'binary': {'path': 'torch.nn.BCEWithLogitsLoss'},
+        ...         'categorical': {'path': 'torch.nn.CrossEntropyLoss'}
+        ...     },
+        ... }
+        >>> metrics_cfg = {
+        ...     'discrete': {
+        ...         'binary': {'accuracy': {'path': 'torchmetrics.Accuracy', 
+        ...                                  'kwargs': {'task': 'binary'}}},
+        ...         'categorical': {'accuracy': {'path': 'torchmetrics.Accuracy',
+        ...                                       'kwargs': {'task': 'multiclass'}}}
+        ...     }
+        ... }
+        >>> 
+        >>> # Create predictor
+        >>> predictor = Predictor(
+        ...     model=my_cbm_model,
+        ...     loss=loss_cfg,
+        ...     metrics=metrics_cfg,
+        ...     enable_summary_metrics=True,
+        ...     enable_perconcept_metrics=['age', 'gender'],  # Track specific concepts
+        ...     optim_class=torch.optim.Adam,
+        ...     optim_kwargs={'lr': 0.001}
+        ... )
+        >>> 
+        >>> # Train with PyTorch Lightning
+        >>> trainer = pl.Trainer(max_epochs=50)
+        >>> trainer.fit(predictor, datamodule=my_datamodule)
+    """
     def __init__(self,
                 model: nn.Module,
                 loss: Mapping,
@@ -25,10 +94,7 @@ class Predictor(pl.LightningModule):
                 optim_class: Type,
                 optim_kwargs: Mapping,
                 scheduler_class: Optional[Type] = None,
-                scheduler_kwargs: Optional[Mapping] = None,
-                train_interv_prob: Optional[float] = 0.,
-                test_interv_policy: Optional[str] = None,
-                test_interv_noise: Optional[float] = 0.,
+                scheduler_kwargs: Optional[Mapping] = None
                 ):
         
         super(Predictor, self).__init__()
@@ -50,9 +116,6 @@ class Predictor(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs or dict()
 
-        # interventions for regularization purposes
-        self.train_interv_prob = train_interv_prob
-
         # concept info
         self.concept_annotations = self.model.annotations.get_axis_annotation(1)
         self.concept_names = self.concept_annotations.labels
@@ -68,15 +131,24 @@ class Predictor(pl.LightningModule):
         self._setup_metrics(metrics)
 
     def __repr__(self):
-        return "{}(model={}, n_concepts={}, train_interv_prob={}, " \
-               "test_interv_policy={}, optimizer={}, scheduler={})" \
+        return "{}(model={}, n_concepts={}, optimizer={}, scheduler={})" \
             .format(self.__class__.__name__,
                     self.model.__class__.__name__,
+                    self.n_concepts,
                     self.optim_class.__name__,
                     self.scheduler_class.__name__ if self.scheduler_class else None)
 
     def _setup_concept_groups(self):
-        """Pre-compute concept information for efficient computation."""
+        """Pre-compute concept grouping by type for efficient loss/metric computation.
+        
+        Creates index mappings to slice tensors by concept type:
+        - binary_concept_idx: Indices of binary concepts (cardinality=1)
+        - categorical_concept_idx: Indices of categorical concepts (cardinality>1)
+        - continuous_concept_idx: Indices of continuous concepts
+        - binary_idx, categorical_idx, continuous_idx: Flattened tensor indices
+        
+        These precomputed indices avoid repeated computation during training.
+        """
         metadata = self.concept_annotations.metadata
         cardinalities = self.concept_annotations.cardinalities
         
@@ -114,9 +186,33 @@ class Predictor(pl.LightningModule):
                           annotations: AxisAnnotation, 
                           collection: Mapping,
                           collection_name: str):
-        """
-        Validate collections (typically metrics and losses) against concept annotations.
-        Discards unused collection items and performs sanity checks.
+        """Validate loss/metric configurations against concept annotations.
+        
+        Ensures that:
+        1. Required losses/metrics are present for each concept type
+        2. Annotation structure (nested vs dense) matches concept types
+        3. Unused configurations are warned about
+        
+        Args:
+            annotations (AxisAnnotation): Concept annotations with metadata.
+            collection (Mapping): Nested dict of losses or metrics.
+            collection_name (str): Either 'loss' or 'metrics' for error messages.
+            
+        Returns:
+            Tuple[Optional[dict], Optional[dict], Optional[dict]]: 
+                (binary_config, categorical_config, continuous_config) 
+                Only returns configs needed for the actual concept types present.
+                
+        Raises:
+            ValueError: If validation fails (missing required configs, 
+                incompatible annotation structure).
+                
+        Example:
+            >>> binary_loss, cat_loss, cont_loss = self._check_collection(
+            ...     self.concept_annotations, 
+            ...     loss_config, 
+            ...     'loss'
+            ... )
         """
         assert collection_name in ['loss', 'metrics'], "collection_name must be either 'loss' or 'metrics'"
 
@@ -221,7 +317,16 @@ class Predictor(pl.LightningModule):
                 continuous if needs_continuous else None)
     
     def _setup_losses(self, loss_config: Mapping):
-        """Setup and instantiate loss functions."""
+        """Setup and instantiate loss functions from configuration.
+        
+        Validates the loss config and creates loss function instances for each
+        concept type (binary, categorical, continuous) based on what's needed.
+        
+        Args:
+            loss_config (Mapping): Nested dict with structure:
+                {'discrete': {'binary': {...}, 'categorical': {...}}, 
+                 'continuous': {...}}
+        """
         # Validate and extract needed losses
         binary_cfg, categorical_cfg, continuous_cfg = self._check_collection(
             self.concept_annotations, loss_config, 'loss'
@@ -234,13 +339,30 @@ class Predictor(pl.LightningModule):
 
     @staticmethod
     def _check_metric(metric):
-        """Clone and reset a metric for use in collections."""
+        """Clone and reset a metric for independent tracking across splits.
+        
+        Args:
+            metric: TorchMetrics metric instance.
+            
+        Returns:
+            Cloned and reset metric ready for train/val/test collection.
+        """
         metric = metric.clone()
         metric.reset()
         return metric
 
     def _setup_metrics(self, metrics_config: Mapping):
-        """Setup and instantiate metrics with summary and/or per-concept options."""
+        """Setup and instantiate metrics with summary and/or per-concept tracking.
+        
+        Creates two types of metrics:
+        1. Summary metrics: Aggregated over all concepts of each type 
+           (keys: 'SUMMARY-binary_accuracy', etc.)
+        2. Per-concept metrics: Individual metrics for specified concepts 
+           (keys: 'age_accuracy', 'gender_accuracy', etc.)
+        
+        Args:
+            metrics_config (Mapping): Nested dict with same structure as loss_config.
+        """
         if metrics_config is None:
             metrics_config = {}
         
@@ -308,7 +430,16 @@ class Predictor(pl.LightningModule):
         self._set_metrics(summary_metrics, perconcept_metrics)
     
     def _instantiate_metric_dict(self, metrics_cfg: Mapping, num_classes: int = None) -> dict:
-        """Instantiate a dictionary of metrics from config."""
+        """Instantiate a dictionary of metrics from configuration.
+        
+        Args:
+            metrics_cfg (Mapping): Dict of metric configs with 'path' and 'kwargs'.
+            num_classes (int, optional): Number of classes for categorical metrics. 
+                If provided, overrides kwargs['num_classes'].
+                
+        Returns:
+            dict: Instantiated metrics keyed by metric name.
+        """
         if not isinstance(metrics_cfg, dict):
             return {}
         
@@ -321,7 +452,15 @@ class Predictor(pl.LightningModule):
         return metrics
 
     def _set_metrics(self, summary_metrics: Mapping = None, perconcept_metrics: Mapping = None):
-        """Create MetricCollection for train/val/test from summary and per-concept metrics."""
+        """Create MetricCollections for train/val/test splits.
+        
+        Combines summary and per-concept metrics into MetricCollections with 
+        appropriate prefixes ('train/', 'val/', 'test/').
+        
+        Args:
+            summary_metrics (Mapping, optional): Dict of summary metrics by type.
+            perconcept_metrics (Mapping, optional): Dict of per-concept metrics.
+        """
         all_metrics = {}
         
         # Add summary metrics
@@ -361,19 +500,29 @@ class Predictor(pl.LightningModule):
                          categorical_fn: Optional[Callable],
                          continuous_fn: Optional[Callable],
                          is_loss: bool) -> Union[torch.Tensor, None]:
-        """
-        Apply loss or metric functions by looping over concept groups.
+        """Apply loss or metric functions to concept groups by type.
+        
+        Slices predictions and targets by concept type and applies the 
+        appropriate function to each group. Handles padding for categorical
+        concepts with varying cardinalities.
         
         Args:
-            c_hat: Predicted concepts
-            c_true: Ground truth concepts
-            binary_fn: Function to apply to binary concepts
-            categorical_fn: Function to apply to categorical concepts
-            continuous_fn: Function to apply to continuous concepts
+            c_hat (torch.Tensor): Predicted concepts (logits or values).
+            c_true (torch.Tensor): Ground truth concepts.
+            binary_fn (Optional[Callable]): Function for binary concepts 
+                (loss or metric.update).
+            categorical_fn (Optional[Callable]): Function for categorical concepts.
+            continuous_fn (Optional[Callable]): Function for continuous concepts.
+            is_loss (bool): True if computing loss (returns scalar), False if 
+                updating metrics (returns None).
             
         Returns:
-            For losses: scalar tensor
-            For metrics: None (metrics are updated in-place)
+            Union[torch.Tensor, None]: Scalar loss tensor if is_loss=True, 
+                else None (metrics updated in-place).
+                
+        Note:
+            For categorical concepts, logits are padded to max_card and stacked
+            for batch processing. This is a known performance bottleneck (FIXME).
         """
         if is_loss:
             loss = 0.0
@@ -418,15 +567,17 @@ class Predictor(pl.LightningModule):
             return None
 
     def _compute_loss(self, c_hat: torch.Tensor, c_true: torch.Tensor) -> torch.Tensor:
-        """
-        Compute loss using pre-configured loss functions.
+        """Compute total loss across all concept types.
+        
+        Sums losses from binary, categorical, and continuous concepts using
+        their respective loss functions.
         
         Args:
-            c_hat: Predicted concepts (logits or probabilities)
-            c_true: Ground truth concepts
+            c_hat (torch.Tensor): Predicted concepts (logits or values).
+            c_true (torch.Tensor): Ground truth concepts.
             
         Returns:
-            Scalar loss value
+            torch.Tensor: Scalar loss value (sum of all type-specific losses).
         """
         return self._apply_fn_by_type(
             c_hat, c_true,
@@ -438,13 +589,16 @@ class Predictor(pl.LightningModule):
     
     def _update_metrics(self, c_hat: torch.Tensor, c_true: torch.Tensor, 
                        metric_collection: MetricCollection):
-        """
-        Update both summary and per-concept metrics.
+        """Update both summary and per-concept metrics.
+        
+        Iterates through the metric collection and updates each metric with
+        the appropriate slice of predictions and targets based on metric type
+        (summary vs per-concept) and concept type (binary/categorical/continuous).
         
         Args:
-            c_hat: Predicted concepts
-            c_true: Ground truth concepts
-            metric_collection: MetricCollection to update
+            c_hat (torch.Tensor): Predicted concepts.
+            c_true (torch.Tensor): Ground truth concepts.
+            metric_collection (MetricCollection): Collection to update (train/val/test).
         """
         for key in metric_collection:
 
@@ -507,6 +661,12 @@ class Predictor(pl.LightningModule):
                                                   c_true[:, c_id:c_id+1])
             
     def log_metrics(self, metrics, **kwargs):
+        """Log metrics to logger (W&B) at epoch end.
+        
+        Args:
+            metrics: MetricCollection or dict of metrics to log.
+            **kwargs: Additional arguments passed to self.log_dict.
+        """
         self.log_dict(metrics, 
                       on_step=False, 
                       on_epoch=True, 
@@ -515,6 +675,13 @@ class Predictor(pl.LightningModule):
                       **kwargs)
 
     def log_loss(self, name, loss, **kwargs):
+        """Log loss to logger and progress bar at epoch end.
+        
+        Args:
+            name (str): Loss name prefix (e.g., 'train', 'val', 'test').
+            loss (torch.Tensor): Loss value to log.
+            **kwargs: Additional arguments passed to self.log.
+        """
         self.log(name + "_loss",
                  loss.detach(),
                  on_step=False,
@@ -524,7 +691,14 @@ class Predictor(pl.LightningModule):
                  **kwargs)
 
     def update_and_log_metrics(self, step, c_hat, c, batch_size):
-        """Update and log metrics for the current step."""
+        """Update and log metrics for the current step (train/val/test).
+        
+        Args:
+            step (str): One of 'train', 'val', or 'test'.
+            c_hat (torch.Tensor): Predicted concepts.
+            c (torch.Tensor): Ground truth concepts.
+            batch_size (int): Batch size for proper metric aggregation.
+        """
         collection = getattr(self, f"{step}_metrics")
         
         if len(collection) == 0:
@@ -536,6 +710,14 @@ class Predictor(pl.LightningModule):
         self.log_metrics(collection, batch_size=batch_size)
 
     def _unpack_batch(self, batch):
+        """Extract inputs, concepts, and transforms from batch dict.
+        
+        Args:
+            batch (dict): Batch with 'inputs', 'concepts', and optional 'transform'.
+            
+        Returns:
+            Tuple: (inputs, concepts, transform) after model-specific preprocessing.
+        """
         inputs = batch['inputs']
         concepts = batch['concepts']
         transform = batch.get('transform')
@@ -547,6 +729,21 @@ class Predictor(pl.LightningModule):
                       preprocess: bool = False, 
                       postprocess: bool = True,
                       **forward_kwargs):
+        """Run model forward pass on a batch with optional preprocessing.
+        
+        Args:
+            batch (dict): Batch dictionary with 'inputs' and 'concepts'.
+            preprocess (bool, optional): Apply input transformations. Defaults to False.
+            postprocess (bool, optional): Apply inverse transformations to outputs 
+                (experimental). Defaults to True.
+            **forward_kwargs: Additional arguments passed to model.forward().
+            
+        Returns:
+            Model output (typically concept predictions).
+            
+        Note:
+            Postprocessing for concept scaling is not fully implemented.
+        """
         inputs, _, transform = self._unpack_batch(batch)
 
         # apply batch preprocessing
@@ -574,6 +771,17 @@ class Predictor(pl.LightningModule):
         return out
 
     def shared_step(self, batch, step):
+        """Shared logic for train/val/test steps.
+        
+        Performs forward pass, loss computation, and metric logging.
+        
+        Args:
+            batch (dict): Batch dictionary from dataloader.
+            step (str): One of 'train', 'val', or 'test'.
+            
+        Returns:
+            torch.Tensor: Scalar loss value.
+        """
         c = c_loss = batch['concepts']['c']
         out = self.predict_batch(batch, 
                                  preprocess=self.preprocess_inputs, 
@@ -597,16 +805,44 @@ class Predictor(pl.LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
+        """Training step called by PyTorch Lightning.
+        
+        Args:
+            batch (dict): Training batch.
+            batch_idx (int): Batch index.
+            
+        Returns:
+            torch.Tensor: Training loss.
+        """
         loss = self.shared_step(batch, step='train')
         if torch.isnan(loss).any():
             print(f"Loss is 'nan' at epoch: {self.current_epoch}, batch: {batch_idx}")
         return loss
 
     def validation_step(self, batch):
+        """Validation step called by PyTorch Lightning.
+        
+        Args:
+            batch (dict): Validation batch.
+            
+        Returns:
+            torch.Tensor: Validation loss.
+        """
         loss = self.shared_step(batch, step='val')
         return loss
     
     def test_step(self, batch):
+        """Test step called by PyTorch Lightning.
+        
+        Args:
+            batch (dict): Test batch.
+            
+        Returns:
+            torch.Tensor: Test loss.
+            
+        Note:
+            Test-time interventions are not yet implemented (TODO).
+        """
         loss = self.shared_step(batch, step='test')
         
         # TODO: test-time interventions
@@ -616,61 +852,25 @@ class Predictor(pl.LightningModule):
         return loss
 
 
-
-    # def on_train_epoch_end(self):
-    #     # Set the current epoch for SCBM and update the list of concept probs for computing the concept percentiles
-    #     if type(self.model).__name__ == 'SCBM':
-    #         self.model.training_epoch = self.current_epoch
-    #         # self.model.concept_pred = torch.cat(self.model.concept_pred_tmp, dim=0) 
-    #         # self.model.concept_pred_tmp = []     
-
-    # def on_test_epoch_end(self):
-    #     # baseline task accuracy
-    #     y_baseline = self.test_y_metrics['y_accuracy'].compute().item()
-    #     print(f"Baseline task accuracy: {y_baseline}")
-    #     pickle.dump({'_baseline':y_baseline}, open(f'results/y_accuracy.pkl', 'wb'))
-
-    #     # baseline concept accuracy
-    #     c_baseline = {}
-    #     for k, metric in self.test_c_metrics.items():
-    #         k = _remove_prefix(k, self.test_c_metrics.prefix)
-    #         c_baseline[k] = metric.compute().item()
-    #         print(f"Baseline concept accuracy for {k}: {c_baseline[k]}")
-    #     pickle.dump(c_baseline, open(f'results/c_accuracy.pkl', 'wb'))
-
-    #     if self.model.has_concepts:
-    #         # task accuracy after invervention on each individual concept
-    #         y_int = {}
-    #         for k, metric in self.test_intervention_single_y.items():
-    #             c_name = _remove_prefix(k, self.test_intervention_single_y.prefix)
-    #             y_int[c_name] = metric.compute().item()
-    #             print(f"Task accuracy after intervention on {c_name}: {y_int[c_name]}")
-    #         pickle.dump(y_int, open(f'results/single_c_interventions_on_y.pkl', 'wb'))
-
-    #         # task accuracy after intervention of each policy level
-    #         y_int = {}
-    #         for k, metric in self.test_intervention_level_y.items():
-    #             level = _remove_prefix(k, self.test_intervention_level_y.prefix)
-    #             y_int[level] = metric.compute().item()
-    #             print(f"Task accuracy after intervention on {level}: {y_int[level]}")
-    #         pickle.dump(y_int, open(f'results/level_interventions_on_y.pkl', 'wb'))
-
-    #         # individual concept accuracy after intervention of each policy level
-    #         c_int = {}
-    #         for k, metric in self.test_intervention_level_c.items():
-    #             level = _remove_prefix(k, self.test_intervention_level_c.prefix)
-    #             c_int[level] = metric.compute().item()
-    #             print(f"Concept accuracy after intervention on {level}: {c_int[level]}")
-    #         pickle.dump(c_int, open(f'results/level_interventions_on_c.pkl', 'wb'))
-
-    #         # save graph and concepts
-    #         pickle.dump({'concepts':self.c_names,
-    #                      'policy':self.test_interv_policy}, open("graph.pkl", 'wb'))
-            
-    #         pickle.dump({'policy':self.test_interv_policy}, open("policy.pkl", 'wb'))
-
     def configure_optimizers(self):
-        """"""
+        """Configure optimizer and optional learning rate scheduler.
+        
+        Called by PyTorch Lightning to setup optimization.
+        
+        Returns:
+            dict: Configuration with 'optimizer' and optionally 'lr_scheduler' 
+                and 'monitor' keys.
+                
+        Example:
+            >>> # With scheduler monitoring validation loss
+            >>> predictor = Predictor(
+            ...     ...,
+            ...     optim_class=torch.optim.Adam,
+            ...     optim_kwargs={'lr': 0.001},
+            ...     scheduler_class=torch.optim.lr_scheduler.ReduceLROnPlateau,
+            ...     scheduler_kwargs={'mode': 'min', 'patience': 5, 'monitor': 'val_loss'}
+            ... )
+        """
         cfg = dict()
         optimizer = self.optim_class(self.parameters(), **self.optim_kwargs)
         cfg["optimizer"] = optimizer

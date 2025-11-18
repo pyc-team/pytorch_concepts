@@ -3,7 +3,7 @@ import gzip
 import shutil
 import pandas as pd
 import torch
-from typing import List
+from typing import List, Optional
 import bnlearn as bn
 from pgmpy.sampling import BayesianModelSampling
 
@@ -25,12 +25,12 @@ class BnLearnDataset(ConceptDataset):
     def __init__(
             self,
             name: str, # name of the bnlearn DAG
+            root: str, # root directory to store/load the dataset
             seed: int, # seed for data generation
             n_gen: int = 10000,
-            concept_subset: list | None = None, # subset of concept labels
-            label_descriptions: dict | None = None,
-            autoencoder_kwargs: dict | None = None, # kwargs of the autoencoder used to extract latent representations
-            root: str = None
+            concept_subset: Optional[list] = None, # subset of concept labels
+            label_descriptions: Optional[dict] = None,
+            autoencoder_kwargs: Optional[dict] = None, # kwargs of the autoencoder used to extract latent representations
     ):
         self.name = name
         self.seed = seed
@@ -131,7 +131,7 @@ class BnLearnDataset(ConceptDataset):
 
         # ---- save all ----
         # save embeddings
-        print(f"Saving dataset from {self.root_dir}")
+        print(f"Saving dataset to {self.root_dir}")
         torch.save(embeddings, self.files_to_build_paths["embeddings"])
         # save concepts
         concepts.to_hdf(self.files_to_build_paths["concepts"], key="concepts", mode="w")
