@@ -1,7 +1,7 @@
 import torchvision.models as models
 from torchvision import transforms
 
-from torch_concepts.data.dataset import ColorMNISTDataset
+from torch_concepts.data.datasets import ColorMNISTDataset
 # from torch_concepts.data.utils import preprocess_img_data, load_preprocessed_data
 
 

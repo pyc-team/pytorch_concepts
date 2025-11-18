@@ -2,7 +2,7 @@ import torch
 from typing import Union
 from torchvision.transforms import Compose
 
-from ..dataset import FashionMNISTDataset
+from ..datasets import FashionMNISTDataset
 
 from ..base.datamodule import ConceptDataModule
 from ..splitters.coloring import ColoringSplitter
