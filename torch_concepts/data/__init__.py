@@ -8,7 +8,7 @@ concept datasets.
 
 # Submodules
 from . import base
-from . import dataset
+from . import datasets
 from . import datamodules
 from . import preprocessing
 from . import scalers

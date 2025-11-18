@@ -1,7 +1,7 @@
 import torchvision.models as models
 from torchvision import transforms
 
-from torch_concepts.data.dataset import CelebADataset
+from torch_concepts.data.datasets import CelebADataset
 
 
 def main():

@@ -1,4 +1,4 @@
-from ..dataset import BnLearnDataset
+from ..datasets import BnLearnDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
