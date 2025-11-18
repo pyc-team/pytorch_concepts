@@ -4,7 +4,6 @@ This module provides StandardScaler for normalizing data to zero mean and
 unit variance, similar to scikit-learn's StandardScaler but for PyTorch tensors.
 """
 
-from abc import ABC, abstractmethod
 from typing import Tuple, Union
 import torch
 from torch import Tensor

@@ -7,7 +7,6 @@ deployment, and experiment reproduction.
 
 from omegaconf import OmegaConf
 from pytorch_lightning import LightningDataModule, LightningModule
-from pytorch_lightning.loggers import WandbLogger
 from torch import cuda
 
 from env import CACHE, PROJECT_NAME, VERSION, PROJECT_ENTITY

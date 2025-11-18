@@ -5,7 +5,7 @@ for all concept-based models in the library. It handles backbone integration,
 encoder setup, annotation management, and provides hooks for data preprocessing.
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, Optional, Tuple, Mapping, Dict
 import torch
 import torch.nn as nn
