@@ -17,8 +17,9 @@
   - [Dataset Configuration](#dataset-configuration-datasetyaml)
   - [Model Configuration](#model-configuration-modelyaml)
   - [Engine Configuration](#engine-configuration-engineengineyaml)
-- [Implementing Your Own Model](#implementing-your-own-model)
-- [Implementing Your Own Dataset](#implementing-your-own-dataset)
+- [Implementation](#implementation)
+  - [Implementing Your Own Model](#implementing-your-own-model)
+  - [Implementing Your Own Dataset](#implementing-your-own-dataset)
 - [Contributing](#contributing)
 - [Cite this library](#cite-this-library)
 
@@ -288,7 +289,12 @@ continuous:
 
 ---
 
-# Implementing Your Own Model
+# Implementation
+
+Conceptarium is designed to be extensible and accomodate your own experimental setting. You can implement custom models and datasets by following the guidelines below.
+
+
+## Implementing Your Own Model
 
 Create your model in Conceptarium by following the guidelines given in [examples/contributing/model.md](examples/contributing/model.md).
 
@@ -308,7 +314,7 @@ python run_experiment.py --config-file your_sweep.yaml
 
 ---
 
-# Implementing Your Own Dataset
+## Implementing Your Own Dataset
 Create your dataset in Conceptarium by following the guidelines given in [examples/contributing/dataset.md](examples/contributing/dataset.md).
 
 This involves the following steps:
