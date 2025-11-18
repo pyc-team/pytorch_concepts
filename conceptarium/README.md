@@ -7,8 +7,13 @@
 <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> <em>Conceptarium</em> is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Conceptarium is built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> [PyTorch](https://pytorch.org/) and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) for model implementation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/lightning.svg" width="25px" align="center"/> [PyTorch Lightning](https://lightning.ai/pytorch-lightning) for training automation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="25px" align="center"/> [Hydra](https://hydra.cc/) for configuration management and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/wandb.svg" width="25px" align="center"/> [Weights & Biases](https://wandb.ai/) for logging.
 
 - [Quick Start](#quick-start)
-- [Configuration Structure](#configuration-structure)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Running Experiments](#running-experiments)
+  - [Custom configurations](#custom-configurations)
+  - [Output Structure](#output-structure)
 - [Configuration Details](#configuration-details)
+  - [Configuration Structure](#configuration-structure)
   - [Dataset Configuration](#dataset-configuration-datasetyaml)
   - [Model Configuration](#model-configuration-modelyaml)
   - [Engine Configuration](#engine-configuration-engineengineyaml)
