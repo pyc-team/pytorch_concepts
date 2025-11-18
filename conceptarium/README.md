@@ -339,18 +339,6 @@ Thanks to all contributors! 🧡
   <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" />
 </a>
 
-- [Pietro Barbiero](http://www.pietrobarbiero.eu/), 
-- [Giovanni De Felice](https://gdefe.github.io/)
-- [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/)
-- [Gabriele Ciravegna](https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/)
-- [Gabriele Dominici](https://pc.inf.usi.ch/team/gabriele-dominici/)
-- [Francesco De Santis]
-- [Arianna Casanova]
-- [David Debot](https://www.kuleuven.be/wieiswie/en/person/00165387) 
-- [Francesco Giannini](https://www.francescogiannini.eu/)
-- [Michelangelo Diligenti](https://docenti.unisi.it/en/diligenti)
-- [Giuseppe Marra](https://www.giuseppemarra.com/)
-
 ---
 
 # Licence
