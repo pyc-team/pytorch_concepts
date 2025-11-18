@@ -49,11 +49,6 @@ class Predictor(pl.LightningModule):
         optim_kwargs (Mapping): Optimizer arguments (e.g., {'lr': 0.001}).
         scheduler_class (Type, optional): LR scheduler class. Defaults to None.
         scheduler_kwargs (Mapping, optional): Scheduler arguments. Defaults to None.
-        train_interv_prob (float, optional): Intervention probability during training 
-            (experimental). Defaults to 0.0.
-        test_interv_policy (str, optional): Test-time intervention policy 
-            (experimental). Defaults to None.
-        test_interv_noise (float, optional): Intervention noise level. Defaults to 0.0.
         
     Example:
         >>> # Configure loss and metrics
@@ -62,7 +57,6 @@ class Predictor(pl.LightningModule):
         ...         'binary': {'path': 'torch.nn.BCEWithLogitsLoss'},
         ...         'categorical': {'path': 'torch.nn.CrossEntropyLoss'}
         ...     },
-        ...     'continuous': {'path': 'torch.nn.MSELoss'}
         ... }
         >>> metrics_cfg = {
         ...     'discrete': {
@@ -100,10 +94,7 @@ class Predictor(pl.LightningModule):
                 optim_class: Type,
                 optim_kwargs: Mapping,
                 scheduler_class: Optional[Type] = None,
-                scheduler_kwargs: Optional[Mapping] = None,
-                train_interv_prob: Optional[float] = 0.,
-                test_interv_policy: Optional[str] = None,
-                test_interv_noise: Optional[float] = 0.,
+                scheduler_kwargs: Optional[Mapping] = None
                 ):
         
         super(Predictor, self).__init__()
@@ -124,9 +115,6 @@ class Predictor(pl.LightningModule):
         self.optim_kwargs = optim_kwargs or dict()
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs or dict()
-
-        # interventions for regularization purposes
-        self.train_interv_prob = train_interv_prob
 
         # concept info
         self.concept_annotations = self.model.annotations.get_axis_annotation(1)

@@ -7,9 +7,9 @@ from ...typing import BackboneType
 
 
 class BnLearnDataModule(ConceptDataModule):
-    """DataModule for the Sachs Bayesian Network dataset.
+    """DataModule for all Bayesian Network datasets.
 
-    Handles data loading, splitting, and batching for the Sachs dataset
+    Handles data loading, splitting, and batching for all Bayesian Network datasets
     with support for concept-based learning.
     
     Args:

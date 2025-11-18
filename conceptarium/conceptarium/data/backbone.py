@@ -80,7 +80,7 @@ def get_backbone_embs(path: str,
     """Get backbone embeddings with automatic caching.
     
     Loads embeddings from cache if available, otherwise computes and saves them.
-    This dramatically speeds up training by avoiding repeated backbone computation.
+    This dramatically speeds up training by avoiding repeated (pretrained) backbone computation.
     
     Args:
         path (str): File path for saving/loading embeddings (.pt file).

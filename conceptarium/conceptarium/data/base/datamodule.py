@@ -34,15 +34,16 @@ class ConceptDataModule(LightningDataModule):
         test_size (float, optional): Test set fraction. Defaults to 0.2.
         ftune_size (float, optional): Fine-tuning set fraction. Defaults to 0.0.
         ftune_val_size (float, optional): Fine-tuning validation fraction. Defaults to 0.0.
-        batch_size (int, optional): Mini-batch size. Defaults to 512.
+        batch_size (int, optional): Mini-batch size. Defaults to 64.
         backbone (BackboneType, optional): Feature extraction model. If provided
             with precompute_embs=True, embeddings are computed and cached. Defaults to None.
         precompute_embs (bool, optional): Cache backbone embeddings to disk for
-            faster training. Defaults to False.
+            faster retrieval. Defaults to False.
         force_recompute (bool, optional): Recompute embeddings even if cached. 
             Defaults to False.
-        scalers (Mapping, optional): Dict of scalers for data normalization 
-            (keys: 'input', 'concepts'). If None, uses StandardScaler. Defaults to None.
+        scalers (Mapping, optional): Dict of custom scalers for data normalization. 
+            Keys must match the target keys in the batch (e.g., 'input', 'concepts'). 
+            If None, uses StandardScaler. Defaults to None.
         splitter (object, optional): Custom splitter for train/val/test splits.
             If None, uses RandomSplitter. Defaults to None.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
@@ -59,7 +60,7 @@ class ConceptDataModule(LightningDataModule):
         ...     dataset=dataset,
         ...     val_size=0.1,
         ...     test_size=0.2,
-        ...     batch_size=256,
+        ...     batch_size=64,
         ...     backbone=backbone,
         ...     precompute_embs=True,  # Cache embeddings for faster training
         ...     workers=4
@@ -75,7 +76,7 @@ class ConceptDataModule(LightningDataModule):
                  test_size: float = 0.2,
                  ftune_size: float = 0.0,
                  ftune_val_size: float = 0.0,
-                 batch_size: int = 512,
+                 batch_size: int = 64,
                  backbone: BackboneType = None,     # optional backbone
                  precompute_embs: bool = False,
                  force_recompute: bool = False,      # whether to recompute embeddings even if cached
@@ -311,6 +312,8 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Fit scalers on training data only
         # ----------------------------------
+        # TODO: enable scalers and transforms
+        
         # if stage in ['fit', None]:
         #     for key, scaler in self.scalers.items():
         #         if not hasattr(self.dataset, key):
