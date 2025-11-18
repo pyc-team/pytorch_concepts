@@ -14,9 +14,7 @@
   - [Engine Configuration](#engine-configuration-engineengineyaml)
 - [Implementing Your Own Model](#implementing-your-own-model)
 - [Implementing Your Own Dataset](#implementing-your-own-dataset)
-- [PyC Book](#pyc-book)
-- [Authors](#authors)
-- [Licence](#licence)
+- [Contributing](#contributing)
 - [Cite this library](#cite-this-library)
 
 ---
@@ -325,13 +323,13 @@ python run_experiment.py --config-name your_sweep.yaml
 
 ---
 
-# PyC Book
+# Contributing
 
-You can find further reading materials and tutorials in our book [Concept-based Interpretable Deep Learning in Python](https://pyc-team.github.io/pyc-book/).
-
----
-
-# Contributors
+- Use the `dev` branch to write and test your contributions locally.
+- Make small commits and use ["Gitmoji"](https://gitmoji.dev/) to add emojis to your commit messages.
+- Make sure to write documentation and tests for your contributions.
+- Make sure all tests pass before submitting the pull request.
+- Submit a pull request to the `main` branch.
 
 Thanks to all contributors! 🧡
 
@@ -341,17 +339,7 @@ Thanks to all contributors! 🧡
 
 ---
 
-# Licence
 
-Copyright 2025 PyC Team.
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at: <http://www.apache.org/licenses/LICENSE-2.0>.
-
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-See the License for the specific language governing permissions and limitations under the License.
-
----
 
 # Cite this library
 

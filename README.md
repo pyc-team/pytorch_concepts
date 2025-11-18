@@ -26,14 +26,10 @@ The name of the library stands for both
   - [High-level APIs](#high-level-apis)
     - [Objects](#objects-1)
     - [High-level Models](#high-level-models)
-  - [No-code APIs](#no-code-apis)
-- [Evaluation APIs](#evaluation-apis)
-  - [Datasets](#datasets)
-  - [Metrics](#metrics)
+  - [Conceptarium: No-code APIs and benchmarking framework](#conceptarium-no-code-apis-and-benchmarking-framework)
+    - [Models](#models)
+    - [Datasets](#datasets)
 - [Contributing](#contributing)
-- [PyC Book](#pyc-book)
-- [Authors](#authors)
-- [Licence](#licence)
 - [Cite this library](#cite-this-library)
 
 
@@ -202,6 +198,8 @@ cd pytorch_concepts/conceptarium
 python run_experiment.py --config-name your_sweep.yaml
 ```
 
+### Models
+
 Out-of-the-box models include:
 
 | Model                              | Description | Reference |
@@ -215,6 +213,7 @@ Out-of-the-box models include:
 add more...
 
 
+### Datasets
 
 Out-of-the-box datasets include:
 | Dataset                              | Description | Reference |
@@ -253,17 +252,6 @@ Out-of-the-box metrics include:
 - Make sure all tests pass before submitting the pull request.
 - Submit a pull request to the `main` branch.
 
-
----
-
-# PyC Book
-
-You can find further reading materials and tutorials in our book [Concept-based Interpretable Deep Learning in Python](https://pyc-team.github.io/pyc-book/).
-
----
-
-# Contributors
-
 Thanks to all contributors! 🧡
 
 <a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
@@ -272,17 +260,7 @@ Thanks to all contributors! 🧡
 
 ---
 
-# Licence
 
-Copyright 2025 PyC Team.
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at: <http://www.apache.org/licenses/LICENSE-2.0>.
-
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-See the License for the specific language governing permissions and limitations under the License.
-
----
 
 # Cite this library
 
