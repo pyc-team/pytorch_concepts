@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Annotations, AxisAnnotation, Variable
-from torch_concepts.data import ToyDataset
+from torch_concepts.data.dataset import ToyDataset
 from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference
 

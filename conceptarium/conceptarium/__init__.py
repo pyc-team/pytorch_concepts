@@ -1,3 +1,57 @@
-from .engines.predictor import Predictor
+"""
+Conceptarium - Training framework for concept-based models.
 
-__all__ = ["Predictor"]
+This module provides PyTorch Lightning-based training infrastructure,
+including trainers, experiment utilities, and W&B integration.
+"""
+
+from .engines.predictor import Predictor
+from .trainer import Trainer, GradientMonitor_afterB
+from .utils import (
+    seed_everything,
+    setup_run_env,
+    clean_empty_configs,
+    update_config_from_data,
+    instantiate_from_string,
+    get_from_string,
+    add_distribution_to_annotations,
+)
+from .wandb import (
+    run_from_id,
+    checkpoint_from_run,
+    model_from_run,
+    dataset_from_run,
+    iter_runs,
+)
+from .hydra import target_classname, parse_hyperparams
+from .resolvers import register_custom_resolvers
+
+__all__ = [
+    # Engines
+    "Predictor",
+
+    # Trainer
+    "Trainer",
+    "GradientMonitor_afterB",
+
+    # Utilities
+    "seed_everything",
+    "setup_run_env",
+    "clean_empty_configs",
+    "update_config_from_data",
+    "instantiate_from_string",
+    "get_from_string",
+    "add_distribution_to_annotations",
+
+    # W&B
+    "run_from_id",
+    "checkpoint_from_run",
+    "model_from_run",
+    "dataset_from_run",
+    "iter_runs",
+
+    # Hydra
+    "target_classname",
+    "parse_hyperparams",
+    "register_custom_resolvers",
+]

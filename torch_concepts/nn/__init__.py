@@ -4,39 +4,48 @@ Neural network modules for concept-based models.
 This module provides neural network components for building concept-based architectures.
 """
 
-from .base.graph import BaseGraphLearner
-from .base.model import BaseModel
-from .base.layer import (
+# Base classes
+from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
+from torch_concepts.nn.modules.high.base.model import BaseModel
+from torch_concepts.nn.modules.low.base.layer import (
     BaseConceptLayer,
     BaseEncoder,
     BasePredictor,
 )
-from .base.inference import BaseInference, BaseIntervention
+from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
 
+# Propagator
 from .modules.propagator import Propagator
 
-from .modules.encoders.exogenous import ExogEncoder
-from .modules.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
-from .modules.encoders.stochastic import StochasticEncoderFromEmb
+# Encoders
+from .modules.low.encoders.exogenous import ExogEncoder
+from .modules.low.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
+from .modules.low.encoders.stochastic import StochasticEncoderFromEmb
+from .modules.low.encoders.selector import MemorySelector
 
-from .modules.predictors.linear import ProbPredictor
-from .modules.predictors.embedding import MixProbExogPredictor
-from .modules.predictors.hypernet import HyperLinearPredictor
-from .modules.selector import MemorySelector
+# Predictors
+from .modules.low.predictors.linear import ProbPredictor
+from .modules.low.predictors.embedding import MixProbExogPredictor
+from .modules.low.predictors.hypernet import HyperLinearPredictor
 
-from .modules.wanda import WANDAGraphLearner
+# Graph learner
+from .modules.low.graph.wanda import WANDAGraphLearner
 
-from .modules.models.factor import Factor
-from .modules.models.pgm import ProbabilisticModel
-from .modules.models.bipartite import BipartiteModel
-from .modules.models.graph import GraphModel
+# Models (mid-level)
+from .modules.mid.models.factor import Factor
+from .modules.mid.models.probabilistic_model import ProbabilisticModel
+from .modules.mid.constructors.bipartite import BipartiteModel
+from .modules.mid.constructors.graph import GraphModel
 
-from .modules.inference.forward import (
+# Inference (mid-level)
+from .modules.mid.inference.forward import (
     ForwardInference,
     DeterministicInference,
     AncestralSamplingInference,
 )
-from .modules.inference.intervention import (
+
+# Interventions (low-level)
+from .modules.low.inference.intervention import (
     RewiringIntervention,
     GroundTruthIntervention,
     DoIntervention,
@@ -44,10 +53,10 @@ from .modules.inference.intervention import (
     intervention,
 )
 
-from .modules.policy.random import RandomPolicy
-from .modules.policy.uniform import UniformPolicy
-from .modules.policy.uncertainty import UncertaintyInterventionPolicy
-
+# Intervention policies
+from .modules.low.policy.uniform import UniformPolicy
+from .modules.low.policy.uncertainty import UncertaintyInterventionPolicy
+from .modules.low.policy.random import RandomPolicy
 
 __all__ = [
     # Base classes
@@ -99,5 +108,7 @@ __all__ = [
     "intervention",
 
     # Intervention policies
+    "UniformPolicy",
     "UncertaintyInterventionPolicy",
+    "RandomPolicy",
 ]

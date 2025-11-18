@@ -5,10 +5,16 @@ This module provides various utility functions for working with concept-based mo
 including concept name validation, output size computation, explanation analysis,
 and numerical stability checks.
 """
+import importlib
+import warnings
 from collections import Counter
-from typing import Dict, Union, List
+from copy import deepcopy
+from typing import Dict, Union, List, Mapping
 import torch, math
 import logging
+
+from .data.annotations import Annotations
+
 
 def validate_and_generate_concept_names(
     concept_names: Dict[int, Union[int, List[str]]],
@@ -155,3 +161,133 @@ def numerical_stability_check(cov, device, epsilon=1e-6):
             num_added += epsilon
             epsilon *= 2
     return cov
+
+
+def _is_int_index(x) -> bool:
+    """
+    Check if a value is an integer index.
+
+    Args:
+        x: Value to check.
+
+    Returns:
+        bool: True if x is an int or 0-dimensional tensor, False otherwise.
+    """
+    return isinstance(x, int) or (isinstance(x, torch.Tensor) and x.dim() == 0)
+
+
+def _check_tensors(tensors):
+    """
+    Validate that a list of tensors are compatible for concatenation.
+
+    Ensures all tensors have:
+    - At least 2 dimensions (batch and concept dimensions)
+    - Same batch size (dimension 0)
+    - Same trailing dimensions (dimension 2+)
+    - Same dtype and device
+    - Same requires_grad setting
+
+    The concept dimension (dimension 1) is allowed to vary.
+
+    Args:
+        tensors (List[torch.Tensor]): List of tensors to validate.
+
+    Raises:
+        ValueError: If tensors have incompatible shapes, dtypes, devices, or settings.
+    """
+    B = tensors[0].shape[0]
+    dtype = tensors[0].dtype
+    device = tensors[0].device
+    rest_shape = tensors[0].shape[2:]  # dims >=2 must match
+    for i, t in enumerate(tensors):
+        if t.dim() < 2:
+            raise ValueError(f"Tensor {i} must have at least 2 dims (B, c_i, ...); got {tuple(t.shape)}.")
+        if t.shape[0] != B:
+            raise ValueError(f"All tensors must share batch dim. Got {t.shape[0]} != {B} at field {i}.")
+        # only dim=1 may vary; dims >=2 must match exactly
+        if t.shape[2:] != rest_shape:
+            raise ValueError(
+                f"All tensors must share trailing shape from dim=2. "
+                f"Field {i} has {t.shape[2:]} != {rest_shape}."
+            )
+        if t.dtype != dtype:
+            raise ValueError("All tensors must share dtype.")
+        if t.device != device:
+            raise ValueError("All tensors must be on the same device.")
+        if t.requires_grad != tensors[0].requires_grad:
+            raise ValueError("All tensors must have the same requires_grad setting.")
+
+
+def add_distribution_to_annotations(annotations: Annotations,
+                                    variable_distributions: Mapping) -> Annotations:
+    """Add probability distribution classes to concept annotations metadata.
+
+    Maps concept types and cardinalities to appropriate distribution classes
+    (e.g., Bernoulli for binary, Categorical for multi-class). Used by models
+    to define probabilistic layers for each concept.
+
+    Args:
+        annotations: Concept annotations with type and cardinality metadata.
+        variable_distributions: Mapping from distribution flags to config:
+            - discrete_card1: Binary concept distribution
+            - discrete_cardn: Categorical distribution
+            - continuous_card1: Scalar continuous distribution
+            - continuous_cardn: Vector continuous distribution
+
+    Returns:
+        Updated annotations with 'distribution' field in each concept's metadata.
+
+    Example:
+        >>> distributions = {
+        ...     'discrete_card1': {'path': 'torch.distributions.Bernoulli'},
+        ...     'discrete_cardn': {'path': 'torch.distributions.Categorical'}
+        ... }
+        >>> annotations = add_distribution_to_annotations(
+        ...     annotations, distributions
+        ... )
+    """
+    concepts_annotations = deepcopy(annotations[1])
+    metadatas = concepts_annotations.metadata
+    cardinalities = concepts_annotations.cardinalities
+    for (concept_name, metadata), cardinality in zip(metadatas.items(), cardinalities):
+        if 'distribution' in metadata:
+            warnings.warn(
+                f"Distribution field of concept {concept_name} already set; leaving existing value unchanged.",
+                RuntimeWarning
+            )
+            continue
+        else:
+            if metadata['type'] == 'discrete' and cardinality == 1:
+                distribution_flag = 'discrete_card1'
+            elif metadata['type'] == 'discrete' and cardinality > 1:
+                distribution_flag = 'discrete_cardn'
+            elif metadata['type'] == 'continuous' and cardinality == 1:
+                distribution_flag = 'continuous_card1'
+            elif metadata['type'] == 'continuous' and cardinality > 1:
+                distribution_flag = 'continuous_cardn'
+            else:
+                raise ValueError(f"Cannot set distribution type for concept {concept_name}.")
+
+        metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
+
+    annotations[1].metadata = metadatas
+    return annotations
+
+
+def get_from_string(class_path: str):
+    """Import and return a class from its fully qualified string path.
+
+    Args:
+        class_path: Fully qualified class path (e.g., 'torch.optim.Adam').
+
+    Returns:
+        Class object (not instantiated).
+
+    Example:
+        >>> Adam = get_from_string('torch.optim.Adam')
+        >>> optimizer = Adam(model.parameters(), lr=0.001)
+    """
+    module_path, class_name = class_path.rsplit('.', 1)
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls

@@ -1,7 +1,7 @@
 import torch
 
 from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.data import ToyDataset
+from torch_concepts.data.dataset import ToyDataset
 from torch_concepts.nn import ExogEncoder, ProbEncoderFromExog, MixProbExogPredictor
 
 

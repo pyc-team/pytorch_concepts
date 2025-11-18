@@ -1,0 +1,212 @@
+/* Custom CSS adapted from Torch Spatiotemporal Documentation */
+
+/* General */
+
+a {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+}
+
+/*  Header  */
+
+section#torch-spatiotemporal h1 {
+    display: none;
+}
+
+#particles-js {
+    z-index: -30;
+    position: relative;
+    height: 18rem;
+}
+
+.hero-content {
+    position: absolute;
+    width: 65%;
+    min-width: 300px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 0 20px var(--color-background-primary));
+    z-index: 20;
+    text-align: center;
+}
+
+.hero-lead {
+    font-size: 120%;
+    font-weight: 300;
+}
+
+.hero-shade {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    background: linear-gradient(rgba(0, 0, 0, 0), var(--color-background-primary));
+    z-index: 10;
+}
+
+.particles-js-canvas-el {
+    opacity: 50%;
+    position: absolute;
+    width: 100%;
+    height: 100%;
+}
+
+@media (max-width: 736px) {
+    #particles-js {
+        height: 15rem;
+    }
+
+    .hero-lead {
+        font-size: 100%;
+    }
+}
+
+.carousel-logo {
+    background: unset;
+    box-shadow: unset !important;
+    border: unset !important;
+    width: 50px !important;
+    margin: auto;
+    filter: contrast(0);
+    transition-duration: 0.3s;
+}
+
+.carousel-logo:hover {
+    filter: unset;
+    transform: unset;
+}
+
+/* Tables */
+
+table.docutils {
+    box-shadow: unset;
+}
+
+table.docutils caption {
+    font-size: var(--font-size--normal);
+    caption-side: bottom;
+    margin-top: 1rem;
+}
+
+.caption-number {
+    font-weight: 600;
+    margin-right: 0.3rem;
+}
+
+.longtable {
+    width: 100%;
+}
+
+/* Code */
+
+code.literal {
+    font-weight: 600;
+}
+
+/* Logos */
+
+img.inline-logo {
+    display: inline-block;
+    width: 1.2em;
+    vertical-align: text-top;
+}
+
+img.inline-logo.with-text {
+    margin-right: .2em;
+}
+
+img.inline-logo.tsl {
+    width: 1.3em;
+}
+
+/* GitHub contributions */
+
+.gh-contributors {
+    display: inline-flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 15px;
+}
+
+.gh-contributor {
+    width: 5rem;
+    height: 5rem;
+    position: relative;
+    /*border: solid;*/
+    /*border-radius: 50%;*/
+    /*border-color: var(--color-link);*/
+}
+
+.gh-contributor img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
+
+.gh-contributor-number {
+    position: absolute;
+    bottom: 8px;
+    right: 0;
+    background: var(--color-background-primary);
+    padding: 0.1rem 1rem 0.1rem .5rem;
+    border-radius: 1rem 0rem 0rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+/* Home Button in Sidebar */
+.sidebar-brand-container {
+    position: relative;
+}
+
+.home-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: calc(100% - 1rem);
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0.5rem 1rem 0.5rem;
+    background: var(--color-brand-primary);
+    color: var(--color-background-primary) !important;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    border: none;
+    box-sizing: border-box;
+}
+
+.home-button:hover {
+    background: var(--color-brand-content);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.home-button-icon {
+    width: 1.2rem;
+    height: 1.2rem;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+/* Make logo also visually indicate it's clickable */
+.sidebar-brand {
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.sidebar-brand:hover {
+    opacity: 0.8;
+}
+
+/* Other */
+
+#furo-sidebar-ad-placement {
+    display: none;
+}

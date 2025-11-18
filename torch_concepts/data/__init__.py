@@ -6,30 +6,37 @@ data, including various benchmark datasets (MNIST, CelebA, CUB, etc.) and custom
 concept datasets.
 """
 
-from .dataset.awa2 import AwA2Dataset
-from .dataset.bnlearn import BnLearnDataset
-from .dataset.cebab import CEBaBDataset
-from .dataset.celeba import CelebADataset
-from .dataset.colormnist import ColorMNISTDataset
-from .dataset.cub import CUBDataset
-from .dataset.fashionmnist import FashionMNISTDataset
-from .dataset.mnist import ColorMNISTDataset, MNIST, MNISTAddition, MNISTEvenOdd, PartialMNISTAddition
-from .dataset.toy import ToyDataset, CompletenessDataset
-from .dataset.traffic import TrafficLights
+# Submodules
+from . import base
+from . import dataset
+from . import datamodules
+from . import preprocessing
+from . import scalers
+from . import splitters
+
+# Key classes from annotations
+from . import annotations
+
+# Utilities
+from . import utils
+
+# Backbone utilities
+from . import backbone
+
+# IO utilities
+from . import io
 
 __all__ = [
-    "AwA2Dataset",
-    "BnLearnDataset",
-    "CEBaBDataset",
-    "CelebADataset",
-    "ColorMNISTDataset",
-    "CUBDataset",
-    "FashionMNISTDataset",
-    "MNIST",
-    "MNISTAddition",
-    "MNISTEvenOdd",
-    "PartialMNISTAddition",
-    "ToyDataset",
-    "CompletenessDataset",
-    "TrafficLights",
+    # Submodules
+    "base",
+    "dataset",
+    "datamodules",
+    "preprocessing",
+    "scalers",
+    "splitters",
+
+    "annotations",
+    "utils",
+    "backbone",
+    "io",
 ]

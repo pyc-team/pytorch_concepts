@@ -7,7 +7,7 @@ from typing import List, Optional
 import bnlearn as bn
 from pgmpy.sampling import BayesianModelSampling
 
-from torch_concepts import Annotations, AxisAnnotation
+from ..annotations import Annotations, AxisAnnotation
 
 from ..base import ConceptDataset
 from ..preprocessing.autoencoder import extract_embs_from_autoencoder
@@ -152,4 +152,3 @@ class BnLearnDataset(ConceptDataset):
     def load(self):
         embeddings, concepts, annotations, graph = self.load_raw()
         return embeddings, concepts, annotations, graph
-
