@@ -159,7 +159,7 @@ defaults:
   - _commons
   - _self_
 
-_target_: conceptarium.data.BnLearnDataModule
+_target_: torch_concepts.data.datamodules.BnLearnDataModule   # the path to your datamodule class  
 
 name: asia
 
@@ -198,7 +198,7 @@ defaults:
   - _commons
   - _self_
   
-_target_: "conceptarium.nn.CBM"
+_target_: "torch_concepts.nn.CBM"         # the path to your model class
 
 task_names: ${dataset.default_task_names}
 
@@ -231,7 +231,7 @@ defaults:
   - loss: default
   - _self_
   
-_target_: "conceptarium.engines.predictor.Predictor"
+_target_: "conceptarium.Predictor"
 
 optim_class:
   _target_: "hydra.utils.get_class"
@@ -296,11 +296,11 @@ Conceptarium is designed to be extensible and accomodate your own experimental s
 
 ## Implementing Your Own Model
 
-Create your model in Conceptarium by following the guidelines given in [examples/contributing/model.md](examples/contributing/model.md).
+Create your model in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC by following the guidelines given in [torch_concepts/examples/contributing/model.md](../examples/contributing/model.md).
 
 This involves the following steps:
-- Create your model in `conceptarium/nn/models/your_model.py`.
-- Create configuration file in `conf/model/your_model.yaml`.
+- Create your model (`your_model.py`).
+- Create configuration file in `conceptarium/conf/model/your_model.yaml`, targeting the model class.
 - Run experiments using your model. 
 
 If your model is compatible with the defualt configuration structure, you can run experiments directly as follows:
@@ -315,12 +315,12 @@ python run_experiment.py --config-file your_sweep.yaml
 ---
 
 ## Implementing Your Own Dataset
-Create your dataset in Conceptarium by following the guidelines given in [examples/contributing/dataset.md](examples/contributing/dataset.md).
+Create your dataset in Conceptarium by following the guidelines given in [torch_concepts/examples/contributing/dataset.md](../examples/contributing/dataset.md).
 
 This involves the following steps:
-- Create the dataset in `torch_concepts/data/datasets/your_dataset.py`.
-- Create the datamodule in `conceptarium/data/datamodules/your_datamodule.py`.
-- Create configuration file in `conf/dataset/your_dataset.yaml`.
+- Create the dataset (`your_dataset.py`).
+- Create the datamodule (`your_datamodule.py`) wrapping the dataset.
+- Create configuration file in `conceptarium/conf/dataset/your_dataset.yaml`, targeting the datamodule class.
 - Run experiments using your dataset. 
 
 If your dataset is compatible with the default configuration structure, you can run experiments directly as follows:

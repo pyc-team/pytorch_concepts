@@ -1,6 +1,6 @@
 # Contributing a New Model
 
-This guide will help you implement a new model into the `conceptarium` benchmarking tool. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
+This guide will help you implement a new model in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ The library provides three main API levels for model implementation:
 
 ## Part 1: Implementing the Model Class
 
-All models should extend `BaseModel` from `conceptarium.nn.base.model` and be placed in `conceptarium/conceptarium/nn/models/your_model.py`.
+All models should extend `BaseModel` from `torch_concepts.nn.modules.high.base.model` and be placed in `torch_concepts/nn/modules/high/models`.
 
 ### 1.1 Understanding BaseModel
 
@@ -407,7 +407,7 @@ defaults:
   - _self_
 
 # Target class for Hydra instantiation
-_target_: "conceptarium.nn.models.your_model.YourModel"
+_target_: "torch_concepts.nn.modules.high.models.your_model.YourModel"    # Path to your model class
 
 # Inference configuration
 inference:
@@ -475,5 +475,5 @@ Test your model thoroughly before submission.
 Provide the following documentation:
 1. **Model docstring**: Clear description of model architecture, parameters, and usage
 2. **Citation**: If based on a paper, include proper citation
-3. **Example usage**: If the model is somewhat peculiar, please create example in `conceptarium/examples/models-usage/your_model.py`
-4. **README entry**: Add entry and description to conceptarium README
+3. **Example usage**: If the model is somewhat peculiar, please create example in `torch_concepts/examples/models-usage/your_model.py`
+4. **README entry**: Add entry and description to torch_concepts README

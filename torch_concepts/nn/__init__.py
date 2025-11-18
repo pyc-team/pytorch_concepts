@@ -31,6 +31,10 @@ from .modules.low.predictors.hypernet import HyperLinearPredictor
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
 
+# Models (high-level)
+from .modules.high.models.blackbox import BlackBox, BlackBox_torch
+from .modules.high.models.cbm import CBM, CBM_factors
+
 # Models (mid-level)
 from .modules.mid.models.factor import Factor
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
@@ -89,7 +93,13 @@ __all__ = [
     # COSMO
     "WANDAGraphLearner",
 
-    # Models
+    # Models (high-level)
+    "BlackBox",
+    "BlackBox_torch",
+    "CBM",
+    "CBM_factors",
+
+    # Models (mid-level)
     "Factor",
     "ProbabilisticModel",
     "BipartiteModel",

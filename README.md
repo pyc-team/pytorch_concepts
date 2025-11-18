@@ -180,9 +180,8 @@ To be completed...
 ## Conceptarium: No-code APIs and benchmarking framework
 
 <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> **Conceptarium** is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC, it provides:
-- **Standardized benchmarking datasets**
-- **Out-of-the-box concept-based architectures** implemented in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts). All models implemented in Conceptarium can be instantiated with 1 line of code and reused across the board.
-- **Configuration-driven experiments**: Use <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="20px" align="center"/> [Hydra](https://hydra.cc/) for flexible YAML-based configuration management and run sequential multi-run experiments with a single command
+
+- **Configuration-driven experiments**: Use <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="20px" align="center"/> [Hydra](https://hydra.cc/) for flexible YAML-based configuration management and run sequential experiments on multiple <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC datasets and models with a single command.
 - **Automated training**: Leverage <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/lightning.svg" width="20px" align="center"/> [PyTorch Lightning](https://lightning.ai/pytorch-lightning) for streamlined training loops
 - **Experiment tracking**: Integrated <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/wandb.svg" width="20px" align="center"/> [Weights & Biases](https://wandb.ai/) logging for monitoring and reproducibility
 

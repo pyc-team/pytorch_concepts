@@ -1,6 +1,6 @@
 # Contributing a New Dataset
 
-This guide will help you implement a new dataset into the `pytorch_concepts` library. The process involves creating two main components:
+This guide will help you implement a new dataset in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. The process involves creating two main components:
 
 1. **Dataset Class** (`dataset_name.py`) - handles data loading, downloading, and building
 2. **DataModule Class** (`datamodule_name.py`) - handles data splitting, transformations, and PyTorch Lightning integration
@@ -15,7 +15,7 @@ Before implementing your dataset, ensure you have:
 
 ## Part 1: Implementing the Dataset Class
 
-The dataset class should extend `ConceptDataset` from `torch_concepts.data.base` and be placed in `torch_concepts/data/dataset/your_dataset.py`.
+The dataset class should extend `ConceptDataset` from `torch_concepts.data.base.dataset` and be placed in `torch_concepts/data/datasets/your_dataset.py`.
 
 All datasets should provide 4 main objects to the base class `ConceptDataset`:
 - `input data`: raw input features as torch.Tensor
@@ -301,18 +301,18 @@ Annotations({
 
 ### 1.6 Complete Example Template
 
-See `torch_concepts/data/dataset/bnlearn.py` for a complete reference implementation.
+See `torch_concepts/data/datasets/bnlearn.py` for a complete reference implementation.
 
 
 
 
 ## Part 2: Implementing the DataModule Class
 
-The DataModule handles data splitting, transformations, and integration with PyTorch Lightning. Place it in `conceptarium/conceptarium/data/datamodules/your_datamodule.py`.
+The DataModule handles data splitting, transformations, and integration with PyTorch Lightning. Place it in `torch_concepts/data/datamodules/your_datamodule.py`.
 
 ### 2.1 Basic DataModule (Extends Default)
 
-Your datamodule should extend `ConceptDataModule`.
+Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base.datamodule`.
 
 ```python
 from env import DATA_ROOT
@@ -386,17 +386,15 @@ class YourDataModule(ConceptDataModule):
 The following default scalers and splitters will be used if the 'scalers' and 'splitters' parameters are not specified.
 
 #### Default Scalers
-Located in `conceptarium/conceptarium/data/scalers/`:
-- `StandardScaler`: Z-score normalization (default)
+- `StandardScaler`: Z-score normalization (default). Located in `torch_concepts/data/scalers/standard.py`.
 
 #### Default Splitters
-Located in `conceptarium/conceptarium/data/splitters/`:
-- `RandomSplitter`: Random train/val/test split (default)
+- `RandomSplitter`: Random train/val/test split (default). Located in `torch_concepts/data/splitters/random.py`.
 
 
 ### 2.3 Implementing Custom Scalers
 
-If you need a custom scaler, create it in `conceptarium/conceptarium/data/scalers/your_scaler.py`:
+If you need a custom scaler, you can extend the `Scaler` class from `torch_concepts.data.base.scaler` and place the new scaler in `torch_concepts/data/scalers/your_scaler.py`.
 
 ```python
 class YourCustomScaler:
@@ -429,7 +427,7 @@ class YourCustomScaler:
 
 ### 2.4 Implementing Custom Splitters
 
-If you need a custom splitter, create it in `conceptarium/conceptarium/data/splitters/your_splitter.py`:
+If you need a custom splitter, you can extend the `Splitter` class from `torch_concepts.data.base.splitter` and place the new splitter in `torch_concepts/data/splitters/your_splitter.py`:
 
 ```python
 import numpy as np
@@ -486,7 +484,7 @@ defaults:
   - _self_
 
 # Target class for Hydra instantiation
-_target_: conceptarium.data.datamodules.your_datamodule.YourDataModule
+_target_: torch_concepts.data.datamodules.your_datamodule.YourDataModule       # Path to your datamodule class
 
 # Random seed (typically inherited from global config)
 seed: ${seed}
@@ -523,7 +521,7 @@ Specifies configuration inheritance:
 The fully qualified path to your DataModule class. This tells Hydra which class to instantiate.
 
 ```yaml
-_target_: conceptarium.data.datamodules.your_datamodule.YourDataModule
+_target_: torch_concepts.data.datamodules.your_datamodule.YourDataModule
 ```
 
 #### `seed`
@@ -562,7 +560,7 @@ Create a test script to verify your implementation:
 
 ```python
 from torch_concepts.data import YourDataset
-from conceptarium.conceptarium.data.datamodules import YourDataModule
+from torch_concepts.data.datamodules import YourDataModule
 
 # Test dataset loading
 dataset = YourDataset(
@@ -634,16 +632,5 @@ print(f"Batch concepts shape: {batch['concepts']['c'].shape}")
 Provide the following documentation:
 1. **Dataset docstring**: Clear description of data source, structure, and usage
 2. **Citation**: If based on a paper, include proper citation
-3. **Example usage**: If the dataset is somewhat peculiar, please create example in `conceptarium/examples/loading-data/your_dataset.py`
-4. **README entry**: Add entry and description to conceptarium README
-
-
-
-
-### Reference Implementations
-
-- **Simple generated dataset**: `torch_concepts/data/dataset/toy.py`
-- **Downloaded dataset**: `torch_concepts/data/dataset/bnlearn.py`
-- **DataModule**: `conceptarium/conceptarium/data/datamodules/bnlearn.py`
-- **Simple config**: `conceptarium/conf/dataset/asia.yaml`
-- **Complex config**: `conceptarium/conf/dataset/colormnist.yaml`
+3. **Example usage**: If the dataset is somewhat peculiar, please create example in `torch_concepts/examples/loading-data/your_dataset.py`
+4. **README entry**: Add entry and description to the torch_concepts `README.md`
