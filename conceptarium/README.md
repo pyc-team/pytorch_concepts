@@ -1,130 +1,200 @@
 <p align="center">
-<img src="https://github.com/pyc-team/pytorch_concepts/blob/master/conceptarium/logo.png" style="width: 30cm">
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/conceptarium.png" style="width: 30cm">
 <br>
 
+# Conceptarium
 
-# Training with Hydra Configuration
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> <em>Conceptarium</em> is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Conceptarium is built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> [PyTorch](https://pytorch.org/) and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) for model implementation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/lightning.svg" width="25px" align="center"/> [PyTorch Lightning](https://lightning.ai/pytorch-lightning) for training automation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="25px" align="center"/> [Hydra](https://hydra.cc/) for configuration management and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/wandb.svg" width="25px" align="center"/> [Weights & Biases](https://wandb.ai/) for logging.
 
-This example demonstrates how to train models using Hydra configuration files. This is the recommended approach for experiments as it provides better organization and reproducibility.
+- [Quick Start](#quick-start)
+- [Configuration Structure](#configuration-structure)
+- [Configuration Details](#configuration-details)
+  - [Dataset Configuration](#dataset-configuration-datasetyaml)
+  - [Model Configuration](#model-configuration-modelyaml)
+  - [Engine Configuration](#engine-configuration-engineengineyaml)
+- [Implementing Your Own Model](#implementing-your-own-model)
+- [Implementing Your Own Dataset](#implementing-your-own-dataset)
+- [PyC Book](#pyc-book)
+- [Authors](#authors)
+- [Licence](#licence)
+- [Cite this library](#cite-this-library)
 
-## Quick Start
+---
 
-### Basic Usage
+# Quick Start
 
-Run with default configuration (asia dataset, CBM model):
+## Installation
+
+Clone the <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) repository and navigate to the Conceptarium directory:
+
 ```bash
-# cd directory where conceptarium is located
-python examples/with_hydra.py
+git clone https://github.com/pyc-team/pytorch_concepts.git
+cd pytorch_concepts/conceptarium
 ```
 
-Run with toy XOR dataset:
+To install all requirements and avoid conflicts, we recommend installing an [Anaconda](https://www.anaconda.com/) environment using the following command:
+
 ```bash
-python examples/with_hydra.py dataset=toy_xor
+conda env create -f environment.yml
 ```
 
-### Override Configuration Parameters
 
-You can override any configuration parameter from the command line:
 
+## Configuration
+
+Configure your experiment by editing `conf/sweep.yaml`:
+
+```yaml
+defaults:
+  - _default
+  - _self_
+
+hydra:
+  job:
+    name: my_experiment
+  sweeper:
+    params:
+      model: cbm            # One or more models (blackbox, cbm, cem, cgm, c2bm, etc.)
+      dataset: celeba, cub  # One or more datasets (celeba, cub, MNIST, alarm, etc.)
+      seed: 1,2,3,4,5       # sweep over multiple seeds for robustness
+
+engine:
+  optim_kwargs:
+    lr: 0.00075
+
+trainer:
+  devices: [0]
+  max_epochs: 500
+  patience: 30
+```
+
+## Running Experiments
+
+Run a single experiment:
+```bash
+python run_experiment.py
+```
+
+## Custom configurations
+
+You can create as many configuration sweeps as you like. Assign a different name to each, e.g., `conf/your_sweep.yaml`, and run it as follows:
+
+```bash
+python run_experiment.py --config-name your_sweep
+```
+
+On top of this, you can also override configuration from command line:
 ```bash
 # Change dataset
-python examples/with_hydra.py dataset=alarm
+python run_experiment.py dataset=alarm
 
-# Change model architecture
-python examples/with_hydra.py model.encoder_kwargs.hidden_size=128 model.encoder_kwargs.n_layers=2
+# Change learning rate
+python run_experiment.py engine.optim_kwargs.lr=0.001
 
-# Change training parameters
-python examples/with_hydra.py trainer.max_epochs=100 trainer.patience=10
-
-# Change optimizer settings
-python examples/with_hydra.py engine.optim_kwargs.lr=0.001
-
-# Change batch size
-python examples/with_hydra.py dataset.batch_size=64
+# Change multiple configurations
+python run_experiment.py model=cbm,blackbox dataset=asia,alarm seed=1,2,3
 ```
 
-### Hyperparameter Sweeps
+## Output Structure
 
-Run multiple experiments with different configurations:
+Results and logging outputs are saved in `conceptarium/outputs/`:
 
-```bash
-# Sweep over multiple seeds
-python examples/with_hydra.py -m seed=1,2,3,4,5
-
-# Sweep over learning rates
-python examples/with_hydra.py -m engine.optim_kwargs.lr=0.0001,0.001,0.01
-
-# Combine multiple sweeps
-python examples/with_hydra.py -m seed=1,2,3 trainer.max_epochs=100,200 dataset.batch_size=32,64
 ```
+outputs/
+└── multirun/
+    └── YYYY-MM-DD/
+        └── HH-MM-SS/
+            ├── 0/  # First run
+            ├── 1/  # Second run
+            └── ...
+```
+
+---
+
+# Configuration Details
+
+Conceptarium provides a flexible configuration system based on <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="25px" align="center"/> [Hydra](https://hydra.cc/), enabling easy experimentation across models, datasets, and hyperparameters. All configurations are stored in `conceptarium/conf/` and can be composed, overridden, and swept over from the command line or sweep files.
+
 
 ## Configuration Structure
 
-Configuration files are located in `conceptarium/conf/`:
+Configuration files are organized in `conceptarium/conf/`:
 
 ```
 conf/
-├── _default.yaml          # Main configuration file with defaults
-├── sweep.yaml             # Configuration for hyperparameter sweeps
-├── dataset/               # Dataset configurations
+├── _default.yaml      # Base configuration with defaults
+├── sweep.yaml         # Experiment sweep configuration
+├── dataset/           # Dataset configurations
 │   ├── _commons.yaml      # Common dataset parameters
-│   ├── asia.yaml          # Asia Bayesian network
-│   ├── alarm.yaml         # Alarm Bayesian network
-│   └── toy_xor.yaml       # Toy XOR dataset (NEW)
-├── model/                 # Model architectures
+│   ├── celeba.yaml        # Bayesian network datasets
+│   ├── cub.yaml
+│   ├── sachs.yaml
+│   └── ...
+├── model/             # Model architectures
 │   ├── _commons.yaml      # Common model parameters
+│   ├── blackbox.yaml      # Black-box baseline
 │   ├── cbm.yaml           # Concept Bottleneck Model
-│   └── blackbox.yaml      # Black-box baseline
-└── engine/                # Training configurations
+│   ├── cem.yaml           # Concept Embedding Model
+│   ├── cgm.yaml           # Concept Graph Model
+│   └── c2bm.yaml          # Causally Reliable CBM
+└── engine/            # Training engine configurations
     ├── engine.yaml        # Main engine config
     ├── loss/              # Loss function configurations
-    │   └── default.yaml   # BCE, CrossEntropy, MSE
+    │   └── default.yaml   # Type-aware losses (BCE, CE, MSE)
     └── metrics/           # Metric configurations
-        └── default.yaml   # Accuracy, MAE, MSE
+        └── default.yaml   # Type-aware metrics (Accuracy, MAE, MSE)
 ```
 
-## Configuration Details
 
-### Dataset Configuration (`dataset/*.yaml`)
+## Dataset Configuration (`dataset/*.yaml`)
 
-Specifies the dataset to use and its parameters:
+Dataset configurations specify the dataset class to instantiate and all necessary preprocessing parameters:
 
 ```yaml
 defaults:
   - _commons
   - _self_
 
-_target_: conceptarium.data.datamodules.toy.ToyDataModule
+_target_: conceptarium.data.BnLearnDataModule
 
-name: toy_xor
-dataset_name: xor
-size: 1000
-random_state: 42
+name: asia
 
-default_task_names: [task_xor]
+backbone: null # input data is not high-dimensional, so does not require backbone
+precompute_embs: false
+
+default_task_names: [dysp]
 
 label_descriptions:
-  concept_1: "First binary concept for XOR task"
-  concept_2: "Second binary concept for XOR task"
-  task_xor: "XOR of the two concepts (target variable)"
+  asia: "Recent trip to Asia"
+  tub: "Has tuberculosis"
+  smoke: "Is a smoker"
+  lung: "Has lung cancer"
+  bronc: "Has bronchitis"
+  either: "Has tuberculosis or lung cancer"
+  xray: "Positive X-ray"
+  dysp: "Has dyspnoea (shortness of breath)"
 ```
 
-Common parameters (from `_commons.yaml`):
-- `batch_size`: Batch size for training
-- `val_size`: Validation set fraction
-- `test_size`: Test set fraction
-- `concept_subset`: Subset of concepts to use
+### Common Parameters
 
-### Model Configuration (`model/*.yaml`)
+From `_commons.yaml`:
+- **`batch_size`**: Training batch size (default: 256)
+- **`val_size`**: Validation set fraction (default: 0.15)
+- **`test_size`**: Test set fraction (default: 0.15)
+- **`concept_subset`**: List of specific concepts to use (optional)
 
-Specifies the model architecture:
+---
+
+## Model Configuration (`model/*.yaml`)
+
+Model configurations specify the architecture and inference strategy:
 
 ```yaml
 defaults:
   - _commons
   - _self_
   
-_target_: "conceptarium.nn.models.cbm.CBM"
+_target_: "conceptarium.nn.CBM"
 
 task_names: ${dataset.default_task_names}
 
@@ -133,16 +203,23 @@ inference:
   _partial_: true
 ```
 
-Common parameters (from `_commons.yaml`):
-- `encoder_kwargs.hidden_size`: Hidden layer size
-- `encoder_kwargs.n_layers`: Number of layers
-- `encoder_kwargs.activation`: Activation function
-- `encoder_kwargs.dropout`: Dropout rate
-- `variable_distributions`: Probability distributions for concepts
+### Common Parameters
 
-### Engine Configuration (`engine/engine.yaml`)
+From `_commons.yaml`:
+- **`encoder_kwargs.hidden_size`**: Hidden layer dimension in encoder
+- **`encoder_kwargs.n_layers`**: Number of hidden layers in encoder
+- **`encoder_kwargs.activation`**: Activation function (relu, tanh, etc.) in encoder
+- **`encoder_kwargs.dropout`**: Dropout probability in encoder
+- **`variable_distributions`**: Probability distributions with which concepts are modeled:
+  - `binary`: Relaxed Bernoulli
+  - `categorical`: Relaxed OneHot Categorical
+  - `continuous`: Normal distribution
 
-Specifies training parameters:
+---
+
+## Engine Configuration (`engine/engine.yaml`)
+
+Engine configurations specify training behavior, losses, and metrics:
 
 ```yaml
 defaults:
@@ -155,11 +232,18 @@ _target_: "conceptarium.engines.predictor.Predictor"
 optim_class:
   _target_: "hydra.utils.get_class"
   path: "torch.optim.AdamW"
+  
 optim_kwargs:
   lr: 0.00075
+  
+enable_summary_metrics: true       # enable/disable summary metrics over concepts
+enable_perconcept_metrics: false   # enable/disable per-concept metrics
 ```
 
-Loss configuration (`engine/loss/default.yaml`):
+### Loss Configuration (`engine/loss/default.yaml`)
+
+Type-aware losses automatically select appropriate loss functions based on variable types:
+
 ```yaml
 discrete:
   binary: 
@@ -168,12 +252,16 @@ discrete:
   categorical: 
     path: "torch.nn.CrossEntropyLoss"
     kwargs: {}
+    
 continuous: 
   path: "torch.nn.MSELoss"
   kwargs: {}
 ```
 
-Metrics configuration (`engine/metrics/default.yaml`):
+### Metrics Configuration (`engine/metrics/default.yaml`)
+
+Type-aware metrics automatically select appropriate metrics based on variable types:
+
 ```yaml
 discrete:
   binary:
@@ -185,6 +273,7 @@ discrete:
       path: "torchmetrics.classification.MulticlassAccuracy"
       kwargs: 
         average: 'micro'
+        
 continuous: 
   mae: 
     path: "torchmetrics.regression.MeanAbsoluteError"
@@ -194,99 +283,100 @@ continuous:
     kwargs: {}
 ```
 
-## Advanced Usage
+---
 
-### Creating Custom Datasets
+# Implementing Your Own Model
 
-1. Create a new datamodule in `conceptarium/data/datamodules/`:
+Create your model in Conceptarium by following the guidelines given in [examples/contributing/model.md](examples/contributing/model.md).
 
-```python
-from torch_concepts.data import YourDataset
-from ..base.datamodule import ConceptDataModule
+This involves the following steps:
+- Create your model in `conceptarium/nn/models/your_model.py`.
+- Create configuration file in `conf/model/your_model.yaml`.
+- Run experiments using your model. 
 
-class YourDataModule(ConceptDataModule):
-    def __init__(self, ...):
-        dataset = YourDataset(...)
-        super().__init__(dataset=dataset, ...)
-```
-
-2. Create a configuration file in `conf/dataset/`:
-
-```yaml
-defaults:
-  - _commons
-  - _self_
-
-_target_: conceptarium.data.datamodules.your_module.YourDataModule
-
-name: your_dataset
-# Add your dataset-specific parameters here
-```
-
-3. Run with your dataset:
+If your model is compatible with the defualt configuration structure, you can run experiments directly as follows:
 ```bash
-python examples/with_hydra.py dataset=your_dataset
+python run_experiment.py model=your_model dataset=...
 ```
-
-### Creating Custom Models
-
-1. Implement your model in `conceptarium/nn/models/`
-
-2. Create a configuration file in `conf/model/`:
-
-```yaml
-defaults:
-  - _commons
-  - _self_
-  
-_target_: "conceptarium.nn.models.your_model.YourModel"
-
-# Add model-specific parameters here
-```
-
-3. Run with your model:
+Alernatively, create your own sweep file `conf/your_sweep.yaml` containing your mdoel and run:
 ```bash
-python examples/with_hydra.py model=your_model
+python run_experiment.py --config-file your_sweep
 ```
 
-## Comparison: with_hydra.py vs no_hydra.ipynb
+---
 
-| Feature | with_hydra.py | no_hydra.ipynb |
-|---------|--------------|----------------|
-| **Configuration** | Centralized YAML files | Inline Python code |
-| **Reproducibility** | Automatic config logging | Manual tracking |
-| **Hyperparameter Sweeps** | Built-in support (`-m` flag) | Manual loops |
-| **Best for** | Production experiments | Learning & debugging |
-| **Flexibility** | Override via command line | Full Python control |
-| **Setup** | Requires Hydra knowledge | Straightforward Python |
+# Implementing Your Own Dataset
+Create your dataset in Conceptarium by following the guidelines given in [examples/contributing/dataset.md](examples/contributing/dataset.md).
 
-## Output Structure
+This involves the following steps:
+- Create the dataset in `torch_concepts/data/datasets/your_dataset.py`.
+- Create the datamodule in `conceptarium/data/datamodules/your_datamodule.py`.
+- Create configuration file in `conf/dataset/your_dataset.yaml`.
+- Run experiments using your dataset. 
 
-After running, outputs are saved in:
+If your dataset is compatible with the default configuration structure, you can run experiments directly as follows:
+```bash
+python run_experiment.py dataset=your_dataset model=...
 ```
-conceptarium/outputs/
-└── YYYY-MM-DD/
-    └── HH-MM-SS_job_name/
-        ├── .hydra/           # Hydra configuration
-        ├── config.yaml       # Resolved configuration
-        ├── main.log          # Training logs
-        └── checkpoints/      # Model checkpoints
+Alternatively, create your own sweep file `conf/your_sweep.yaml` containing your dataset and run:
+```bash
+python run_experiment.py --config-name your_sweep
 ```
 
-For sweeps, each run gets its own subdirectory:
-```
-outputs/multirun/
-└── YYYY-MM-DD/
-    └── HH-MM-SS_sweep_name/
-        ├── 0/  # First configuration
-        ├── 1/  # Second configuration
-        └── ...
-```
+---
 
-## Tips
+# PyC Book
 
-1. **Start Simple**: Begin with default configuration, then override specific parameters
-2. **Use Sweeps**: Leverage `-m` flag for hyperparameter search
-3. **Check Configs**: Look at `outputs/.../hydra/config.yaml` to see resolved configuration
-4. **Reuse Configs**: Copy successful configurations to create new presets
-5. **Debug with Notebook**: Use `no_hydra.ipynb` for interactive debugging, then move to Hydra for experiments
+You can find further reading materials and tutorials in our book [Concept-based Interpretable Deep Learning in Python](https://pyc-team.github.io/pyc-book/).
+
+---
+
+# Contributors
+
+Thanks to all contributors! 🧡
+
+<a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" />
+</a>
+
+- [Pietro Barbiero](http://www.pietrobarbiero.eu/), 
+- [Giovanni De Felice](https://gdefe.github.io/)
+- [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/)
+- [Gabriele Ciravegna](https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/)
+- [Gabriele Dominici](https://pc.inf.usi.ch/team/gabriele-dominici/)
+- [Francesco De Santis]
+- [Arianna Casanova]
+- [David Debot](https://www.kuleuven.be/wieiswie/en/person/00165387) 
+- [Francesco Giannini](https://www.francescogiannini.eu/)
+- [Michelangelo Diligenti](https://docenti.unisi.it/en/diligenti)
+- [Giuseppe Marra](https://www.giuseppemarra.com/)
+
+---
+
+# Licence
+
+Copyright 2025 PyC Team.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at: <http://www.apache.org/licenses/LICENSE-2.0>.
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+See the License for the specific language governing permissions and limitations under the License.
+
+---
+
+# Cite this library
+
+If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
+
+```
+@software{pycteam2025concept,
+    author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
+    license = {MIT},
+    month = {3},
+    title = {{PyTorch Concepts}},
+    url = {https://github.com/pyc-team/pytorch_concepts},
+    year = {2025}
+}
+```
+Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovanni De Felice](https://gdefe.github.io/).
