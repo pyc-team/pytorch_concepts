@@ -52,62 +52,67 @@ API Reference
 
 Complete API documentation organized by abstraction level:
 
-Low-level APIs: assemble custom interpretable architectures
-^^^^^^^^^^^^^^^^^
 .. toctree::
-   :maxdepth: 2
-   :caption: pyc
+   :maxdepth: 1
+   :caption: Low-level API
 
-   modules/nn.layers
-   modules/nn.intervention
+   modules/nn.base
+   modules/nn.encoders
+   modules/nn.graph
+   modules/nn.inference
    modules/nn.policy
+   modules/nn.predictors
+   modules/nn.dense_layers
 
 .. toctree::
    :maxdepth: 1
-   :caption:
-   modules/nn.wanda
-   modules/nn.propagator
+   :caption: Mid-level API
 
+   modules/nn.base
+   modules/nn.constructors
+   modules/nn.inference
+   modules/nn.models
 
-Mid-level APIs
-^^^^^^^^^^^^^^^^^^
 
 .. toctree::
    :maxdepth: 1
-   :caption:
+   :caption: High-level API
 
-   modules/variable
-   modules/factor
-   modules/probabilistic_model
-   modules/inference
-
-
-
-High-level APIs
-^^^^^^^^^^^^^^^^^
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Use case: assemble custom interpretable architectures
-
-   modules/annotations
-   modules/concept_graph
+   modules/nn.base
    modules/nn.models
 
 
 
-Utilities & Evaluation
-^^^^^^^^^^^^^^^^^^^^^^^
+.. toctree::
+   :maxdepth: 1
+   :caption: Data
+
+   modules/data.base
+   modules/data.dataloaders
+   modules/data.datasets
+   modules/data.preprocessing
+   modules/data.scalers
+   modules/data.splitters
+   modules/data.annotations
+   modules/data.backbone
+   modules/data.io
+   modules/data.utils
 
 .. toctree::
    :maxdepth: 1
-   :caption: Utilities & Evaluation
+   :caption: Distributions
 
-   modules/data
    modules/distributions
-   modules/nn.metrics
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Other modules
+
    modules/nn.loss
+   modules/nn.metrics
+   modules/nn.propagator
    modules/nn.functional
+
 
 
 Contributing
