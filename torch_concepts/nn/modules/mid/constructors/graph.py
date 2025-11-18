@@ -4,7 +4,8 @@ from torch.nn import Identity
 from .....data.annotations import Annotations
 from ..models.variable import Variable
 from .concept_graph import ConceptGraph
-from .... import Factor, ProbabilisticModel
+from ..models.factor import Factor
+from ..models.probabilistic_model import ProbabilisticModel
 from .....distributions import Delta
 from ..base.model import BaseConstructor, Propagator
 

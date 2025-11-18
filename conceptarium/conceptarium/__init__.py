@@ -12,9 +12,6 @@ from .utils import (
     setup_run_env,
     clean_empty_configs,
     update_config_from_data,
-    instantiate_from_string,
-    get_from_string,
-    add_distribution_to_annotations,
 )
 from .wandb import (
     run_from_id,
@@ -39,9 +36,6 @@ __all__ = [
     "setup_run_env",
     "clean_empty_configs",
     "update_config_from_data",
-    "instantiate_from_string",
-    "get_from_string",
-    "add_distribution_to_annotations",
 
     # W&B
     "run_from_id",

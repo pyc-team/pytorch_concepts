@@ -2,17 +2,17 @@ import torch
 from typing import Union
 from torchvision.transforms import Compose
 
-from ..datasets import ColorMNISTDataset
+from ..datasets import FashionMNISTDataset
 
 from ..base.datamodule import ConceptDataModule
 from ..splitters.coloring import ColoringSplitter
 from ...typing import BackboneType
 
 
-class ColorMNISTDataModule(ConceptDataModule):
-    """DataModule for the ColorMNIST dataset.
+class FashionMNISTDataModule(ConceptDataModule):
+    """DataModule for the FashionMNIST dataset.
 
-    Handles data loading, splitting, and batching for the ColorMNIST dataset
+    Handles data loading, splitting, and batching for the FashionMNIST dataset
     with support for concept-based learning.
     
     Args:
@@ -45,14 +45,14 @@ class ColorMNISTDataModule(ConceptDataModule):
         label_descriptions: dict | None = None,
         workers: int = 0,
         coloring: dict | None = None,
-        CACHE = None,
+        DATA_ROOT = None,
     ):
 
         # add to coloring the field "percentages" according to the split, to generate data accordingly
         coloring['training_percentage'] = 1.0 -  test_size - ftune_size - ftune_val_size
         coloring['test_percentage'] = test_size + ftune_size + ftune_val_size
 
-        dataset = ColorMNISTDataset(root=str(CACHE / "colormnist"),
+        dataset = FashionMNISTDataset(root=str(CACHE / "fashionmnist"),
                        seed=seed,
                        concept_subset=concept_subset,
                        label_descriptions=label_descriptions,
@@ -61,7 +61,7 @@ class ColorMNISTDataModule(ConceptDataModule):
                        coloring=coloring
                        )
 
-        splitter = ColoringSplitter(root=str(CACHE / "colormnist"),
+        splitter = ColoringSplitter(root=str(CACHE / "fashionmnist"),
                                     seed=seed,
                                     val_size=val_size,
                                     test_size=test_size,

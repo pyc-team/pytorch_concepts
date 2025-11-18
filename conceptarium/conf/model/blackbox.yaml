@@ -2,7 +2,7 @@ defaults:
   - _commons
   - _self_
   
-_target_: "conceptarium.nn.models.blackbox.BlackBox"
+_target_: "torch_concepts.nn.BlackBox"
 
 inference: 
   _target_: "torch_concepts.nn.DeterministicInference"

@@ -29,7 +29,7 @@ from . import io
 __all__ = [
     # Submodules
     "base",
-    "dataset",
+    "datasets",
     "datamodules",
     "preprocessing",
     "scalers",

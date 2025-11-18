@@ -9,13 +9,13 @@ from omegaconf import OmegaConf
 from pytorch_lightning import LightningDataModule, LightningModule
 from torch import cuda
 
-from env import CACHE, PROJECT_NAME, VERSION, PROJECT_ENTITY
+from env import CACHE, PROJECT_NAME, WANDB_ENTITY
 from hydra.utils import instantiate
 from wandb.apis.public import Run
 
 
-wandb_project = f"{PROJECT_NAME}_v{VERSION}"
-wandb_entity = PROJECT_ENTITY
+wandb_project = f"{PROJECT_NAME}"
+wandb_entity = WANDB_ENTITY
 
 
 def run_from_id(run_id: str) -> Run:

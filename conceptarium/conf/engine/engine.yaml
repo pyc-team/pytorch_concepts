@@ -3,7 +3,7 @@ defaults:
   - loss: default
   - _self_
   
-_target_: "conceptarium.engines.predictor.Predictor"
+_target_: "conceptarium.Predictor"
 
 optim_class:
   _target_: "hydra.utils.get_class"
@@ -19,6 +19,7 @@ enable_perconcept_metrics: ${dataset.default_task_names}
 preprocess_inputs: false
 scale_concepts: false
 
-train_interv_prob: 0.1
-test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
-test_interv_noise: 0.
+# TODO: implement this
+# train_interv_prob: 0.1
+# test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
+# test_interv_noise: 0.

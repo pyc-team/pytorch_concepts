@@ -20,7 +20,7 @@ import pytorch_lightning as pl
 
 from torch_concepts import AxisAnnotation
 
-from ..utils import instantiate_from_string
+from torch_concepts.utils import instantiate_from_string
 
 
 class Predictor(pl.LightningModule):

@@ -2,7 +2,7 @@ defaults:
   - _commons
   - _self_
   
-_target_: "conceptarium.nn.models.cbm.CBM"
+_target_: "torch_concepts.nn.CBM"
 
 task_names: ${dataset.default_task_names}
 

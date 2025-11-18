@@ -291,3 +291,23 @@ def get_from_string(class_path: str):
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
     return cls
+
+
+def instantiate_from_string(class_path: str, **kwargs):
+    """Instantiate a class from its fully qualified string path.
+    
+    Args:
+        class_path: Fully qualified class path (e.g., 'torch.nn.ReLU').
+        **kwargs: Keyword arguments passed to class constructor.
+        
+    Returns:
+        Instantiated class object.
+        
+    Example:
+        >>> relu = instantiate_from_string('torch.nn.ReLU')
+        >>> loss = instantiate_from_string(
+        ...     'torch.nn.BCEWithLogitsLoss', reduction='mean'
+        ... )
+    """
+    cls = get_from_string(class_path)
+    return cls(**kwargs)

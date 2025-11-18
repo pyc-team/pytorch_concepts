@@ -7,18 +7,14 @@ This module provides helper functions for:
 - Managing concept annotations and distributions
 """
 
-from copy import deepcopy
 import torch
 import numpy as np
 import random
 import os
 import torch
-import importlib
 from omegaconf import DictConfig, open_dict
-from typing import Mapping
 
-from torch_concepts import Annotations
-import warnings
+from env import DATA_ROOT
 
 
 def seed_everything(seed: int):
@@ -69,6 +65,10 @@ def setup_run_env(cfg: DictConfig):
         torch.set_float32_matmul_precision(cfg.matmul_precision)
     with open_dict(cfg): 
         cfg.update(device="cuda" if torch.cuda.is_available() else "cpu")
+    # set DATA_ROOT
+    if not cfg.get("DATA_ROOT"):
+        with open_dict(cfg):
+            cfg.dataset.update(DATA_ROOT=DATA_ROOT)
     return cfg
 
 def clean_empty_configs(cfg: DictConfig) -> DictConfig:
@@ -125,22 +125,3 @@ def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
         #    concept_metadata = dm.concept_metadata
         # )
     return cfg
-
-def instantiate_from_string(class_path: str, **kwargs):
-    """Instantiate a class from its fully qualified string path.
-    
-    Args:
-        class_path: Fully qualified class path (e.g., 'torch.nn.ReLU').
-        **kwargs: Keyword arguments passed to class constructor.
-        
-    Returns:
-        Instantiated class object.
-        
-    Example:
-        >>> relu = instantiate_from_string('torch.nn.ReLU')
-        >>> loss = instantiate_from_string(
-        ...     'torch.nn.BCEWithLogitsLoss', reduction='mean'
-        ... )
-    """
-    cls = get_from_string(class_path)
-    return cls(**kwargs)

@@ -3,7 +3,7 @@ defaults:
   - _commons_bnlearn
   - _self_
 
-_target_: conceptarium.data.datamodules.bnlearn.BnLearnDataModule
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
 
 name: pigs
 
