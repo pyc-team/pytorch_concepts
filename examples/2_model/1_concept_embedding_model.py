@@ -27,7 +27,7 @@ def main():
     }
     annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
-    # PGM Initialization
+    # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
     concept_model = BipartiteModel(task_names=task_names,
                                    input_size=latent_dims,
@@ -38,7 +38,7 @@ def main():
                                    use_source_exogenous=True)
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model.pgm)
+    inference_engine = DeterministicInference(concept_model.probabilistic_model)
     query_concepts = ["c1", "c2", "xor"]
 
     model = torch.nn.Sequential(encoder, concept_model)
@@ -70,8 +70,8 @@ def main():
 
     print("=== Interventions ===")
 
-    int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size)
-    int_strategy_c1 = DoIntervention(model=concept_model.pgm.factors, constants=-10)
+    int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.factors, constants=-10)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1", "c2"]):
@@ -84,9 +84,9 @@ def main():
         print(cy_pred[:5])
         print()
 
-        int_policy_c1 = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size, scale=100)
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
-        int_strategy_c2 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
+        int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
+        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+        int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
         with intervention(policies=[int_policy_c1, int_policy_c1],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):

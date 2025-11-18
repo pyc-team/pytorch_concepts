@@ -30,6 +30,32 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         in_features_logits: Number of input logit features (optional).
         in_features_embedding: Number of input embedding features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import BaseConceptLayer
+        >>>
+        >>> # Create a custom concept layer
+        >>> class MyConceptLayer(BaseConceptLayer):
+        ...     def __init__(self, out_features, in_features_logits):
+        ...         super().__init__(
+        ...             out_features=out_features,
+        ...             in_features_logits=in_features_logits
+        ...         )
+        ...         self.linear = torch.nn.Linear(in_features_logits, out_features)
+        ...
+        ...     def forward(self, logits):
+        ...         return torch.sigmoid(self.linear(logits))
+        >>>
+        >>> # Example usage
+        >>> layer = MyConceptLayer(out_features=5, in_features_logits=10)
+        >>>
+        >>> # Generate random input
+        >>> logits = torch.randn(2, 10)  # batch_size=2, in_features=10
+        >>>
+        >>> # Forward pass
+        >>> output = layer(logits)
+        >>> print(output.shape)  # torch.Size([2, 5])
     """
 
     def __init__(
@@ -77,6 +103,36 @@ class BaseEncoder(BaseConceptLayer):
         out_features: Number of output concept features.
         in_features_embedding: Number of input embedding features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import BaseEncoder
+        >>>
+        >>> # Create a custom encoder
+        >>> class MyEncoder(BaseEncoder):
+        ...     def __init__(self, out_features, in_features_embedding):
+        ...         super().__init__(
+        ...             out_features=out_features,
+        ...             in_features_embedding=in_features_embedding
+        ...         )
+        ...         self.net = torch.nn.Sequential(
+        ...             torch.nn.Linear(in_features_embedding, 128),
+        ...             torch.nn.ReLU(),
+        ...             torch.nn.Linear(128, out_features)
+        ...         )
+        ...
+        ...     def forward(self, embedding):
+        ...         return self.net(embedding)
+        >>>
+        >>> # Example usage
+        >>> encoder = MyEncoder(out_features=10, in_features_embedding=784)
+        >>>
+        >>> # Generate random image embedding (e.g., flattened MNIST)
+        >>> x = torch.randn(4, 784)  # batch_size=4, pixels=784
+        >>>
+        >>> # Encode to concepts
+        >>> concepts = encoder(x)
+        >>> print(concepts.shape)  # torch.Size([4, 10])
     """
 
     def __init__(self,
@@ -107,6 +163,40 @@ class BasePredictor(BaseConceptLayer):
         in_features_embedding: Number of input embedding features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
         in_activation: Activation function for input (default: torch.sigmoid).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import BasePredictor
+        >>>
+        >>> # Create a custom predictor
+        >>> class MyPredictor(BasePredictor):
+        ...     def __init__(self, out_features, in_features_logits):
+        ...         super().__init__(
+        ...             out_features=out_features,
+        ...             in_features_logits=in_features_logits,
+        ...             in_activation=torch.sigmoid
+        ...         )
+        ...         self.linear = torch.nn.Linear(in_features_logits, out_features)
+        ...
+        ...     def forward(self, logits):
+        ...         # Apply activation to input logits
+        ...         probs = self.in_activation(logits)
+        ...         # Predict next concepts
+        ...         return self.linear(probs)
+        >>>
+        >>> # Example usage
+        >>> predictor = MyPredictor(out_features=3, in_features_logits=10)
+        >>>
+        >>> # Generate random concept logits
+        >>> concept_logits = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>>
+        >>> # Predict task labels from concepts
+        >>> task_logits = predictor(concept_logits)
+        >>> print(task_logits.shape)  # torch.Size([4, 3])
+        >>>
+        >>> # Get task predictions
+        >>> task_probs = torch.sigmoid(task_logits)
+        >>> print(task_probs.shape)  # torch.Size([4, 3])
     """
 
     def __init__(self,

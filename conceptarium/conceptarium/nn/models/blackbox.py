@@ -4,7 +4,7 @@ from typing import Any, List, Optional, Dict, Mapping
 
 from torch_concepts import Annotations, Variable
 from torch_concepts.distributions.delta import Delta
-from torch_concepts.nn import Factor, ProbEncoderFromEmb, ProbabilisticGraphicalModel, BaseInference
+from torch_concepts.nn import Factor, ProbEncoderFromEmb, ProbabilisticModel, BaseInference
 
 from ..dense_layers import MLP
 from ..base.model import BaseModel
@@ -99,13 +99,13 @@ class BlackBox(BaseModel):
                                   module_class=[ProbEncoderFromEmb(in_features_embedding=embedding.size, 
                                                                    out_features=c.size) for c in concepts])
         
-        # PGM Initialization
-        self.pgm = ProbabilisticGraphicalModel(
+        # ProbabilisticModel Initialization
+        self.probabilistic_model = ProbabilisticModel(
             variables=[embedding, *concepts],
             factors=[embedding_factor, *concept_encoders]
         )
 
-        self.inference = inference(self.pgm)
+        self.inference = inference(self.probabilistic_model)
 
     def filter_output_for_loss(self, forward_out):
         # forward_out: logits

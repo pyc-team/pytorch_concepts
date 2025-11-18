@@ -1,3 +1,9 @@
+"""
+Inference and intervention modules for concept-based models.
+
+This module provides intervention strategies that modify concept values during
+inference, enabling causal reasoning and what-if analysis in concept-based models.
+"""
 import math
 import contextlib
 from abc import abstractmethod
@@ -40,14 +46,57 @@ def _as_list(x, n: int):
 # ---------------- strategy ----------------
 
 class RewiringIntervention(BaseIntervention):
+    """
+    Base class for rewiring-based interventions.
+
+    Rewiring interventions replace predicted concept values with target values
+    based on a binary mask, implementing do-calculus operations.
+
+    Args:
+        model: The concept-based model to intervene on.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import RewiringIntervention
+        >>>
+        >>> # Subclass to create custom intervention
+        >>> class MyIntervention(RewiringIntervention):
+        ...     def _make_target(self, y, *args, **kwargs):
+        ...         return torch.ones_like(y)
+        >>>
+    """
+
     def __init__(self, model: nn.Module, *args, **kwargs):
         super().__init__(model)
 
     @abstractmethod
     def _make_target(self, y: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        """
+        Create target tensor for intervention.
+
+        Args:
+            y: Predicted concept values.
+            *args: Additional arguments.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            torch.Tensor: Target values for intervention.
+        """
         raise NotImplementedError
 
     def query(self, original_module: nn.Module, mask: torch.Tensor, *args, **kwargs) -> nn.Module:
+        """
+        Create an intervention wrapper module.
+
+        Args:
+            original_module: The original module to wrap.
+            mask: Binary mask (1=keep prediction, 0=replace with target).
+            *args: Additional arguments.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            nn.Module: Wrapped module with intervention applied.
+        """
         parent = self
 
         class _Rewire(nn.Module):
@@ -69,8 +118,31 @@ class RewiringIntervention(BaseIntervention):
 
 class GroundTruthIntervention(RewiringIntervention):
     """
-    Mix in a provided ground-truth tensor.
-    REQUIREMENT: ground_truth must be exactly [B, F] at runtime (no broadcasting).
+    Intervention that replaces predicted concepts with ground truth values.
+
+    Implements do(C=c_true) operations by mixing predicted and ground truth
+    concept values based on a binary mask.
+
+    Args:
+        model: The concept-based model to intervene on.
+        ground_truth: Ground truth concept values of shape (batch_size, n_concepts).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import GroundTruthIntervention
+        >>>
+        >>> # Create a dummy model
+        >>> model = torch.nn.Linear(10, 5)
+        >>>
+        >>> # Ground truth values
+        >>> c_true = torch.tensor([[1.0, 0.0, 1.0, 0.0, 1.0],
+        ...                        [0.0, 1.0, 0.0, 1.0, 0.0]])
+        >>>
+        >>> # Create intervention
+        >>> intervention = GroundTruthIntervention(model, c_true)
+        >>>
+        >>> # Apply intervention (typically done via context manager)
+        >>> # See intervention() context manager for complete usage
     """
 
     def __init__(self, model: nn.Module, ground_truth: torch.Tensor):
@@ -82,13 +154,39 @@ class GroundTruthIntervention(RewiringIntervention):
 
 class DoIntervention(RewiringIntervention):
     """
-    Set features to constants.
-    Accepts:
-      - scalar
-      - [F]
-      - [1, F]
-      - [B, F]
-    Will broadcast to [B, F] where possible.
+    Intervention that sets concepts to constant values (do-calculus).
+
+    Implements do(C=constant) operations, supporting scalar, per-concept,
+    or per-sample constant values with automatic broadcasting.
+
+    Args:
+        model: The concept-based model to intervene on.
+        constants: Constant values (scalar, [F], [1,F], or [B,F]).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import DoIntervention
+        >>>
+        >>> # Create a dummy model
+        >>> model = torch.nn.Linear(10, 3)
+        >>>
+        >>> # Set all concepts to 1.0
+        >>> intervention_scalar = DoIntervention(model, 1.0)
+        >>>
+        >>> # Set each concept to different values
+        >>> intervention_vec = DoIntervention(
+        ...     model,
+        ...     torch.tensor([0.5, 1.0, 0.0])
+        ... )
+        >>>
+        >>> # Set per-sample values
+        >>> intervention_batch = DoIntervention(
+        ...     model,
+        ...     torch.tensor([[0.0, 1.0, 0.5],
+        ...                   [1.0, 0.0, 0.5]])
+        ... )
+        >>>
+        >>> # Use via context manager - see intervention()
     """
 
     def __init__(self, model: nn.Module, constants: torch.Tensor | float):
@@ -120,10 +218,38 @@ class DoIntervention(RewiringIntervention):
 
 class DistributionIntervention(RewiringIntervention):
     """
-    Sample each feature from a distribution.
-      - dist: a single torch.distributions.Distribution (broadcast to all features)
-              OR a list/tuple of length F with per-feature distributions.
-    Uses rsample when available; falls back to sample.
+    Intervention that samples concept values from distributions.
+
+    Implements do(C~D) operations where concepts are sampled from specified
+    probability distributions, enabling distributional interventions.
+
+    Args:
+        model: The concept-based model to intervene on.
+        dist: A torch.distributions.Distribution or list of per-concept distributions.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import DistributionIntervention
+        >>> from torch.distributions import Bernoulli, Normal
+        >>>
+        >>> # Create a dummy model
+        >>> model = torch.nn.Linear(10, 3)
+        >>>
+        >>> # Single distribution for all concepts
+        >>> intervention_single = DistributionIntervention(
+        ...     model,
+        ...     Bernoulli(torch.tensor(0.7))
+        ... )
+        >>>
+        >>> # Per-concept distributions
+        >>> intervention_multi = DistributionIntervention(
+        ...     model,
+        ...     [Bernoulli(torch.tensor(0.3)),
+        ...      Normal(torch.tensor(0.0), torch.tensor(1.0)),
+        ...      Bernoulli(torch.tensor(0.8))]
+        ... )
+        >>>
+        >>> # Use via context manager - see intervention()
     """
 
     def __init__(self, model: nn.Module, dist):
@@ -247,18 +373,63 @@ def intervention(
     strategies: Union[RewiringIntervention, Sequence[RewiringIntervention]],
     target_concepts: Union[str, int, Sequence[Union[str, int]]],
     quantiles: Optional[Union[float, Sequence[float]]] = 1.,
-    model: nn.Module = None,                # optional; defaults to strategies[0].model
+    model: nn.Module = None,
 ):
     """
-    Now supports multiple layers. Singletons are broadcast to len(on_layers).
+    Context manager for applying interventions to concept-based models.
+
+    Enables interventions on concept modules by temporarily replacing model
+    components with intervention wrappers. Supports single or multiple layers.
+
+    Args:
+        policies: Policy module(s) that determine which concepts to intervene on.
+        strategies: Intervention strategy/strategies (e.g., DoIntervention).
+        target_concepts: Concept names/paths or indices to intervene on.
+        quantiles: Quantile thresholds for selective intervention (default: 1.0).
+        model: Optional model reference (default: strategies[0].model).
+
+    Yields:
+        The intervention wrapper (if target_concepts are indices) or None.
+
     Example:
-        with intervention(
-            policies=[int_policy_c, int_policy_y],
-            strategies=[int_strategy_c, int_strategy_y],
-            on_layers=["encoder_layer.encoder", "y_predictor.predictor"],
-            quantiles=[quantile, 1.0],
-        ):
-            ...
+        >>> import torch
+        >>> from torch_concepts.nn import (
+        ...     DoIntervention, intervention, RandomPolicy
+        ... )
+        >>> from torch_concepts import Variable
+        >>>
+        >>> # Create a simple model
+        >>> class SimplePGM(torch.nn.Module):
+        ...     def __init__(self, in_features, out_features):
+        ...         super().__init__()
+        ...         self.encoder = torch.nn.Linear(in_features, 3)
+        ...         self.predictor = torch.nn.Linear(3, out_features)
+        ...     def forward(self, x):
+        ...         c = torch.sigmoid(self.encoder(x))
+        ...         y = self.predictor(c)
+        ...         return y
+        >>>
+        >>> model = SimplePGM(10, 3)
+        >>>
+        >>> # Create intervention strategy (set concepts to 1)
+        >>> strategy = DoIntervention(model, torch.FloatTensor([1.0, 0.0, 1.0]))
+        >>>
+        >>> # Create policy (random selection)
+        >>> policy = RandomPolicy(out_features=3)
+        >>>
+        >>> # Apply intervention on specific concept indices
+        >>> x = torch.randn(4, 10)
+        >>> with intervention(
+        ...     policies=policy,
+        ...     strategies=strategy,
+        ...     target_concepts=[0, 2],  # Intervene on concepts 0 and 2
+        ...     quantiles=0.8
+        ... ) as wrapper:
+        ...     # Inside context, interventions are active
+        ...     output = wrapper(x=x)
+        >>>
+        >>> print(f"Output shape: {output.shape}")
+        Output shape: torch.Size([4, 3])
     """
     # Normalise on_layers to list and compute N
     if isinstance(target_concepts, str):

@@ -27,7 +27,7 @@ def main():
     }
     annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
-    # PGM Initialization
+    # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
     concept_model = BipartiteModel(task_names,
                                    latent_dims,
@@ -36,7 +36,7 @@ def main():
                                    Propagator(ProbPredictor))
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model.pgm)
+    inference_engine = DeterministicInference(concept_model.probabilistic_model)
     query_concepts = ["c1", "c2", "xor"]
 
     model = torch.nn.Sequential(encoder, concept_model)
@@ -71,8 +71,8 @@ def main():
 
     emb = encoder(x_train)
 
-    int_policy_c = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.pgm.factors, constants=-10)
+    int_policy_c = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
+    int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.factors, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):

@@ -31,11 +31,54 @@ class BaseModel(torch.nn.Module):
         **kwargs: Arbitrary keyword arguments.
 
     Example:
-        >>> annotations = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'c3'])})
-        >>> encoder = Propagator(...)
-        >>> predictor = Propagator(...)
-        >>> model = ConcreteModel(input_size=784, annotations=annotations,
-        ...                       encoder=encoder, predictor=predictor)
+        >>> import torch
+        >>> from torch_concepts import Annotations, AxisAnnotation
+        >>> from torch_concepts.nn import BaseModel, Propagator
+        >>>
+        >>> # Create annotations for concepts
+        >>> concept_labels = ('color', 'shape', 'size')
+        >>> annotations = Annotations({
+        ...     1: AxisAnnotation(labels=concept_labels)
+        ... })
+        >>>
+        >>> # Create a concrete model class
+        >>> class MyConceptModel(BaseModel):
+        ...     def __init__(self, input_size, annotations, encoder, predictor):
+        ...         super().__init__(input_size, annotations, encoder, predictor)
+        ...         # Build encoder and predictor
+        ...         self.encoder = self._encoder_builder
+        ...         self.predictor = self._predictor_builder
+        ...
+        ...     def forward(self, x):
+        ...         concepts = self.encoder(x)
+        ...         predictions = self.predictor(concepts)
+        ...         return predictions
+        >>>
+        >>> # Create encoder and predictor propagators
+        >>> encoder = torch.nn.Linear(784, 3)  # Simple encoder
+        >>> predictor = torch.nn.Linear(3, 10)  # Simple predictor
+        >>>
+        >>> # Instantiate model
+        >>> model = MyConceptModel(
+        ...     input_size=784,
+        ...     annotations=annotations,
+        ...     encoder=encoder,
+        ...     predictor=predictor
+        ... )
+        >>>
+        >>> # Generate random input (e.g., flattened MNIST image)
+        >>> x = torch.randn(8, 784)  # batch_size=8, pixels=784
+        >>>
+        >>> # Forward pass
+        >>> output = model(x)
+        >>> print(output.shape)  # torch.Size([8, 10])
+        >>>
+        >>> # Access concept labels
+        >>> print(model.labels)  # ('color', 'shape', 'size')
+        >>>
+        >>> # Get concept index by name
+        >>> idx = model.name2id['color']
+        >>> print(idx)  # 0
     """
 
     def __init__(self,

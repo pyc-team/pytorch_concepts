@@ -18,18 +18,56 @@ class AxisAnnotation:
     """
     Annotations for a single axis of a tensor.
 
-    Attributes
-    ----------
-    axis : int
-        The tensor dimension this annotates (0 for batch, 1 for concept, etc.)
-    labels : tuple[str, ...]
-        Ordered, unique labels for this axis
-    is_nested : bool
-        Whether this axis has nested structure (inferred from states if present)
-    cardinalities : Optional[tuple[int, ...]]
-        IF NESTED, the cardinality of each component (inferred from states)
-    states : Optional[tuple[tuple[str, ...], ...]]
-        IF NESTED, state labels for each component. None for non-nested.
+    This class provides semantic labeling for one dimension of a tensor,
+    supporting both simple binary concepts and nested multi-state concepts.
+
+    Attributes:
+        labels (tuple[str, ...]): Ordered, unique labels for this axis.
+        states (Optional[tuple[tuple[str, ...], ...]]): State labels for each concept (if nested).
+        cardinalities (Optional[tuple[int, ...]]): Cardinality of each concept.
+        metadata (Optional[Dict[str, Dict]]): Additional metadata for each label.
+        is_nested (bool): Whether this axis has nested/hierarchical structure.
+
+    Args:
+        labels: Tuple of concept names for this axis.
+        states: Optional tuple of state tuples for nested concepts.
+        cardinalities: Optional tuple of cardinalities per concept.
+        metadata: Optional metadata dictionary keyed by label names.
+
+    Example:
+        >>> from torch_concepts import AxisAnnotation
+        >>>
+        >>> # Simple binary concepts
+        >>> axis_binary = AxisAnnotation(
+        ...     labels=('has_wheels', 'has_windows', 'is_red')
+        ... )
+        >>> print(axis_binary.labels)  # ('has_wheels', 'has_windows', 'is_red')
+        >>> print(axis_binary.is_nested)  # False
+        >>> print(axis_binary.cardinalities)  # (1, 1, 1) - binary concepts
+        >>>
+        >>> # Nested concepts with explicit states
+        >>> axis_nested = AxisAnnotation(
+        ...     labels=('color', 'shape'),
+        ...     states=(('red', 'green', 'blue'), ('circle', 'square')),
+        ... )
+        >>> print(axis_nested.labels)  # ('color', 'shape')
+        >>> print(axis_nested.is_nested)  # True
+        >>> print(axis_nested.cardinalities)  # (3, 2)
+        >>> print(axis_nested.states[0])  # ('red', 'green', 'blue')
+        >>>
+        >>> # With cardinalities only (auto-generates state labels)
+        >>> axis_cards = AxisAnnotation(
+        ...     labels=('size', 'material'),
+        ...     cardinalities=(3, 4)  # 3 sizes, 4 materials
+        ... )
+        >>> print(axis_cards.cardinalities)  # (3, 4)
+        >>> print(axis_cards.states[0])  # ('0', '1', '2')
+        >>>
+        >>> # Access methods
+        >>> idx = axis_binary.get_index('has_wheels')
+        >>> print(idx)  # 0
+        >>> label = axis_binary.get_label(1)
+        >>> print(label)  # 'has_windows'
     """
     labels: Tuple[str, ...]
     states: Optional[Tuple[Tuple[str, ...], ...]] = field(default=None)
@@ -292,10 +330,64 @@ class AxisAnnotation:
 
 class Annotations:
     """
+    Multi-axis annotation container for concept tensors.
+
+    This class manages annotations for multiple tensor dimensions, providing
+    a unified interface for working with concept-based tensors that may have
+    different semantic meanings along different axes.
+
+    Attributes:
+        _axis_annotations (Dict[int, AxisAnnotation]): Map from axis index to annotation.
+
+    Args:
+        axis_annotations: Either a list of AxisAnnotations (indexed 0, 1, 2, ...)
+                         or a dict mapping axis numbers to AxisAnnotations.
+
+    Example:
+        >>> from torch_concepts import Annotations, AxisAnnotation
+        >>>
+        >>> # Create annotations for a concept tensor
+        >>> # Axis 0: batch (typically not annotated)
+        >>> # Axis 1: concepts
+        >>> concept_ann = AxisAnnotation(
+        ...     labels=('color', 'shape', 'size'),
+        ...     cardinalities=(3, 2, 1)  # 3 colors, 2 shapes, 1 binary size
+        ... )
+        >>>
+        >>> # Create annotations object
+        >>> annotations = Annotations({1: concept_ann})
+        >>>
+        >>> # Access concept labels
+        >>> print(annotations.get_axis_labels(1))  # ('color', 'shape', 'size')
+        >>>
+        >>> # Get index of a concept
+        >>> idx = annotations.get_index(1, 'color')
+        >>> print(idx)  # 0
+        >>>
+        >>> # Check if axis is nested
+        >>> print(annotations.is_axis_nested(1))  # True
+        >>>
+        >>> # Get cardinalities
+        >>> print(annotations.get_axis_cardinalities(1))  # (3, 2, 1)
+        >>>
+        >>> # Access via indexing
+        >>> print(annotations[1].labels)  # ('color', 'shape', 'size')
+        >>>
+        >>> # Multiple axes example
+        >>> task_ann = AxisAnnotation(labels=('task1', 'task2', 'task3'))
+        >>> multi_ann = Annotations({
+        ...     1: concept_ann,
+        ...     2: task_ann
+        ... })
+        >>> print(multi_ann.annotated_axes)  # (1, 2)
     """
 
     def __init__(self, axis_annotations: Optional[Union[List, Dict[int, AxisAnnotation]]] = None):
         """
+        Initialize Annotations container.
+
+        Args:
+            axis_annotations: Either a list or dict of AxisAnnotation objects.
         """
 
         if axis_annotations is None:

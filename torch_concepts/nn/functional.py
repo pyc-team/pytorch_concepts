@@ -42,12 +42,12 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
     Beyond the Accuracy-Explainability Trade-Off" (Espinosa Zarlenga et al., 2022).
 
     Args:
-        c_emb: Concept embeddings of shape (B, n_concepts, emb_size * sum(groups)).
+        c_emb: Concept embeddings of shape (B, n_concepts, emb_size).
         c_scores: Concept scores of shape (B, sum(groups)).
         groups: List of group sizes (e.g., [3, 4] for two groups).
 
     Returns:
-        Tensor: Mixed embeddings of shape (B, n_concepts, emb_size * len(groups)).
+        Tensor: Mixed embeddings of shape (B, len(groups), emb_size // 2).
 
     Raises:
         AssertionError: If group sizes don't sum to n_concepts.
@@ -57,6 +57,29 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
         Accuracy-Explainability Trade-Off", NeurIPS 2022.
         https://arxiv.org/abs/2209.09056
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn.functional import grouped_concept_embedding_mixture
+        >>>
+        >>> # 10 concepts in 3 groups: [3, 4, 3]
+        >>> # Embedding size = 20 (must be even)
+        >>> batch_size = 4
+        >>> n_concepts = 10
+        >>> emb_size = 20
+        >>> groups = [3, 4, 3]
+        >>>
+        >>> # Generate random embeddings and scores
+        >>> c_emb = torch.randn(batch_size, n_concepts, emb_size)
+        >>> c_scores = torch.rand(batch_size, n_concepts)  # Probabilities
+        >>>
+        >>> # Apply grouped mixture
+        >>> mixed = grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+        >>> print(mixed.shape)  # torch.Size([4, 3, 10])
+        >>> # Output shape: (batch_size, n_groups, emb_size // 2)
+        >>>
+        >>> # Singleton groups use two-half mixture
+        >>> # Multi-concept groups use weighted average of base embeddings
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, "group_sizes must sum to n_concepts"

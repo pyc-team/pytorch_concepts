@@ -1,5 +1,5 @@
 """
-Variable representation for concept-based probabilistic graphical models.
+Variable representation for concept-based Probabilistic Models.
 
 This module defines the Variable class, which represents random variables in
 concept-based models. Variables can have different probability distributions
@@ -14,7 +14,7 @@ from torch_concepts.distributions import Delta
 
 class Variable:
     """
-    Represents a random variable in a concept-based probabilistic graphical model.
+    Represents a random variable in a concept-based Probabilistic Model.
 
     A Variable encapsulates one or more concepts along with their associated
     probability distribution, parent variables, and metadata. It supports
@@ -36,17 +36,65 @@ class Variable:
         out_features (int): Number of output features this variable produces.
         in_features (int): Total input features from all parent variables.
 
-    Examples:
-        >>> # Create a binary concept variable
-        >>> var = Variable(concepts=['has_wheels'], parents=[], distribution=Bernoulli, size=1)
+    Example:
+        >>> import torch
+        >>> from torch.distributions import Bernoulli, Categorical, Normal
+        >>> from torch_concepts.concepts.variable import Variable
+        >>> from torch_concepts.distributions import Delta
         >>>
-        >>> # Create a categorical variable with 3 classes
-        >>> var = Variable(concepts=['color'], parents=[], distribution=Categorical, size=3)
+        >>> # Create a binary concept variable
+        >>> var_binary = Variable(
+        ...     concepts='has_wheels',
+        ...     parents=[],
+        ...     distribution=Bernoulli,
+        ...     size=1
+        ... )
+        >>> print(var_binary.concepts)  # ['has_wheels']
+        >>> print(var_binary.out_features)  # 1
+        >>>
+        >>> # Create a categorical variable with 3 color classes
+        >>> var_color = Variable(
+        ...     concepts=['color'],
+        ...     parents=[],
+        ...     distribution=Categorical,
+        ...     size=3  # red, green, blue
+        ... )
+        >>> print(var_color[0].out_features)  # 3
+        >>>
+        >>> # Create a deterministic (Delta) variable
+        >>> var_delta = Variable(
+        ...     concepts=['continuous_feature'],
+        ...     parents=[],
+        ...     distribution=Delta,
+        ...     size=1
+        ... )
         >>>
         >>> # Create multiple variables at once
-        >>> vars = Variable(concepts=['A', 'B', 'C'], parents=[], distribution=Delta, size=1)
-        >>> len(vars)  # Returns 3 Variable instances
-        3
+        >>> vars_list = Variable(
+        ...     concepts=['A', 'B', 'C'],
+        ...     parents=[],
+        ...     distribution=Delta,
+        ...     size=1
+        ... )
+        >>> print(len(vars_list))  # 3
+        >>> print(vars_list[0].concepts)  # ['A']
+        >>> print(vars_list[1].concepts)  # ['B']
+        >>>
+        >>> # Create variables with parent dependencies
+        >>> parent_var = Variable(
+        ...     concepts=['parent_concept'],
+        ...     parents=[],
+        ...     distribution=Bernoulli,
+        ...     size=1
+        ... )
+        >>> child_var = Variable(
+        ...     concepts=['child_concept'],
+        ...     parents=parent_var,
+        ...     distribution=Bernoulli,
+        ...     size=1
+        ... )
+        >>> print(child_var[0].in_features)  # 1 (from parent)
+        >>> print(child_var[0].out_features)  # 1
     """
 
     def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
@@ -199,7 +247,7 @@ class Variable:
             if isinstance(parent, Variable):
                 total_in += parent.out_features
             else:
-                raise TypeError(f"Parent '{parent}' is not a Variable object. PGM initialization error.")
+                raise TypeError(f"Parent '{parent}' is not a Variable object. ProbabilisticModel initialization error.")
         return total_in
 
     def __getitem__(self, key: Union[str, List[str]]) -> 'Variable':

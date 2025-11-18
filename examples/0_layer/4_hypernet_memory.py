@@ -34,8 +34,7 @@ def main():
                               out_features=y_annotations.shape[1])
     y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
-                                       embedding_size=latent_dims,
-                                       out_features=y_annotations.shape[1])
+                                       embedding_size=latent_dims)
     model = torch.nn.Sequential(encoder, selector, encoder_layer, y_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)

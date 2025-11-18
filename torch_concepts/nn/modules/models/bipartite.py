@@ -9,6 +9,69 @@ from .graph import GraphModel
 
 
 class BipartiteModel(GraphModel):
+    """
+    Bipartite concept graph model with concepts and tasks in separate layers.
+
+    This model implements a bipartite graph structure where concepts only connect
+    to tasks (not to each other), creating a clean separation between concept
+    and task layers. This is useful for multi-task learning with shared concepts.
+
+    Attributes:
+        label_names (List[str]): All node labels (concepts + tasks).
+        concept_names (List[str]): Concept node labels.
+        task_names (List[str]): Task node labels.
+
+    Args:
+        task_names: List of task names (must be in annotations labels).
+        input_size: Size of input features.
+        annotations: Annotations object with concept and task metadata.
+        encoder: Propagator for encoding concepts from inputs.
+        predictor: Propagator for predicting tasks from concepts.
+        use_source_exogenous: Whether to use exogenous features for source nodes.
+        source_exogenous: Optional propagator for source exogenous features.
+        internal_exogenous: Optional propagator for internal exogenous features.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts import Annotations, AxisAnnotation
+        >>> from torch_concepts.nn import BipartiteModel, Propagator
+        >>> from torch.distributions import Bernoulli
+        >>>
+        >>> # Define concepts and tasks
+        >>> all_labels = ('color', 'shape', 'size', 'task1', 'task2')
+        >>> metadata = {'color': {'distribution': Bernoulli},
+        ...             'shape': {'distribution': Bernoulli},
+        ...             'size': {'distribution': Bernoulli},
+        ...             'task1': {'distribution': Bernoulli},
+        ...             'task2': {'distribution': Bernoulli}}
+        >>> annotations = Annotations({
+        ...     1: AxisAnnotation(labels=all_labels, metadata=metadata)
+        ... })
+        >>>
+        >>> # Create bipartite model with tasks
+        >>> task_names = ['task1', 'task2']
+        >>>
+        >>> model = BipartiteModel(
+        ...     task_names=task_names,
+        ...     input_size=784,
+        ...     annotations=annotations,
+        ...     encoder=Propagator(torch.nn.Linear),
+        ...     predictor=Propagator(torch.nn.Linear)
+        ... )
+        >>>
+        >>> # Generate random input
+        >>> x = torch.randn(8, 784)  # batch_size=8
+        >>>
+        >>> # Forward pass (implementation depends on GraphModel)
+        >>> # Concepts are encoded, then tasks predicted from concepts
+        >>> print(model.concept_names)  # ['color', 'shape', 'size']
+        >>> print(model.task_names)     # ['task1', 'task2']
+        >>> print(model.probabilistic_model)
+        >>>
+        >>> # The bipartite structure ensures:
+        >>> # - Concepts don't predict other concepts
+        >>> # - Only concepts -> tasks edges exist
+    """
     def __init__(
             self,
             task_names: Union[List[str], str, List[int]],

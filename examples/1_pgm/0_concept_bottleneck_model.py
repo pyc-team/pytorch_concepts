@@ -4,7 +4,7 @@ from torch.distributions import Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Annotations, AxisAnnotation, Variable
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticGraphicalModel, \
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference
 
 
@@ -29,8 +29,8 @@ def main():
     c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
     y_predictor = Factor("xor", module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
 
-    # PGM Initialization
-    concept_model = ProbabilisticGraphicalModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
+    # ProbabilisticModel Initialization
+    concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)

@@ -35,7 +35,7 @@ def main():
                                              [0, 0, 0, 1],
                                              [0, 0, 0, 0]]), list(annotations.get_axis_annotation(1).labels))
 
-    # PGM Initialization
+    # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
@@ -46,7 +46,7 @@ def main():
                                    predictor=Propagator(HyperLinearPredictor, embedding_size=11))
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model.pgm, temperature=1.)
+    inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, temperature=1.)
     query_concepts = ["c1", "c2", "xor", "not_xor"]
 
     model = torch.nn.Sequential(encoder, concept_model)
@@ -80,8 +80,8 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Task2 Acc: {task2_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size)
-    int_strategy_c1 = DoIntervention(model=concept_model.pgm.factors, constants=0)
+    int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.factors, constants=0)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1"]):
@@ -96,8 +96,8 @@ def main():
         print(cy_pred[:5])
         print()
 
-        int_policy_c1 = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size)
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=c_train[:, 0:1])
+        int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=c_train[:, 0:1])
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=["c1"]):

@@ -10,16 +10,86 @@ from torch_concepts.nn import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
 from .intervention import _InterventionWrapper
-from ..models.pgm import ProbabilisticGraphicalModel
+from ..models.pgm import ProbabilisticModel
 from ...base.inference import BaseInference
 
 
 class ForwardInference(BaseInference):
-    def __init__(self, pgm: ProbabilisticGraphicalModel, graph_learner: BaseGraphLearner = None, *args, **kwargs):
+    """
+    Forward inference engine for probabilistic models.
+
+    This class implements forward inference through a probabilistic model
+    by topologically sorting variables and computing them in dependency order. It
+    supports parallel computation within topological levels and can optionally use
+    a learned graph structure.
+
+    The inference engine:
+    - Automatically sorts variables in topological order
+    - Computes variables level-by-level (variables at same depth processed in parallel)
+    - Supports GPU parallelization via CUDA streams
+    - Supports CPU parallelization via threading
+    - Handles interventions via _InterventionWrapper
+
+    Attributes:
+        probabilistic_model (ProbabilisticModel): The probabilistic model to perform inference on.
+        graph_learner (BaseGraphLearner): Optional graph structure learner.
+        concept_map (Dict[str, Variable]): Maps concept names to Variable objects.
+        sorted_variables (List[Variable]): Variables in topological order.
+        levels (List[List[Variable]]): Variables grouped by topological depth.
+
+    Args:
+        probabilistic_model: The probabilistic model to perform inference on.
+        graph_learner: Optional graph learner for weighted adjacency structure.
+
+    Raises:
+        RuntimeError: If the model contains cycles (not a DAG).
+
+    Example:
+        >>> import torch
+        >>> from torch.distributions import Bernoulli
+        >>> from torch_concepts import Variable
+        >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts.nn import ForwardInference, Factor, ProbabilisticModel
+        >>>
+        >>> # Create a simple model: embedding -> A -> B
+        >>> # Where A is a root concept and B depends on A
+        >>>
+        >>> # Define variables
+        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>>
+        >>> # Define factors (modules that compute each variable)
+        >>> from torch.nn import Identity, Linear
+        >>> embedding_factor = Factor('embedding', module_class=Identity())
+        >>> factor_A = Factor('A', module_class=Linear(10, 1))  # embedding -> A
+        >>> factor_B = Factor('B', module_class=Linear(1, 1))   # A -> B
+        >>>
+        >>> # Create probabilistic model
+        >>> pgm = ProbabilisticModel(
+        ...     variables=[embedding_var, var_A, var_B],
+        ...     factors=[embedding_factor, factor_A, factor_B]
+        ... )
+        >>>
+        >>> # Create forward inference engine
+        >>> inference = ForwardInference(pgm)
+        >>>
+        >>> # Check topological order
+        >>> print([v.concepts[0] for v in inference.sorted_variables])
+        >>> # ['embedding', 'A', 'B']
+        >>>
+        >>> # Check levels (for parallel computation)
+        >>> for i, level in enumerate(inference.levels):
+        ...     print(f"Level {i}: {[v.concepts[0] for v in level]}")
+        >>> # Level 0: ['embedding']
+        >>> # Level 1: ['A']
+        >>> # Level 2: ['B']
+    """
+    def __init__(self, probabilistic_model: ProbabilisticModel, graph_learner: BaseGraphLearner = None, *args, **kwargs):
         super().__init__()
-        self.pgm = pgm
+        self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
-        self.concept_map = {var.concepts[0]: var for var in pgm.variables}
+        self.concept_map = {var.concepts[0]: var for var in probabilistic_model.variables}
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -28,22 +98,42 @@ class ForwardInference(BaseInference):
             self.row_labels2id = {var: idx for idx, var in enumerate(self.graph_learner.row_labels)}
             self.col_labels2id = {var: idx for idx, var in enumerate(self.graph_learner.col_labels)}
 
-        if len(self.sorted_variables) != len(self.pgm.variables):
-            raise RuntimeError("The PGM contains cycles and cannot be processed in topological order.")
+        if len(self.sorted_variables) != len(self.probabilistic_model.variables):
+            raise RuntimeError("The ProbabilisticModel contains cycles and cannot be processed in topological order.")
 
     @abstractmethod
     def get_results(self, results: torch.tensor, parent_variable: Variable):
+        """
+        Process the raw output tensor from a factor.
+
+        This method should be implemented by subclasses to handle distribution-specific
+        processing (e.g., sampling from Bernoulli, taking argmax from Categorical, etc.).
+
+        Args:
+            results: Raw output tensor from the factor.
+            parent_variable: The variable being computed.
+
+        Returns:
+            Processed output tensor.
+        """
         pass
 
     def _topological_sort(self):
         """
-        Sort variables topologically and compute levels
-        (variables that share the same topological depth).
-        """
-        in_degree = {var.concepts[0]: 0 for var in self.pgm.variables}
-        adj = {var.concepts[0]: [] for var in self.pgm.variables}
+        Sort variables topologically and compute levels.
 
-        for var in self.pgm.variables:
+        Variables are organized into levels where each level contains variables
+        that have the same topological depth (can be computed in parallel).
+
+        Returns:
+            Tuple of (sorted_variables, levels) where:
+            - sorted_variables: List of all variables in topological order
+            - levels: List of lists, each containing variables at the same depth
+        """
+        in_degree = {var.concepts[0]: 0 for var in self.probabilistic_model.variables}
+        adj = {var.concepts[0]: [] for var in self.probabilistic_model.variables}
+
+        for var in self.probabilistic_model.variables:
             child_name = var.concepts[0]
             for parent_var in var.parents:
                 parent_name = parent_var.concepts[0]
@@ -81,11 +171,23 @@ class ForwardInference(BaseInference):
             results: Dict[str, torch.Tensor],
     ) -> Tuple[str, torch.Tensor]:
         """
-        Compute the output tensor for a single variable, given the current results.
-        Returns (concept_name, output_tensor) without mutating `results`.
+        Compute the output tensor for a single variable.
+
+        Args:
+            var: The variable to compute.
+            external_inputs: Dictionary of external input tensors for root variables.
+            results: Dictionary of already computed variable outputs.
+
+        Returns:
+            Tuple of (concept_name, output_tensor).
+
+        Raises:
+            RuntimeError: If factor is missing for the variable.
+            ValueError: If root variable is missing from external_inputs.
+            RuntimeError: If parent variable hasn't been computed yet.
         """
         concept_name = var.concepts[0]
-        factor = self.pgm.get_module_of_concept(concept_name)
+        factor = self.probabilistic_model.get_module_of_concept(concept_name)
 
         if factor is None:
             raise RuntimeError(f"Missing factor for variable/concept: {concept_name}")
@@ -128,16 +230,19 @@ class ForwardInference(BaseInference):
 
     def predict(self, external_inputs: Dict[str, torch.Tensor], debug: bool = False) -> Dict[str, torch.Tensor]:
         """
-        Performs a forward pass prediction across the entire PGM using the topological level structure.
+        Perform forward pass prediction across the entire probabilistic model.
+
+        This method processes variables level-by-level, exploiting parallelism within
+        each level. On GPU, uses CUDA streams for parallel computation. On CPU, uses
+        ThreadPoolExecutor.
 
         Args:
-            external_inputs: external inputs for root variables.
-            debug: if True, disables parallelism and executes sequentially for easier debugging.
+            external_inputs: Dictionary mapping root variable names to input tensors.
+            debug: If True, runs sequentially for easier debugging (disables parallelism).
 
         Returns:
-            A dictionary {concept_name: output_tensor}.
+            Dictionary mapping concept names to their output tensors.
         """
-
         results: Dict[str, torch.Tensor] = {}
 
         levels = getattr(self, "levels", None)
@@ -183,6 +288,21 @@ class ForwardInference(BaseInference):
     def get_parent_kwargs(self, factor,
                           parent_latent: Union[List[torch.Tensor], torch.Tensor] = None,
                           parent_logits: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """
+        Prepare keyword arguments for factor forward pass based on parent outputs.
+
+        This method inspects the factor's forward signature and constructs appropriate
+        kwargs, separating logits (from probabilistic parents) and latent features
+        (from continuous parents).
+
+        Args:
+            factor: The factor module to call.
+            parent_latent: List of continuous parent outputs (embeddings/exogenous).
+            parent_logits: List of probabilistic parent outputs (concept logits).
+
+        Returns:
+            Dictionary of kwargs ready for factor.forward(**kwargs).
+        """
         parent_kwargs = {}
         if isinstance(factor.module_class, _InterventionWrapper):
             forward_to_check = factor.module_class.forward_to_check
@@ -214,16 +334,24 @@ class ForwardInference(BaseInference):
 
     def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False) -> torch.Tensor:
         """
-        Executes a forward pass and returns only the specified concepts concatenated
-        into a single tensor, in the order requested.
+        Execute forward pass and return only specified concepts concatenated.
+
+        This method runs full inference via predict() and then extracts and
+        concatenates only the requested concepts in the specified order.
 
         Args:
-            query_concepts: A list of concept names to retrieve, e.g., ["c2", "c1", "xor_class"].
-            evidence: A dictionary of {root_concept_name: input_tensor} for the root variables.
+            query_concepts: List of concept names to retrieve (e.g., ["C", "B", "A"]).
+            evidence: Dictionary of {root_concept_name: input_tensor}.
+            debug: If True, runs in debug mode (sequential execution).
 
         Returns:
-            A single torch.Tensor containing the concatenated predictions for the
-            requested concepts, ordered as requested (Batch x TotalFeatures).
+            Single tensor containing concatenated predictions for requested concepts,
+            ordered as requested (Batch x TotalFeatures).
+
+        Raises:
+            ValueError: If requested concept was not computed.
+            RuntimeError: If batch sizes don't match across concepts.
+            RuntimeError: If concatenation produces unexpected feature dimension.
         """
         # 1. Run the full forward pass to get all necessary predictions
         all_predictions = self.predict(evidence, debug=debug)
@@ -264,29 +392,38 @@ class ForwardInference(BaseInference):
     @property
     def available_query_vars(self) -> Set[str]:
         """
-        A tuple of all variable names available for querying.
+        Get all variable names available for querying.
 
-        After calling `unrolled_pgm`, this reflects the unrolled variables;
-        before that, it reflects the original PGM variables.
+        Returns:
+            Set of concept names that can be queried.
         """
         if hasattr(self, "_unrolled_query_vars"):
             return self._unrolled_query_vars
-        return set(var.concepts[0] for var in self.pgm.variables)
+        return set(var.concepts[0] for var in self.probabilistic_model.variables)
 
-    def unrolled_pgm(self) -> ProbabilisticGraphicalModel:
+    def unrolled_probabilistic_model(self) -> ProbabilisticModel:
         """
-        Build an 'unrolled' view of the PGM based on the graph_learner adjacency.
+        Build an 'unrolled' view of the ProbabilisticModel based on graph_learner adjacency.
+
+        This method creates a modified PGM that reflects the learned graph structure,
+        applying rules for keeping/dropping factors based on root/non-root status
+        and recursively pruning unused variables.
 
         Rules:
-        - For root columns in the adjacency (no incoming edges), keep the row factor,
-          drop the corresponding column factor.
-        - For non-root columns, keep the column factor, drop the corresponding row factor,
-          and replace usages of that row factor as a parent with the kept column factor.
-        - Recursively drop any variable X if all its direct children are dropped.
-        """
+        - For root columns (no incoming edges): keep row factor, drop column factor
+        - For non-root columns: keep column factor, drop row factor
+        - Recursively drop variables whose children are all dropped
+        - Apply adjacency gating to remove zero-weight edges
 
+        Returns:
+            Modified ProbabilisticModel with unrolled structure.
+
+        Raises:
+            RuntimeError: If graph_learner is not set or lacks weighted_adj.
+            RuntimeError: If adjacency shape doesn't match label lengths.
+        """
         if self.graph_learner is None or not hasattr(self.graph_learner, "weighted_adj"):
-            raise RuntimeError("unrolled_pgm requires a graph_learner with a 'weighted_adj' attribute.")
+            raise RuntimeError("unrolled_probabilistic_model requires a graph_learner with a 'weighted_adj' attribute.")
 
         adj = self.graph_learner.weighted_adj
         row_labels = list(self.graph_learner.row_labels)
@@ -296,17 +433,17 @@ class ForwardInference(BaseInference):
         if n_rows != len(row_labels) or n_cols != len(col_labels):
             raise RuntimeError("Mismatch between adjacency shape and row/col labels length.")
 
-        # --- 0) Build children map from the raw PGM (no adjacency, no renaming) ---
+        # --- 0) Build children map from the raw ProbabilisticModel (no adjacency, no renaming) ---
         # children_map[parent_name] -> set(child_name)
         children_map: Dict[str, Set[str]] = defaultdict(set)
-        for var in self.pgm.variables:
+        for var in self.probabilistic_model.variables:
             child_name = var.concepts[0]
             for parent in var.parents:
                 parent_name = parent.concepts[0]
                 children_map[parent_name].add(child_name)
 
-        # All variable names in the PGM
-        all_names: Set[str] = {var.concepts[0] for var in self.pgm.variables}
+        # All variable names in the ProbabilisticModel
+        all_names: Set[str] = {var.concepts[0] for var in self.probabilistic_model.variables}
 
         # --- 1) Determine which side we keep for each row/col pair (using adjacency) ---
         # Root factor (in adjacency sense) = column with no incoming edges
@@ -361,7 +498,7 @@ class ForwardInference(BaseInference):
         keep_names: Set[str] = {name for name in all_names if name not in drop}
 
         # --- 3) Rewrite parents using keep_names, rename_map, and adjacency gating ---
-        for var in self.pgm.variables:
+        for var in self.probabilistic_model.variables:
             child_name = var.concepts[0]
             new_parents: List[Variable] = []
             seen: Set[str] = set()
@@ -416,9 +553,9 @@ class ForwardInference(BaseInference):
         new_factors: List[object] = []
         seen_factors: Set[object] = set()
 
-        repeats = [self.pgm.concept_to_variable[p].size for p in row_labels]
+        repeats = [self.probabilistic_model.concept_to_variable[p].size for p in row_labels]
         for var in new_variables:
-            factor = self.pgm.factors[var.concepts[0]]
+            factor = self.probabilistic_model.factors[var.concepts[0]]
             if factor is not None and factor not in seen_factors:
                 if factor.concepts[0] in rename_map.values() and factor.concepts[0] in col_labels:
                     col_id = self.col_labels2id[factor.concepts[0]]
@@ -433,20 +570,183 @@ class ForwardInference(BaseInference):
         # --- 6) Update available_query_vars to reflect the unrolled graph ---
         self._unrolled_query_vars = set(v.concepts[0] for v in new_variables)
 
-        return ProbabilisticGraphicalModel(new_variables, new_factors)
+        return ProbabilisticModel(new_variables, new_factors)
 
 
 class DeterministicInference(ForwardInference):
+    """
+    Deterministic forward inference for probabilistic graphical models.
+
+    This inference engine performs deterministic (maximum likelihood) inference by
+    returning raw logits/outputs from factors without sampling. It's useful for
+    prediction tasks where you want the most likely values rather than samples
+    from the distribution.
+
+    Inherits all functionality from ForwardInference but implements get_results()
+    to return raw outputs without stochastic sampling.
+
+    Example:
+        >>> import torch
+        >>> from torch.distributions import Bernoulli
+        >>> from torch_concepts import Variable
+        >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts.nn import DeterministicInference, Factor, ProbabilisticModel
+        >>>
+        >>> # Create a simple PGM: embedding -> A -> B
+        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>>
+        >>> # Define factors
+        >>> from torch.nn import Identity, Linear
+        >>> embedding_factor = Factor('embedding', module_class=Identity())
+        >>> factor_A = Factor('A', module_class=Linear(10, 1))
+        >>> factor_B = Factor('B', module_class=Linear(1, 1))
+        >>>
+        >>> # Create probabilistic model
+        >>> pgm = ProbabilisticModel(
+        ...     variables=[embedding_var, var_A, var_B],
+        ...     factors=[embedding_factor, factor_A, factor_B]
+        ... )
+        >>>
+        >>> # Create deterministic inference engine
+        >>> inference = DeterministicInference(pgm)
+        >>>
+        >>> # Perform inference - returns logits, not samples
+        >>> x = torch.randn(4, 10)  # batch_size=4, embedding_size=10
+        >>> results = inference.predict({'embedding': x})
+        >>>
+        >>> # Results contain raw logits for Bernoulli variables
+        >>> print(results['A'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
+        >>> print(results['B'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
+        >>>
+        >>> # Query specific concepts - returns concatenated logits
+        >>> output = inference.query(['B', 'A'], evidence={'embedding': x})
+        >>> print(output.shape)  # torch.Size([4, 2])
+        >>> # output contains [logit_B, logit_A] for each sample
+        >>>
+        >>> # Convert logits to probabilities if needed
+        >>> prob_A = torch.sigmoid(results['A'])
+        >>> print(prob_A.shape)  # torch.Size([4, 1])
+        >>>
+        >>> # Get hard predictions (0 or 1)
+        >>> pred_A = (prob_A > 0.5).float()
+        >>> print(pred_A)  # Binary predictions
+    """
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+        """
+        Return raw output without sampling.
+
+        Args:
+            results: Raw output tensor from the factor.
+            parent_variable: The variable being computed (unused in deterministic mode).
+
+        Returns:
+            torch.Tensor: Raw output tensor (logits for probabilistic variables).
+        """
         return results
 
 
 class AncestralSamplingInference(ForwardInference):
-    def __init__(self, pgm: ProbabilisticGraphicalModel, graph_learner: BaseGraphLearner = None, **dist_kwargs):
-        super().__init__(pgm, graph_learner)
+    """
+    Ancestral sampling inference for probabilistic graphical models.
+
+    This inference engine performs ancestral (forward) sampling by drawing samples
+    from the distributions defined by each variable. It's useful for generating
+    realistic samples from the model and for tasks requiring stochastic predictions.
+
+    The sampling respects the probabilistic structure:
+    - Samples from Bernoulli distributions using .sample()
+    - Uses reparameterization (.rsample()) for RelaxedBernoulli and RelaxedOneHotCategorical
+    - Supports custom distribution kwargs (e.g., temperature for Gumbel-Softmax)
+
+    Args:
+        probabilistic_model: The probabilistic model to perform inference on.
+        graph_learner: Optional graph learner for weighted adjacency structure.
+        **dist_kwargs: Additional kwargs passed to distribution constructors
+                      (e.g., temperature for relaxed distributions).
+
+    Example:
+        >>> import torch
+        >>> from torch.distributions import Bernoulli
+        >>> from torch_concepts import Variable
+        >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts.nn import AncestralSamplingInference, Factor, ProbabilisticModel
+        >>>
+        >>> # Create a simple PGM: embedding -> A -> B
+        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>>
+        >>> # Define factors
+        >>> from torch.nn import Identity, Linear
+        >>> embedding_factor = Factor('embedding', module_class=Identity())
+        >>> factor_A = Factor('A', module_class=Linear(10, 1))
+        >>> factor_B = Factor('B', module_class=Linear(1, 1))
+        >>>
+        >>> # Create probabilistic model
+        >>> pgm = ProbabilisticModel(
+        ...     variables=[embedding_var, var_A, var_B],
+        ...     factors=[embedding_factor, factor_A, factor_B]
+        ... )
+        >>>
+        >>> # Create ancestral sampling inference engine
+        >>> inference = AncestralSamplingInference(pgm)
+        >>>
+        >>> # Perform inference - returns samples, not logits
+        >>> x = torch.randn(4, 10)  # batch_size=4, embedding_size=10
+        >>> results = inference.predict({'embedding': x})
+        >>>
+        >>> # Results contain binary samples {0, 1} for Bernoulli variables
+        >>> print(results['A'].shape)  # torch.Size([4, 1])
+        >>> print(results['A'].unique())  # tensor([0., 1.]) - actual samples
+        >>> print(results['B'].shape)  # torch.Size([4, 1])
+        >>> print(results['B'].unique())  # tensor([0., 1.]) - actual samples
+        >>>
+        >>> # Query specific concepts - returns concatenated samples
+        >>> samples = inference.query(['B', 'A'], evidence={'embedding': x})
+        >>> print(samples.shape)  # torch.Size([4, 2])
+        >>> # samples contains [sample_B, sample_A] for each instance
+        >>> print(samples)  # All values are 0 or 1
+        >>>
+        >>> # Multiple runs produce different samples (stochastic)
+        >>> samples1 = inference.query(['A'], evidence={'embedding': x})
+        >>> samples2 = inference.query(['A'], evidence={'embedding': x})
+        >>> print(torch.equal(samples1, samples2))  # Usually False (different samples)
+        >>>
+        >>> # With relaxed distributions (requires temperature)
+        >>> from torch.distributions import RelaxedBernoulli
+        >>> var_A_relaxed = Variable('A', parents=['embedding'],
+        ...                          distribution=RelaxedBernoulli, size=1)
+        >>> pgm = ProbabilisticModel(
+        ...     variables=[embedding_var, var_A_relaxed, var_B],
+        ...     factors=[embedding_factor, factor_A, factor_B]
+        ... )
+        >>> inference_relaxed = AncestralSamplingInference(pgm, temperature=0.05)
+        >>> # Now uses reparameterization trick (.rsample())
+        >>>
+        >>> # Query returns continuous values in [0, 1] for relaxed distributions
+        >>> relaxed_samples = inference_relaxed.query(['A'], evidence={'embedding': x})
+        >>> # relaxed_samples will be continuous, not binary
+    """
+    def __init__(self, probabilistic_model: ProbabilisticModel, graph_learner: BaseGraphLearner = None, **dist_kwargs):
+        super().__init__(probabilistic_model, graph_learner)
         self.dist_kwargs = dist_kwargs
 
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+        """
+        Sample from the distribution parameterized by the results.
+
+        This method creates a distribution using the variable's distribution type
+        and the computed logits/parameters, then draws a sample.
+
+        Args:
+            results: Raw output tensor from the factor (logits or parameters).
+            parent_variable: The variable being computed (defines distribution type).
+
+        Returns:
+            torch.Tensor: Sampled values from the distribution.
+        """
         sig = inspect.signature(parent_variable.distribution.__init__)
         params = sig.parameters
         allowed = {

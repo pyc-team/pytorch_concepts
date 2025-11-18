@@ -30,7 +30,7 @@ def main():
     }
     annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
-    # PGM Initialization
+    # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
     concept_model = BipartiteModel(task_names=list(task_names),
                                    input_size=latent_dims,
@@ -41,11 +41,11 @@ def main():
                                    predictor=Propagator(HyperLinearPredictor, embedding_size=11))
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model.pgm, temperature=1.0)
+    inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, temperature=1.0)
     query_concepts = ["c1", "c2", "xor"]
-    int_policy_c = RandomPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c1 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=c_train[:, 0:1])
-    int_strategy_c2 = GroundTruthIntervention(model=concept_model.pgm.factors, ground_truth=c_train[:, 1:2])
+    int_policy_c = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
+    int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=c_train[:, 0:1])
+    int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=c_train[:, 1:2])
 
     model = torch.nn.Sequential(encoder, concept_model)
 
@@ -88,8 +88,8 @@ def main():
 
     print("=== Interventions ===")
 
-    int_policy_random = UniformPolicy(out_features=concept_model.pgm.concept_to_variable["c1"].size)
-    int_strategy_random = DoIntervention(model=concept_model.pgm.factors, constants=0)
+    int_policy_random = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+    int_strategy_random = DoIntervention(model=concept_model.probabilistic_model.factors, constants=0)
     with intervention(policies=int_policy_random,
                       strategies=int_strategy_random,
                       target_concepts=["c1", "c2"]):

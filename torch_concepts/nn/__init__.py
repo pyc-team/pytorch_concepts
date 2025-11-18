@@ -27,7 +27,7 @@ from .modules.selector import MemorySelector
 from .modules.wanda import WANDAGraphLearner
 
 from .modules.models.factor import Factor
-from .modules.models.pgm import ProbabilisticGraphicalModel
+from .modules.models.pgm import ProbabilisticModel
 from .modules.models.bipartite import BipartiteModel
 from .modules.models.graph import GraphModel
 
@@ -37,6 +37,7 @@ from .modules.inference.forward import (
     AncestralSamplingInference,
 )
 from .modules.inference.intervention import (
+    RewiringIntervention,
     GroundTruthIntervention,
     DoIntervention,
     DistributionIntervention,
@@ -81,7 +82,7 @@ __all__ = [
 
     # Models
     "Factor",
-    "ProbabilisticGraphicalModel",
+    "ProbabilisticModel",
     "BipartiteModel",
     "GraphModel",
 
@@ -91,6 +92,7 @@ __all__ = [
     "AncestralSamplingInference",
 
     # Interventions
+    "RewiringIntervention",
     "GroundTruthIntervention",
     "DoIntervention",
     "DistributionIntervention",

@@ -128,7 +128,7 @@ class Factor(nn.Module):
 
     def build_cpt(self) -> torch.Tensor:
         if not self.variable:
-            raise RuntimeError("Factor not linked to a Variable in PGM.")
+            raise RuntimeError("Factor not linked to a Variable in ProbabilisticModel.")
 
         all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
 
@@ -139,7 +139,7 @@ class Factor(nn.Module):
                 f"Input tensor dimension mismatch for CPT building. "
                 f"Factor module expects {self.module_class.in_features} features, "
                 f"but parent combinations resulted in {input_batch.shape[-1]} features. "
-                f"Check Variable definition and PGM resolution."
+                f"Check Variable definition and ProbabilisticModel resolution."
             )
 
         logits = self.module_class(input=input_batch)
@@ -165,7 +165,7 @@ class Factor(nn.Module):
 
     def build_potential(self) -> torch.Tensor:
         if not self.variable:
-            raise RuntimeError("Factor not linked to a Variable in PGM.")
+            raise RuntimeError("Factor not linked to a Variable in ProbabilisticModel.")
 
         # We need the core probability part for potential calculation
         all_full_inputs, discrete_state_vectors = self._get_parent_combinations()

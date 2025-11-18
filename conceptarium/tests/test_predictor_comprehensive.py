@@ -33,7 +33,7 @@ def create_mock_model(concept_names, cardinalities, tasks, is_nested):
     class MockModel(nn.Module):
         def __init__(self, concept_names, cardinalities, tasks, is_nested):
             super().__init__()
-            self.pgm = None
+            self.probabilistic_model = None
             self.annotations = type('obj', (object,), {
                 'get_axis_annotation': lambda self, axis: create_mock_annotations(
                     concept_names, cardinalities, tasks, is_nested

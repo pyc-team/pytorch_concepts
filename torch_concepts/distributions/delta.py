@@ -15,7 +15,7 @@ class Delta(Distribution):
 
     This distribution always returns the same fixed value when sampled,
     making it useful for representing deterministic variables in
-    probabilistic graphical models.
+    Probabilistic Models.
 
     The Delta distribution has zero variance and assigns all probability
     mass to a single point.

@@ -5,7 +5,7 @@
 # PyC
 
 PyC is a library built upon PyTorch to easily implement **interpretable and causally transparent deep learning models**.
-The library provides primitives for layers (encoders, predictors, special layers), probabilistic graphical models, and APIs for running experiments at scale.
+The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
 
 The name of the library stands for both
 - **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
@@ -21,7 +21,7 @@ The name of the library stands for both
     - [Models](#models)
     - [Inference](#inference)
   - [Mid-level APIs](#mid-level-apis)
-    - [Probabilistic Graphical Models](#probabilistic-graphical-models)
+    - [Probabilistic Models](#probabilistic-models)
     - [Inference](#inference-1)
   - [High-level APIs](#high-level-apis)
     - [Objects](#objects-1)
@@ -63,7 +63,7 @@ import torch_concepts as pyc
 The library is organized to be modular and accessible at different levels of abstraction:
 - **No-code APIs. Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files.
 - **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code.
-- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a probabilistic graphical model interface.
+- **Mid-level APIs. Use case: build custom interpretable and causally transparent Probabilistic Models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a Probabilistic Model interface.
 - **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain pytorch-like interface. These APIs also include metrics, losses, and datasets.
 
 <p align="center">
@@ -144,25 +144,25 @@ At this API level, there are two types of inference that can be performed:
 
 ## Mid-level APIs
 
-### Probabilistic Graphical Models
-At this API level, models are represented as probabilistic graphical models (PGMs) where:
-- **Variables**: represent random variables in the probabilistic graphical model. Variables are defined by their name, parents, and distribution type. For instance we can define a list of three concepts as:
+### Probabilistic Models
+At this API level, models are represented as Probabilistic Models where:
+- **Variables**: represent random variables in the Probabilistic Model. Variables are defined by their name, parents, and distribution type. For instance we can define a list of three concepts as:
   ```python
   concepts = pyc.Variable(concepts=["c1", "c2", "c3"], parents=[], distribution=torch.distributions.RelaxedBernoulli)
   ```
-- **Factors**: represent conditional probability distributions (CPDs) between variables in the probabilistic graphical model and are parameterized by PyC layers. For instance we can define a list of three factors for the above concepts as:
+- **Factors**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by PyC layers. For instance we can define a list of three factors for the above concepts as:
   ```python
   concept_factors = pyc.nn.Factor(concepts=["c1", "c2", "c3"], module_class=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
   ```
-- **Probabilistic Graphical Model**: a collection of variables and factors. For instance we can define a PGM as:
+- **Probabilistic Model**: a collection of variables and factors. For instance we can define a ProbabilisticModel as:
   ```python
-  pgm = pyc.nn.ProbabilisticGraphicalModel(variables=concepts, factors=concept_factors)
+  probabilistic_model = pyc.nn.ProbabilisticModel(variables=concepts, factors=concept_factors)
   ```
 
 ### Inference
 Inference is performed using efficient tensorial probabilistic inference algorithms. For instance, we can perform ancestral sampling as:
 ```python
-inference_engine = pyc.nn.AncestralSamplingInference(pgm=pgm, graph_learner=wanda, temperature=1.)
+inference_engine = pyc.nn.AncestralSamplingInference(probabilistic_model=probabilistic_model, graph_learner=wanda, temperature=1.)
 predictions = inference_engine.query(["c1"], evidence={'embedding': embedding})
 ```
 

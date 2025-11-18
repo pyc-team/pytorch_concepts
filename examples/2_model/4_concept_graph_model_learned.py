@@ -43,7 +43,7 @@ def main():
                                              [0, 0, 0, 0, 0, 0],
                                              [0, 0, 0, 0, 0, 0]]), list(annotations.get_axis_annotation(1).labels))
 
-    # PGM Initialization
+    # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
@@ -57,10 +57,10 @@ def main():
     graph_learner = WANDAGraphLearner(concept_names, task_names)
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model.pgm, graph_learner)
+    inference_engine = DeterministicInference(concept_model.probabilistic_model, graph_learner)
     query_concepts = ["c1", "c2", "xor", "c1_copy", "c2_copy", "xor_copy"]
 
-    model = torch.nn.Sequential(encoder, concept_model)
+    model = torch.nn.Sequential(encoder, concept_model, graph_learner)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -92,7 +92,7 @@ def main():
         print(graph_learner.weighted_adj)
         print()
 
-        concept_model_new = inference_engine.unrolled_pgm()
+        concept_model_new = inference_engine.unrolled_probabilistic_model()
         # identify available query concepts in the unrolled model
         query_concepts = [c for c in query_concepts if c in inference_engine.available_query_vars]
         concept_idx = {v: i for i, v in enumerate(concept_names)}
@@ -112,7 +112,7 @@ def main():
         print("=== Interventions ===")
         intervened_concept = query_concepts[0]
 
-        int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable[intervened_concept].size)
+        int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
         int_strategy_c1 = DoIntervention(model=concept_model_new.factors, constants=-10)
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
@@ -123,7 +123,7 @@ def main():
             print(cy_pred[:5])
             print()
 
-            int_policy_c1 = UniformPolicy(out_features=concept_model.pgm.concept_to_variable[intervened_concept].size)
+            int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
             int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=int_policy_c1,
                               strategies=int_strategy_c1,

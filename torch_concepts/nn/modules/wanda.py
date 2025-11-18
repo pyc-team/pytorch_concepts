@@ -1,5 +1,11 @@
+"""
+WANDA graph learner for discovering concept relationships.
+
+This module implements the WANDA graph
+learning algorithm for discovering relations among concepts.
+"""
 import math
-from typing import Optional, List
+from typing import List
 
 import torch
 
@@ -8,9 +14,45 @@ from ...nn.base.graph import BaseGraphLearner
 
 class WANDAGraphLearner(BaseGraphLearner):
     """
-    WANDA Graph Learner Module.
+    WANDA Graph Learner for concept structure discovery. Adapted from COSMO.
 
-    Adapted from COSMO: `"Constraint-Free Structure Learning with Smooth Acyclic Orientations" <https://arxiv.org/abs/2309.08406>`_.
+    WANDA learns a directed acyclic graph (DAG) structure by assigning
+    priority values to concepts and creating edges based on priority differences.
+    This approach ensures acyclicity by construction.
+
+    Attributes:
+        np_params (nn.Parameter): Learnable priority values for each concept.
+        priority_var (float): Variance for priority initialization.
+        threshold (nn.Parameter): Learnable threshold for edge creation.
+        hard_threshold (bool): Whether to use hard or soft thresholding.
+
+    Args:
+        row_labels: List of concept names for graph rows.
+        col_labels: List of concept names for graph columns.
+        priority_var: Variance for priority initialization (default: 1.0).
+        hard_threshold: Use hard thresholding for edges (default: True).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import WANDAGraphLearner
+        >>>
+        >>> # Create WANDA learner for 5 concepts
+        >>> concepts = ['c1', 'c2', 'c3', 'c4', 'c5']
+        >>> wanda = WANDAGraphLearner(
+        ...     row_labels=concepts,
+        ...     col_labels=concepts,
+        ...     priority_var=1.0,
+        ...     hard_threshold=True
+        ... )
+        >>>
+        >>> # Get current graph estimate
+        >>> adj_matrix = wanda.weighted_adj
+        >>> print(adj_matrix.shape)
+        torch.Size([5, 5])
+
+    References:
+        Massidda et al. "Constraint-Free Structure Learning with Smooth Acyclic
+        Orientations". https://arxiv.org/abs/2309.08406
     """
     def __init__(
             self,
@@ -19,6 +61,15 @@ class WANDAGraphLearner(BaseGraphLearner):
             priority_var: float = 1.0,
             hard_threshold: bool = True,
     ):
+        """
+        Initialize the WANDA graph learner.
+
+        Args:
+            row_labels: List of concept names for graph rows.
+            col_labels: List of concept names for graph columns.
+            priority_var: Variance for priority initialization (default: 1.0).
+            hard_threshold: Use hard thresholding for edges (default: True).
+        """
         super(WANDAGraphLearner, self).__init__(row_labels, col_labels)
 
         # define COSMO parameters
@@ -31,19 +82,24 @@ class WANDAGraphLearner(BaseGraphLearner):
         self._reset_parameters()
 
     def _reset_parameters(self):
+        """
+        Reset learnable parameters to initial values.
+
+        Initializes priority parameters with normal distribution.
+        """
         torch.nn.init.normal_(self.np_params, std=self.priority_var)
 
     @property
     def weighted_adj(self) -> torch.Tensor:
         """
-        Computes the orientation matrix given the priority vectors.
-        If the hard_threshold flag is set to True, the orientation
-        if thresholded against the shift parameter.
+        Compute the weighted adjacency matrix from learned priorities.
 
-        The matrix containing the priority differences is computed
-        as diff_mat[i, j] = priority[j] - priority[i]. We want an arc
-        whenever p[i] < p[j], therefore, whenever
-            dif_mat[i, j] > self.shift
+        Computes an orientation matrix based on priority differences. An edge
+        from i to j exists when priority[j] > priority[i] + threshold[i].
+        The diagonal is always zero (no self-loops).
+
+        Returns:
+            torch.Tensor: Weighted adjacency matrix of shape (n_labels, n_labels).
         """
         n_nodes = self.np_params.shape[0]
 

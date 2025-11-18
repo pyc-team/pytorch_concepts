@@ -4,7 +4,7 @@ import torch
 
 from torch_concepts import Annotations, Variable
 from torch_concepts.distributions import Delta
-from torch_concepts.nn import BipartiteModel, ProbEncoderFromEmb, ProbPredictor, ProbabilisticGraphicalModel, \
+from torch_concepts.nn import BipartiteModel, ProbEncoderFromEmb, ProbPredictor, ProbabilisticModel, \
                               Factor, Propagator, BaseInference
 
 from ..base.model import BaseModel
@@ -39,9 +39,9 @@ class CBM(BaseModel):
                                annotations=annotations,
                                encoder=Propagator(ProbEncoderFromEmb),
                                predictor=Propagator(ProbPredictor))
-        self.pgm = model.pgm
+        self.probabilistic_model = model.probabilistic_model
 
-        self.inference = inference(self.pgm)
+        self.inference = inference(self.probabilistic_model)
 
     def filter_output_for_loss(self, forward_out):
         # forward_out: logits
@@ -79,7 +79,7 @@ class CBM(BaseModel):
 
 class CBM_factors(BaseModel):
     """Mid-level implementation of Concept Bottleneck Model (CBM) \
-        using Variables, Factors and ProbabilisticGraphicalModel."""
+        using Variables, Factors and ProbabilisticModel."""
     def __init__(
         self,
         task_names: Union[List[str], str, List[int]],
@@ -128,13 +128,13 @@ class CBM_factors(BaseModel):
                                  module_class=[ProbPredictor(in_features_logits=sum([c.size for c in concepts]), 
                                                              out_features=t.size) for t in tasks])
 
-        # PGM Initialization
-        self.pgm = ProbabilisticGraphicalModel(
+        # ProbabilisticModel Initialization
+        self.probabilistic_model = ProbabilisticModel(
             variables=[embedding, *concepts, *tasks],
             factors=[embedding_factor, *concept_encoders, *task_predictors]
         )
 
-        self.inference = inference(self.pgm)
+        self.inference = inference(self.probabilistic_model)
 
     def filter_output_for_loss(self, forward_out):
         # forward_out: logits

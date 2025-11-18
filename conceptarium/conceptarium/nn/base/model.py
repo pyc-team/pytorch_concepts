@@ -152,4 +152,4 @@ class BaseModel(nn.Module, ABC):
         self.inference = inference
 
     def set_and_instantiate_inference(self, inference: BaseInference) -> None:
-        self.inference = inference(pgm=self.pgm)
+        self.inference = inference(probabilistic_model=self.probabilistic_model)

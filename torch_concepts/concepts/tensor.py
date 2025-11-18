@@ -39,12 +39,54 @@ class ConceptGraph:
         node_names (List[str], optional): Node names. If None, generates default names.
 
     Example:
+        >>> import torch
+        >>> from torch_concepts import ConceptGraph
+        >>>
+        >>> # Create a simple directed graph
+        >>> # A -> B -> C
+        >>> # A -> C
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
-        >>> graph.get_root_nodes()
-        ['A']
+        >>>
+        >>> # Get root nodes (no incoming edges)
+        >>> print(graph.get_root_nodes())  # ['A']
+        >>>
+        >>> # Get leaf nodes (no outgoing edges)
+        >>> print(graph.get_leaf_nodes())  # ['C']
+        >>>
+        >>> # Check edge existence
+        >>> print(graph.has_edge('A', 'B'))  # True
+        >>> print(graph.has_edge('B', 'A'))  # False
+        >>>
+        >>> # Get edge weight
+        >>> print(graph.get_edge_weight('A', 'C'))  # 1.0
+        >>>
+        >>> # Get successors and predecessors
+        >>> print(graph.get_successors('A'))  # ['B', 'C']
+        >>> print(graph.get_predecessors('C'))  # ['A', 'B']
+        >>>
+        >>> # Check if DAG
+        >>> print(graph.is_dag())  # True
+        >>>
+        >>> # Topological sort
+        >>> print(graph.topological_sort())  # ['A', 'B', 'C']
+        >>>
+        >>> # Convert to NetworkX for visualization
+        >>> nx_graph = graph.to_networkx()
+        >>>
+        >>> # Convert to pandas DataFrame
+        >>> df = graph.to_pandas()
+        >>> print(df)
+        >>>
+        >>> # Create from sparse format directly
+        >>> edge_index = torch.tensor([[0, 0, 1], [1, 2, 2]])
+        >>> edge_weight = torch.tensor([1.0, 1.0, 1.0])
+        >>> graph2 = ConceptGraph.from_sparse(
+        ...     edge_index, edge_weight, n_nodes=3,
+        ...     node_names=['X', 'Y', 'Z']
+        ... )
     """
 
     def __init__(self, data: Tensor, node_names: Optional[List[str]] = None):
