@@ -4,7 +4,7 @@
 
 # PyC
 
-PyC is a library built upon PyTorch to easily implement **interpretable and causally transparent deep learning models**.
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
 
 The name of the library stands for both
@@ -41,7 +41,7 @@ The name of the library stands for both
 
 # Quick start
 
-You can install PyC along with all its dependencies from
+You can install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC along with all its dependencies from
 [PyPI](https://pypi.org/project/pytorch-concepts/):
 
 ```pip install pytorch-concepts ```
@@ -77,7 +77,7 @@ The library is organized to be modular and accessible at different levels of abs
 ## Low-level APIs
 
 ### Objects
-In PyC there are three types of objects: 
+In <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC there are three types of objects: 
 - **Embedding**: high-dimensional latent representations shared across all concepts.
 - **Exogenous**: high-dimensional latent representations related to a specific concept.
 - **Logits**: Concept scores before applying an activation function.
@@ -104,7 +104,7 @@ There are only three types of layers:
     ```
 
 ### Models
-A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may include standard PyTorch layers + PyC layers:
+A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may include standard <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> PyTorch layers + <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC layers:
 ```python
 concept_bottleneck_model = torch.nn.ModuleDict({
     'encoder': pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3),
@@ -150,7 +150,7 @@ At this API level, models are represented as Probabilistic Models where:
   ```python
   concepts = pyc.Variable(concepts=["c1", "c2", "c3"], parents=[], distribution=torch.distributions.RelaxedBernoulli)
   ```
-- **Factors**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by PyC layers. For instance we can define a list of three factors for the above concepts as:
+- **Factors**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC layers. For instance we can define a list of three factors for the above concepts as:
   ```python
   concept_factors = pyc.nn.Factor(concepts=["c1", "c2", "c3"], module_class=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
   ```
@@ -183,7 +183,7 @@ To be completed...
 
 ## Conceptarium: No-code APIs and benchmarking framework
 
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> **Conceptarium** is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Built on top of PyC, it provides:
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> **Conceptarium** is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC, it provides:
 - **Standardized benchmarking datasets**
 - **Out-of-the-box concept-based architectures** implemented in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts). All models implemented in Conceptarium can be instantiated with 1 line of code and reused across the board.
 - **Configuration-driven experiments**: Use <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="20px" align="center"/> [Hydra](https://hydra.cc/) for flexible YAML-based configuration management and run sequential multi-run experiments with a single command
