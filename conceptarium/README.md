@@ -80,7 +80,7 @@ python run_experiment.py
 You can create as many configuration sweeps as you like. Assign a different name to each, e.g., `conf/your_sweep.yaml`, and run it as follows:
 
 ```bash
-python run_experiment.py --config-name your_sweep
+python run_experiment.py --config-name your_sweep.yaml
 ```
 
 On top of this, you can also override configuration from command line:
@@ -300,7 +300,7 @@ python run_experiment.py model=your_model dataset=...
 ```
 Alernatively, create your own sweep file `conf/your_sweep.yaml` containing your mdoel and run:
 ```bash
-python run_experiment.py --config-file your_sweep
+python run_experiment.py --config-file your_sweep.yaml
 ```
 
 ---
@@ -320,7 +320,7 @@ python run_experiment.py dataset=your_dataset model=...
 ```
 Alternatively, create your own sweep file `conf/your_sweep.yaml` containing your dataset and run:
 ```bash
-python run_experiment.py --config-name your_sweep
+python run_experiment.py --config-name your_sweep.yaml
 ```
 
 ---
