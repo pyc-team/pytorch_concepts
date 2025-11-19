@@ -66,6 +66,54 @@ The library is organized to be modular and accessible at different levels of abs
   <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="100%">
 </p>
 
+For instance, we can instantiate a vanilla Concept Bottleneck Model as follows:
+
+- High-level API:
+```python
+labels = ["c1", "c2", "c3"]
+cardinalities = [1, 1, 3]
+metadata = {
+      'c1': {'distribution': torch.distributions.RelaxedBernoulli},
+      'c2': {'distribution': torch.distributions.RelaxedBernoulli},
+      'c3': {'distribution': torch.distributions.RelaxedOneHotCategorical},
+  }
+annotations = pyc.Annotations({1: pyc.AxisAnnotation(labels=labels, cardinalities=cardinalities, metadata=metadata)})
+model = pyc.nn.CBM(
+    task_names=['c3'],
+    inference=pyc.nn.DeterministicInference,
+    input_size=64,
+    annotations=annotations,
+    encoder_kwargs={'hidden_size': 16,
+                    'n_layers': 1,
+                    'activation': 'leaky_relu',
+                    'dropout': 0.}
+)
+```
+
+- Mid-level API:
+
+```python
+embeddings = pyc.Variable(concepts=['embedding'], parents=[], distribution=pyc.distributions.Delta)
+concepts = pyc.Variable(concepts=["c1", "c2"], parents=[], distribution=torch.distributions.RelaxedBernoulli)
+tasks = pyc.Variable(concepts=["c3"], parents=["c1", "c2"], distribution=torch.distributions.RelaxedOneHotCategorical, size=3)
+embedding_factors = pyc.nn.Factor(concepts=["embedding"], 
+                                 module_class=torch.nn.Linear(10, 10))
+concept_factors = pyc.nn.Factor(concepts=["c1", "c2"],
+                                module_class=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=2))
+task_factors = pyc.nn.Factor(concepts=["c3"], 
+                             module_class=pyc.nn.ProbPredictor(in_features_logits=2, out_features=3))
+probabilistic_model = pyc.nn.ProbabilisticModel(variables=embeddings + concepts + tasks, 
+                                                factors=embedding_factors + concept_factors + task_factors)
+```
+
+- Low-level API:
+```python
+concept_bottleneck_model = torch.nn.ModuleDict({
+    'encoder': pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3),
+    'predictor': pyc.nn.ProbPredictor(in_features_logits=3, out_features=2),
+})
+```
+
 ---
 
 # Design principles
@@ -166,10 +214,34 @@ predictions = inference_engine.query(["c1"], evidence={'embedding': embedding})
 
 ## High-level APIs
 
+### Annotations
+Annotations are used to define the structure of high-level models directly from data. For instance, we can define a concept annotation as:
+```python
+labels = ["c1", "c2", "c3"]
+cardinalities = [2, 1, 3]
+metadata = {
+      'c1': {'distribution': torch.distributions.RelaxedOneHotCategorical},
+      'c2': {'distribution': torch.distributions.RelaxedBernoulli},
+      'c3': {'distribution': torch.distributions.RelaxedOneHotCategorical},
+  }
+annotations = pyc.Annotations({1: pyc.AxisAnnotation(labels=labels, cardinalities=cardinalities, metadata=metadata)})
+```
 
-### Models
+### Out-of-the-box Models
+We can instantiate out-of-the-box high-level models using annotations. For instance, we can instantiate a Concept Bottleneck Model as:
+```python
+model = pyc.nn.CBM(
+    task_names=['c3'],
+    inference=pyc.nn.DeterministicInference,
+    input_size=64,
+    annotations=annotations,
+    encoder_kwargs={'hidden_size': 16,
+                    'n_layers': 1,
+                    'activation': 'leaky_relu',
+                    'dropout': 0.}
+)
+```
 
-Out-of-the-box models include:
 
 | Model                              | Description | Reference |
 |------------------------------------| --- |  --- |
