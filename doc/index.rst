@@ -1,8 +1,9 @@
-.. image:: _static/img/pyc_logo.png
-   :width: 40%
+.. image:: _static/img/pyc_logo_transparent.png
+   :class: index-logo-cropped
+   :width: 60%
    :align: center
 
-|
+
 
 PyC is a library built upon PyTorch to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.

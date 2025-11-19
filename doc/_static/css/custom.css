@@ -7,6 +7,66 @@ a {
     word-wrap: break-word;
 }
 
+/* Index Page Logo Cropping */
+.index-logo-cropped {
+    display: block;
+    max-width: 60%;
+    height: auto;
+    margin: 0 auto;
+    object-fit: cover;
+    /* Crop 20% from each side by scaling - to show 60% of image, scale by 1/0.6 = 1.67 */
+    transform: scale(1.4);
+    /* Create a container effect using margins to prevent overflow */
+    padding: 0;
+}
+
+/* Wrapper to contain the scaled image */
+img.index-logo-cropped {
+    /* Apply overflow clipping via a pseudo-container approach */
+    clip-path: inset(0);
+}
+
+/* Sidebar Logo Link */
+.sidebar-logo-link {
+    display: block;
+    text-align: center;
+    padding: 0.5rem;
+    margin: 0.5rem auto;
+    max-width: 130px;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    overflow: hidden;
+}
+
+.sidebar-logo-link:hover {
+    transform: scale(1.05);
+    opacity: 0.8;
+}
+
+.sidebar-logo-img {
+    width: 100%;
+    height: auto;
+    max-width: 72px;
+    display: block;
+    margin: 0 auto;
+    object-fit: cover;
+    /* Crop 15% from each side by scaling up and using aspect ratio */
+    transform: scale(2.5);
+    /* Add overflow hidden to parent container via padding trick */
+}
+
+/* Responsive sizing for the logo */
+@media (max-width: 768px) {
+    .sidebar-logo-img {
+        max-width: 60px;
+    }
+}
+
+@media (min-width: 1200px) {
+    .sidebar-logo-img {
+        max-width: 84px;
+    }
+}
+
 /*  Header  */
 
 section#torch-spatiotemporal h1 {

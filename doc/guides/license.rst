@@ -1,5 +1,5 @@
 ==============
-Apache License
+License
 ==============
 
 :Version: 2.0
