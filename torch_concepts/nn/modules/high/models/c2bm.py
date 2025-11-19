@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Union, Tuple, Mapping
 from torch import Tensor
 
 from .....data.annotations import Annotations
-from ....models.concept_graph import ConceptGraph
+from ...mid.constructors.concept_graph import ConceptGraph
 from .... import GraphModel, ExogEncoder, ProbEncoderFromExog, HyperLinearPredictor, Propagator
 
 from ..base.model import BaseModel
