@@ -15,12 +15,4 @@ Getting Started
 Contributing Guidelines
 -----------------------
 
-When contributing new components, please follow these guidelines:
-
-.. toctree::
-   :maxdepth: 1
-
-   examples/contributing/dataset
-   examples/contributing/loss
-   examples/contributing/metric
-   examples/contributing/model
+TODO...

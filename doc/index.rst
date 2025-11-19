@@ -9,47 +9,104 @@ The library provides primitives for layers (encoders, predictors, special layers
 
 The name of the library stands for both:
 
-- **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
-- **P(y|C)**: as the main purpose of the library is to support sound probabilistic modeling of the conditional distribution of targets *y* given concepts *C*.
+**PyTorch Concepts**
+    as concepts are essential building blocks for interpretable deep learning.
+
+**P(y|C)**
+    as the main purpose of the library is to support sound probabilistic modeling of the conditional distribution of targets *y* given concepts *C*.
 
 
-Quick Start
+Get Started
 -----------
 
-You can install PyC along with all its dependencies from `PyPI <https://pypi.org/project/pytorch-concepts/>`_:
+.. grid:: 1 1 2 3
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
 
-.. code-block:: bash
+    .. grid-item-card::  :octicon:`download;1em;sd-text-primary` Installation
+        :link: guides/installation
+        :link-type: doc
+        :shadow: sm
 
-   pip install pytorch-concepts
+        Learn how to install PyC and set up your environment.
 
-and then import it in your Python scripts as:
+    .. grid-item-card::  :octicon:`play;1em;sd-text-primary` Using PyC
+        :link: guides/using
+        :link-type: doc
+        :shadow: sm
 
-.. code-block:: python
+        Explore tutorials and examples to get started with PyC.
 
-   import torch_concepts as pyc
+    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Contributing
+        :link: guides/contributing
+        :link-type: doc
+        :shadow: sm
 
-- Examples: https://github.com/pyc-team/pytorch_concepts/tree/master/examples
-- Book: https://pyc-team.github.io/pyc-book/
+        Contribute to PyC and help improve the library.
 
 
-PyC Software Stack
-------------------
 
-The library is organized to be modular and accessible at different levels of abstraction:
+API Reference
+-------------
 
-- **No-code APIs. Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files.
-- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code.
-- **Mid-level APIs. Use case: build custom interpretable and causally transparent Probabilistic Models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a Probabilistic Model interface.
-- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain pytorch-like interface. These APIs also include metrics, losses, and datasets.
+.. grid:: 1 1 2 3
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  :octicon:`tools;1em;sd-text-primary` Low-Level API
+        :link: modules/low_level_api
+        :link-type: doc
+        :shadow: sm
+
+        Build architectures from basic interpretable layers in a plain PyTorch-like interface.
+
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Mid-Level API
+        :link: modules/mid_level_api
+        :link-type: doc
+        :shadow: sm
+
+        Build custom interpretable and causally transparent Probabilistic Models.
+
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` High-Level API
+        :link: modules/high_level_api
+        :link-type: doc
+        :shadow: sm
+
+        Use out-of-the-box state-of-the-art models with one line of code.
+
+    .. grid-item-card::  :octicon:`database;1em;sd-text-primary` Data API
+        :link: modules/data_api
+        :link-type: doc
+        :shadow: sm
+
+        Access datasets, dataloaders, preprocessing, and data utilities.
+
+    .. grid-item-card::  :octicon:`infinity;1em;sd-text-primary` Distributions API
+        :link: modules/distributions_api
+        :link-type: doc
+        :shadow: sm
+
+        Work with probability distributions for probabilistic modeling.
+
+    .. grid-item-card::  :octicon:`package;1em;sd-text-primary` Other Modules
+        :link: modules/other_modules
+        :link-type: doc
+        :shadow: sm
+
+        Explore additional utilities and helper modules.
+
+
+The overall software stack of PyC is illustrated below:
 
 .. image:: _static/img/pyc_software_stack.png
    :width: 100%
    :align: center
 
 
-
 Contributing
-------------
+--------------
 
 - Use the ``dev`` branch to write and test your contributions locally.
 - Make small commits and use `Gitmoji <https://gitmoji.dev/>`_ to add emojis to your commit messages.
@@ -57,68 +114,35 @@ Contributing
 - Make sure all tests pass before submitting the pull request.
 - Submit a pull request to the ``main`` branch.
 
+Thanks to all contributors! 🧡
 
-PyC Book
---------
-
-You can find further reading materials and tutorials in our book
-`Concept-based Interpretable Deep Learning in Python <https://pyc-team.github.io/pyc-book/>`_.
-
-
-Authors
--------
-
-- `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_, Universita' della Svizzera Italiana (CH) and University of Cambridge (UK).
-- `Gabriele Ciravegna <https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/>`_, Politecnico di Torino (IT).
-- `David Debot <https://www.kuleuven.be/wieiswie/en/person/00165387>`_, KU Leuven (BE).
-- `Michelangelo Diligenti <https://docenti.unisi.it/en/diligenti>`_, Università degli Studi di Siena (IT).
-- `Gabriele Dominici <https://pc.inf.usi.ch/team/gabriele-dominici/>`_, Universita' della Svizzera Italiana (CH).
-- `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`_, University of Cambridge (UK).
-- `Francesco Giannini <https://www.francescogiannini.eu/>`_, Scuola Normale Superiore di Pisa (IT).
-- `Giuseppe Marra <https://www.giuseppemarra.com/>`_, KU Leuven (BE).
+.. image:: https://contrib.rocks/image?repo=pyc-team/pytorch_concepts
+   :target: https://github.com/pyc-team/pytorch_concepts/graphs/contributors
+   :alt: Contributors
 
 
-License
--------
 
-Copyright 2024 Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti,
-Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra.
+Cite this library
+----------------
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
-except in compliance with the License. You may obtain a copy of the License at:
-http://www.apache.org/licenses/LICENSE-2.0.
+If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
 
-Unless required by applicable law or agreed to in writing, software distributed under the
-License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-either express or implied.
-
-See the License for the specific language governing permissions and limitations under the License.
-
-
-Cite This Library
------------------
-
-If you found this library useful for your blog post, research article or product, we would be
-grateful if you would cite it like this:
-
-.. code-block:: text
-
-   Barbiero P., Ciravegna G., Debot D., Diligenti M.,
-   Dominici G., Espinosa Zarlenga M., Giannini F., Marra G. (2024).
-   Concept-based Interpretable Deep Learning in Python.
-   https://pyc-team.github.io/pyc-book/intro.html
-
-Or use the following BibTeX entry:
+{% raw %}
 
 .. code-block:: bibtex
 
-   @book{pycteam2024concept,
-     title      = {Concept-based Interpretable Deep Learning in Python},
-     author     = {Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti,
-                   Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra},
-     year       = {2024},
-     url        = {https://pyc-team.github.io/pyc-book/intro.html}
+   @software{pycteam2025concept,
+       author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
+       license = {MIT},
+       month = {3},
+       title = {{PyTorch Concepts}},
+       url = {https://github.com/pyc-team/pytorch_concepts},
+       year = {2025}
    }
+
+{% endraw %}
+
+Reference authors: `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_ and `Giovanni De Felice <https://gdefe.github.io/>`_.
 
 
 Indices and Tables
@@ -134,8 +158,10 @@ Indices and Tables
    :caption: Usage
    :hidden:
 
-   user_guide
-   contributor_guide
+   guides/installation
+   guides/using
+   guides/contributing
+   guides/license
 
 .. toctree::
    :maxdepth: 2
@@ -148,3 +174,12 @@ Indices and Tables
    modules/data_api
    modules/distributions_api
    modules/other_modules
+
+.. toctree::
+   :glob:
+   :maxdepth: 1
+   :caption: Indices
+   :hidden:
+
+   genindex
+   py-modindex
