@@ -47,73 +47,6 @@ The library is organized to be modular and accessible at different levels of abs
    :align: center
 
 
-API Reference
--------------
-
-Complete API documentation organized by abstraction level:
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Low-level API
-
-   modules/nn.base.low
-   modules/nn.encoders
-   modules/nn.graph
-   modules/nn.inference
-   modules/nn.policy
-   modules/nn.predictors
-   modules/nn.dense_layers
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Mid-level API
-
-   modules/nn.base.mid
-   modules/nn.constructors
-   modules/nn.inference.mid
-   modules/nn.models
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: High-level API
-
-   modules/nn.base.high
-   modules/nn.models.high
-
-
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Data
-
-   modules/data.base
-   modules/data.dataloaders
-   modules/data.datasets
-   modules/data.preprocessing
-   modules/data.scalers
-   modules/data.splitters
-   modules/data.annotations
-   modules/data.backbone
-   modules/data.io
-   modules/data.utils
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Distributions
-
-   modules/distributions
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Other modules
-
-   modules/nn.loss
-   modules/nn.metrics
-   modules/nn.propagator
-   modules/nn.functional
-
-
 
 Contributing
 ------------
@@ -194,3 +127,24 @@ Indices and Tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Usage
+   :hidden:
+
+   user_guide
+   contributor_guide
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+   :hidden:
+
+   modules/low_level_api
+   modules/mid_level_api
+   modules/high_level_api
+   modules/data_api
+   modules/distributions_api
+   modules/other_modules
