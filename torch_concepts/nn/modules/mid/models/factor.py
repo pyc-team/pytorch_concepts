@@ -11,6 +11,73 @@ from .....distributions import Delta
 
 
 class Factor(nn.Module):
+    """
+    A Factor represents a conditional probability distribution (CPD) in a probabilistic graphical model.
+
+    A Factor links concepts to neural network modules that compute probability distributions.
+    It can automatically split multiple concepts into separate factors and supports building
+    conditional probability tables (CPTs) and potential tables for inference.
+
+    Parameters
+    ----------
+    concepts : Union[str, List[str]]
+        A single concept name or a list of concept names. If a list of N concepts is provided,
+        the Factor automatically splits into N separate Factor instances.
+    module_class : Union[nn.Module, List[nn.Module]]
+        A neural network module or list of modules that compute the probability distribution.
+        If concepts is a list of length N, module_class can be:
+        - A single module (will be replicated for all concepts)
+        - A list of N modules (one per concept)
+
+    Attributes
+    ----------
+    concepts : List[str]
+        List of concept names associated with this factor.
+    module_class : nn.Module
+        The neural network module used to compute probabilities.
+    variable : Optional[Variable]
+        The Variable instance this factor is linked to (set by ProbabilisticModel).
+    parents : List[Variable]
+        List of parent Variables in the graphical model.
+
+    Examples
+    --------
+    >>> import torch
+    >>> import torch.nn as nn
+    >>> from torch_concepts.nn import Factor
+    >>>
+    >>> # Create different modules for different concepts
+    >>> module_a = nn.Linear(in_features=10, out_features=1)
+    >>> module_b = nn.Sequential(
+    ...     nn.Linear(in_features=10, out_features=5),
+    ...     nn.ReLU(),
+    ...     nn.Linear(in_features=5, out_features=1)
+    ... )
+    >>>
+    >>> # Create factors with different modules
+    >>> factors = Factor(
+    ...     concepts=["binary_concept", "complex_concept"],
+    ...     module_class=[module_a, module_b]
+    ... )
+    >>>
+    >>> print(factors[0].module_class)
+    Linear(in_features=10, out_features=1, bias=True)
+    >>> print(factors[1].module_class)
+    Sequential(...)
+
+    Notes
+    -----
+    - The Factor class uses a custom `__new__` method to automatically split multiple concepts
+      into separate Factor instances when a list is provided.
+    - Factors are typically created and managed by a ProbabilisticModel rather than directly.
+    - The module_class should accept an 'input' keyword argument in its forward pass.
+    - Supported distributions for CPT/potential building: Bernoulli, Categorical, Delta, Normal.
+
+    See Also
+    --------
+    Variable : Represents a random variable in the probabilistic model.
+    ProbabilisticModel : Container that manages factors and variables.
+    """
     def __new__(cls, concepts: Union[str, List[str]],
                 module_class: Union[nn.Module, List[nn.Module]]):
 
