@@ -1,8 +1,26 @@
-data.backbone
-=============
+Backbone Networks
+==================
 
-.. automodule:: torch_concepts.data.backbone
-   :members:
-   :undoc-members:
-   :show-inheritance:
+This module provides backbone network utilities for feature extraction and embedding precomputation.
 
+.. currentmodule:: torch_concepts.data.backbone
+
+Summary
+-------
+
+**Backbone Functions**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   compute_backbone_embs
+   get_backbone_embs
+
+
+Function Documentation
+----------------------
+
+.. autofunction:: compute_backbone_embs
+
+.. autofunction:: get_backbone_embs

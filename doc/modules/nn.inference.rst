@@ -1,16 +1,58 @@
-nn.inference
-=============
+Inference Modules
+===============================
 
-.. automodule:: torch_concepts.nn.modules.low.inference
+This module provides inference mechanisms for querying concept-based models with support for interventions.
+
+.. currentmodule:: torch_concepts.nn
+
+Summary
+-------
+
+**Intervention Strategies**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   RewiringIntervention
+   GroundTruthIntervention
+   DoIntervention
+   DistributionIntervention
+
+**Intervention Context Manager**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   intervention
+
+
+Class Documentation
+-------------------
+
+.. autoclass:: RewiringIntervention
    :members:
    :undoc-members:
    :show-inheritance:
 
-Submodules
-----------
-
-.. automodule:: torch_concepts.nn.modules.low.inference.intervention
+.. autoclass:: GroundTruthIntervention
    :members:
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: DoIntervention
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: DistributionIntervention
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+Function Documentation
+----------------------
+
+.. autofunction:: intervention

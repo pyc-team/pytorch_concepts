@@ -1,38 +1,38 @@
-Predictors
-=======================
+Inference
+======================
 
-This module provides predictor implementations that map from concepts to target predictions.
+This module provides inference mechanisms for probabilistic models.
 
 .. currentmodule:: torch_concepts.nn
 
 Summary
 -------
 
-**Predictor Classes**
+**Inference Classes**
 
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   ProbPredictor
-   MixProbExogPredictor
-   HyperLinearPredictor
+   ForwardInference
+   DeterministicInference
+   AncestralSamplingInference
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: ProbPredictor
+.. autoclass:: ForwardInference
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: MixProbExogPredictor
+.. autoclass:: DeterministicInference
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: HyperLinearPredictor
+.. autoclass:: AncestralSamplingInference
    :members:
    :undoc-members:
    :show-inheritance:

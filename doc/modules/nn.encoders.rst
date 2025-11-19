@@ -1,31 +1,50 @@
-nn.encoders
-===========
+Encoders
+=====================
 
-.. automodule:: torch_concepts.nn.modules.low.encoders
+This module provides encoder implementations that transform input features into concept representations.
+
+.. currentmodule:: torch_concepts.nn
+
+Summary
+-------
+
+**Encoder Classes**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ProbEncoderFromEmb
+   ProbEncoderFromExog
+   StochasticEncoderFromEmb
+   ExogEncoder
+   MemorySelector
+
+
+Class Documentation
+-------------------
+
+.. autoclass:: ProbEncoderFromEmb
    :members:
    :undoc-members:
    :show-inheritance:
 
-Submodules
-----------
-
-.. automodule:: torch_concepts.nn.modules.low.encoders.linear
+.. autoclass:: ProbEncoderFromExog
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torch_concepts.nn.modules.low.encoders.stochastic
+.. autoclass:: StochasticEncoderFromEmb
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torch_concepts.nn.modules.low.encoders.exogenous
+.. autoclass:: ExogEncoder
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: torch_concepts.nn.modules.low.encoders.selector
+.. autoclass:: MemorySelector
    :members:
    :undoc-members:
    :show-inheritance:
-

@@ -56,7 +56,7 @@ Complete API documentation organized by abstraction level:
    :maxdepth: 1
    :caption: Low-level API
 
-   modules/nn.base
+   modules/nn.base.low
    modules/nn.encoders
    modules/nn.graph
    modules/nn.inference
@@ -68,9 +68,9 @@ Complete API documentation organized by abstraction level:
    :maxdepth: 1
    :caption: Mid-level API
 
-   modules/nn.base
+   modules/nn.base.mid
    modules/nn.constructors
-   modules/nn.inference
+   modules/nn.inference.mid
    modules/nn.models
 
 
@@ -78,8 +78,8 @@ Complete API documentation organized by abstraction level:
    :maxdepth: 1
    :caption: High-level API
 
-   modules/nn.base
-   modules/nn.models
+   modules/nn.base.high
+   modules/nn.models.high
 
 
 

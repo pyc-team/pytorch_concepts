@@ -1,7 +1,7 @@
-Probabilistic Models
-==================================
+Pre-built Models
+===============================
 
-This module provides probabilistic model implementations for concept-based reasoning.
+This module provides ready-to-use implementations of state-of-the-art concept-based models.
 
 .. currentmodule:: torch_concepts.nn
 
@@ -14,31 +14,31 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   ProbabilisticModel
-   Factor
-   BipartiteModel
-   GraphModel
+   CBM
+   CBM_factors
+   BlackBox
+   BlackBox_torch
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: ProbabilisticModel
+.. autoclass:: CBM
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: Factor
+.. autoclass:: CBM_factors
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: BipartiteModel
+.. autoclass:: BlackBox
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: GraphModel
+.. autoclass:: BlackBox_torch
    :members:
    :undoc-members:
    :show-inheritance:

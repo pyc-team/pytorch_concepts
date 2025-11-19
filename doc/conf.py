@@ -52,6 +52,7 @@ extensions = [
 ]
 
 autosummary_generate = True
+autosummary_imported_members = True
 
 source_suffix = '.rst'
 master_doc = 'index'

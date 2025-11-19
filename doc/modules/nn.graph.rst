@@ -1,15 +1,26 @@
-nn.graph
-========
+Graph Learners
+===========================
 
-.. automodule:: torch_concepts.nn.modules.low.graph
-   :members:
-   :undoc-members:
-   :show-inheritance:
+This module provides graph learning algorithms for discovering concept relationships from data.
 
-Submodules
-----------
+.. currentmodule:: torch_concepts.nn
 
-.. automodule:: torch_concepts.nn.modules.low.graph.wanda
+Summary
+-------
+
+**Graph Learning Classes**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   WANDAGraphLearner
+
+
+Class Documentation
+-------------------
+
+.. autoclass:: WANDAGraphLearner
    :members:
    :undoc-members:
    :show-inheritance:

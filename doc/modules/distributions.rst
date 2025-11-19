@@ -1,15 +1,26 @@
-distributions
-=============
+Distributions
+==============
 
-.. automodule:: torch_concepts.distributions
-   :members:
-   :undoc-members:
-   :show-inheritance:
+This module provides probability distribution implementations for concept-based models.
 
-Submodules
-----------
+.. currentmodule:: torch_concepts.distributions
 
-.. automodule:: torch_concepts.distributions.delta
+Summary
+-------
+
+**Distribution Classes**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Delta
+
+
+Class Documentation
+-------------------
+
+.. autoclass:: Delta
    :members:
    :undoc-members:
    :show-inheritance:

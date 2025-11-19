@@ -1,25 +1,26 @@
-data.dataloaders
-================
+Data Modules
+=============
 
-.. automodule:: torch_concepts.data.datamodules
-   :members:
-   :undoc-members:
-   :show-inheritance:
+This module provides data module implementations for concept-based datasets.
 
-Submodules
-----------
+.. currentmodule:: torch_concepts.data.datamodules
 
-.. automodule:: torch_concepts.data.datamodules.bnlearn
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Summary
+-------
 
-.. automodule:: torch_concepts.data.datamodules.colormnist
-   :members:
-   :undoc-members:
-   :show-inheritance:
+**DataModule Classes**
 
-.. automodule:: torch_concepts.data.datamodules.fashionmnist
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   BnLearnDataModule
+
+
+Class Documentation
+-------------------
+
+.. autoclass:: torch_concepts.data.datamodules.BnLearnDataModule
    :members:
    :undoc-members:
    :show-inheritance:

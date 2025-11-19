@@ -1,26 +1,32 @@
-nn.constructors
-===============
+Model Constructors
+================================
 
-.. automodule:: torch_concepts.nn.modules.mid.constructors
+This module provides constructors for building concept-based models from specifications.
+
+.. currentmodule:: torch_concepts.nn
+
+Summary
+-------
+
+**Constructor Classes**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   BipartiteModel
+   GraphModel
+
+
+Class Documentation
+----------------------
+
+.. autoclass:: BipartiteModel
    :members:
    :undoc-members:
    :show-inheritance:
 
-Submodules
-----------
-
-.. automodule:: torch_concepts.nn.modules.mid.constructors.bipartite
+.. autoclass:: GraphModel
    :members:
    :undoc-members:
    :show-inheritance:
-
-.. automodule:: torch_concepts.nn.modules.mid.constructors.concept_graph
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. automodule:: torch_concepts.nn.modules.mid.constructors.graph
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
