@@ -3,9 +3,31 @@
    :width: 60%
    :align: center
 
+.. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
+   :width: 20px
+   :align: middle
 
+.. |pytorch_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
+   :width: 20px
+   :align: middle
 
-PyC is a library built upon PyTorch to easily implement **interpretable and causally transparent deep learning models**.
+.. |hydra_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg
+   :width: 20px
+   :align: middle
+
+.. |pl_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg
+    :width: 20px
+    :align: middle
+
+.. |wandb_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg
+   :width: 20px
+   :align: middle
+
+.. |conceptarium_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg
+   :width: 20px
+   :align: middle
+
+|pyc_logo| PyC is a library built upon |pytorch_logo| PyTorch to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
 
 The name of the library stands for both:
@@ -30,26 +52,38 @@ Get Started
         :link-type: doc
         :shadow: sm
 
-        Learn how to install PyC and set up your environment.
+        Learn how to install |pyc_logo| PyC and set up your environment.
 
     .. grid-item-card::  :octicon:`play;1em;sd-text-primary` Using PyC
         :link: guides/using
         :link-type: doc
         :shadow: sm
 
-        Explore tutorials and examples to get started with PyC.
+        Explore tutorials and examples to get started with |pyc_logo| PyC.
 
     .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Contributing
         :link: guides/contributing
         :link-type: doc
         :shadow: sm
 
-        Contribute to PyC and help improve the library.
+        Contribute to |pyc_logo| PyC and help improve the library.
 
 
 
 API Reference
 -------------
+
+.. grid:: 1
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` Conceptarium
+        :link: modules/conceptarium
+        :link-type: doc
+        :shadow: sm
+
+        |conceptarium_logo| Conceptarium is a no-code framework for running large-scale experiments on concept-based models. Built on top of |pyc_logo| PyC with |hydra_logo| Hydra, |pl_logo| PyTorch Lightning, and |wandb_logo| WandB.
 
 .. grid:: 1 1 2 3
     :margin: 3 0 0 0
@@ -61,7 +95,7 @@ API Reference
         :link-type: doc
         :shadow: sm
 
-        Build architectures from basic interpretable layers in a plain PyTorch-like interface.
+        Build architectures from basic interpretable layers in a plain |pytorch_logo| PyTorch-like interface.
 
     .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Mid-Level API
         :link: modules/mid_level_api
@@ -76,6 +110,12 @@ API Reference
         :shadow: sm
 
         Use out-of-the-box state-of-the-art models with one line of code.
+
+
+.. grid:: 1 1 2 3
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
 
     .. grid-item-card::  :octicon:`database;1em;sd-text-primary` Data API
         :link: modules/data_api
@@ -99,7 +139,7 @@ API Reference
         Explore additional utilities and helper modules.
 
 
-The overall software stack of PyC is illustrated below:
+The overall software stack of |pyc_logo| PyC is illustrated below:
 
 .. image:: _static/img/pyc_software_stack.png
    :width: 100%
