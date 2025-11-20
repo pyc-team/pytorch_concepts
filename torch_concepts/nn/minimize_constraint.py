@@ -279,7 +279,7 @@ def minimize_constr(
 
     # optimize
     x0_np = x0.float().cpu().numpy().flatten().copy()
-    method = kwargs.pop("method")
+    method = kwargs.pop("method", "trust-constr")  # Default to trust-constr
     if method == "trust-constr":
         result = minimize_scipy(
             f_with_jac,
