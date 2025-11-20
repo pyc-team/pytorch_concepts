@@ -113,7 +113,7 @@ Pick the best entry point based on your experience:
         :shadow: lg
         :class-card: sd-border-primary
 
-        Use Conceptarium, a no-code framework built on top of |pyc_logo| PyC for running large-scale experiments on concept-based models.
+        Use |conceptarium_logo| Conceptarium, a no-code framework built on top of |pyc_logo| PyC for running large-scale experiments on concept-based models.
 
 
 API Reference
@@ -156,7 +156,7 @@ These modules allow users with different levels of abstraction to build interptr
         :shadow: lg
         :class-card: sd-border-primary
 
-        Use out-of-the-box state-of-the-art models with one line of code.
+        Use out-of-the-box state-of-the-art |pl_logo| PyTorch Lightning models with one line of code.
 
 
 Shared Modules
@@ -240,7 +240,7 @@ This framework is intended for benchmarking or researchers in other fields who w
         :shadow: lg
         :class-card: sd-border-primary
 
-        |conceptarium_logo| Conceptarium is a no-code framework for running large-scale experiments on concept-based models. Built on top of |pyc_logo| PyC with |hydra_logo| Hydra, |pl_logo| PyTorch Lightning, and |wandb_logo| WandB.
+        |conceptarium_logo| Conceptarium is a no-code framework for running large-scale experiments on concept-based models. Built on top of |pyc_logo| PyC with |hydra_logo| Hydra and |wandb_logo| WandB.
 
 
 Contributing
