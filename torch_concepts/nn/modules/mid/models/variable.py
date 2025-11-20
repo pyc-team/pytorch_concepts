@@ -123,11 +123,29 @@ class Variable:
 
         n_concepts = len(concepts)
 
-        # If single concept in list, treat as single Variable
+        # If single concept in list, create and return single instance (not as list)
         if n_concepts == 1:
-            assert not isinstance(distribution, list)
-            assert isinstance(size, int)
-            return object.__new__(cls)
+            # Handle case where distribution/size are lists with single element
+            dist_to_use = distribution
+            size_to_use = size
+
+            if isinstance(distribution, list):
+                assert len(distribution) == 1, "Distribution list must have exactly 1 element for single concept"
+                dist_to_use = distribution[0]
+            if isinstance(size, list):
+                assert len(size) == 1, "Size list must have exactly 1 element for single concept"
+                size_to_use = size[0]
+
+            # Create single instance and return it directly
+            instance = object.__new__(cls)
+            instance.__init__(
+                concepts=concepts,  # Keep as single-element list
+                parents=parents,
+                distribution=dist_to_use,
+                size=size_to_use,
+                metadata=metadata
+            )
+            return instance  # Return single instance, not as list
 
         # Standardize distribution: single value -> list of N values
         if distribution is None:
