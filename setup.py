@@ -65,9 +65,14 @@ EXTRAS_REQUIRE = {
     'docs': [
         'matplotlib',
         'numpydoc',
-        'sphinx_rtd_theme',
+        'furo',
         'sphinx-gallery',
         'sphinx',
+        'sphinx_design',
+        'sphinxext-opengraph',
+        'sphinx-copybutton',
+        'myst-nb',
+        'sphinx-hoverxref',
     ],
 }
 
