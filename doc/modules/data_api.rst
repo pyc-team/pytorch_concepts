@@ -1,4 +1,4 @@
-Data API
+Data
 ========
 
 Data APIs provide utilities for loading, preprocessing, and managing datasets.

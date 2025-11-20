@@ -309,9 +309,9 @@ Indices and Tables
    modules/low_level_api
    modules/mid_level_api
    modules/high_level_api
+   modules/other_modules
    modules/data_api
    modules/distributions_api
-   modules/other_modules
 
 .. toctree::
    :glob:

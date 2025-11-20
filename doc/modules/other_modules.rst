@@ -1,4 +1,4 @@
-Other Modules
+Shared Modules
 =============
 
 Additional utility modules including losses, metrics, propagators, and functional utilities.
