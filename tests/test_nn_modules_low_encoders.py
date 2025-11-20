@@ -195,12 +195,11 @@ class TestMemorySelector(unittest.TestCase):
         """Test selector initialization."""
         selector = MemorySelector(
             in_features_embedding=64,
-            in_features_logits=10,
             out_features=5,
             memory_size=20,
             embedding_size=8
         )
-        self.assertEqual(selector.in_features_logits, 10)
+        self.assertEqual(selector.in_features_embedding, 64)
         self.assertEqual(selector.out_features, 5)
         self.assertEqual(selector.memory_size, 20)
         self.assertEqual(selector.embedding_size, 8)
@@ -209,59 +208,50 @@ class TestMemorySelector(unittest.TestCase):
         """Test forward pass without sampling (soft selection)."""
         selector = MemorySelector(
             in_features_embedding=64,
-            in_features_logits=8,
             out_features=4,
             memory_size=10,
             embedding_size=6
         )
         embeddings = torch.randn(2, 64)
-        logits = torch.randn(2, 8)
-        output = selector(embedding=embeddings, logits=logits, sampling=False)
+        output = selector(embedding=embeddings, sampling=False)
         self.assertEqual(output.shape, (2, 4, 6))
 
     def test_forward_with_sampling(self):
         """Test forward pass with sampling (Gumbel-softmax)."""
         selector = MemorySelector(
             in_features_embedding=64,
-            in_features_logits=8,
             out_features=4,
             memory_size=10,
             embedding_size=6
         )
         embeddings = torch.randn(2, 64)
-        logits = torch.randn(2, 8)
-        output = selector(embedding=embeddings, logits=logits, sampling=True)
+        output = selector(embedding=embeddings, sampling=True)
         self.assertEqual(output.shape, (2, 4, 6))
 
     def test_gradient_flow_soft(self):
         """Test gradient flow with soft selection."""
         selector = MemorySelector(
             in_features_embedding=32,
-            in_features_logits=6,
             out_features=3,
             memory_size=8,
             embedding_size=4
         )
         embeddings = torch.randn(2, 32, requires_grad=True)
-        logits = torch.randn(2, 6, requires_grad=True)
-        output = selector(embedding=embeddings, logits=logits, sampling=False)
+        output = selector(embedding=embeddings, sampling=False)
         loss = output.sum()
         loss.backward()
         self.assertIsNotNone(embeddings.grad)
-        self.assertIsNotNone(logits.grad)
 
     def test_gradient_flow_hard(self):
         """Test gradient flow with hard selection."""
         selector = MemorySelector(
             in_features_embedding=32,
-            in_features_logits=6,
             out_features=3,
             memory_size=8,
             embedding_size=4
         )
         embeddings = torch.randn(2, 32, requires_grad=True)
-        logits = torch.randn(2, 6, requires_grad=True)
-        output = selector(embedding=embeddings, logits=logits, sampling=True)
+        output = selector(embedding=embeddings, sampling=True)
         loss = output.sum()
         loss.backward()
         self.assertIsNotNone(embeddings.grad)
@@ -271,7 +261,6 @@ class TestMemorySelector(unittest.TestCase):
         for temp in [0.1, 0.5, 1.0, 2.0]:
             selector = MemorySelector(
                 in_features_embedding=32,
-                in_features_logits=6,
                 out_features=3,
                 memory_size=8,
                 embedding_size=4,
@@ -279,48 +268,43 @@ class TestMemorySelector(unittest.TestCase):
             )
             self.assertEqual(selector.temperature, temp)
             embeddings = torch.randn(2, 32)
-            logits = torch.randn(2, 6)
-            output = selector(embedding=embeddings, logits=logits, sampling=False)
+            output = selector(embedding=embeddings, sampling=False)
             self.assertEqual(output.shape, (2, 3, 4))
 
     def test_memory_initialization(self):
-        """Test that memory is properly initialized."""
+        """Test memory bank initialization."""
         selector = MemorySelector(
             in_features_embedding=32,
-            in_features_logits=6,
             out_features=5,
             memory_size=10,
             embedding_size=8
         )
-        # Memory should have shape (out_features, memory_size * embedding_size)
-        self.assertEqual(selector.memory.num_embeddings, 5)
-        self.assertEqual(selector.memory.embedding_dim, 10 * 8)
+        # Check memory has correct shape
+        self.assertEqual(selector.memory.weight.shape, (5, 80))  # out_features x (memory_size * embedding_size)
+
+    def test_selector_network(self):
+        """Test selector network structure."""
+        selector = MemorySelector(
+            in_features_embedding=64,
+            out_features=4,
+            memory_size=10,
+            embedding_size=6
+        )
+        # Check selector is a Sequential module
+        self.assertIsInstance(selector.selector, nn.Sequential)
 
     def test_batch_processing(self):
         """Test different batch sizes."""
         selector = MemorySelector(
             in_features_embedding=32,
-            in_features_logits=6,
             out_features=3,
-            memory_size=8,
+            memory_size=5,
             embedding_size=4
         )
         for batch_size in [1, 4, 8]:
             embeddings = torch.randn(batch_size, 32)
-            logits = torch.randn(batch_size, 6)
-            output = selector(embedding=embeddings, logits=logits, sampling=False)
+            output = selector(embedding=embeddings, sampling=False)
             self.assertEqual(output.shape, (batch_size, 3, 4))
-
-    def test_selector_network(self):
-        """Test that selector network is created."""
-        selector = MemorySelector(
-            in_features_embedding=32,
-            in_features_logits=6,
-            out_features=3,
-            memory_size=8,
-            embedding_size=4
-        )
-        self.assertIsNotNone(selector.selector)
 
 
 class TestStochasticEncoderFromEmb(unittest.TestCase):
