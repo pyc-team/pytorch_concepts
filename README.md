@@ -116,10 +116,10 @@ These modules allow users with different levels of abstraction to build interpre
 <tr>
 <td width="33%" valign="top">
 
-### 🚀 High-Level API
-Use out-of-the-box state-of-the-art models with one line of code.
+### 🔧 Low-Level API
+Build architectures from basic interpretable layers in a plain ![pytorch-logo-small] PyTorch-like interface.
 
-[→ High-Level API](doc/modules/high_level_api.rst)
+[→ Low-Level API](doc/modules/low_level_api.rst)
 
 </td>
 <td width="33%" valign="top">
@@ -134,10 +134,10 @@ Build custom interpretable and causally transparent Probabilistic Models.
 </td>
 <td width="33%" valign="top">
 
-### 🔧 Low-Level API
-Build architectures from basic interpretable layers in a plain ![pytorch-logo-small] PyTorch-like interface.
+### 🚀 High-Level API
+Use out-of-the-box state-of-the-art models with one line of code.
 
-[→ Low-Level API](doc/modules/low_level_api.rst)
+[→ High-Level API](doc/modules/high_level_api.rst)
 
 </td>
 </tr>

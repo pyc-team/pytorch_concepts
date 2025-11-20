@@ -130,6 +130,14 @@ These modules allow users with different levels of abstraction to build interptr
     :gutter: 2
     :padding: 0
 
+    .. grid-item-card::  :octicon:`tools;1em;sd-text-primary` Low-Level API
+        :link: modules/low_level_api
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Build architectures from basic interpretable layers in a plain |pytorch_logo| PyTorch-like interface.
+
     .. grid-item-card::  :octicon:`graph;1em;sd-text-danger` Mid-Level API
         :link: modules/mid_level_api
         :link-type: doc
@@ -141,14 +149,6 @@ These modules allow users with different levels of abstraction to build interptr
         .. warning::
 
            This API is still under development and interfaces might change in future releases.
-
-    .. grid-item-card::  :octicon:`tools;1em;sd-text-primary` Low-Level API
-        :link: modules/low_level_api
-        :link-type: doc
-        :shadow: lg
-        :class-card: sd-border-primary
-
-        Build architectures from basic interpretable layers in a plain |pytorch_logo| PyTorch-like interface.
 
     .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` High-Level API
         :link: modules/high_level_api
