@@ -3,7 +3,7 @@ from typing import List, Optional, Union
 import pandas as pd
 import torch
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from .concept_graph import ConceptGraph
 from ...propagator import Propagator
 from .graph import GraphModel

@@ -13,7 +13,7 @@ from typing import Dict, Union, List, Mapping
 import torch, math
 import logging
 
-from .data.annotations import Annotations
+from .annotations import Annotations
 
 
 def validate_and_generate_concept_names(

@@ -12,7 +12,6 @@ Data APIs provide utilities for loading, preprocessing, and managing datasets.
    data.preprocessing
    data.scalers
    data.splitters
-   data.annotations
    data.backbone
    data.io
    data.utils

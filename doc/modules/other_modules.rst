@@ -10,3 +10,4 @@ Additional utility modules including losses, metrics, propagators, and functiona
    nn.metrics
    nn.propagator
    nn.functional
+   annotations

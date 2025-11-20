@@ -10,7 +10,7 @@ from typing import Any, Optional, Tuple, Mapping, Dict
 import torch
 import torch.nn as nn
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from ...mid.inference.forward import BaseInference
 
 from ...low.dense_layers import MLP

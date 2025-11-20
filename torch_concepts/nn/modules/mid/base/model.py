@@ -6,7 +6,7 @@ defining the structure for models that use concept representations.
 """
 import torch
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from ...propagator import Propagator
 
 

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from typing import Any, List, Optional, Dict, Mapping
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from ....modules.mid.models.variable import Variable
 from .....distributions.delta import Delta
 from ....modules.mid.models.factor import Factor

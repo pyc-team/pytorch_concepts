@@ -1,7 +1,7 @@
 from typing import List, Tuple, Optional
 from torch.nn import Identity
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from ..models.variable import Variable
 from .concept_graph import ConceptGraph
 from ..models.factor import Factor

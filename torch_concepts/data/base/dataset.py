@@ -14,7 +14,7 @@ from typing import Dict, List, Mapping, Optional, Union
 import warnings
 
 from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
-from ..annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations, AxisAnnotation
 from ..utils import files_exist, parse_tensor, convert_precision
 
 # TODO: implement masks for missing values

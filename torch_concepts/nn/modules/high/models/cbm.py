@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Union, Mapping
 from torch import nn
 import torch
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from ....modules.mid.models.variable import Variable
 from .....distributions import Delta
 from ....modules.mid.constructors.bipartite import BipartiteModel

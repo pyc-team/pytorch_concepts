@@ -3,7 +3,7 @@ Annotations
 
 This module provides utilities for handling concept annotations in datasets.
 
-.. currentmodule:: torch_concepts.data.annotations
+.. currentmodule:: torch_concepts.annotations
 
 Summary
 -------

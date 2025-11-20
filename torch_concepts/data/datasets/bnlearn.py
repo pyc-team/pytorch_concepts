@@ -7,7 +7,7 @@ from typing import List, Optional
 import bnlearn as bn
 from pgmpy.sampling import BayesianModelSampling
 
-from ..annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations, AxisAnnotation
 
 from ..base import ConceptDataset
 from ..preprocessing.autoencoder import extract_embs_from_autoencoder
