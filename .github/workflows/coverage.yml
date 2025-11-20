@@ -24,8 +24,10 @@ jobs:
         pip install pytest pytest-cov codecov
         # Install project requirements first
         pip install -r requirements.txt
-        # Then install the package in editable mode
-        pip install -e .
+        # Install pytorch_lightning (needed for data module)
+        pip install pytorch-lightning
+        # Install the package in editable mode with data extras
+        pip install -e ".[data,tests]"
 
     - name: Run tests with coverage
       run: |
