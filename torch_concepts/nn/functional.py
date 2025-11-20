@@ -200,10 +200,10 @@ def linear_equation_expl(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
@@ -371,10 +371,10 @@ def logic_rule_explanations(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_logic_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_logic_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_logic_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
