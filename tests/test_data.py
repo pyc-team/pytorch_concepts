@@ -1,8 +1,8 @@
 import unittest
 import torch
 
-from torch_concepts.data import ToyDataset, CompletenessDataset
-from torch_concepts.data.toy import _xor, _trigonometry, _dot, _checkmark, _complete
+from torch_concepts.data.datasets import ToyDataset, CompletenessDataset
+from torch_concepts.data.datasets.toy import _xor, _trigonometry, _dot, _checkmark, _complete
 
 
 class TestToyDataset(unittest.TestCase):

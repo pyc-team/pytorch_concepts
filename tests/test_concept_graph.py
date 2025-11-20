@@ -1,7 +1,7 @@
 """Tests for ConceptGraph class."""
 import unittest
 import torch
-from torch_concepts.concepts.tensor import ConceptGraph
+from torch_concepts import ConceptGraph
 
 
 class TestConceptGraph(unittest.TestCase):
