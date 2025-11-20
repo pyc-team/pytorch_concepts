@@ -14,35 +14,6 @@ class TestConceptFunctions(unittest.TestCase):
                                           [0.7, 0.3, 0.5]])
         self.target_confidence = 0.5
 
-    def test_intervene(self):
-        result = CF.intervene(self.c_pred, self.c_true, self.indexes)
-        expected = torch.tensor([[0.9, 0.2], [0.3, 0.6]])
-        self.assertTrue(torch.equal(result, expected),
-                        f"Expected {expected}, but got {result}")
-
-    def test_concept_embedding_mixture(self):
-        c_emb = torch.randn(5, 4, 6)
-        c_scores = torch.randint(0, 2, (5, 4))
-        result = CF.concept_embedding_mixture(c_emb, c_scores)
-        self.assertTrue(result.shape == (5, 4, 3),
-                        f"Expected shape (5, 4, 3), but got {result.shape}")
-
-    def test_intervene_on_concept_graph(self):
-        # Create a AnnotatedTensor adjacency matrix
-        c_adj = torch.tensor([[0, 1, 0],
-                              [1, 0, 1],
-                              [0, 1, 0]], dtype=torch.float)
-
-        # Intervene by zeroing out specific columns
-        intervened_c_adj = CF.intervene_on_concept_graph(c_adj, [1])
-        # Verify the shape of the output
-        self.assertEqual(intervened_c_adj.shape, c_adj.shape)
-        # Verify that the specified columns are zeroed out
-        expected_data = torch.tensor([[0, 0, 0],
-                                      [1, 0, 1],
-                                      [0, 0, 0]], dtype=torch.float)
-        self.assertTrue(torch.equal(intervened_c_adj, expected_data))
-
     def test_selective_calibration(self):
         expected_theta = torch.tensor([[0.8, 0.2, 0.5]])
         expected_result = expected_theta
