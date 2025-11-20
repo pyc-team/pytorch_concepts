@@ -195,13 +195,23 @@ def _check_tensors(tensors):
     Raises:
         ValueError: If tensors have incompatible shapes, dtypes, devices, or settings.
     """
+    # First, check that all tensors have at least 2 dimensions
+    for i, t in enumerate(tensors):
+        if t.dim() < 2:
+            raise ValueError(f"Tensor {i} must have at least 2 dims (B, c_i, ...); got {tuple(t.shape)}.")
+
+    # Check that all tensors have the same number of dimensions
+    first_ndim = tensors[0].dim()
+    for i, t in enumerate(tensors):
+        if t.dim() != first_ndim:
+            raise ValueError(f"All tensors must have at least 2 dims and the same total number of dimensions; Tensor 0 has {first_ndim} dims, but Tensor {i} has {t.dim()} dims.")
+
     B = tensors[0].shape[0]
     dtype = tensors[0].dtype
     device = tensors[0].device
     rest_shape = tensors[0].shape[2:]  # dims >=2 must match
+
     for i, t in enumerate(tensors):
-        if t.dim() < 2:
-            raise ValueError(f"Tensor {i} must have at least 2 dims (B, c_i, ...); got {tuple(t.shape)}.")
         if t.shape[0] != B:
             raise ValueError(f"All tensors must share batch dim. Got {t.shape[0]} != {B} at field {i}.")
         # only dim=1 may vary; dims >=2 must match exactly
