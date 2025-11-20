@@ -71,10 +71,12 @@ Build architectures from basic interpretable layers in a plain <img src="https:/
 [→ Low-Level API](doc/modules/low_level_api.rst)
 
 </td>
-<td width="33%" valign="top">
+<td width="33%" valign="top" style="border: 2px solid #dc3545;">
 
 ### 📊 Mid-Level API
 Build custom interpretable and causally transparent Probabilistic Models.
+
+> ⚠️ **Warning:** This API is still under development and interfaces might change in future releases.
 
 [→ Mid-Level API](doc/modules/mid_level_api.rst)
 

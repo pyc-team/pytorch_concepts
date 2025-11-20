@@ -97,12 +97,17 @@ API Reference
 
         Build architectures from basic interpretable layers in a plain |pytorch_logo| PyTorch-like interface.
 
-    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Mid-Level API
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-danger` Mid-Level API
         :link: modules/mid_level_api
         :link-type: doc
         :shadow: sm
+        :class-card: sd-border-danger
 
         Build custom interpretable and causally transparent Probabilistic Models.
+
+        .. warning::
+
+           This API is still under development and interfaces might change in future releases.
 
     .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` High-Level API
         :link: modules/high_level_api

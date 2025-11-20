@@ -3,6 +3,10 @@ Mid-level API
 
 Mid-level APIs allow you to build custom interpretable and causally transparent Probabilistic Models.
 
+.. warning::
+
+   This API is still under development and interfaces might change in future releases.
+
 .. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
    :width: 20px
    :align: middle
