@@ -215,6 +215,10 @@ class GraphModel(BaseConstructor):
                                 parents=['embedding'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
                                 size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
+            # Ensure encoder_vars is always a list
+            if not isinstance(encoder_vars, list):
+                encoder_vars = [encoder_vars]
+
             propagator = layer.build(
                 in_features_embedding=parent_vars[0].size,
                 in_features_logits=None,
@@ -222,6 +226,9 @@ class GraphModel(BaseConstructor):
                 out_features=encoder_vars[0].size,
             )
             encoder_factors = Factor(label_names, module_class=propagator)
+            # Ensure encoder_factors is always a list
+            if not isinstance(encoder_factors, list):
+                encoder_factors = [encoder_factors]
         else:
             assert len(parent_vars) == sum(cardinalities)
             encoder_vars = []
