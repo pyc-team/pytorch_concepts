@@ -46,32 +46,70 @@ Contribute to PyC and help improve the library.
 
 ---
 
-## API Reference
+## Explore Based on Your Background
+
+PyC is designed to accommodate users with different backgrounds and expertise levels.
+Pick the best entry point based on your experience:
 
 <table>
 <tr>
-<td colspan="3" valign="top">
+<td width="50%" valign="top">
 
-### 🧪 Conceptarium
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"/> **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC with <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"/> Hydra, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px" align="center"/> PyTorch Lightning, and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px" align="center"/> WandB.
+### 💻 Pure torch user?
+Start from the Low-Level API to build models from basic interpretable layers.
 
-[→ Conceptarium Documentation](doc/modules/conceptarium.rst)
+[→ Low-Level API](doc/modules/low_level_api.rst)
+
+</td>
+<td width="50%" valign="top">
+
+### 📊 Probabilistic modeling user?
+Start from the Mid-Level API to build custom Probabilistic Models.
+
+[→ Mid-Level API](doc/modules/mid_level_api.rst)
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🚀 Just want to use state-of-the-art models out-of-the-box?
+Start from the High-Level API to use pre-defined models with one line of code.
+
+[→ High-Level API](doc/modules/high_level_api.rst)
+
+</td>
+<td width="50%" valign="top">
+
+### 🧪 No experience with programming?
+Use Conceptarium, a no-code framework built on top of PyC for running large-scale experiments on concept-based models.
+
+[→ Conceptarium](doc/modules/conceptarium.rst)
 
 </td>
 </tr>
 </table>
 
+---
+
+## API Reference
+
+### Main Modules
+
+The main modules of the library are organized into three levels of abstraction: Low-Level API, Mid-Level API, and High-Level API.
+These modules allow users with different levels of abstraction to build interpretable models.
+
 <table>
 <tr>
 <td width="33%" valign="top">
 
-### 🔧 Low-Level API
-Build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px" align="center"/> PyTorch-like interface.
+### 🚀 High-Level API
+Use out-of-the-box state-of-the-art models with one line of code.
 
-[→ Low-Level API](doc/modules/low_level_api.rst)
+[→ High-Level API](doc/modules/high_level_api.rst)
 
 </td>
-<td width="33%" valign="top" style="border: 2px solid #dc3545;">
+<td width="33%" valign="top">
 
 ### 📊 Mid-Level API
 Build custom interpretable and causally transparent Probabilistic Models.
@@ -83,18 +121,56 @@ Build custom interpretable and causally transparent Probabilistic Models.
 </td>
 <td width="33%" valign="top">
 
-### 🚀 High-Level API
-Use out-of-the-box state-of-the-art models with one line of code.
+### 🔧 Low-Level API
+Build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px" align="center"/> PyTorch-like interface.
 
-[→ High-Level API](doc/modules/high_level_api.rst)
+[→ Low-Level API](doc/modules/low_level_api.rst)
 
 </td>
 </tr>
 </table>
 
+### Shared Modules
+
+The library also includes shared modules that provide additional functionalities such as loss functions, metrics, and utilities.
+
 <table>
 <tr>
 <td width="33%" valign="top">
+
+### 🔥 Loss Functions
+Various loss functions for concept-based models.
+
+[→ Loss Functions](doc/modules/other_modules.rst)
+
+</td>
+<td width="33%" valign="top">
+
+### 📈 Metrics
+Evaluation metrics for concept-based models.
+
+[→ Metrics](doc/modules/other_modules.rst)
+
+</td>
+<td width="33%" valign="top">
+
+### 📦 Utilities
+Helper utilities and tools for concept-based models.
+
+[→ Utilities](doc/modules/other_modules.rst)
+
+</td>
+</tr>
+</table>
+
+### Extra Modules
+
+Extra modules provide additional APIs for data handling and probability distributions.
+These modules have additional dependencies and can be installed separately.
+
+<table>
+<tr>
+<td width="50%" valign="top">
 
 ### 💾 Data API
 Access datasets, dataloaders, preprocessing, and data utilities.
@@ -102,7 +178,7 @@ Access datasets, dataloaders, preprocessing, and data utilities.
 [→ Data API](doc/modules/data_api.rst)
 
 </td>
-<td width="33%" valign="top">
+<td width="50%" valign="top">
 
 ### ∞ Distributions API
 Work with probability distributions for probabilistic modeling.
@@ -110,12 +186,23 @@ Work with probability distributions for probabilistic modeling.
 [→ Distributions API](doc/modules/distributions_api.rst)
 
 </td>
-<td width="33%" valign="top">
+</tr>
+</table>
 
-### 📦 Other Modules
-Explore additional utilities and helper modules.
+### Conceptarium
 
-[→ Other Modules](doc/modules/other_modules.rst)
+Conceptarium is a no-code framework for running large-scale experiments on concept-based models.
+The interface is based on configuration files, making it easy to set up and run experiments without writing code.
+This framework is intended for benchmarking or researchers in other fields who want to use concept-based models without programming knowledge.
+
+<table>
+<tr>
+<td valign="top">
+
+### 🧪 Conceptarium
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"/> **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC with <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"/> Hydra, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px" align="center"/> PyTorch Lightning, and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px" align="center"/> WandB.
+
+[→ Conceptarium Documentation](doc/modules/conceptarium.rst)
 
 </td>
 </tr>
