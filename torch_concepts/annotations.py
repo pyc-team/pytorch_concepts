@@ -154,9 +154,11 @@ class AxisAnnotation:
         if self.metadata is not None:
             if not isinstance(self.metadata, dict):
                 raise ValueError("metadata must be a dictionary")
-            for label in self.labels:
-                if label not in self.metadata:
-                    raise ValueError(f"Metadata missing for label {label!r}")
+            # Only validate if metadata is non-empty
+            if self.metadata:
+                for label in self.labels:
+                    if label not in self.metadata:
+                        raise ValueError(f"Metadata missing for label {label!r}")
 
     @property
     def shape(self) -> Union[int, Tuple[int, ...]]:
@@ -512,6 +514,45 @@ class Annotations:
         """
         return self.get_axis_annotation(axis)
 
+    def __setitem__(self, axis: int, annotation: AxisAnnotation) -> None:
+        """Set annotation for an axis."""
+        self.annotate_axis(annotation, axis)
+
+    def __delitem__(self, axis: int) -> None:
+        """Remove annotation for an axis."""
+        if axis not in self._axis_annotations:
+            raise KeyError(f"Axis {axis} is not annotated")
+        del self._axis_annotations[axis]
+
+    def __contains__(self, axis: int) -> bool:
+        """Check if an axis is annotated."""
+        return axis in self._axis_annotations
+
+    def __len__(self) -> int:
+        """Return number of annotated axes."""
+        return len(self._axis_annotations)
+
+    def __iter__(self):
+        """Iterate over axis numbers."""
+        return iter(self._axis_annotations)
+
+    def keys(self):
+        """Return axis numbers (dict-like interface)."""
+        return self._axis_annotations.keys()
+
+    def values(self):
+        """Return AxisAnnotation objects (dict-like interface)."""
+        return self._axis_annotations.values()
+
+    def items(self):
+        """Return (axis, AxisAnnotation) pairs (dict-like interface)."""
+        return self._axis_annotations.items()
+
+    @property
+    def axis_annotations(self) -> Dict[int, AxisAnnotation]:
+        """Access to the underlying axis annotations dictionary."""
+        return self._axis_annotations
+
     def __repr__(self) -> str:
         """String representation."""
         if not self._axis_annotations:
@@ -568,3 +609,39 @@ class Annotations:
         joined[axis] = self._axis_annotations[axis].union_with(other._axis_annotations[axis])
         return Annotations(joined)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert to JSON-serializable dictionary.
+
+        Returns
+        -------
+        dict
+            Dictionary with axis annotations.
+        """
+        return {
+            'axis_annotations': {
+                str(axis): ann.to_dict() for axis, ann in self._axis_annotations.items()
+            }
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Annotations':
+        """
+        Create Annotations from dictionary.
+
+        Parameters
+        ----------
+        data : dict
+            Dictionary with serialized Annotations data.
+
+        Returns
+        -------
+        Annotations
+            Reconstructed Annotations object.
+        """
+        axis_annotations = {}
+        if 'axis_annotations' in data:
+            for axis_str, ann_data in data['axis_annotations'].items():
+                axis = int(axis_str)
+                axis_annotations[axis] = AxisAnnotation.from_dict(ann_data)
+        return cls(axis_annotations=axis_annotations)
