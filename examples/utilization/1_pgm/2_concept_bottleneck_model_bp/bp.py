@@ -1,23 +1,16 @@
 import torch
 import itertools
 
-from torch_concepts.nn import ProbabilisticModel
-
 
 # ------------------------------------------------------------------
 # 1. Build global metadata / indexing
 # ------------------------------------------------------------------
 
-def build_graph_metadata(concept_model: ProbabilisticModel):
+def build_graph_metadata(variables, factors):
     """
     variables: dict {var_name: arity}
     factors:   dict {factor_name: [var_name1, var_name2, ...]}  (ordered scope)
     """
-
-
-
-
-
     # ----- variables -----
     var_names = list(variables.keys())
     V = len(var_names)
