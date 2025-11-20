@@ -152,12 +152,22 @@ class ProbabilisticModel(nn.Module):
 
         # ---- Factor modules: fill only self.factors (ModuleDict) ----
         for factor in input_factors:
-            original_module = factor.module_class
             if len(factor.concepts) > 1:
+                # Multi-concept factor: split into individual factors
                 for concept in factor.concepts:
-                    self.factors[concept] = copy.deepcopy(original_module)
+                    new_factor = Factor(concepts=[concept], module_class=copy.deepcopy(factor.module_class))
+                    # Link the factor to its variable
+                    if concept in self.concept_to_variable:
+                        new_factor.variable = self.concept_to_variable[concept]
+                        new_factor.parents = self.concept_to_variable[concept].parents
+                    self.factors[concept] = new_factor
             else:
+                # Single concept factor
                 concept = factor.concepts[0]
+                # Link the factor to its variable
+                if concept in self.concept_to_variable:
+                    factor.variable = self.concept_to_variable[concept]
+                    factor.parents = self.concept_to_variable[concept].parents
                 self.factors[concept] = factor
 
         # ---- Parent resolution (unchanged) ----

@@ -123,6 +123,12 @@ class Variable:
 
         n_concepts = len(concepts)
 
+        # If single concept in list, treat as single Variable
+        if n_concepts == 1:
+            assert not isinstance(distribution, list)
+            assert isinstance(size, int)
+            return object.__new__(cls)
+
         # Standardize distribution: single value -> list of N values
         if distribution is None:
             distribution_list = [Delta] * n_concepts

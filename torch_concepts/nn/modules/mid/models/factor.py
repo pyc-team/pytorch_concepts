@@ -87,6 +87,11 @@ class Factor(nn.Module):
 
         n_concepts = len(concepts)
 
+        # If single concept in list, treat as single Factor
+        if n_concepts == 1:
+            assert not isinstance(module_class, list)
+            return object.__new__(cls)
+
         # Standardize module_class: single value -> list of N values
         if not isinstance(module_class, list):
             module_list = [module_class] * n_concepts
@@ -168,6 +173,11 @@ class Factor(nn.Module):
             else:
                 raise TypeError(f"Unsupported distribution type {parent_var.distribution.__name__} for CPT generation.")
 
+        # Handle case with only continuous parents (no discrete parents)
+        if not discrete_combinations_list:
+            fixed_continuous_input = torch.cat(continuous_tensors, dim=-1) if continuous_tensors else torch.empty((1, 0))
+            return fixed_continuous_input, torch.empty((1, 0))
+
         # Product across discrete parents
         all_discrete_product = list(product(*discrete_combinations_list))
         all_discrete_states_product = list(product(*discrete_state_vectors_list))
@@ -188,8 +198,6 @@ class Factor(nn.Module):
             discrete_state_vector = torch.cat(list(discrete_states), dim=-1)
             all_discrete_state_vectors.append(discrete_state_vector)
 
-        if not all_full_inputs and continuous_tensors:
-            all_full_inputs = [fixed_continuous_input]
 
         return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
 
