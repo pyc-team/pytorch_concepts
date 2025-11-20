@@ -123,29 +123,11 @@ class Variable:
 
         n_concepts = len(concepts)
 
-        # If single concept in list, create and return single instance (not as list)
+        # If single concept in list, normalize parameters and return single instance
         if n_concepts == 1:
-            # Handle case where distribution/size are lists with single element
-            dist_to_use = distribution
-            size_to_use = size
-
-            if isinstance(distribution, list):
-                assert len(distribution) == 1, "Distribution list must have exactly 1 element for single concept"
-                dist_to_use = distribution[0]
-            if isinstance(size, list):
-                assert len(size) == 1, "Size list must have exactly 1 element for single concept"
-                size_to_use = size[0]
-
-            # Create single instance and return it directly
-            instance = object.__new__(cls)
-            instance.__init__(
-                concepts=concepts,  # Keep as single-element list
-                parents=parents,
-                distribution=dist_to_use,
-                size=size_to_use,
-                metadata=metadata
-            )
-            return instance  # Return single instance, not as list
+            # This will return a new instance and Python will automatically call __init__
+            # We don't call __init__ manually - just return the instance
+            return object.__new__(cls)
 
         # Standardize distribution: single value -> list of N values
         if distribution is None:
@@ -203,6 +185,13 @@ class Variable:
         # Ensure concepts is a list (important if called internally after __new__ splitting)
         if isinstance(concepts, str):
             concepts = [concepts]
+
+        # Handle case where distribution/size are lists with single element (for single concept)
+        if len(concepts) == 1:
+            if isinstance(distribution, list) and len(distribution) == 1:
+                distribution = distribution[0]
+            if isinstance(size, list) and len(size) == 1:
+                size = size[0]
 
         # Original validation logic
         if distribution is None:
