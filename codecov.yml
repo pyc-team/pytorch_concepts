@@ -27,6 +27,7 @@ ignore:
   - "tests/"
   - "examples/"
   - "doc/"
+  - "conceptarium/"
   - "setup.py"
   - "**/__pycache__"
   - "**/*.pyc"
