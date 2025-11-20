@@ -17,7 +17,7 @@
 
 # PyC
 
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
+![pyc-logo] PyC is a library built upon ![pytorch-logo] PyTorch to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
 
 The name of the library stands for both
@@ -135,7 +135,7 @@ Build custom interpretable and causally transparent Probabilistic Models.
 <td width="33%" valign="top">
 
 ### 🔧 Low-Level API
-Build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px" align="center"/> PyTorch-like interface.
+Build architectures from basic interpretable layers in a plain ![pytorch-logo-small] PyTorch-like interface.
 
 [→ Low-Level API](doc/modules/low_level_api.rst)
 
@@ -213,7 +213,7 @@ This framework is intended for benchmarking or researchers in other fields who w
 <td valign="top">
 
 ### 🧪 Conceptarium
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"/> **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC with <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"/> Hydra, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px" align="center"/> PyTorch Lightning, and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px" align="center"/> WandB.
+![conceptarium-logo-small] **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of ![pyc-logo-small] PyC with ![hydra-logo-small] Hydra, ![lightning-logo-small] PyTorch Lightning, and ![wandb-logo-small] WandB.
 
 [→ Conceptarium Documentation](doc/modules/conceptarium.rst)
 
@@ -256,3 +256,13 @@ If you found this library useful for your research article, blog post, or produc
 }
 ```
 Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovanni De Felice](https://gdefe.github.io/).
+
+<!-- Logo aliases -->
+[pyc-logo]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg
+[pytorch-logo]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg
+[pyc-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
+[pytorch-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
+[conceptarium-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg
+[hydra-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg
+[lightning-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg
+[wandb-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg
