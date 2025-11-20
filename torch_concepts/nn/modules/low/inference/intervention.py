@@ -262,7 +262,13 @@ class DistributionIntervention(RewiringIntervention):
         device, dtype = y.device, y.dtype
 
         def _sample(d, shape):
-            return d.rsample(shape) if hasattr(d, "rsample") else d.sample(shape)
+            # Try rsample first (for reparameterization), fall back to sample if not supported
+            if hasattr(d, "rsample"):
+                try:
+                    return d.rsample(shape)
+                except NotImplementedError:
+                    pass
+            return d.sample(shape)
 
         if hasattr(self.dist, "sample"):  # one distribution for all features
             t = _sample(self.dist, (B, F))
