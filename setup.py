@@ -24,20 +24,12 @@ DOWNLOAD_URL = 'https://github.com/pyc-team/pytorch_concepts'
 VERSION = about["__version__"]
 INSTALL_REQUIRES = [
     'numpy',
-    'opencv-python',
-    'pandas',
     'Pillow',
     'scikit-learn',
     'scipy',
     'torch',
-    'torchvision',
-    'scikit-learn',
     'pytorch-minimize',
     'torch_geometric',
-    'pgmpy',
-    'bnlearn',
-    'datasets',
-    'transformers',
 ]
 CLASSIFIERS = [
     'Intended Audience :: Developers',
@@ -56,6 +48,15 @@ CLASSIFIERS = [
     'Topic :: Software Development',
 ]
 EXTRAS_REQUIRE = {
+    'data': [
+        'opencv-python',
+        'pandas',
+        'torchvision',
+        'pgmpy',
+        'bnlearn',
+        'datasets',
+        'transformers',
+    ],
     'tests': [
         'pytest-cov',
         'pytest',

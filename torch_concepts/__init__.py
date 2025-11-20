@@ -7,7 +7,7 @@ from ._version import __version__
 from importlib import import_module
 from typing import Any
 
-from .data.annotations import Annotations, AxisAnnotation
+from .annotations import Annotations, AxisAnnotation
 from .nn.modules.mid.constructors.concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable
 from . import nn, distributions

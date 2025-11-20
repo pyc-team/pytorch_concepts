@@ -14,9 +14,6 @@ from . import preprocessing
 from . import scalers
 from . import splitters
 
-# Key classes from annotations
-from . import annotations
-
 # Utilities
 from . import utils
 
@@ -35,7 +32,6 @@ __all__ = [
     "scalers",
     "splitters",
 
-    "annotations",
     "utils",
     "backbone",
     "io",
