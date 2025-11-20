@@ -258,11 +258,11 @@ If you found this library useful for your research article, blog post, or produc
 Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovanni De Felice](https://gdefe.github.io/).
 
 <!-- Logo aliases -->
-[pyc-logo]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg
-[pytorch-logo]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg
-[pyc-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
-[pytorch-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
-[conceptarium-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg
-[hydra-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg
-[lightning-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg
-[wandb-logo-small]: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg
+[pyc-logo]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="20px">
+[pytorch-logo]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="20px">
+[pyc-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px">
+[pytorch-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px">
+[conceptarium-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px">
+[hydra-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px">
+[lightning-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px">
+[wandb-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px">
