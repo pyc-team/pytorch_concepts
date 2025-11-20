@@ -30,6 +30,7 @@ INSTALL_REQUIRES = [
     'torch',
     'pytorch-minimize',
     'torch_geometric',
+    'pytorch-lightning',
 ]
 CLASSIFIERS = [
     'Intended Audience :: Developers',

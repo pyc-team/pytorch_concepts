@@ -9,3 +9,4 @@ pandas
 torchvision
 datasets
 transformers
+pytorch-lightning
