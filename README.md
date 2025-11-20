@@ -2,6 +2,19 @@
   <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/pytorch-concepts/"><img src="https://img.shields.io/pypi/v/pytorch-concepts?style=for-the-badge" alt="PyPI"></a>
+  <a href="https://pepy.tech/project/pytorch-concepts"><img src="https://img.shields.io/pepy/dt/pytorch-concepts?style=for-the-badge" alt="Total downloads"></a>
+  <a href="https://codecov.io/gh/pyc-team/pytorch_concepts"><img src="https://img.shields.io/codecov/c/github/pyc-team/pytorch_concepts?style=for-the-badge" alt="Codecov"></a>
+  <a href="https://pytorch-concepts.readthedocs.io/"><img src="https://img.shields.io/readthedocs/pytorch-concepts?style=for-the-badge" alt="Documentation Status"></a>
+</p>
+
+<p align="center">
+  <a href="#get-started">🚀 Getting Started</a> - 
+  <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> - 
+  <a href="https://colab.research.google.com/github/pyc-team/pytorch_concepts/blob/master/examples/introductory_notebook.ipynb">💻 Introductory notebook</a>
+</p>
+
 # PyC
 
 <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
