@@ -11,13 +11,6 @@ The name of the library stands for both
 - **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
 - $P(y|C)$: as the main purpose of the library is to support sound probabilistic modeling of the conditional distribution of targets $y$ given concepts $C$.
 
-
-- [Quick start](#quick-start)
-- [Get Started](#get-started)
-- [API Reference](#api-reference)
-- [Contributing](#contributing)
-- [Cite this library](#cite-this-library)
-
 ---
 
 ## Get Started
