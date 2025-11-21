@@ -130,7 +130,7 @@ class AxisAnnotation:
                 )
             # Generate default state labels '0', '1', '2', etc.
             cardinalities = self.cardinalities
-            states = tuple(tuple(str(i) for i in range(card)) if card > 1 else ('0', '1')
+            states = tuple(tuple(str(i) for i in range(card)) if card > 1 else ('0', )
                            for card in self.cardinalities)
 
         # Case 4: neither states nor cardinalities provided
@@ -138,7 +138,7 @@ class AxisAnnotation:
             warnings.warn("Annotations: neither 'states' nor 'cardinalities' provided; "
                          "assuming all concepts are binary.")
             cardinalities = tuple(1 for _ in self.labels)
-            states = tuple(('0', '1') for _ in self.labels)
+            states = tuple(('0', ) for _ in self.labels)
 
         # Eventually convert categorical with card=2 to bernoulli (card=1)
         # cardinalities = tuple(1 if card == 2 else card for card in cardinalities)

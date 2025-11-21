@@ -1,5 +1,6 @@
 defaults:
   - _commons
+  - loss: weighted
   - _self_
   
 # default is joint training

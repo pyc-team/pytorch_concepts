@@ -32,7 +32,7 @@ from .modules.low.predictors.hypernet import HyperLinearPredictor
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss
+from .modules.loss import ConceptLoss, WeightedConceptLoss
 
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox
@@ -101,6 +101,7 @@ __all__ = [
 
     # Loss functions
     "ConceptLoss",
+    "WeightedConceptLoss",
 
     # Models (high-level)
     "BlackBox",
