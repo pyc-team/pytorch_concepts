@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
+  <img src="doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
 </p>
 
 <p align="center">
@@ -17,8 +17,8 @@
 
 # PyC
 
-![pyc-logo] PyC is a library built upon ![pytorch-logo] PyTorch to easily implement **interpretable and causally transparent deep learning models**.
-The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
+<img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
+The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
 
 The name of the library stands for both
 - **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
@@ -77,7 +77,7 @@ Start from the Low-Level API to build models from basic interpretable layers.
 <td width="50%" valign="top">
 
 ### 📊 Probabilistic modeling user?
-Start from the Mid-Level API to build custom Probabilistic Models.
+Start from the Mid-Level API to build custom probabilistic models.
 
 [→ Mid-Level API](doc/modules/mid_level_api.rst)
 
@@ -117,7 +117,7 @@ These modules allow users with different levels of abstraction to build interpre
 <td width="33%" valign="top">
 
 ### 🔧 Low-Level API
-Build architectures from basic interpretable layers in a plain ![pytorch-logo-small] PyTorch-like interface.
+Build architectures from basic interpretable layers in a plain <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface.
 
 [→ Low-Level API](doc/modules/low_level_api.rst)
 
@@ -125,7 +125,7 @@ Build architectures from basic interpretable layers in a plain ![pytorch-logo-sm
 <td width="33%" valign="top">
 
 ### 📊 Mid-Level API
-Build custom interpretable and causally transparent Probabilistic Models.
+Build custom interpretable and causally transparent probabilistic models.
 
 > ⚠️ **Warning:** This API is still under development and interfaces might change in future releases.
 
@@ -213,7 +213,7 @@ This framework is intended for benchmarking or researchers in other fields who w
 <td valign="top">
 
 ### 🧪 Conceptarium
-![conceptarium-logo-small] **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of ![pyc-logo-small] PyC with ![hydra-logo-small] Hydra, ![lightning-logo-small] PyTorch Lightning, and ![wandb-logo-small] WandB.
+<img src="doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC with <img src="doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra, <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> PyTorch Lightning, and <img src="doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
 
 [→ Conceptarium Documentation](doc/modules/conceptarium.rst)
 
@@ -269,21 +269,11 @@ Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/), [Giovanni D
 This project is supported by the following organizations:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
+  <img src="doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
+  <img src="doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
+  <img src="doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
 </p>
 
 ---
-
-<!-- Logo aliases -->
-[pyc-logo]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="20px">
-[pytorch-logo]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="20px">
-[pyc-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px">
-[pytorch-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px">
-[conceptarium-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px">
-[hydra-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px">
-[lightning-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px">
-[wandb-logo-small]: <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px">
