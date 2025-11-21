@@ -8,15 +8,13 @@ hydra:
   sweeper:
     # standard grid search
     params:
-      # blackbox, cbm, cem, cgm, c2bm
-      model: cbm
-      # asia, sachs, insurance, alarm, hailfinder, pigs, andes
-      dataset: asia
       seed: 1
+      dataset: asia
+      model: cbm_joint
 
 # load_data_embeddings: true
 
-engine:
+model:
   enable_summary_metrics: true
   enable_perconcept_metrics: ${dataset.default_task_names}
   # train_interv_prob: 0.8
@@ -29,5 +27,7 @@ trainer:
   devices: [0]
   max_epochs: 10
   patience: 30
+
+matmul_precision: medium
 
 notes: test

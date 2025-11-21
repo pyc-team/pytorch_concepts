@@ -1,0 +1,14 @@
+_target_: "torch_concepts.nn.ConceptLoss"
+_partial_: true
+fn_collection:
+  discrete:
+    binary: 
+      path: "torch.nn.BCEWithLogitsLoss"
+      kwargs: {}
+    categorical: 
+      path: "torch.nn.CrossEntropyLoss"
+      kwargs: {}
+
+  continuous: 
+    path: "torch.nn.MSELoss"
+    kwargs: {}

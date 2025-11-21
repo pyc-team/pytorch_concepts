@@ -101,10 +101,12 @@ class ConceptDataModule(LightningDataModule):
         if scalers is not None:
             self.scalers = scalers
         else:
-            self.scalers = {
-                'input': StandardScaler(axis=0),
-                'concepts': StandardScaler(axis=0)
-            }
+            # TODO: use these scalers to process continuous data
+            # self.scalers = {
+            #     'input': StandardScaler(axis=0),
+            #     'concepts': StandardScaler(axis=0)
+            # }
+            self.scalers = {}
             
         # set splitter
         self.trainset = self.valset = self.testset = None

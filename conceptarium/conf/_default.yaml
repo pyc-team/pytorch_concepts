@@ -1,7 +1,6 @@
 defaults:
   - dataset: asia
-  - model: cbm
-  - engine: engine
+  - model: cbm_joint
   - _self_
 
 hydra:

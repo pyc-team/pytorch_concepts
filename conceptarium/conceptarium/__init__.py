@@ -5,7 +5,6 @@ This module provides PyTorch Lightning-based training infrastructure,
 including trainers, experiment utilities, and W&B integration.
 """
 
-from .engines.predictor import Predictor
 from .trainer import Trainer, GradientMonitor_afterB
 from .utils import (
     seed_everything,
@@ -24,9 +23,6 @@ from .hydra import target_classname, parse_hyperparams
 from .resolvers import register_custom_resolvers
 
 __all__ = [
-    # Engines
-    "Predictor",
-
     # Trainer
     "Trainer",
     "GradientMonitor_afterB",

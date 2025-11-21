@@ -2,7 +2,7 @@ defaults:
   - _commons
   - _self_
   
-_target_: "torch_concepts.nn.CBM_factors"
+_target_: "torch_concepts.nn.ConceptBottleneckModel_Joint"
 
 task_names: ${dataset.default_task_names}
 

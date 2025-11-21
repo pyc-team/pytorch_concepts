@@ -31,9 +31,15 @@ from .modules.low.predictors.hypernet import HyperLinearPredictor
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
 
+# Loss functions
+from .modules.loss import ConceptLoss
+
 # Models (high-level)
-from .modules.high.models.blackbox import BlackBox, BlackBox_torch
-from .modules.high.models.cbm import CBM, CBM_factors
+from .modules.high.models.blackbox import BlackBox
+from .modules.high.models.cbm import ConceptBottleneckModel, ConceptBottleneckModel_Joint
+
+# Learners (high-level)
+from .modules.high.learners.joint import JointLearner
 
 # Models (mid-level)
 from .modules.mid.models.factor import Factor
@@ -93,11 +99,17 @@ __all__ = [
     # COSMO
     "WANDAGraphLearner",
 
+    # Loss functions
+    "ConceptLoss",
+
     # Models (high-level)
     "BlackBox",
     "BlackBox_torch",
-    "CBM",
-    "CBM_factors",
+    "ConceptBottleneckModel",
+    "ConceptBottleneckModel_Joint",
+
+    # Learners (high-level)
+    "JointLearner",
 
     # Models (mid-level)
     "Factor",

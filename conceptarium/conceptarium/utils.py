@@ -114,14 +114,4 @@ def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
             backbone = dm.backbone,
             embs_precomputed = dm.embs_precomputed
         )
-        # if cfg.engine.metrics.get('accuracy'):
-        #     if cfg.engine.metrics.accuracy.get('_target_') == 'conceptarium.metrics.PerConceptClassificationAccuracy':
-        #         cfg.engine.metrics.accuracy.update(
-        #             n_concepts = dm.n_concepts,
-        #             concept_names = dm.concept_names
-        #         )
-        # cfg.engine.update(
-        #    concept_names = dm.concept_names,
-        #    concept_metadata = dm.concept_metadata
-        # )
     return cfg

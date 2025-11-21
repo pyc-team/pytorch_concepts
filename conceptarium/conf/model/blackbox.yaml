@@ -4,6 +4,4 @@ defaults:
   
 _target_: "torch_concepts.nn.BlackBox"
 
-inference: 
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
+inference: null
