@@ -84,7 +84,7 @@ Pick the best entry point based on your experience:
     :padding: 0
 
     .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Pure torch user?
-        :link: modules/low_level_api
+        :link: guides/using_low_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -92,7 +92,7 @@ Pick the best entry point based on your experience:
         Start from the Low-Level API to build models from basic interpretable layers.
 
     .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic modeling user?
-        :link: modules/mid_level_api
+        :link: guides/using_mid_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -100,7 +100,7 @@ Pick the best entry point based on your experience:
         Start from the Mid-Level API to build custom Probabilistic Models.
 
     .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Just want to use state-of-the-art models out-of-the-box?
-        :link: modules/high_level_api
+        :link: guides/using_high_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -170,7 +170,7 @@ The library also includes shared modules that provide additional functionalities
     :padding: 0
 
     .. grid-item-card::  :octicon:`flame;1em;sd-text-primary` Loss Functions
-        :link: modules/other_modules
+        :link: modules/nn.loss
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -178,7 +178,7 @@ The library also includes shared modules that provide additional functionalities
         Various loss functions for concept-based models.
 
     .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Metrics
-        :link: modules/other_modules
+        :link: modules/nn.metrics
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -186,7 +186,7 @@ The library also includes shared modules that provide additional functionalities
         Evaluation metrics for concept-based models.
 
     .. grid-item-card::  :octicon:`package;1em;sd-text-primary` Utilities
-        :link: modules/other_modules
+        :link: modules/utilities
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -341,7 +341,9 @@ Indices and Tables
    modules/low_level_api
    modules/mid_level_api
    modules/high_level_api
-   modules/other_modules
+   modules/nn.loss
+   modules/nn.metrics
+   modules/utilities
    modules/data_api
    modules/distributions_api
 
