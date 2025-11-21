@@ -103,6 +103,9 @@ class ConceptGraph:
         if len(self.node_names) != self._n_nodes:
             raise ValueError(f"Number of node names ({len(self.node_names)}) must match matrix size ({self._n_nodes})")
 
+        # Pre-compute node name to index mapping for O(1) lookup
+        self._node_name_to_index = {name: idx for idx, name in enumerate(self.node_names)}
+
         # Convert to sparse format and store
         self.edge_index, self.edge_weight = pyg.utils.dense_to_sparse(data)
     
@@ -133,6 +136,9 @@ class ConceptGraph:
         if len(instance.node_names) != n_nodes:
             raise ValueError(f"Number of node names ({len(instance.node_names)}) must match n_nodes ({n_nodes})")
         
+        # Pre-compute node name to index mapping for O(1) lookup
+        instance._node_name_to_index = {name: idx for idx, name in enumerate(instance.node_names)}
+
         instance.edge_index = edge_index
         instance.edge_weight = edge_weight
         
@@ -166,9 +172,11 @@ class ConceptGraph:
                 raise IndexError(f"Node index {node} out of range [0, {self.n_nodes})")
             return node
         elif isinstance(node, str):
-            if node not in self.node_names:
+            # Use pre-computed dictionary for O(1) lookup instead of O(n) list search
+            idx = self._node_name_to_index.get(node)
+            if idx is None:
                 raise ValueError(f"Node '{node}' not found in graph")
-            return self.node_names.index(node)
+            return idx
         else:
             raise TypeError(f"Node must be str or int, got {type(node)}")
 
