@@ -5,6 +5,15 @@ We welcome contributions to PyC! This guide will help you contribute effectively
 
 Thank you for your interest in contributing! The PyC Team welcomes all contributions, whether small bug fixes or major features.
 
+Join Our Community
+------------------
+
+Have questions or want to discuss your ideas? Join our Slack community to connect with other contributors and maintainers!
+
+.. image:: https://img.shields.io/badge/Slack-Join%20Us-4A154B?style=for-the-badge&logo=slack
+   :target: https://join.slack.com/t/pyc-yu37757/shared_invite/zt-3jdcsex5t-LqkU6Plj5rxFemh5bRhe_Q
+   :alt: Slack
+
 How to Contribute
 -----------------
 
