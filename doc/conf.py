@@ -115,6 +115,10 @@ html_css_files = [
     'css/custom.css',
 ]
 
+html_js_files = [
+    'js/theme-logo-switcher.js',
+]
+
 html_theme_options = {
     "sidebar_hide_name": True,
     "navigation_with_keys": True,
@@ -127,7 +131,7 @@ html_theme_options = {
     "dark_css_variables": {
         "color-brand-primary": "#20b0d6",
         "color-brand-content": "#20b0d6",
-        "color-background-primary": "#020f25",
+        "color-background-primary": "#020d1e",
     },
     "footer_icons": [
         {
