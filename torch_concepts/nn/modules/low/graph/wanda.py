@@ -60,6 +60,7 @@ class WANDAGraphLearner(BaseGraphLearner):
             col_labels: List[str],
             priority_var: float = 1.0,
             hard_threshold: bool = True,
+            eps: float = 1e-12,
     ):
         """
         Initialize the WANDA graph learner.
@@ -78,6 +79,7 @@ class WANDAGraphLearner(BaseGraphLearner):
 
         self.threshold = torch.nn.Parameter(torch.zeros(self.n_labels))
 
+        self.eps = eps
         self.hard_threshold = hard_threshold
         self._reset_parameters()
 
@@ -119,7 +121,8 @@ class WANDAGraphLearner(BaseGraphLearner):
             hard_orient_mat = hard_orient_mat.float()
 
             # Apply soft detaching trick
-            eps = 1e-12  # or smaller, depending on your precision needs
-            orient_mat = orient_mat + (torch.where(hard_orient_mat.abs() < eps, torch.zeros_like(hard_orient_mat), hard_orient_mat) - orient_mat).detach()
+            zero_mat = torch.zeros_like(orient_mat)
+            masked_mat = torch.where(hard_orient_mat.abs() < self.eps, zero_mat, hard_orient_mat)
+            orient_mat = orient_mat + (masked_mat - orient_mat).detach()
 
         return orient_mat
