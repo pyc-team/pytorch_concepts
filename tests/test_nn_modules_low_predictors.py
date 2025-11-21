@@ -6,9 +6,9 @@ Tests all predictor modules (linear, embedding, hypernet).
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.predictors.linear import ProbPredictor
-from torch_concepts.nn.modules.low.predictors.embedding import MixProbExogPredictor
-from torch_concepts.nn.modules.low.predictors.hypernet import HyperLinearPredictor
+from torch_concepts.nn import ProbPredictor
+from torch_concepts.nn import MixProbExogPredictor
+from torch_concepts.nn import HyperLinearPredictor
 
 
 class TestProbPredictor(unittest.TestCase):

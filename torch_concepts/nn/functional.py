@@ -10,7 +10,7 @@ from sklearn.metrics import roc_auc_score
 from typing import Callable, List, Union, Dict
 from torch.nn import Linear
 
-from ..semantic import CMRSemantic
+from .modules.low.semantic import CMRSemantic
 
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:

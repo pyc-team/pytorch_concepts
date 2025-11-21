@@ -5,7 +5,7 @@ Tests all semantic operations and t-norms.
 """
 import unittest
 import torch
-from torch_concepts.semantic import (
+from torch_concepts.nn.modules.low.semantic import (
     Semantic,
     CMRSemantic,
     ProductTNorm,
