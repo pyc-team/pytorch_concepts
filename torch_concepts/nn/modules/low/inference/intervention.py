@@ -291,6 +291,7 @@ class _InterventionWrapper(nn.Module):
         strategy: RewiringIntervention,
         quantile: float,
         subset: Optional[List[int]] = None,
+        eps: float = 1e-12,
     ):
         super().__init__()
         self.original = original
@@ -298,6 +299,7 @@ class _InterventionWrapper(nn.Module):
         self.strategy = strategy
         self.quantile = float(quantile)
         self.subset = subset
+        self.eps = eps
         if hasattr(original, "module_class"):
             if hasattr(original.module_class, "forward_to_check"):
                 self.forward_to_check = original.module_class.forward_to_check
@@ -327,7 +329,7 @@ class _InterventionWrapper(nn.Module):
             mask.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), keep_col)
 
             # STE proxy (optional; keeps gradients flowing on the selected col)
-            row_max = sel.max(dim=1, keepdim=True).values + 1e-12
+            row_max = sel.max(dim=1, keepdim=True).values + self.eps
             soft_sel = torch.log1p(sel) / torch.log1p(row_max)  # [B,1]
             soft_proxy = torch.ones_like(policy_logits)
             soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
