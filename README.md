@@ -237,6 +237,11 @@ Thanks to all contributors! 🧡
   <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" />
 </a>
 
+## External Contributors
+
+- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
+- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
+
 ---
 
 
