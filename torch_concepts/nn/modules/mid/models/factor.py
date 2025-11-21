@@ -89,7 +89,7 @@ class Factor(nn.Module):
 
         # If single concept in list, treat as single Factor
         if n_concepts == 1:
-            assert not isinstance(module_class, list)
+            assert not isinstance(module_class, list), "For single concept, module_class must be a single nn.Module."
             return object.__new__(cls)
 
         # Standardize module_class: single value -> list of N values
