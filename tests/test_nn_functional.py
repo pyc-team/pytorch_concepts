@@ -36,7 +36,7 @@ from torch_concepts.nn.functional import (
     prune_linear_layer,
     _default_concept_names,
 )
-from torch_concepts.semantic import CMRSemantic
+from torch_concepts.nn.modules.low.semantic import CMRSemantic
 
 
 class TestDefaultConceptNames(unittest.TestCase):

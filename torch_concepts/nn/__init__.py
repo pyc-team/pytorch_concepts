@@ -105,7 +105,7 @@ __all__ = [
 
     # Models (high-level)
     "BlackBox",
-    "BlackBox_torch",
+    # "BlackBox_torch",
     "ConceptBottleneckModel",
     "ConceptBottleneckModel_Joint",
 
