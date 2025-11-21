@@ -260,7 +260,7 @@ If you found this library useful for your research article, blog post, or produc
     year = {2025}
 }
 ```
-Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovanni De Felice](https://gdefe.github.io/).
+Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/), [Giovanni De Felice](https://gdefe.github.io/), and [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/).
 
 ---
 

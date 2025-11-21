@@ -287,7 +287,7 @@ If you found this library useful for your research article, blog post, or produc
 
 {% endraw %}
 
-Reference authors: `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_ and `Giovanni De Felice <https://gdefe.github.io/>`_.
+Reference authors: `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_, `Giovanni De Felice <https://gdefe.github.io/>`_, and `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`_.
 
 
 Funding
