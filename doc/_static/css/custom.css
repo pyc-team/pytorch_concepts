@@ -100,17 +100,33 @@ img.index-logo-cropped {
 
 /* Fix for Furo's sidebar structure */
 .sidebar-sticky {
-    position: relative;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
 }
 
 .sidebar-sticky > .sidebar-brand {
     background: var(--color-sidebar-background);
 }
 
+/* Keep logo container truly sticky at top of sidebar */
+.sidebar-logo-container {
+    position: sticky;
+    top: 0;
+    background: var(--color-sidebar-background);
+    z-index: 1000;
+    padding: 0.25rem 0 1rem 0;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-sidebar-background-border);
+}
+
 /* Ensure the scroll container doesn't overlap the logo */
 .sidebar-scroll {
     position: relative;
     z-index: 10;
+    flex: 1;
+    overflow-y: auto;
 }
 
 /* Ensure navigation doesn't overlap the logo */
