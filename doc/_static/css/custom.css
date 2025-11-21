@@ -137,6 +137,70 @@ section#torch-spatiotemporal h1 {
     transform: unset;
 }
 
+/* Funding Carousel */
+.funding-carousel-container {
+    overflow: hidden;
+    width: 100%;
+    padding: 2rem 0;
+    background: transparent;
+    position: relative;
+}
+
+.funding-carousel-track {
+    display: flex;
+    gap: 4rem;
+    animation: scroll-logos 20s linear infinite;
+    width: max-content;
+}
+
+.funding-carousel-track:hover {
+    animation-play-state: paused;
+}
+
+.funding-logo-item {
+    flex-shrink: 0;
+    width: 180px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: grayscale(100%) opacity(0.7);
+    transition: all 0.3s ease;
+}
+
+.funding-logo-item:hover {
+    filter: grayscale(0%) opacity(1);
+    transform: scale(1.1);
+}
+
+.funding-logo-item img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+@keyframes scroll-logos {
+    0% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(-50%);
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .funding-logo-item {
+        width: 120px;
+        height: 60px;
+    }
+
+    .funding-carousel-track {
+        gap: 2rem;
+        animation-duration: 15s;
+    }
+}
+
 /* Tables */
 
 table.docutils {

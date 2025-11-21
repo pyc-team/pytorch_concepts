@@ -283,6 +283,38 @@ If you found this library useful for your research article, blog post, or produc
 Reference authors: `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_ and `Giovanni De Felice <https://gdefe.github.io/>`_.
 
 
+Funding
+-------
+
+This project is supported by the following organizations:
+
+.. raw:: html
+
+   <div class="funding-carousel-container">
+      <div class="funding-carousel-track">
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders">
+         </div>
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/hasler.png" alt="Hasler Foundation">
+         </div>
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation">
+         </div>
+         <!-- Duplicate logos for seamless loop -->
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders">
+         </div>
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/hasler.png" alt="Hasler Foundation">
+         </div>
+         <div class="funding-logo-item">
+            <img src="_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation">
+         </div>
+      </div>
+   </div>
+
+
 Indices and Tables
 ------------------
 
