@@ -449,7 +449,7 @@ def intervention(
     else:
         ref_model = strategies.model
 
-    originals: List[nn.Module] = []
+    originals: List[tuple[str, nn.Module]] = []
 
     try:
         if isinstance(target_concepts[0], int):
@@ -462,7 +462,7 @@ def intervention(
                 policy=policies,
                 strategy=strategies,
                 quantile=quantiles,
-                subset=target_concepts
+                subset=target_concepts  # type: ignore
             )
             yield wrap
 
