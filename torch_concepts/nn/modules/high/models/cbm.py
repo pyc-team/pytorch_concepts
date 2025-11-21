@@ -2,9 +2,9 @@ from typing import Any, Dict, List, Optional, Type, Union, Mapping
 from torch import nn
 import torch
 
-from torch_concepts.typing import BackboneType
-
 from .....annotations import Annotations
+from .....typing import BackboneType
+
 from ....modules.mid.constructors.bipartite import BipartiteModel
 from ....modules.low.encoders.linear import ProbEncoderFromEmb
 from ....modules.low.predictors.linear import ProbPredictor
@@ -50,6 +50,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
     ) -> None:
         # Initialize using super() to properly handle MRO
         super().__init__(
+            #-- Learner args
             loss=loss,
             metrics=metrics,
             annotations=annotations,
@@ -62,6 +63,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             scale_concepts=scale_concepts,
             enable_summary_metrics=enable_summary_metrics,
             enable_perconcept_metrics=enable_perconcept_metrics,
+            # -- BaseModel args
             input_size=input_size,
             embs_precomputed=embs_precomputed,
             backbone=backbone,
@@ -105,8 +107,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # inference
         # get logits for the query concepts
         # (b, encoder_out_features) -> (b, sum(concept_cardinalities))
-        out = self.inference.query(query, evidence={'embedding': features})
-        return out
+        logits = self.inference.query(query, evidence={'embedding': features})
+        return logits
 
     def filter_output_for_loss(self, forward_out, target):
         """No filtering needed - return raw logits for standard loss computation.
