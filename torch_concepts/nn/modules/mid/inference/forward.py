@@ -228,7 +228,7 @@ class ForwardInference(BaseInference):
 
         return concept_name, output_tensor
 
-    def predict(self, external_inputs: Dict[str, torch.Tensor], debug: bool = False) -> Dict[str, torch.Tensor]:
+    def predict(self, external_inputs: Dict[str, torch.Tensor], debug: bool = False, device: str = 'auto') -> Dict[str, torch.Tensor]:
         """
         Perform forward pass prediction across the entire probabilistic model.
 
@@ -239,10 +239,29 @@ class ForwardInference(BaseInference):
         Args:
             external_inputs: Dictionary mapping root variable names to input tensors.
             debug: If True, runs sequentially for easier debugging (disables parallelism).
+            device: Device to use for computation. Options:
+                - 'auto' (default): Automatically detect and use CUDA if available, else CPU
+                - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
+                - 'cpu': Force use of CPU even if CUDA is available
 
         Returns:
             Dictionary mapping concept names to their output tensors.
+
+        Raises:
+            RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
         """
+        # Determine which device to use
+        if device == 'auto':
+            use_cuda = torch.cuda.is_available()
+        elif device in ['cuda', 'gpu']:
+            if not torch.cuda.is_available():
+                raise RuntimeError(f"device='{device}' was specified but CUDA is not available")
+            use_cuda = True
+        elif device == 'cpu':
+            use_cuda = False
+        else:
+            raise ValueError(f"Invalid device '{device}'. Must be 'auto', 'cuda', 'gpu', or 'cpu'")
+
         results: Dict[str, torch.Tensor] = {}
 
         levels = getattr(self, "levels", None)
@@ -262,7 +281,7 @@ class ForwardInference(BaseInference):
             level_outputs = []
 
             # GPU: parallel via CUDA streams
-            if torch.cuda.is_available():
+            if use_cuda:
                 streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
 
                 for var, stream in zip(level, streams):
@@ -332,7 +351,7 @@ class ForwardInference(BaseInference):
 
         return parent_kwargs
 
-    def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False) -> torch.Tensor:
+    def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False, device: str = 'auto') -> torch.Tensor:
         """
         Execute forward pass and return only specified concepts concatenated.
 
@@ -343,6 +362,10 @@ class ForwardInference(BaseInference):
             query_concepts: List of concept names to retrieve (e.g., ["C", "B", "A"]).
             evidence: Dictionary of {root_concept_name: input_tensor}.
             debug: If True, runs in debug mode (sequential execution).
+            device: Device to use for computation. Options:
+                - 'auto' (default): Automatically detect and use CUDA if available, else CPU
+                - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
+                - 'cpu': Force use of CPU even if CUDA is available
 
         Returns:
             Single tensor containing concatenated predictions for requested concepts,
@@ -352,9 +375,10 @@ class ForwardInference(BaseInference):
             ValueError: If requested concept was not computed.
             RuntimeError: If batch sizes don't match across concepts.
             RuntimeError: If concatenation produces unexpected feature dimension.
+            RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
         """
         # 1. Run the full forward pass to get all necessary predictions
-        all_predictions = self.predict(evidence, debug=debug)
+        all_predictions = self.predict(evidence, debug=debug, device=device)
 
         # 2. Filter and concatenate results
         result_tensors = []
