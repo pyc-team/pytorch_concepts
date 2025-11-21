@@ -263,25 +263,13 @@ Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovann
 
 This project is supported by the following organizations:
 
-<div align="center">
-  <div style="overflow: hidden; width: 100%; padding: 2rem 0;">
-    <div style="display: flex; gap: 4rem; animation: scroll-logos 20s linear infinite; width: max-content;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-      <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="80px" style="filter: grayscale(100%) opacity(0.7); transition: all 0.3s ease;">
-    </div>
-  </div>
-</div>
-
-<style>
-@keyframes scroll-logos {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-</style>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
+</p>
 
 ---
 
