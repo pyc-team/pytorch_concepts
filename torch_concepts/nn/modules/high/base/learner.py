@@ -42,15 +42,24 @@ class BaseLearner(pl.LightningModule):
         
         super(BaseLearner, self).__init__(**kwargs)
 
-        self.loss_fn = loss(annotations=annotations)
+        # Add distribution information to annotations metadata
+        annotations = add_distribution_to_annotations(
+            annotations, variable_distributions
+        )
+
+        # concept info
+        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.metadata = self.concept_annotations.metadata
+        self.concept_names = self.concept_annotations.labels
+        self.n_concepts = len(self.concept_names)
+        self.types = [self.metadata[name]['type'] for name in self.concept_names]
+        self.groups = get_concept_groups(self.concept_annotations)
+
+        self.loss_fn = loss(annotations=self.concept_annotations)
 
         # transforms
         self.preprocess_inputs = preprocess_inputs
         self.scale_concepts = scale_concepts
-
-        # metrics configuration
-        self.enable_summary_metrics = enable_summary_metrics
-        self.enable_perconcept_metrics = enable_perconcept_metrics
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -58,18 +67,9 @@ class BaseLearner(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs or dict()
 
-        # Add distribution information to annotations metadata
-        annotations = add_distribution_to_annotations(
-            annotations, variable_distributions
-        )
-        # concept info
-        self.concept_annotations = annotations.get_axis_annotation(1)
-        self.metadata = self.concept_annotations.metadata
-        self.concept_names = self.concept_annotations.labels
-        self.n_concepts = len(self.concept_names)
-        self.types = [self.metadata[name]['type'] for name in self.concept_names]
-
-        self.groups = get_concept_groups(self.concept_annotations)
+        # metrics configuration
+        self.enable_summary_metrics = enable_summary_metrics
+        self.enable_perconcept_metrics = enable_perconcept_metrics
 
         # Setup and instantiate metrics
         self._setup_metrics(metrics)

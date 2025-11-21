@@ -1,0 +1,17 @@
+_target_: "torch_concepts.nn.WeightedConceptLoss"
+_partial_: true
+weight: 0.8 # weight applied to concepts, (1-weight) applied to task
+task_names: ${model.task_names}
+
+fn_collection:
+  discrete:
+    binary: 
+      path: "torch.nn.BCEWithLogitsLoss"
+      kwargs: {}
+    categorical: 
+      path: "torch.nn.CrossEntropyLoss"
+      kwargs: {}
+
+  continuous: 
+    path: "torch.nn.MSELoss"
+    kwargs: {}

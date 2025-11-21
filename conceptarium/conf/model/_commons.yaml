@@ -1,6 +1,5 @@
 defaults:
   - metrics: _default
-  - loss: _default
   - _self_
 
 
@@ -8,7 +7,7 @@ encoder_kwargs:
   hidden_size: 64
   n_layers: 1
   activation: leaky_relu
-  dropout: 0.2
+  dropout: 0.5
 
 
 # learner parameters
