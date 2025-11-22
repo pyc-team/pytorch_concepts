@@ -30,6 +30,7 @@ class ColorMNISTDataModule(ConceptDataModule):
     def __init__(
         self,
         seed, # seed for data generation
+        root: str,
         transform: Union[Compose, torch.nn.Module] = None,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
@@ -42,27 +43,28 @@ class ColorMNISTDataModule(ConceptDataModule):
         label_descriptions: dict | None = None,
         workers: int = 0,
         coloring: dict | None = None,
-        DATA_ROOT = None,
     ):
 
         # add to coloring the field "percentages" according to the split, to generate data accordingly
         coloring['training_percentage'] = 1.0 - test_size
         coloring['test_percentage'] = test_size
 
-        dataset = ColorMNISTDataset(root=os.path.join(DATA_ROOT, "colormnist"),
-                       seed=seed,
-                       concept_subset=concept_subset,
-                       label_descriptions=label_descriptions,
-                       task_type=task_type,
-                       transform=transform,
-                       coloring=coloring
-                       )
-
-        splitter = ColoringSplitter(root=os.path.join(DATA_ROOT, "colormnist"),
-                                    seed=seed,
-                                    val_size=val_size,
-                                    test_size=test_size
-                                    )
+        dataset = ColorMNISTDataset(
+            root=root,
+            seed=seed,
+            concept_subset=concept_subset,
+            label_descriptions=label_descriptions,
+            task_type=task_type,
+            transform=transform,
+            coloring=coloring
+        )
+    
+        splitter = ColoringSplitter(
+            root=root,
+            seed=seed,
+            val_size=val_size,
+            test_size=test_size
+        )
         
         super().__init__(
             dataset=dataset,

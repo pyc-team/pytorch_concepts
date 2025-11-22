@@ -29,6 +29,7 @@ class BnLearnDataModule(ConceptDataModule):
         self,
         seed: int, # seed for data generation
         name: str, # name of the bnlearn DAG
+        root: str,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
@@ -40,16 +41,17 @@ class BnLearnDataModule(ConceptDataModule):
         label_descriptions: dict | None = None,
         autoencoder_kwargs: dict | None = None,
         workers: int = 0,
-        DATA_ROOT = None,
+        **kwargs
     ):
-        dataset = BnLearnDataset(name=name,
-                                 root=os.path.join(DATA_ROOT, name),
-                                 seed=seed,
-                                 n_gen=n_gen,
-                                 concept_subset=concept_subset,
-                                 label_descriptions=label_descriptions,
-                                 autoencoder_kwargs=autoencoder_kwargs
-                                 )
+        dataset = BnLearnDataset(
+            name=name,
+            root=root,
+            seed=seed,
+            n_gen=n_gen,
+            concept_subset=concept_subset,
+            label_descriptions=label_descriptions,
+            autoencoder_kwargs=autoencoder_kwargs
+        )
         
         super().__init__(
             dataset=dataset,

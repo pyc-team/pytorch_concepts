@@ -6,7 +6,7 @@ This module provides helper functions for:
 - Dynamic class loading and instantiation
 - Managing concept annotations and distributions
 """
-
+import os
 import torch
 import logging
 import torch
@@ -36,10 +36,14 @@ def setup_run_env(cfg: DictConfig):
     seed_everything(cfg.get("seed"))
     if cfg.get("matmul_precision", None) is not None:
         torch.set_float32_matmul_precision(cfg.matmul_precision)
-    # set DATA_ROOT
-    if not cfg.get("DATA_ROOT"):
+    # set data root
+    if not cfg.dataset.get("root"):
+        if "name" not in cfg.dataset:
+            raise ValueError("If data root is not set, dataset name must be " 
+            "specified in cfg.dataset.name to set data root.")
+        data_root = os.path.join(DATA_ROOT, cfg.dataset.get("name"))
         with open_dict(cfg):
-            cfg.dataset.update(DATA_ROOT=DATA_ROOT)
+            cfg.dataset.update(root = data_root)
     return cfg
 
 def clean_empty_configs(cfg: DictConfig) -> DictConfig:
