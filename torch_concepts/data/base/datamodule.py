@@ -203,7 +203,7 @@ class ConceptDataModule(LightningDataModule):
                 _set = None  # Empty split
             setattr(self, name, _set)
 
-    def maybe_use_backbone_embs(self, precompute_embs: bool = False, verbose: bool = True):
+    def maybe_use_backbone_embs(self, precompute_embs: bool = False, backbone_device: Optional[str] = None, verbose: bool = True):
         if verbose:
             logger.info(f"Input shape: {tuple(self.dataset.input_data.shape)}")
         if precompute_embs:
@@ -216,6 +216,7 @@ class ConceptDataModule(LightningDataModule):
                     batch_size=self.batch_size,
                     force_recompute=self.force_recompute,  # whether to recompute embeddings even if cached
                     workers=self.workers,
+                    device=backbone_device,
                     verbose=verbose,
                 )
                 self.dataset.input_data = embs
@@ -234,7 +235,7 @@ class ConceptDataModule(LightningDataModule):
                 if self.backbone is not None:
                     logger.info("Note: Backbone provided but precompute_embs=False. Using raw input data.")
 
-    def preprocess(self, precompute_embs: bool = False, verbose: bool = True):
+    def preprocess(self, precompute_embs: bool = False, backbone_device: Optional[str] = None, verbose: bool = True):
         """
         Preprocess the data. This method can be overridden by subclasses to
         implement custom preprocessing logic.
@@ -246,11 +247,13 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.maybe_use_backbone_embs(precompute_embs, verbose=verbose)
+        self.maybe_use_backbone_embs(precompute_embs, backbone_device=backbone_device, verbose=verbose)
 
-
-
-    def setup(self, stage: StageOptions = None, verbose: bool = True):
+    def setup(
+            self, 
+            stage: StageOptions = None, 
+            backbone_device: Optional[str] = None,
+            verbose: Optional[bool] = True):
         """
         Prepare the data. This method is called by Lightning with both
         'fit' and 'test' stages.
@@ -275,7 +278,10 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.preprocess(self.precompute_embs, verbose=verbose)
+        self.preprocess(
+            precompute_embs=self.precompute_embs, 
+            backbone_device=backbone_device,
+            verbose=verbose)
 
         # ----------------------------------
         # Splitting

@@ -132,7 +132,7 @@ class AutoencoderTrainer:
             epochs: int = 2000,
             batch_size: int = 512,
             patience: int = 50,
-            device='cpu'
+            device=None
     ):  
         self.noise_level = noise
         self.latend_dim = latent_dim
@@ -141,12 +141,17 @@ class AutoencoderTrainer:
         self.batch_size = batch_size
         self.patience = patience
 
+        if device is None:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+
         self.model = SimpleAutoencoder(input_shape, self.latend_dim)
-        self.model.to(device)
+        self.model.to(self.device)
 
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-        self.device = device
+        
         self.best_model_wts = None
 
     def train(self, dataset):
@@ -238,6 +243,7 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
     Args:
         df: Input pandas DataFrame.
         autoencoder_kwargs: Dictionary of keyword arguments for AutoencoderTrainer.
+            Can include 'device' to specify training device (default: 'cpu').
 
     Returns:
         torch.Tensor: Latent representations of shape (n_samples, latent_dim).
@@ -257,7 +263,8 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
         ...         'latent_dim': 10,
         ...         'epochs': 50,
         ...         'batch_size': 32,
-        ...         'noise': 0.1
+        ...         'noise': 0.1,
+        ...         'device': 'cpu'  # or 'cuda' if desired
         ...     }
         ... )
         >>> print(embeddings.shape)
@@ -266,12 +273,9 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
     # Convert DataFrame to tensor
     data = torch.tensor(df.values, dtype=torch.float32)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     # Train autoencoder
     trainer = AutoencoderTrainer(
         input_shape=data.shape[1],
-        device=device,
         **autoencoder_kwargs
     )
     

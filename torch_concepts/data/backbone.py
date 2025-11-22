@@ -17,6 +17,7 @@ def compute_backbone_embs(
     backbone: nn.Module,
     batch_size: int = 512,
     workers: int = 0,
+    device: str = None,
     verbose: bool = True
 ) -> torch.Tensor:
     """Extract embeddings from a dataset using a backbone model.
@@ -26,10 +27,12 @@ def compute_backbone_embs(
     to avoid repeated backbone computation during training.
     
     Args:
-        dataset: Dataset with __getitem__ returning dict with 'x' key.
+        dataset: Dataset with __getitem__ returning dict with 'x' key or 'inputs'.'x' nested key.
         backbone (nn.Module): Feature extraction model (e.g., ResNet encoder).
         batch_size (int, optional): Batch size for processing. Defaults to 512.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
+        device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.). 
+            If None, auto-detects ('cuda' if available, else 'cpu'). Defaults to None.
         verbose (bool, optional): Print detailed logging information. Defaults to True.
         
     Returns:
@@ -38,13 +41,15 @@ def compute_backbone_embs(
     Example:
         >>> from torchvision.models import resnet18
         >>> backbone = nn.Sequential(*list(resnet18(pretrained=True).children())[:-1])
-        >>> embeddings = compute_backbone_embs(my_dataset, backbone, batch_size=64)
+        >>> embeddings = compute_backbone_embs(my_dataset, backbone, batch_size=64, device='cuda')
         >>> embeddings.shape
         torch.Size([10000, 512])
     """
     
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Set device with auto-detection if None
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(device)
     
     # Store original training state to restore later
     was_training = backbone.training
@@ -68,7 +73,11 @@ def compute_backbone_embs(
     with torch.no_grad():
         iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
         for batch in iterator:
-            x = batch['x'].to(device) # Extract input data from batch
+            # Handle both {'x': tensor} and {'inputs': {'x': tensor}} structures
+            if 'inputs' in batch:
+                x = batch['inputs']['x'].to(device)
+            else:
+                x = batch['x'].to(device)
             embeddings = backbone(x) # Forward pass through backbone
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
@@ -86,6 +95,7 @@ def get_backbone_embs(path: str,
                     batch_size,
                     force_recompute=False,
                     workers=0,
+                    device=None,
                     verbose=True):
     """Get backbone embeddings with automatic caching.
     
@@ -99,6 +109,8 @@ def get_backbone_embs(path: str,
         batch_size: Batch size for computation.
         force_recompute (bool, optional): Recompute even if cached. Defaults to False.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
+        device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.).
+            If None, auto-detects ('cuda' if available, else 'cpu'). Defaults to None.
         verbose (bool, optional): Print detailed logging information. Defaults to True.
         
     Returns:
@@ -109,7 +121,8 @@ def get_backbone_embs(path: str,
         ...     path='cache/mnist_resnet18.pt',
         ...     dataset=train_dataset,
         ...     backbone=my_backbone,
-        ...     batch_size=256
+        ...     batch_size=256,
+        ...     device='cuda'
         ... )
         Loading precomputed embeddings from cache/mnist_resnet18.pt
     """
@@ -120,6 +133,7 @@ def get_backbone_embs(path: str,
                                     backbone,
                                     batch_size=batch_size,
                                     workers=workers,
+                                    device=device,
                                     verbose=verbose)
         # save
         if verbose:
