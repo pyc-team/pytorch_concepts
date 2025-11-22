@@ -61,16 +61,16 @@ class ConceptDataset(Dataset):
         >>> len(dataset)
         100
     """
-    def __init__(self,
-                 input_data: Union[np.ndarray, pd.DataFrame, Tensor],
-                 concepts: Union[np.ndarray, pd.DataFrame, Tensor],
-                 annotations: Optional[Annotations] = None,
-                 graph: Optional[pd.DataFrame] = None,
-                 concept_names_subset: Optional[List[str]] = None,
-                 precision: Union[int, str] = 32,
-                 name: Optional[str] = None,
-                 # TODO
-                 exogenous: Optional[Mapping[str, Union[np.ndarray, pd.DataFrame, Tensor]]] = None
+    def __init__(
+        self,
+        input_data: Union[np.ndarray, pd.DataFrame, Tensor],
+        concepts: Union[np.ndarray, pd.DataFrame, Tensor],
+        annotations: Optional[Annotations] = None,
+        graph: Optional[pd.DataFrame] = None,
+        concept_names_subset: Optional[List[str]] = None,
+        precision: Union[int, str] = 32,
+        name: Optional[str] = None,
+        # TODO: implement handling of exogenous inputs
     ):
         super(ConceptDataset, self).__init__()
 
@@ -140,13 +140,6 @@ class ConceptDataset(Dataset):
         self._graph = None
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
-
-        # Store exogenous variables
-        # self.exogenous = dict()
-        if exogenous is not None:
-            # for name, value in exogenous.items():
-            #     self.add_exogenous(name, value)
-            raise NotImplementedError("Exogenous variables are not supported for now.")
 
     def __repr__(self):
         """

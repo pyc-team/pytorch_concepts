@@ -72,20 +72,22 @@ class ConceptDataModule(LightningDataModule):
         >>> train_loader = datamodule.train_dataloader()
     """
 
-    def __init__(self,
-                 dataset: ConceptDataset,
-                 val_size: float = 0.1,
-                 test_size: float = 0.2,
-                 ftune_size: float = 0.0,
-                 ftune_val_size: float = 0.0,
-                 batch_size: int = 64,
-                 backbone: BackboneType = None,     # optional backbone
-                 precompute_embs: bool = False,
-                 force_recompute: bool = False,      # whether to recompute embeddings even if cached
-                 scalers: Optional[Mapping] = None, # optional custom scalers
-                 splitter: Optional[object] = None, # optional custom splitter
-                 workers: int = 0,
-                 pin_memory: bool = False):
+    def __init__(
+        self,
+        dataset: ConceptDataset,
+        val_size: float = 0.1,
+        test_size: float = 0.2,
+        ftune_size: float = 0.0,
+        ftune_val_size: float = 0.0,
+        batch_size: int = 64,
+        backbone: BackboneType = None,     # optional backbone
+        precompute_embs: bool = False,
+        force_recompute: bool = False, # whether to recompute embeddings even if cached
+        scalers: Optional[Mapping] = None, # optional custom scalers
+        splitter: Optional[object] = None, # optional custom splitter
+        workers: int = 0,
+        pin_memory: bool = False
+    ):
         super(ConceptDataModule, self).__init__()
         self.dataset = dataset
 
