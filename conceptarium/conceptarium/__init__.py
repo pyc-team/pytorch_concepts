@@ -5,7 +5,7 @@ This module provides PyTorch Lightning-based training infrastructure,
 including trainers, experiment utilities, and W&B integration.
 """
 
-from .trainer import Trainer, GradientMonitor_afterB
+from .trainer import Trainer
 from .utils import (
     seed_everything,
     setup_run_env,
@@ -25,7 +25,6 @@ from .resolvers import register_custom_resolvers
 __all__ = [
     # Trainer
     "Trainer",
-    "GradientMonitor_afterB",
 
     # Utilities
     "seed_everything",

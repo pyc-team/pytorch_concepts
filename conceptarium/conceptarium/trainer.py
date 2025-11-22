@@ -8,7 +8,6 @@ and automatic device selection.
 from time import time
 
 from omegaconf import DictConfig
-import pytorch_lightning as pl
 from pytorch_lightning import Trainer as _Trainer_
 from pytorch_lightning.callbacks import (
     EarlyStopping,
@@ -22,29 +21,7 @@ from torch import cuda
 from env import PROJECT_NAME, WANDB_ENTITY
 from hydra.core.hydra_config import HydraConfig
 from conceptarium.hydra import parse_hyperparams
-from wandb.sdk.lib.runid import generate_id
-
-class GradientMonitor_afterB(pl.Callback):
-    """Debug callback to monitor gradient norms after backward pass.
-    
-    Prints the L2 norm of gradients for all model parameters after each
-    backward pass. Useful for debugging gradient flow issues.
-    
-    Note:
-        Currently commented out in Trainer by default. Uncomment to enable.
-    """
-    def on_after_backward(self, trainer, pl_module):
-        """Print gradient norms after backward pass.
-        
-        Args:
-            trainer: PyTorch Lightning trainer instance.
-            pl_module: LightningModule being trained.
-        """
-        norms = []
-        for p in pl_module.parameters():
-            if p.grad is not None:
-                norms.append(p.grad.norm().item())
-        print(f"Gradient Norms after backward: {norms}")       
+from wandb.sdk.lib.runid import generate_id     
         
 def _get_logger(cfg: DictConfig):
     """Create and configure a W&B logger from Hydra config.
@@ -146,7 +123,6 @@ class Trainer(_Trainer_):
                 logging_interval="step",
             )
         )
-        # callbacks.append(GradientMonitor_afterB())
         if cuda.is_available():
             accelerator = "gpu"
         else:
