@@ -6,7 +6,7 @@ from ....modules.mid.constructors.bipartite import BipartiteModel
 from ....modules.low.encoders.exogenous import ExogEncoder
 from ....modules.low.encoders.linear import ProbEncoderFromExog
 from ....modules.low.predictors.embedding import MixProbExogPredictor
-from ....modules.propagator import Propagator
+from ....modules.propagator import LazyConstructor
 
 from ..base.model import BaseModel
 
@@ -32,12 +32,12 @@ class CEM(BaseModel):
             encoder_kwargs=encoder_kwargs,
         )
 
-        exogenous_encoder = Propagator(ExogEncoder, 
+        exogenous_encoder = LazyConstructor(ExogEncoder, 
                                        embedding_size=embedding_size*2)
         
-        concept_encoder = Propagator(ProbEncoderFromExog)
+        concept_encoder = LazyConstructor(ProbEncoderFromExog)
 
-        concept_predictor = Propagator(MixProbExogPredictor)
+        concept_predictor = LazyConstructor(MixProbExogPredictor)
 
         self.model = BipartiteModel(task_names=task_names,
                                     exogenous=exogenous_encoder,

@@ -53,7 +53,7 @@ from torch_concepts.nn import (
     BipartiteModel, 
     ProbEncoderFromEmb, 
     ProbPredictor, 
-    Propagator,
+    LazyConstructor,
     BaseInference
 )
 
@@ -104,8 +104,8 @@ class YourModel(BaseModel):
             task_names=task_names,
             input_size=self.encoder_out_features,
             annotations=annotations,
-            encoder=Propagator(ProbEncoderFromEmb),
-            predictor=Propagator(ProbPredictor)
+            encoder=LazyConstructor(ProbEncoderFromEmb),
+            predictor=LazyConstructor(ProbPredictor)
         )
         self.pgm = model.pgm
         
@@ -320,12 +320,12 @@ encoders = Factor(['age', 'gender'],
                  module_class=[ProbEncoderFromEmb(...), ProbEncoderFromEmb(...)])
 ```
 
-#### Propagator
+#### LazyConstructor
 Utility for automatically instantiating modules for multiple concepts:
 
 ```python
 # Creates one ProbEncoderFromEmb per concept
-encoder = Propagator(ProbEncoderFromEmb)
+encoder = LazyConstructor(ProbEncoderFromEmb)
 ```
 
 #### Inference

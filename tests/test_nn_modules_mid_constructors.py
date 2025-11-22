@@ -7,10 +7,10 @@ import unittest
 import torch
 import pandas as pd
 from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
-from torch_concepts.nn.modules.mid.constructors.bipartite import BipartiteModel
-from torch_concepts.nn.modules.mid.constructors.graph import GraphModel
-from torch_concepts.nn.modules.propagator import Propagator
+from torch_concepts import ConceptGraph
+from torch_concepts.nn import BipartiteModel
+from torch_concepts.nn import GraphModel
+from torch_concepts.nn import LazyConstructor
 from torch.distributions import Bernoulli
 
 
@@ -39,8 +39,8 @@ class TestBipartiteModel(unittest.TestCase):
             task_names=self.task_names,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         self.assertIsNotNone(model)
         self.assertEqual(model.task_names, self.task_names)
@@ -52,8 +52,8 @@ class TestBipartiteModel(unittest.TestCase):
             task_names=self.task_names,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         # In bipartite model, concepts should point to tasks
         # Tasks should not point to themselves
@@ -66,8 +66,8 @@ class TestBipartiteModel(unittest.TestCase):
             task_names=['task1'],
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         self.assertEqual(model.task_names, ['task1'])
 
@@ -94,10 +94,10 @@ class TestBipartiteModel(unittest.TestCase):
             model_graph=graph,
             input_size=784,
             annotations=annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear),
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear),
             use_source_exogenous=True,
-            source_exogenous=Propagator(torch.nn.Linear, embedding_size=784)
+            source_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
         )
         self.assertIsNotNone(model)
 
@@ -107,9 +107,9 @@ class TestBipartiteModel(unittest.TestCase):
             task_names=self.task_names,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear),
-            internal_exogenous=Propagator(torch.nn.Linear, embedding_size=784)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear),
+            internal_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
         )
         self.assertIsNotNone(model)
 
@@ -143,8 +143,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=self.graph,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         self.assertIsNotNone(model)
         self.assertTrue(self.graph.is_dag())
@@ -155,8 +155,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=self.graph,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         # A and B have no parents (root nodes)
         # C and D have parents (internal nodes)
@@ -173,8 +173,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=self.graph,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         order = model.graph_order
         # Check that parents come before children
@@ -206,8 +206,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=graph,
             input_size=784,
             annotations=annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         self.assertEqual(len(model.root_nodes), 1)
         self.assertIn('A', model.root_nodes)
@@ -235,8 +235,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=graph,
             input_size=784,
             annotations=annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         # Should have 2 root nodes (A and C)
         self.assertEqual(len(model.root_nodes), 2)
@@ -266,10 +266,10 @@ class TestGraphModel(unittest.TestCase):
             model_graph=graph,
             input_size=784,
             annotations=annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear),
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear),
             use_source_exogenous=True,
-            source_exogenous=Propagator(torch.nn.Linear, embedding_size=784)
+            source_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
         )
         self.assertIsNotNone(model)
 
@@ -279,9 +279,9 @@ class TestGraphModel(unittest.TestCase):
             model_graph=self.graph,
             input_size=784,
             annotations=self.annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear),
-            internal_exogenous=Propagator(torch.nn.Linear, embedding_size=784)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear),
+            internal_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
         )
         self.assertIsNotNone(model)
 
@@ -307,8 +307,8 @@ class TestGraphModel(unittest.TestCase):
             model_graph=graph,
             input_size=784,
             annotations=annotations,
-            encoder=Propagator(torch.nn.Linear),
-            predictor=Propagator(torch.nn.Linear)
+            encoder=LazyConstructor(torch.nn.Linear),
+            predictor=LazyConstructor(torch.nn.Linear)
         )
         # A is the only root
         self.assertEqual(len(model.root_nodes), 1)

@@ -7,7 +7,7 @@ defining the structure for models that use concept representations.
 import torch
 
 from .....annotations import Annotations
-from ...propagator import Propagator
+from ...low.lazy import LazyConstructor
 
 
 class BaseConstructor(torch.nn.Module):
@@ -25,15 +25,15 @@ class BaseConstructor(torch.nn.Module):
     Args:
         input_size: Size of the input features.
         annotations: Annotations object containing concept metadata.
-        encoder: Propagator layer for encoding root concepts from inputs.
-        predictor: Propagator layer for making predictions from concepts.
+        encoder: LazyConstructor layer for encoding root concepts from inputs.
+        predictor: LazyConstructor layer for making predictions from concepts.
         *args: Variable length argument list.
         **kwargs: Arbitrary keyword arguments.
 
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BaseModel, Propagator
+        >>> from torch_concepts.nn import BaseModel, LazyConstructor
         >>>
         >>> # Create annotations for concepts
         >>> concept_labels = ('color', 'shape', 'size')
@@ -84,8 +84,8 @@ class BaseConstructor(torch.nn.Module):
     def __init__(self,
                  input_size: int,
                  annotations: Annotations,
-                 encoder: Propagator,  # layer for root concepts
-                 predictor: Propagator,
+                 encoder: LazyConstructor,  # layer for root concepts
+                 predictor: LazyConstructor,
                  *args,
                  **kwargs,
                  ):

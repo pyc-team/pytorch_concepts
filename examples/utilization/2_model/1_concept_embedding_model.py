@@ -4,7 +4,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
+from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor, \
     MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy
 
 
@@ -32,9 +32,9 @@ def main():
     concept_model = BipartiteModel(task_names=task_names,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=12),
-                                   encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(MixProbExogPredictor),
+                                   source_exogenous=LazyConstructor(ExogEncoder, embedding_size=12),
+                                   encoder=LazyConstructor(ProbEncoderFromExog),
+                                   predictor=LazyConstructor(MixProbExogPredictor),
                                    use_source_exogenous=True)
 
     # Inference Initialization

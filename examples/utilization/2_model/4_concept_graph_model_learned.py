@@ -5,7 +5,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, Propagator, \
+from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, LazyConstructor, \
     ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
     HyperLinearPredictor, GraphModel, WANDAGraphLearner
 
@@ -48,10 +48,10 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=11),
-                                   internal_exogenous=Propagator(ExogEncoder, embedding_size=7),
-                                   encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(HyperLinearPredictor, embedding_size=20),)
+                                   source_exogenous=LazyConstructor(ExogEncoder, embedding_size=11),
+                                   internal_exogenous=LazyConstructor(ExogEncoder, embedding_size=7),
+                                   encoder=LazyConstructor(ProbEncoderFromExog),
+                                   predictor=LazyConstructor(HyperLinearPredictor, embedding_size=20),)
 
     # graph learning init
     graph_learner = WANDAGraphLearner(concept_names, task_names)

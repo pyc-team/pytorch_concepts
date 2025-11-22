@@ -5,7 +5,7 @@ import torch
 
 from .....annotations import Annotations
 from .concept_graph import ConceptGraph
-from ...propagator import Propagator
+from ...low.lazy import LazyConstructor
 from .graph import GraphModel
 
 
@@ -26,8 +26,8 @@ class BipartiteModel(GraphModel):
         task_names: List of task names (must be in annotations labels).
         input_size: Size of input features.
         annotations: Annotations object with concept and task metadata.
-        encoder: Propagator for encoding concepts from inputs.
-        predictor: Propagator for predicting tasks from concepts.
+        encoder: LazyConstructor for encoding concepts from inputs.
+        predictor: LazyConstructor for predicting tasks from concepts.
         use_source_exogenous: Whether to use exogenous features for source nodes.
         source_exogenous: Optional propagator for source exogenous features.
         internal_exogenous: Optional propagator for internal exogenous features.
@@ -35,7 +35,7 @@ class BipartiteModel(GraphModel):
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BipartiteModel, Propagator
+        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and tasks
@@ -56,8 +56,8 @@ class BipartiteModel(GraphModel):
         ...     task_names=task_names,
         ...     input_size=784,
         ...     annotations=annotations,
-        ...     encoder=Propagator(torch.nn.Linear),
-        ...     predictor=Propagator(torch.nn.Linear)
+        ...     encoder=LazyConstructor(torch.nn.Linear),
+        ...     predictor=LazyConstructor(torch.nn.Linear)
         ... )
         >>>
         >>> # Generate random input
@@ -78,11 +78,11 @@ class BipartiteModel(GraphModel):
             task_names: Union[List[str], str, List[int]],
             input_size: int,
             annotations: Annotations,
-            encoder: Propagator,
-            predictor: Propagator,
+            encoder: LazyConstructor,
+            predictor: LazyConstructor,
             use_source_exogenous: bool = None,
-            source_exogenous: Optional[Propagator] = None,
-            internal_exogenous: Optional[Propagator] = None,
+            source_exogenous: Optional[LazyConstructor] = None,
+            internal_exogenous: Optional[LazyConstructor] = None,
     ):
         # get label names
         label_names = annotations.get_axis_labels(axis=1)

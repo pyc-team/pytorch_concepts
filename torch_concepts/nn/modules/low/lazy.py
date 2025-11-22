@@ -1,5 +1,5 @@
 """
-Propagator module for delayed module instantiation.
+LazyConstructor module for delayed module instantiation.
 
 This module provides a wrapper that delays the instantiation of neural network
 modules until the required dimensions are known, enabling flexible model construction.
@@ -84,11 +84,11 @@ def instantiate_adaptive(module_cls, *args, drop_none=True, **kwargs):
 
 
 
-class Propagator(torch.nn.Module):
+class LazyConstructor(torch.nn.Module):
     """
     Delayed module instantiation wrapper for flexible neural network construction.
 
-    The Propagator class stores a module class and its initialization arguments,
+    The LazyConstructor class stores a module class and its initialization arguments,
     delaying actual instantiation until the required feature dimensions are known.
     This enables building models where concept dimensions are determined dynamically.
 
@@ -102,11 +102,11 @@ class Propagator(torch.nn.Module):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import Propagator
+        >>> from torch_concepts.nn import LazyConstructor
         >>> from torch_concepts.nn import ProbPredictor
         >>>
         >>> # Create a propagator for a predictor
-        >>> propagator = Propagator(
+        >>> lazy_constructorLazyConstructor(
         ...     ProbPredictor,
         ...     activation=torch.sigmoid
         ... )
@@ -130,7 +130,7 @@ class Propagator(torch.nn.Module):
                  *module_args,
                  **module_kwargs):
         """
-        Initialize the Propagator with a module class and its arguments.
+        Initialize the LazyConstructor with a module class and its arguments.
 
         Args:
             module_cls: The class of the module to instantiate later.
@@ -176,10 +176,10 @@ class Propagator(torch.nn.Module):
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.propagator import Propagator
+            >>> from torch_concepts.nn.modules.propagator import LazyConstructor
             >>> from torch_concepts.nn.modules.predictors.linear import ProbPredictor
             >>>
-            >>> propagator = Propagator(ProbPredictor)
+            >>> lazy_constructorLazyConstructor(ProbPredictor)
             >>> module = propagator.build(
             ...     out_features=3,
             ...     in_features_logits=5,
@@ -231,11 +231,11 @@ class Propagator(torch.nn.Module):
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.propagator import Propagator
+            >>> from torch_concepts.nn.modules.propagator import LazyConstructor
             >>> from torch_concepts.nn.modules.predictors.linear import ProbPredictor
             >>>
             >>> # Create and build propagator
-            >>> propagator = Propagator(ProbPredictor)
+            >>> lazy_constructorLazyConstructor(ProbPredictor)
             >>> propagator.build(
             ...     out_features=3,
             ...     in_features_logits=5,
@@ -251,7 +251,7 @@ class Propagator(torch.nn.Module):
         """
         if self.module is None:
             raise RuntimeError(
-                "Propagator module not built. Call .build(in_features, annotations) first."
+                "LazyConstructor module not built. Call .build(in_features, annotations) first."
             )
 
         # Forward calls the *instantiated* module instance

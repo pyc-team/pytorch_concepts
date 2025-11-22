@@ -1,7 +1,7 @@
 """
-Comprehensive tests for torch_concepts.nn.modules.propagator
+Comprehensive tests for torch_concepts.nn.modules.lazy_constructor
 
-Tests the Propagator class for delayed module instantiation:
+Tests the LazyConstructor class for delayed module instantiation:
 - Module storage and building
 - Feature dimension handling
 - Forward pass delegation
@@ -10,8 +10,8 @@ Tests the Propagator class for delayed module instantiation:
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.propagator import (
-    Propagator,
+from torch_concepts.nn.modules.low.lazy import (
+    LazyConstructor,
     _filter_kwargs_for_ctor,
     instantiate_adaptive,
 )
@@ -111,28 +111,28 @@ class TestInstantiateAdaptive(unittest.TestCase):
         self.assertEqual(layer.out_features, 5)
 
 
-class TestPropagator(unittest.TestCase):
-    """Test Propagator class."""
+class TestLazyConstructor(unittest.TestCase):
+    """Test LazyConstructor class."""
 
     def test_initialization(self):
-        """Test Propagator initialization."""
-        propagator = Propagator(nn.Linear)
+        """Test LazyConstructor initialization."""
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        self.assertIsNone(propagator.module)
-        self.assertEqual(propagator._module_cls, nn.Linear)
+        self.assertIsNone(lazy_constructor.module)
+        self.assertEqual(lazy_constructor._module_cls, nn.Linear)
 
     def test_initialization_with_kwargs(self):
         """Test initialization with keyword arguments."""
-        propagator = Propagator(nn.Linear, bias=False)
+        lazy_constructor = LazyConstructor(nn.Linear, bias=False)
 
-        self.assertIn('bias', propagator._module_kwargs)
-        self.assertFalse(propagator._module_kwargs['bias'])
+        self.assertIn('bias', lazy_constructor._module_kwargs)
+        self.assertFalse(lazy_constructor._module_kwargs['bias'])
 
     def test_build_basic(self):
         """Test basic module building."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        module = propagator.build(
+        module = lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -145,9 +145,9 @@ class TestPropagator(unittest.TestCase):
 
     def test_build_combined_features(self):
         """Test building with combined feature dimensions."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        module = propagator.build(
+        module = lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=8,
@@ -159,9 +159,9 @@ class TestPropagator(unittest.TestCase):
 
     def test_build_only_embedding(self):
         """Test with only embedding features."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        module = propagator.build(
+        module = lazy_constructor.build(
             out_features=3,
             in_features_logits=None,
             in_features_embedding=15,
@@ -172,9 +172,9 @@ class TestPropagator(unittest.TestCase):
 
     def test_build_all_none_features(self):
         """Test with all None features (should give 0)."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        module = propagator.build(
+        module = lazy_constructor.build(
             out_features=5,
             in_features_logits=None,
             in_features_embedding=None,
@@ -185,16 +185,16 @@ class TestPropagator(unittest.TestCase):
 
     def test_forward_without_build(self):
         """Test forward pass before building."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
         x = torch.randn(2, 10)
 
         with self.assertRaises(RuntimeError):
-            propagator(x)
+            lazy_constructor(x)
 
     def test_forward_after_build(self):
         """Test forward pass after building."""
-        propagator = Propagator(nn.Linear)
-        propagator.build(
+        lazy_constructor = LazyConstructor(nn.Linear)
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -202,7 +202,7 @@ class TestPropagator(unittest.TestCase):
         )
 
         x = torch.randn(2, 10)
-        output = propagator(x)
+        output = lazy_constructor(x)
 
         self.assertEqual(output.shape, (2, 5))
 
@@ -217,8 +217,8 @@ class TestPropagator(unittest.TestCase):
             def forward(self, x, scale=1.0):
                 return self.linear(x) * scale
 
-        propagator = Propagator(CustomModule)
-        propagator.build(
+        lazy_constructor = LazyConstructor(CustomModule)
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -226,16 +226,16 @@ class TestPropagator(unittest.TestCase):
         )
 
         x = torch.randn(2, 10)
-        output = propagator(x, scale=2.0)
+        output = lazy_constructor(x, scale=2.0)
 
         self.assertEqual(output.shape, (2, 5))
 
     def test_multiple_builds(self):
         """Test that building multiple times updates the module."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
         # First build
-        module1 = propagator.build(
+        module1 = lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -243,7 +243,7 @@ class TestPropagator(unittest.TestCase):
         )
 
         # Second build
-        module2 = propagator.build(
+        module2 = lazy_constructor.build(
             out_features=3,
             in_features_logits=8,
             in_features_embedding=None,
@@ -252,20 +252,20 @@ class TestPropagator(unittest.TestCase):
 
         # Should be different modules
         self.assertIsNot(module1, module2)
-        self.assertEqual(propagator.module.out_features, 3)
+        self.assertEqual(lazy_constructor.module.out_features, 3)
 
     def test_build_returns_module(self):
         """Test that build returns the module."""
-        propagator = Propagator(nn.Linear)
+        lazy_constructor = LazyConstructor(nn.Linear)
 
-        returned = propagator.build(
+        returned = lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
             in_features_exogenous=None
         )
 
-        self.assertIs(returned, propagator.module)
+        self.assertIs(returned, lazy_constructor.module)
 
     def test_build_non_module_error(self):
         """Test error when instantiated object is not a Module."""
@@ -274,10 +274,10 @@ class TestPropagator(unittest.TestCase):
             def __init__(self, **kwargs):
                 pass
 
-        propagator = Propagator(NotAModule)
+        lazy_constructor = LazyConstructor(NotAModule)
 
         with self.assertRaises(TypeError):
-            propagator.build(
+            lazy_constructor.build(
                 out_features=5,
                 in_features_logits=10,
                 in_features_embedding=None,
@@ -285,9 +285,9 @@ class TestPropagator(unittest.TestCase):
             )
 
     def test_gradient_flow(self):
-        """Test that gradients flow through propagator."""
-        propagator = Propagator(nn.Linear)
-        propagator.build(
+        """Test that gradients flow through lazy_constructor."""
+        lazy_constructor = LazyConstructor(nn.Linear)
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -295,7 +295,7 @@ class TestPropagator(unittest.TestCase):
         )
 
         x = torch.randn(2, 10, requires_grad=True)
-        output = propagator(x)
+        output = lazy_constructor(x)
         loss = output.sum()
         loss.backward()
 
@@ -303,21 +303,21 @@ class TestPropagator(unittest.TestCase):
 
     def test_parameters_accessible(self):
         """Test that module parameters are accessible."""
-        propagator = Propagator(nn.Linear)
-        propagator.build(
+        lazy_constructor = LazyConstructor(nn.Linear)
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
             in_features_exogenous=None
         )
 
-        params = list(propagator.parameters())
+        params = list(lazy_constructor.parameters())
         self.assertGreater(len(params), 0)
 
     def test_training_mode(self):
         """Test training/eval mode switching."""
-        propagator = Propagator(nn.Linear)
-        propagator.build(
+        lazy_constructor = LazyConstructor(nn.Linear)
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -325,23 +325,23 @@ class TestPropagator(unittest.TestCase):
         )
 
         # Should start in training mode
-        self.assertTrue(propagator.training)
+        self.assertTrue(lazy_constructor.training)
 
         # Switch to eval
-        propagator.eval()
-        self.assertFalse(propagator.training)
+        lazy_constructor.eval()
+        self.assertFalse(lazy_constructor.training)
 
         # Switch back to train
-        propagator.train()
-        self.assertTrue(propagator.training)
+        lazy_constructor.train()
+        self.assertTrue(lazy_constructor.training)
 
 
-class TestPropagatorWithComplexModules(unittest.TestCase):
-    """Test Propagator with more complex module types."""
+class TestLazyConstructorWithComplexModules(unittest.TestCase):
+    """Test LazyConstructor with more complex module types."""
 
     def test_with_sequential(self):
         """Test with Sequential module."""
-        propagator = Propagator(
+        lazy_constructor = LazyConstructor(
             nn.Sequential,
             nn.Linear(10, 20),
             nn.ReLU(),
@@ -349,9 +349,9 @@ class TestPropagatorWithComplexModules(unittest.TestCase):
         )
 
         # Sequential doesn't use the standard in_features/out_features
-        # This test verifies that propagator handles this gracefully
+        # This test verifies that lazy_constructor handles this gracefully
         try:
-            propagator.build(
+            lazy_constructor.build(
                 out_features=5,
                 in_features_logits=10,
                 in_features_embedding=None,
@@ -359,7 +359,7 @@ class TestPropagatorWithComplexModules(unittest.TestCase):
             )
             # If it builds, test forward
             x = torch.randn(2, 10)
-            output = propagator(x)
+            output = lazy_constructor(x)
             self.assertEqual(output.shape, (2, 5))
         except (TypeError, ValueError):
             # Expected if Sequential can't accept those kwargs
@@ -379,8 +379,8 @@ class TestPropagatorWithComplexModules(unittest.TestCase):
                     out = torch.relu(out)
                 return out
 
-        propagator = Propagator(CustomLayer, activation='relu')
-        propagator.build(
+        lazy_constructor = LazyConstructor(CustomLayer, activation='relu')
+        lazy_constructor.build(
             out_features=5,
             in_features_logits=10,
             in_features_embedding=None,
@@ -388,7 +388,7 @@ class TestPropagatorWithComplexModules(unittest.TestCase):
         )
 
         x = torch.randn(2, 10)
-        output = propagator(x)
+        output = lazy_constructor(x)
 
         self.assertEqual(output.shape, (2, 5))
 

@@ -14,8 +14,8 @@ from torch_concepts.nn.modules.low.base.layer import (
 )
 from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
 
-# Propagator
-from .modules.propagator import Propagator
+# LazyConstructor
+from .modules.low.lazy import LazyConstructor
 
 # Encoders
 from .modules.low.encoders.exogenous import ExogEncoder
@@ -78,8 +78,8 @@ __all__ = [
     "BaseInference",
     "BaseIntervention",
 
-    # Propagator
-    "Propagator",
+    # LazyConstructor
+    "LazyConstructor",
     
     # Exogenous encoder classes
     "ExogEncoder",

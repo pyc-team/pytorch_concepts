@@ -1,13 +1,12 @@
 Shared Modules
 =============
 
-Additional utility modules including losses, metrics, propagators, and functional utilities.
+Additional utility modules including losses, metrics, and functional utilities.
 
 .. toctree::
    :maxdepth: 1
 
    nn.loss
    nn.metrics
-   nn.propagator
    nn.functional
    annotations

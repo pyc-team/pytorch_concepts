@@ -3,7 +3,7 @@ from torch import Tensor
 
 from .....data.annotations import Annotations
 from ...mid.constructors.concept_graph import ConceptGraph
-from .... import GraphModel, ExogEncoder, ProbEncoderFromExog, HyperLinearPredictor, Propagator
+from .... import GraphModel, ExogEncoder, ProbEncoderFromExog, HyperLinearPredictor, LazyConstructor
 
 from ..base.model import BaseModel
 
@@ -30,12 +30,12 @@ class C2BM(BaseModel):
             encoder_kwargs=encoder_kwargs,
         )
 
-        exogenous_encoder = Propagator(ExogEncoder, 
+        exogenous_encoder = LazyConstructor(ExogEncoder,
                                        embedding_size=exog_encoder_embedding_size)
         
-        concept_encoder = Propagator(ProbEncoderFromExog)
+        concept_encoder = LazyConstructor(ProbEncoderFromExog)
 
-        concept_predictor = Propagator(HyperLinearPredictor, 
+        concept_predictor = LazyConstructor(HyperLinearPredictor,
                                        embedding_size=hyperlayer_hidden_size)
 
         self.model = GraphModel(model_graph=graph,

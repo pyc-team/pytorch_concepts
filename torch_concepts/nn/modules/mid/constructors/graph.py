@@ -7,7 +7,8 @@ from .concept_graph import ConceptGraph
 from ..models.factor import Factor
 from ..models.probabilistic_model import ProbabilisticModel
 from .....distributions import Delta
-from ..base.model import BaseConstructor, Propagator
+from ..base.model import BaseConstructor
+from ...low.lazy import LazyConstructor
 
 
 class GraphModel(BaseConstructor):
@@ -35,8 +36,8 @@ class GraphModel(BaseConstructor):
         model_graph: ConceptGraph defining the structure (must be a DAG).
         input_size: Size of input features.
         annotations: Annotations object with concept metadata and distributions.
-        encoder: Propagator for encoding root concepts from inputs.
-        predictor: Propagator for predicting internal concepts from parents.
+        encoder: LazyConstructor for encoding root concepts from inputs.
+        predictor: LazyConstructor for predicting internal concepts from parents.
         use_source_exogenous: Whether to use source exogenous features for predictions.
         source_exogenous: Optional propagator for source exogenous features.
         internal_exogenous: Optional propagator for internal exogenous features.
@@ -49,7 +50,7 @@ class GraphModel(BaseConstructor):
         >>> import torch
         >>> import pandas as pd
         >>> from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
-        >>> from torch_concepts.nn import GraphModel, Propagator
+        >>> from torch_concepts.nn import GraphModel, LazyConstructor
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and their structure
@@ -88,8 +89,8 @@ class GraphModel(BaseConstructor):
         ...     model_graph=graph,
         ...     input_size=784,
         ...     annotations=annotations,
-        ...     encoder=Propagator(torch.nn.Linear),
-        ...     predictor=Propagator(torch.nn.Linear),
+        ...     encoder=LazyConstructor(torch.nn.Linear),
+        ...     predictor=LazyConstructor(torch.nn.Linear),
         ... )
         >>>
         >>> # Inspect the graph structure
@@ -110,11 +111,11 @@ class GraphModel(BaseConstructor):
                  model_graph: ConceptGraph,
                 input_size: int,
                 annotations: Annotations,
-                encoder: Propagator,
-                predictor: Propagator,
+                encoder: LazyConstructor,
+                predictor: LazyConstructor,
                 use_source_exogenous: bool = None,
-                source_exogenous: Optional[Propagator] = None,
-                internal_exogenous: Optional[Propagator] = None,
+                source_exogenous: Optional[LazyConstructor] = None,
+                internal_exogenous: Optional[LazyConstructor] = None,
                  ):
         super(GraphModel, self).__init__(
             input_size=input_size,
@@ -168,12 +169,12 @@ class GraphModel(BaseConstructor):
             factors=[embedding_factor, *source_exogenous_factors, *encoder_factors, *internal_exogenous_factors, *predictor_factors],
         )
 
-    def _init_exog(self, layer: Propagator, label_names, parent_var, cardinalities) -> Tuple[Variable, Factor]:
+    def _init_exog(self, layer: LazyConstructor, label_names, parent_var, cardinalities) -> Tuple[Variable, Factor]:
         """
         Initialize exogenous variables and factors.
 
         Args:
-            layer: Propagator for exogenous features.
+            layer: LazyConstructor for exogenous features.
             label_names: Names of concepts to create exogenous features for.
             parent_var: Parent variable (typically embedding).
             cardinalities: Cardinalities of each concept.
@@ -187,22 +188,22 @@ class GraphModel(BaseConstructor):
                             distribution = Delta,
                             size = layer._module_kwargs['embedding_size'])
 
-        propagator = layer.build(
+        lazy_constructor = layer.build(
             in_features_embedding=parent_var.size,
             in_features_logits=None,
             in_features_exogenous=None,
             out_features=1,
         )
 
-        exog_factors = Factor(exog_names, module_class=propagator)
+        exog_factors = Factor(exog_names, module_class=lazy_constructor)
         return exog_vars, exog_factors
 
-    def _init_encoder(self, layer: Propagator, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, Factor]:
+    def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, Factor]:
         """
         Initialize encoder variables and factors for root concepts.
 
         Args:
-            layer: Propagator for encoding.
+            layer: LazyConstructor for encoding.
             label_names: Names of root concepts.
             parent_vars: Parent variables (embedding or exogenous).
             cardinalities: Optional cardinalities for concepts.
@@ -219,13 +220,13 @@ class GraphModel(BaseConstructor):
             if not isinstance(encoder_vars, list):
                 encoder_vars = [encoder_vars]
 
-            propagator = layer.build(
+            lazy_constructor = layer.build(
                 in_features_embedding=parent_vars[0].size,
                 in_features_logits=None,
                 in_features_exogenous=None,
                 out_features=encoder_vars[0].size,
             )
-            encoder_factors = Factor(label_names, module_class=propagator)
+            encoder_factors = Factor(label_names, module_class=lazy_constructor)
             # Ensure encoder_factors is always a list
             if not isinstance(encoder_factors, list):
                 encoder_factors = [encoder_factors]
@@ -240,19 +241,19 @@ class GraphModel(BaseConstructor):
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
-                propagator = layer.build(
+                lazy_constructor = layer.build(
                     in_features_embedding=None,
                     in_features_logits=None,
                     in_features_exogenous=exog_vars[0].size,
                     out_features=encoder_var.size,
                 )
-                encoder_factor = Factor(label_name, module_class=propagator)
+                encoder_factor = Factor(label_name, module_class=lazy_constructor)
                 encoder_vars.append(encoder_var)
                 encoder_factors.append(encoder_factor)
         return encoder_vars, encoder_factors
 
     def _init_predictors(self,
-                         layer: Propagator,
+                         layer: LazyConstructor,
                          label_names: List[str],
                          available_vars,
                          cardinalities=None,
@@ -262,7 +263,7 @@ class GraphModel(BaseConstructor):
         Initialize predictor variables and factors for internal concepts.
 
         Args:
-            layer: Propagator for prediction.
+            layer: LazyConstructor for prediction.
             label_names: Names of internal concepts to predict.
             available_vars: Variables available as parents (previously created concepts).
             cardinalities: Optional cardinalities for concepts.
@@ -301,7 +302,7 @@ class GraphModel(BaseConstructor):
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])
 
             # TODO: we currently assume predictors can use exogenous vars if any, but not embedding
-            propagator = layer.build(
+            lazy_constructor = layer.build(
                 in_features_logits=in_features_logits,
                 in_features_exogenous=in_features_exogenous,
                 in_features_embedding=None,
@@ -309,7 +310,7 @@ class GraphModel(BaseConstructor):
                 cardinalities=[predictor_var.size]
             )
 
-            predictor_factor = Factor(c_name, module_class=propagator)
+            predictor_factor = Factor(c_name, module_class=lazy_constructor)
 
             predictor_vars.append(predictor_var)
             predictor_factors.append(predictor_factor)

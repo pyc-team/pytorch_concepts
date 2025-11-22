@@ -8,7 +8,7 @@ from .....typing import BackboneType
 from ....modules.mid.constructors.bipartite import BipartiteModel
 from ....modules.low.encoders.linear import ProbEncoderFromEmb
 from ....modules.low.predictors.linear import ProbPredictor
-from ....modules.propagator import Propagator
+from ....modules.low.lazy import LazyConstructor
 from ....modules.low.base.inference import BaseInference
 
 from ..base.model import BaseModel
@@ -74,8 +74,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         model = BipartiteModel(task_names=task_names,
                                input_size=self.encoder_out_features,
                                annotations=annotations,
-                               encoder=Propagator(ProbEncoderFromEmb),
-                               predictor=Propagator(ProbPredictor))
+                               encoder=LazyConstructor(ProbEncoderFromEmb),
+                               predictor=LazyConstructor(ProbPredictor))
 
         self.inference = inference(model.probabilistic_model)
 
