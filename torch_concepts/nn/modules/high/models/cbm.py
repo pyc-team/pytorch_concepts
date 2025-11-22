@@ -35,7 +35,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         optim_class: Type,
         optim_kwargs: Mapping,
 
-        embs_precomputed: Optional[bool] = False,
         backbone: Optional[BackboneType] = None,
         encoder: Optional[nn.Module] = None,
         encoder_kwargs: Optional[Dict] = None,
@@ -61,7 +60,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             perconcept_metrics=perconcept_metrics,
             # -- BaseModel args
             input_size=input_size,
-            embs_precomputed=embs_precomputed,
             backbone=backbone,
             encoder=encoder,
             encoder_kwargs=encoder_kwargs
@@ -157,8 +155,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #         input_size (int): Input feature dimensionality.
 #         annotations (Annotations): Variable annotations.
 #         variable_distributions (Mapping): Distribution types.
-#         embs_precomputed (bool, optional): Skip backbone. Defaults to False.
-#         backbone (Optional[callable], optional): Feature extractor. Defaults to None.
+#         backbone (Optional[callable], optional): Feature extractor. If None,
+#             assumes embeddings are pre-computed. Defaults to None.
 #         encoder_kwargs (Dict, optional): MLP encoder config. Defaults to None.
 #         **kwargs: Reserved for future use.
 
@@ -184,7 +182,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #         input_size: int,
 #         annotations: Annotations,
 #         variable_distributions: Mapping,
-#         embs_precomputed: bool = False,
 #         backbone: Optional[callable] = None,
 #         encoder_kwargs: Mapping = None,
 #         **kwargs
@@ -196,7 +193,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #             variable_distributions=variable_distributions,
 #             # encoder params
 #             input_size=input_size,
-#             embs_precomputed=embs_precomputed,
 #             backbone=backbone,
 #             encoder_kwargs=encoder_kwargs,
 #         )

@@ -84,9 +84,9 @@ def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
     """
     with open_dict(cfg):
         cfg.model.update(
-            input_size = dm.backbone.output_size if dm.backbone else dm.n_features[-1], # FIXME: backbone.output_size might not exist
+            # FIXME: backbone.output_size might not exist
+            input_size = dm.backbone.output_size if dm.backbone else dm.n_features[-1],
             # output_size = sum(dm.concept_metadata.values()),   # check if this is needed
-            backbone = dm.backbone,
-            embs_precomputed = dm.embs_precomputed
+            backbone = dm.backbone if not dm.embs_precomputed else None,
         )
     return cfg

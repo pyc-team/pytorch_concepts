@@ -22,25 +22,22 @@ class BaseModel(nn.Module, ABC):
 
     Args:
         input_size (int): Dimensionality of input features (after backbone, if used).
-        embs_precomputed (bool, optional): Whether embeddings are pre-computed
-            (skips backbone). Defaults to False.
         backbone (BackboneType, optional): Feature extraction backbone (e.g., ResNet,
-            ViT). Can be a nn.Module or callable. Defaults to None.
+            ViT). Can be a nn.Module or callable. If None, assumes embeddings
+            are pre-computed. Defaults to None.
         encoder_kwargs (Dict, optional): Arguments for MLP encoder
             (e.g., {'hidden_size': 128, 'n_layers': 2}). If None, uses Identity.
             Defaults to None.
 
     Attributes:
         annotations (Annotations): Annotated concept variables with distribution info.
-        embs_precomputed (bool): Whether to skip backbone processing.
-        backbone (BackboneType): Feature extraction module.
+        backbone (BackboneType): Feature extraction module (None if precomputed).
         encoder_out_features (int): Output dimensionality of encoder.
     """
 
     def __init__(
         self,
         input_size: int,
-        embs_precomputed: bool = False,
         backbone: BackboneType = None,
         encoder: nn.Module = None,
         encoder_kwargs: Dict = None,
@@ -48,7 +45,6 @@ class BaseModel(nn.Module, ABC):
     ) -> None:
         super().__init__(**kwargs)
 
-        self.embs_precomputed = embs_precomputed
         self._backbone = backbone
 
         if encoder is not None:
@@ -156,7 +152,7 @@ class BaseModel(nn.Module, ABC):
             TypeError: If backbone is not None and not callable.
         """
 
-        if self.embs_precomputed or self.backbone is None:
+        if self.backbone is None:
             return x
 
         if not callable(self.backbone):

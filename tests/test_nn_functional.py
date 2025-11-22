@@ -32,7 +32,7 @@ from torch_concepts.nn.functional import (
     cace_score,
     residual_concept_causal_effect,
     edge_type,
-    hamming_distance,
+    custom_hamming_distance,
     prune_linear_layer,
     _default_concept_names,
 )
@@ -531,7 +531,7 @@ class TestGraphMetrics(unittest.TestCase):
         graph1 = pd.DataFrame(graph1_data, index=nodes, columns=nodes)
         graph2 = pd.DataFrame(graph2_data, index=nodes, columns=nodes)
 
-        cost, count = hamming_distance(graph1, graph2)
+        cost, count = custom_hamming_distance(graph1, graph2)
         self.assertIsInstance(cost, (int, float))
         self.assertIsInstance(count, int)
 

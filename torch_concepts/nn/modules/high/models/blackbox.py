@@ -24,7 +24,6 @@ class BlackBox(BaseModel, JointLearner):
         optim_class: Type,
         optim_kwargs: Mapping,
 
-        embs_precomputed: Optional[bool] = False,
         backbone: Optional[BackboneType] = None,
         encoder: Optional[nn.Module] = None,
         encoder_kwargs: Optional[Dict] = None,
@@ -48,9 +47,8 @@ class BlackBox(BaseModel, JointLearner):
             scheduler_kwargs=scheduler_kwargs,
             summary_metrics=summary_metrics,
             perconcept_metrics=perconcept_metrics,
-            #-- BaseModel args
+            # -- BaseModel args
             input_size=input_size,
-            embs_precomputed=embs_precomputed,
             backbone=backbone,
             encoder=encoder,
             encoder_kwargs=encoder_kwargs
