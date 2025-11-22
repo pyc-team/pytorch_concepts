@@ -97,6 +97,33 @@ def convert_precision(tensor: Tensor,
         tensor = tensor.to(torch.float16)
     return tensor
 
+def resolve_size(size: Union[int, float], n_samples: int) -> int:
+    """Convert size specification to absolute number of samples.
+    
+    Args:
+        size: Either an integer (absolute count) or float (fraction in [0, 1]).
+        n_samples: Total number of samples in dataset.
+        
+    Returns:
+        int: Absolute number of samples.
+        
+    Raises:
+        ValueError: If fractional size is not in [0, 1] or absolute size is negative.
+        TypeError: If size is neither int nor float.
+    """
+    if isinstance(size, float):
+        if not 0.0 <= size <= 1.0:
+            raise ValueError(f"Fractional size must be in [0, 1], got {size}")
+        return int(size * n_samples)
+    
+    elif isinstance(size, int):
+        if size < 0:
+            raise ValueError(f"Absolute size must be non-negative, got {size}")
+        return size
+    
+    else:
+        raise TypeError(f"Size must be int or float, got {type(size).__name__}")
+        
 def colorize(images, colors):
     """
     Colorize grayscale images based on specified colors.

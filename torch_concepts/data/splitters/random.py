@@ -7,8 +7,8 @@ standard train/val/test splits.
 from typing import Union
 import numpy as np
 
+from ..utils import resolve_size
 from ..base.dataset import ConceptDataset
-
 from ..base.splitter import Splitter
 
 class RandomSplitter(Splitter):
@@ -58,33 +58,6 @@ class RandomSplitter(Splitter):
         self.val_size = val_size
         self.test_size = test_size
 
-    def _resolve_size(self, size: Union[int, float], n_samples: int) -> int:
-        """Convert size specification to absolute number of samples.
-        
-        Args:
-            size: Either an integer (absolute count) or float (fraction in [0, 1]).
-            n_samples: Total number of samples in dataset.
-            
-        Returns:
-            int: Absolute number of samples.
-            
-        Raises:
-            ValueError: If fractional size is not in [0, 1] or absolute size is negative.
-            TypeError: If size is neither int nor float.
-        """
-        if isinstance(size, float):
-            if not 0.0 <= size <= 1.0:
-                raise ValueError(f"Fractional size must be in [0, 1], got {size}")
-            return int(size * n_samples)
-        
-        elif isinstance(size, int):
-            if size < 0:
-                raise ValueError(f"Absolute size must be non-negative, got {size}")
-            return size
-        
-        else:
-            raise TypeError(f"Size must be int or float, got {type(size).__name__}")
-
     def fit(self, dataset: ConceptDataset) -> None:
         """Randomly split the dataset into train/val/test sets.
         
@@ -101,8 +74,8 @@ class RandomSplitter(Splitter):
         n_samples = len(dataset)
         
         # Resolve all sizes to absolute numbers
-        n_val = self._resolve_size(self.val_size, n_samples)
-        n_test = self._resolve_size(self.test_size, n_samples)
+        n_val = resolve_size(self.val_size, n_samples)
+        n_test = resolve_size(self.test_size, n_samples)
         
         # Validate that splits don't exceed dataset size
         total_split = n_val + n_test
