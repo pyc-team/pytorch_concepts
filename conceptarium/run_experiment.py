@@ -30,7 +30,7 @@ def main(cfg: DictConfig) -> None:
     # 3. Update config based on data
     # ----------------------------------
     print("\n----------------------INIT DATA--------------------------------------")
-    datamodule = instantiate(cfg.dataset, _convert_="all")
+    datamodule = instantiate(cfg.dataset)
     datamodule.setup('fit')
     cfg = update_config_from_data(cfg, datamodule)
 
@@ -38,8 +38,7 @@ def main(cfg: DictConfig) -> None:
     # Model
     # ----------------------------------
     print("\n----------------------INIT MODEL-------------------------------------")
-    model = instantiate(cfg.model, _convert_="all", _partial_=True)(annotations=datamodule.annotations,
-                                                                    graph=datamodule.graph)
+    model = instantiate(cfg.model, annotations=datamodule.annotations, graph=datamodule.graph)
 
     print("\n----------------------BEGIN TRAINING---------------------------------")
     try:
