@@ -103,7 +103,7 @@ __all__ = ['YourCustomMetric']
 
 ### 1. Create Metric Configuration
 
-Create or update `conceptarium/conf/engine/metrics/your_metrics.yaml`. Remember that conceptarium supports different metrics for discrete (classification) and continuous (regression) concepts. Also remember that conceptarium implement an option to aggregate metrics across concepts, so concept-specific metrics are not supported right now.
+Create or update `conceptarium/conf/engine/metrics/your_metrics.yaml`. Remember that conceptarium supports different metrics for discrete (classification) and continuous (regression) concepts. Also remember that conceptarium implements an option to aggregate metrics across concepts, so concept-specific metrics are not supported right now.
 
 ```yaml
 # Metrics for discrete (classification) concepts
