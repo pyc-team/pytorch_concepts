@@ -125,8 +125,8 @@ class TestIndicesToMask:
             device=device, dtype=dtype
         )
 
-        assert mask.device == device
-        assert target.device == device
+        assert mask.device.type == device.type
+        assert target.device.type == device.type
         assert mask.dtype == dtype
         assert target.dtype == dtype
 

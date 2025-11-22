@@ -56,11 +56,14 @@ class ConceptLoss(nn.Module):
         super().__init__()
         self.binary_fn, self.categorical_fn, self.continuous_fn = setup_losses(annotations, fn_collection)
         self.groups = get_concept_groups(annotations)
+        self.cardinalities = annotations.cardinalities
 
         # For categorical loss, precompute max cardinality for padding
         if self.categorical_fn is not None:
-            self.cardinalities = annotations.cardinalities
-            self.max_card = max([self.cardinalities[i] for i in self.cardinalities])
+            self.max_card = max([self.cardinalities[i] for i in self.groups['categorical_concepts']])
+
+        if self.continuous_fn is not None:
+            self.max_dim = max([self.cardinalities[i] for i in self.groups['continuous_concepts']])
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute total loss across all concept types.
@@ -96,9 +99,7 @@ class ConceptLoss(nn.Module):
         
         # Continuous concepts
         if self.continuous_fn is not None:
-            cont_preds = input[:, self.groups['continuous_logits']]
-            cont_targets = target[:, self.groups['continuous_concepts']]
-            total_loss += self.continuous_fn(cont_preds, cont_targets)
+            raise NotImplementedError("Continuous concepts not yet implemented.")
         
         return total_loss
 
@@ -109,13 +110,13 @@ class WeightedConceptLoss(nn.Module):
     Args:
         annotations (Annotations): Annotations object with concept metadata.
         fn_collection (Mapping): Loss function configuration.
-        weights (Mapping): Weights for each concept type, e.g.:
-            {'binary': 0.5, 'categorical': 0.3, 'continuous': 0.2}
+        weight (float): Weight for concept loss; (1 - weight) is for task loss.
+        task_names (List[str]): List of task concept names.
     """
     def __init__(self, 
                  annotations: AxisAnnotation, 
                  fn_collection: Mapping,
-                 weight: Mapping,
+                 weight: float,
                  task_names: List[str]
     ):
         super().__init__()
