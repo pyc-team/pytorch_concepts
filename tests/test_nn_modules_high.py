@@ -48,9 +48,10 @@ class TestBatchValidation(unittest.TestCase):
     
     def setUp(self):
         """Create a mock learner instance for testing unpack_batch."""
-        # Create a mock learner that only implements unpack_batch
+        # Create a mock learner that implements both _check_batch and unpack_batch
         self.learner = type('MockLearner', (), {})()
-        # Bind the unpack_batch method from BaseLearner
+        # Bind both methods from BaseLearner
+        self.learner._check_batch = BaseLearner._check_batch.__get__(self.learner)
         self.learner.unpack_batch = BaseLearner.unpack_batch.__get__(self.learner)
     
     def test_valid_batch_structure(self):
