@@ -1,3 +1,5 @@
+import os
+
 from ..datasets import BnLearnDataset
 
 from ..base.datamodule import ConceptDataModule
@@ -14,8 +16,6 @@ class BnLearnDataModule(ConceptDataModule):
         seed: Random seed for data generation and splitting.
         val_size: Validation set size (fraction or absolute count).
         test_size: Test set size (fraction or absolute count).
-        ftune_size: Fine-tuning set size (fraction or absolute count).
-        ftune_val_size: Fine-tuning validation set size (fraction or absolute count).
         batch_size: Batch size for dataloaders.
         n_samples: Total number of samples to generate.
         autoencoder_kwargs: Configuration for autoencoder-based feature extraction.
@@ -31,8 +31,6 @@ class BnLearnDataModule(ConceptDataModule):
         name: str, # name of the bnlearn DAG
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
-        ftune_size: int | float = 0.0,
-        ftune_val_size: int | float = 0.0,
         batch_size: int = 512,
         backbone: BackboneType = None,
         precompute_embs: bool = False,
@@ -43,10 +41,9 @@ class BnLearnDataModule(ConceptDataModule):
         autoencoder_kwargs: dict | None = None,
         workers: int = 0,
         DATA_ROOT = None,
-        **kwargs
     ):
         dataset = BnLearnDataset(name=name,
-                                 root=str(DATA_ROOT / name),
+                                 root=os.path.join(DATA_ROOT, name),
                                  seed=seed,
                                  n_gen=n_gen,
                                  concept_subset=concept_subset,
@@ -58,8 +55,6 @@ class BnLearnDataModule(ConceptDataModule):
             dataset=dataset,
             val_size=val_size,
             test_size=test_size,
-            ftune_size=ftune_size,
-            ftune_val_size=ftune_val_size,
             batch_size=batch_size,
             backbone=backbone,
             precompute_embs=precompute_embs,

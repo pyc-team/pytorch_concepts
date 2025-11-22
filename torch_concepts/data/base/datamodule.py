@@ -25,7 +25,7 @@ class ConceptDataModule(LightningDataModule):
     """PyTorch Lightning DataModule for concept-based datasets.
     
     Handles the complete data pipeline:
-    1. Data splitting (train/val/test + optional fine-tuning splits)
+    1. Data splitting (train/val/test)
     2. Optional backbone embedding precomputation and caching
     3. Data scaling/normalization
     4. DataLoader creation with appropriate configurations
@@ -34,8 +34,6 @@ class ConceptDataModule(LightningDataModule):
         dataset (ConceptDataset): Complete dataset to be split.
         val_size (float, optional): Validation set fraction. Defaults to 0.1.
         test_size (float, optional): Test set fraction. Defaults to 0.2.
-        ftune_size (float, optional): Fine-tuning set fraction. Defaults to 0.0.
-        ftune_val_size (float, optional): Fine-tuning validation fraction. Defaults to 0.0.
         batch_size (int, optional): Mini-batch size. Defaults to 64.
         backbone (BackboneType, optional): Feature extraction model. If provided
             with precompute_embs=True, embeddings are computed and cached. Defaults to None.
@@ -77,8 +75,6 @@ class ConceptDataModule(LightningDataModule):
         dataset: ConceptDataset,
         val_size: float = 0.1,
         test_size: float = 0.2,
-        ftune_size: float = 0.0,
-        ftune_val_size: float = 0.0,
         batch_size: int = 64,
         backbone: BackboneType = None,     # optional backbone
         precompute_embs: bool = False,
@@ -114,9 +110,7 @@ class ConceptDataModule(LightningDataModule):
         else:
             self.splitter = RandomSplitter(
                 val_size=val_size,
-                test_size=test_size,
-                ftune_size=ftune_size,
-                ftune_val_size=ftune_val_size
+                test_size=test_size
             )
 
     def __len__(self) -> int:
@@ -146,14 +140,6 @@ class ConceptDataModule(LightningDataModule):
     @property
     def testset(self):
         return self._testset
-
-    @property
-    def ftuneset(self):
-        return self._ftuneset
-    
-    @property
-    def ftune_valset(self):
-        return self._ftune_valset
     
     @trainset.setter
     def trainset(self, value):
@@ -167,14 +153,6 @@ class ConceptDataModule(LightningDataModule):
     def testset(self, value):
         self._add_set('test', value)
 
-    @ftuneset.setter
-    def ftuneset(self, value):
-        self._add_set('ftune', value)
-    
-    @ftune_valset.setter
-    def ftune_valset(self, value):
-        self._add_set('ftune_val', value)
-
     @property
     def train_len(self):
         return len(self.trainset) if self.trainset is not None else None
@@ -186,14 +164,6 @@ class ConceptDataModule(LightningDataModule):
     @property
     def test_len(self):
         return len(self.testset) if self.testset is not None else None
-
-    @property
-    def ftune_len(self):
-        return len(self.ftuneset) if self.ftuneset is not None else None
-    
-    @property
-    def ftune_val_len(self):
-        return len(self.ftune_valset) if self.ftune_valset is not None else None
 
     @property
     def n_samples(self) -> int:
@@ -209,10 +179,10 @@ class ConceptDataModule(LightningDataModule):
         """
         Add a dataset or a sequence of indices as a specific split.
         Args:
-            split_type: One of 'train', 'val', 'test', 'ftune', 'ftune_val'. 
+            split_type: One of 'train', 'val', 'test'. 
             _set: A Dataset or a sequence of indices.
         """
-        assert split_type in ['train', 'val', 'test', 'ftune', 'ftune_val']
+        assert split_type in ['train', 'val', 'test']
         split_type = '_' + split_type
         name = split_type + 'set'
         
@@ -315,8 +285,6 @@ class ConceptDataModule(LightningDataModule):
             self.trainset = self.splitter.train_idxs
             self.valset = self.splitter.val_idxs
             self.testset = self.splitter.test_idxs
-            self.ftuneset = self.splitter.ftune_idxs
-            self.ftune_valset = self.splitter.ftune_val_idxs
 
         # ----------------------------------
         # Fit scalers on training data only
@@ -338,7 +306,7 @@ class ConceptDataModule(LightningDataModule):
 
 
     def get_dataloader(self, 
-                       split: Literal['train', 'val', 'test', 'ftune', 'ftune_val'] = None,
+                       split: Literal['train', 'val', 'test'] = None,
                        shuffle: bool = False,
                        batch_size: Optional[int] = None) -> Optional[DataLoader]:
         """
@@ -359,11 +327,11 @@ class ConceptDataModule(LightningDataModule):
         """
         if split is None:
             dataset = self.dataset
-        elif split in ['train', 'val', 'test', 'ftune', 'ftune_val']:
+        elif split in ['train', 'val', 'test']:
             dataset = getattr(self, f'{split}set')
         else:
             raise ValueError("Argument `split` must be one of "
-                             "'train', 'val', 'test', 'ftune', 'ftune_val', or None.")
+                             "'train', 'val', 'test', or None.")
         if dataset is None: 
             return None
         pin_memory = self.pin_memory if split == 'train' else None
