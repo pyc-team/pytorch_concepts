@@ -85,71 +85,55 @@ class AxisAnnotation:
 
     def __post_init__(self):
         """Validate consistency, infer is_nested and eventually states, and cardinalities."""
-        # Case 1: both states and cardinalities are provided
-        if self.states is not None and self.cardinalities is not None:
-            # Validate states length and cardinality length matches labels length
-            if len(self.states) != len(self.labels):
-                raise ValueError(
-                    f"Number of state tuples ({len(self.states)}) must match "
-                    f"number of labels ({len(self.labels)})"
-                )
-            if len(self.cardinalities) != len(self.labels):
-                raise ValueError(
-                    f"Number of cardinalities ({len(self.cardinalities)}) must match "
-                    f"number of labels ({len(self.labels)})"
-                )
-            # check states length matches cardinalities
-            inferred_cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
-            if self.cardinalities != inferred_cardinalities:
-                raise ValueError(
-                    f"Provided cardinalities {self.cardinalities} don't match "
-                    f"inferred cardinalities {inferred_cardinalities} from states"
-                )
-            cardinalities = self.cardinalities
-            states = self.states
-
-        # Case 2: only states are provided (no cardinalities)
-        elif self.states is not None and self.cardinalities is None:
-            # Validate states length matches labels length
-            if len(self.states) != len(self.labels):
-                raise ValueError(
-                    f"Number of state tuples ({len(self.states)}) must match "
-                    f"number of labels ({len(self.labels)})"
-                )
-            cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
-            states = self.states
-
-        # Case 3: only cardinalities provided (no states)
+        # Initialize states and cardinalities based on what's provided
+        if self.states is not None and self.cardinalities is None:
+            # Infer cardinalities from states
+            self.cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
         elif self.states is None and self.cardinalities is not None:
-            # Validate cardinalities length matches labels length
-            if len(self.cardinalities) != len(self.labels):
-                raise ValueError(
-                    f"Number of cardinalities ({len(self.cardinalities)}) must match "
-                    f"number of labels ({len(self.labels)})"
-                )
-            # Generate default state labels '0', '1', '2', etc.
-            cardinalities = self.cardinalities
-            states = tuple(tuple(str(i) for i in range(card)) if card > 1 else ('0', )
-                           for card in self.cardinalities)
-
-        # Case 4: neither states nor cardinalities provided
+            # Generate default state labels from cardinalities
+            self.states = tuple(
+                tuple(str(i) for i in range(card)) if card > 1 else ('0',)
+                for card in self.cardinalities
+            )
+        elif self.states is None and self.cardinalities is None:
+            # Neither provided - assume binary
+            warnings.warn(
+                "Annotations: neither 'states' nor 'cardinalities' provided; "
+                "assuming all concepts are binary."
+            )
+            self.cardinalities = tuple(1 for _ in self.labels)
+            self.states = tuple(('0',) for _ in self.labels)
         else:
-            warnings.warn("Annotations: neither 'states' nor 'cardinalities' provided; "
-                         "assuming all concepts are binary.")
-            cardinalities = tuple(1 for _ in self.labels)
-            states = tuple(('0', ) for _ in self.labels)
+            # Both provided - use as-is for now, will validate below
+            pass
 
-        # Eventually convert categorical with card=2 to bernoulli (card=1)
-        # cardinalities = tuple(1 if card == 2 else card for card in cardinalities)
+        # Validate consistency now that both are populated
+        if len(self.states) != len(self.labels):
+            raise ValueError(
+                f"Number of state tuples ({len(self.states)}) must match "
+                f"number of labels ({len(self.labels)})"
+            )
+        if len(self.cardinalities) != len(self.labels):
+            raise ValueError(
+                f"Number of cardinalities ({len(self.cardinalities)}) must match "
+                f"number of labels ({len(self.labels)})"
+            )
+
+        # Verify states length matches cardinalities
+        inferred_cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
+        if self.cardinalities != inferred_cardinalities:
+            raise ValueError(
+                f"Provided cardinalities {self.cardinalities} don't match "
+                f"inferred cardinalities {inferred_cardinalities} from states"
+            )
+
         # Determine is_nested from cardinalities
         # FIXME: should we consider nested also mix of scalars and bernoulli?
-        is_nested = any(card > 1 for card in cardinalities)
-
-        object.__setattr__(self, 'cardinalities', cardinalities)
-        object.__setattr__(self, 'states', states)
+        is_nested = any(card > 1 for card in self.cardinalities)
+        
         object.__setattr__(self, 'is_nested', is_nested)
 
-        # consistency checks on metadata
+        # Consistency checks on metadata
         if self.metadata is not None:
             if not isinstance(self.metadata, dict):
                 raise ValueError("metadata must be a dictionary")
