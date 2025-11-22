@@ -3,9 +3,10 @@ Utility functions for the torch_concepts package.
 
 This module provides various utility functions for working with concept-based models,
 including concept name validation, output size computation, explanation analysis,
-and numerical stability checks.
+seeding for reproducibility, and numerical stability checks.
 """
 import importlib
+import os
 import warnings
 from collections import Counter
 from copy import deepcopy
@@ -14,6 +15,38 @@ import torch, math
 import logging
 
 from .annotations import Annotations
+from pytorch_lightning import seed_everything as pl_seed_everything
+
+
+def seed_everything(seed: int, workers: bool = True) -> int:
+    """Set random seeds across all libraries for reproducibility.
+    
+    Enhanced wrapper around PyTorch Lightning's seed_everything that also sets
+    PYTHONHASHSEED environment variable for complete reproducibility, including
+    Python's hash randomization.
+    
+    Sets seeds for:
+    - Python's random module
+    - NumPy's random module  
+    - PyTorch (CPU and CUDA)
+    - PYTHONHASHSEED environment variable
+    - PL_GLOBAL_SEED environment variable (via Lightning)
+    
+    Args:
+        seed: Random seed value to set across all libraries.
+        workers: If True, sets worker seed for DataLoaders.
+        
+    Returns:
+        The seed value that was set.
+        
+    Example:
+        >>> import torch_concepts as tc
+        >>> tc.seed_everything(42)
+        42
+        >>> # All random operations are now reproducible
+    """
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    return pl_seed_everything(seed, workers=workers)
 
 
 def validate_and_generate_concept_names(

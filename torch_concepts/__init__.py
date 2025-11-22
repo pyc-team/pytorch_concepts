@@ -10,6 +10,7 @@ from typing import Any
 from .annotations import Annotations, AxisAnnotation
 from .nn.modules.mid.constructors.concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable
+from .utils import seed_everything
 from . import nn, distributions
 from . import data
 
@@ -26,6 +27,7 @@ __all__ = [
     "AxisAnnotation",
     "ConceptGraph",
     "Variable",
+    "seed_everything",
 
     "nn",
     "data",

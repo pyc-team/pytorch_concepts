@@ -1,7 +1,7 @@
 """Utility functions for configuration, seeding, and class instantiation.
 
 This module provides helper functions for:
-- Setting random seeds across all libraries
+- Setting random seeds across all libraries (re-exported from torch_concepts)
 - Configuring runtime environment from Hydra configs
 - Dynamic class loading and instantiation
 - Managing concept annotations and distributions
@@ -9,37 +9,14 @@ This module provides helper functions for:
 
 import torch
 import logging
-import numpy as np
-import random
-import os
 import torch
 from omegaconf import DictConfig, open_dict
+from torch_concepts import seed_everything
 
 logger = logging.getLogger(__name__)
 
 from env import DATA_ROOT
 
-
-def seed_everything(seed: int):
-    """Set random seeds for reproducibility across all libraries.
-    
-    Sets seeds for Python's random, NumPy, PyTorch CPU and CUDA to ensure
-    reproducible results across runs.
-    
-    Args:
-        seed: Integer seed value for random number generators.
-        
-    Example:
-        >>> seed_everything(42)
-        Seed set to 42
-    """
-    logger.info(f"Seed set to {seed}")
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 def setup_run_env(cfg: DictConfig):
     """Configure runtime environment from Hydra configuration.
