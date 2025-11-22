@@ -33,8 +33,8 @@ class BaseLearner(pl.LightningModule):
                 optim_kwargs: Mapping,
                 scheduler_class: Optional[Type] = None,
                 scheduler_kwargs: Optional[Mapping] = None,  
-                enable_summary_metrics: Optional[bool] = True,
-                enable_perconcept_metrics: Optional[Union[bool, list]] = False,
+                summary_metrics: Optional[bool] = True,
+                perconcept_metrics: Optional[Union[bool, list]] = False,
                 **kwargs
     ):        
         super(BaseLearner, self).__init__(**kwargs)
@@ -51,6 +51,15 @@ class BaseLearner(pl.LightningModule):
         self.n_concepts = len(self.concept_names)
         self.types = [self.metadata[name]['type'] for name in self.concept_names]
         self.groups = get_concept_groups(self.concept_annotations)
+        
+        # Validate that continuous concepts are not used
+        if self.groups['continuous_concepts']:
+            continuous_names = [self.concept_names[i] for i in self.groups['continuous_concepts']]
+            raise NotImplementedError(
+                f"Continuous concepts are not yet supported in the high-level API. "
+                f"Found continuous concepts: {continuous_names}. "
+                f"Please use only discrete (binary or categorical) concepts."
+            )
 
         self.loss_fn = loss(annotations=self.concept_annotations)
 
@@ -61,8 +70,8 @@ class BaseLearner(pl.LightningModule):
         self.scheduler_kwargs = scheduler_kwargs or dict()
 
         # metrics configuration
-        self.enable_summary_metrics = enable_summary_metrics
-        self.enable_perconcept_metrics = enable_perconcept_metrics
+        self.summary_metrics = summary_metrics
+        self.perconcept_metrics = perconcept_metrics
 
         # Setup and instantiate metrics
         self._setup_metrics(metrics)
@@ -111,7 +120,7 @@ class BaseLearner(pl.LightningModule):
         perconcept_metrics = {}
         
         # Setup summary metrics (one per type group)
-        if self.enable_summary_metrics:
+        if self.summary_metrics:
             if binary_metrics_cfg:
                 summary_metrics['binary'] = self._instantiate_metric_dict(binary_metrics_cfg)
             
@@ -128,13 +137,13 @@ class BaseLearner(pl.LightningModule):
                 summary_metrics['continuous'] = self._instantiate_metric_dict(continuous_metrics_cfg)
         
         # Setup per-concept metrics (one per concept)
-        if self.enable_perconcept_metrics:
-            if isinstance(self.enable_perconcept_metrics, bool):
+        if self.perconcept_metrics:
+            if isinstance(self.perconcept_metrics, bool):
                 concepts_to_trace = self.concept_names
-            elif isinstance(self.enable_perconcept_metrics, list):
-                concepts_to_trace = self.enable_perconcept_metrics
+            elif isinstance(self.perconcept_metrics, list):
+                concepts_to_trace = self.perconcept_metrics
             else:
-                raise ValueError("enable_perconcept_metrics must be either a bool or a list of concept names.")
+                raise ValueError("perconcept_metrics must be either a bool or a list of concept names.")
             for concept_name in concepts_to_trace:
                 c_id = self.concept_names.index(concept_name)
                 c_type = self.types[c_id]
@@ -302,7 +311,7 @@ class BaseLearner(pl.LightningModule):
         for key in metric_collection:
 
             # Update summary metrics (compute metrics relative to each group)
-            if self.enable_summary_metrics:
+            if self.summary_metrics:
                 if 'SUMMARY-binary_' in key and self.groups['binary_concepts']:
                     self._apply_fn_by_type(
                         c_hat, c_true,
@@ -331,7 +340,7 @@ class BaseLearner(pl.LightningModule):
                     continue
 
             # Update per-concept metrics
-            if self.enable_perconcept_metrics:
+            if self.perconcept_metrics:
                 # Extract concept name from key
                 key_noprefix = _remove_prefix(key, prefix=metric_collection.prefix)
                 concept_name = '_'.join(key_noprefix.split('_')[:-1])  # Handle multi-word concept names

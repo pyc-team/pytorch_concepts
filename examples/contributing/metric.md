@@ -129,14 +129,8 @@ discrete:
         param1: value1
 
 # Metrics for continuous (regression) concepts
-continuous:
-  mae: 
-    path: "torchmetrics.regression.MeanAbsoluteError"
-    kwargs: {}
-  custom_metric:
-    path: "conceptarium.nn.metrics.YourCustomMetric"
-    kwargs:
-      param1: value1
+# continuous: 
+  # ... not supported yet
 ```
 
 ## Model Integration

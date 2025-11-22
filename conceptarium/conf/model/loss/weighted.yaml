@@ -12,6 +12,5 @@ fn_collection:
       path: "torch.nn.CrossEntropyLoss"
       kwargs: {}
 
-  continuous: 
-    path: "torch.nn.MSELoss"
-    kwargs: {}
+  # continuous: 
+    # ... not supported yet

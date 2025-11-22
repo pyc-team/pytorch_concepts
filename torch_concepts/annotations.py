@@ -143,7 +143,7 @@ class AxisAnnotation:
         # Eventually convert categorical with card=2 to bernoulli (card=1)
         # cardinalities = tuple(1 if card == 2 else card for card in cardinalities)
         # Determine is_nested from cardinalities
-        # FIXME: should we consider nested also mix of continuous and discrete?
+        # FIXME: should we consider nested also mix of scalars and bernoulli?
         is_nested = any(card > 1 for card in cardinalities)
 
         object.__setattr__(self, 'cardinalities', cardinalities)

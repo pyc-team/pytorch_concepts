@@ -49,6 +49,10 @@ def check_collection(annotations: AxisAnnotation,
     is_binary = [x == ('discrete', 1) for x in zip(types, cardinalities)]
     is_categorical = [t == 'discrete' and card > 1 for t, card in zip(types, cardinalities)]
     is_continuous = [t == 'continuous' for t in types]
+
+    # raise error if continuous concepts are present
+    if any(is_continuous):
+        raise NotImplementedError("Continuous concepts not yet implemented.")
     
     has_binary = any(is_binary)
     has_categorical = any(is_categorical)

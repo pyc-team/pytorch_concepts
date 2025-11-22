@@ -153,7 +153,7 @@ def build(self):
     concept_names = list(concept_columns)
     
     # Define metadata for each concept (REQUIRED: must include 'type')
-    # type can be 'discrete' or 'continuous' ('continuous' is not yet fully supported)
+    # type can be 'discrete' or 'continuous' ('continuous' is not yet supported)
     concept_metadata = {
         name: {'type': 'discrete'} for name in concept_names
     }
@@ -262,7 +262,7 @@ def __getitem__(self, idx: int) -> dict:
 
 #### Concept Types
 - **`discrete`**: Binary and Categorical variables
-- **`continuous`**: Continuous variables
+- **`continuous`**: Continuous variables (not yet supported)
 
 #### Cardinalities
 - **Binary concepts (2 states)**: Use cardinality = **1** (treated as Bernoulli)

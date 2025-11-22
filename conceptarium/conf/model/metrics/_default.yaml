@@ -12,10 +12,5 @@ discrete:
       kwargs: 
         average: 'micro'
     
-continuous: 
-  mae: 
-    path: "torchmetrics.regression.MeanAbsoluteError"
-    kwargs: {}
-  mse: 
-    path: "torchmetrics.regression.MeanSquaredError"
-    kwargs: {}
+# continuous: 
+  # ... not supported yet
