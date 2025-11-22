@@ -130,7 +130,7 @@ class AxisAnnotation:
         # Determine is_nested from cardinalities
         # FIXME: should we consider nested also mix of scalars and bernoulli?
         is_nested = any(card > 1 for card in self.cardinalities)
-        
+
         object.__setattr__(self, 'is_nested', is_nested)
 
         # Consistency checks on metadata
@@ -479,14 +479,6 @@ class Annotations:
             return ann.states[idx_label].index(state)
         except ValueError:
             raise ValueError(f"State {state!r} not found for concept {label!r} in axis {axis}")
-
-    # ---------------------- Backward compatibility ---------------------- #
-    # @property
-    # def concept_names(self) -> Tuple[str, ...]:
-    #     """Get concept names (assumes concept axis = 1). For backward compatibility."""
-    #     if 1 not in self._axis_annotations:
-    #         raise ValueError("Concept axis (1) is not annotated")
-    #     return self.labels_for_axis(1)
 
     def __getitem__(self, axis: int) -> AxisAnnotation:
         """
