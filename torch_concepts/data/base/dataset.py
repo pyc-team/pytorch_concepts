@@ -154,8 +154,7 @@ class ConceptDataset(Dataset):
         Returns:
             str: String showing dataset name and dimensions.
         """
-        return "{}(n_samples={}, n_features={}, n_concepts={})" \
-            .format(self.name, self.n_samples, self.n_features, self.n_concepts)
+        return f"{self.name}(n_samples={self.n_samples}, n_features={self.n_features}, n_concepts={self.n_concepts})"
 
     def __len__(self) -> int:
         """

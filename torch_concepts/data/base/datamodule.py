@@ -131,12 +131,10 @@ class ConceptDataModule(LightningDataModule):
             raise AttributeError(item)
 
     def __repr__(self):
-        return "{}(train_len={}, val_len={}, test_len={}, " \
-               "scalers=[{}], batch_size={}, n_features={}, n_concepts={})" \
-            .format(self.__class__.__name__,
-                   self.train_len, self.val_len, self.test_len,
-                   ', '.join(self.scalers.keys()), self.batch_size,
-                   self.n_features, self.n_concepts)
+        scalers_str = ', '.join(self.scalers.keys())
+        return (f"{self.__class__.__name__}(train_len={self.train_len}, val_len={self.val_len}, "
+                f"test_len={self.test_len}, scalers=[{scalers_str}], batch_size={self.batch_size}, "
+                f"n_features={self.n_features}, n_concepts={self.n_concepts})")
 
     @property
     def trainset(self):

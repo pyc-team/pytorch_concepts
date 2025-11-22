@@ -75,11 +75,9 @@ class BaseLearner(pl.LightningModule):
         self._setup_metrics(metrics)
 
     def __repr__(self):
-        return "{}(model={}, n_concepts={}, optimizer={}, scheduler={})" \
-            .format(self.__class__.__name__,
-                    self.n_concepts,
-                    self.optim_class.__name__,
-                    self.scheduler_class.__name__ if self.scheduler_class else None)
+        scheduler_name = self.scheduler_class.__name__ if self.scheduler_class else None
+        return (f"{self.__class__.__name__}(n_concepts={self.n_concepts}, "
+                f"optimizer={self.optim_class.__name__}, scheduler={scheduler_name})")
 
     @staticmethod
     def _check_metric(metric):
@@ -292,7 +290,6 @@ class BaseLearner(pl.LightningModule):
             c_true_continuous = c_true[:, self.groups['continuous_concepts']]
             continuous_fn.update(c_hat_continuous, c_true_continuous)
 
-    
     def update_metrics(self, in_metric_dict: Mapping, 
                        metric_collection: MetricCollection):
         """Update both summary and per-concept metrics.
@@ -410,6 +407,34 @@ class BaseLearner(pl.LightningModule):
         concepts = batch['concepts']
         transforms = batch.get('transforms', {})
         return inputs, concepts, transforms
+
+    def maybe_apply_preprocessing(self, 
+                                  preprocess: bool,
+                                  inputs: Mapping,
+                                  transform: Mapping) -> torch.Tensor:
+        # apply batch preprocessing
+        if preprocess:
+            for key, transf in transform.items():
+                if key in inputs:
+                    inputs[key] = transf.transform(inputs[key])
+        return inputs
+
+    def maybe_apply_postprocessing(self, 
+                                   postprocess: bool,
+                                   forward_out: Union[torch.Tensor, Mapping],
+                                   transform: Mapping) -> torch.Tensor:
+        raise NotImplementedError("Postprocessing is not implemented yet.")
+        # # apply batch postprocess
+        # if postprocess:
+            # case isinstance(forward_out, Mapping):
+            #     ....
+
+            # case isinstance(forward_out, torch.Tensor):
+            #     only continuous concepts...
+            #     transf = transform.get('c')
+            #     if transf is not None:
+            #         out = transf.inverse_transform(forward_out)
+        # return out
 
     @abstractmethod
     def training_step(self, batch):

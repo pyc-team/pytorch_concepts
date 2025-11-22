@@ -63,10 +63,9 @@ class BaseModel(nn.Module, ABC):
         self.encoder_out_features = encoder_kwargs.get('hidden_size') if encoder_kwargs else input_size
 
     def __repr__(self):
-        return "{}(model={}, backbone={}, encoder={})" \
-            .format(self.__class__.__name__,
-                    self.backbone.__class__.__name__ if self.backbone is not None else "None",
-                    self.encoder.__class__.__name__ if self.encoder is not None else "None")
+        backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
+        encoder_name = self.encoder.__class__.__name__ if self.encoder is not None else "None"
+        return f"{self.__class__.__name__}(backbone={backbone_name}, encoder={encoder_name})"
 
     @property
     def backbone(self) -> BackboneType:
@@ -97,13 +96,42 @@ class BaseModel(nn.Module, ABC):
     #     return self._encoder
 
     @abstractmethod
-    def forward(self,
-                x: torch.Tensor,
-                query: List[str] = None,
-                *args,
-                **kwargs) -> torch.Tensor:
+    def forward(self, x, query, *args, **kwargs):
+        """Model forward method to be implemented by subclasses.
+        """
         pass
 
+    @abstractmethod
+    def filter_output_for_loss(self, forward_out, target):
+        """Filter model outputs before passing to loss function.
+
+        Override this method in your model to customize what outputs are passed to the loss.
+        Useful when your model returns auxiliary outputs that shouldn't be
+        included in loss computation or viceversa.
+
+        Args:
+            forward_out: Model output (typically concept predictions).
+            target: Ground truth concepts.
+        Returns:
+            dict: Filtered outputs for loss computation.
+        """
+        pass
+
+    @abstractmethod
+    def filter_output_for_metric(self, forward_out, target):
+        """Filter model outputs before passing to metric computation.
+
+        Override this method in your model to customize what outputs are passed to the metrics.
+        Useful when your model returns auxiliary outputs that shouldn't be
+        included in metric computation or viceversa.
+
+        Args:
+            forward_out: Model output (typically concept predictions).
+            target: Ground truth concepts.
+        Returns:
+            dict: Filtered outputs for metric computation.
+        """
+        pass
 
     # ------------------------------------------------------------------
     # Embeddings extraction helpers
