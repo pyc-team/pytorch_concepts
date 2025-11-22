@@ -1,14 +1,3 @@
-"""PyTorch Lightning training engine for concept-based models.
-
-This module provides the Predictor class, which orchestrates the training, 
-validation, and testing of concept-based models. It handles:
-- Loss computation with type-aware losses (binary/categorical/continuous)
-- Metric tracking (summary and per-concept)
-- Optimizer and scheduler configuration
-- Batch preprocessing and transformations
-- Concept interventions (experimental)
-"""
-
 from abc import abstractmethod
 from typing import Mapping, Type, Union, Optional
 import torch
@@ -34,7 +23,7 @@ class JointLearner(BaseLearner):
                 enable_summary_metrics: Optional[bool] = True,
                 enable_perconcept_metrics: Optional[Union[bool, list]] = False,
                 **kwargs
-                ):
+    ):
         super(JointLearner, self).__init__(
             loss=loss,
             metrics=metrics,
@@ -50,74 +39,6 @@ class JointLearner(BaseLearner):
             enable_perconcept_metrics=enable_perconcept_metrics,
             **kwargs
         )
-
-    def maybe_apply_preprocessing(self, 
-                                  preprocess: bool,
-                                  inputs: Mapping,
-                                  transform: Mapping) -> torch.Tensor:
-        # apply batch preprocessing
-        if preprocess:
-            for key, transf in transform.items():
-                if key in inputs:
-                    inputs[key] = transf.transform(inputs[key])
-        return inputs
-
-    def maybe_apply_postprocessing(self, 
-                                   postprocess: bool,
-                                   forward_out: Union[torch.Tensor, Mapping],
-                                   transform: Mapping) -> torch.Tensor:
-        raise NotImplementedError("Postprocessing is not implemented yet.")
-        # # apply batch postprocess
-        # if postprocess:
-            # case isinstance(forward_out, Mapping):
-            #     ....
-
-            # case isinstance(forward_out, torch.Tensor):
-            #     only continuous concepts...
-            #     transf = transform.get('c')
-            #     if transf is not None:
-            #         out = transf.inverse_transform(forward_out)
-        # return out
-    
-    @abstractmethod
-    def forward(self, x, query, *args, **kwargs):
-        """Model forward method to be implemented by subclasses.
-        
-        Should handle inference queries for all concepts jointly.
-        """
-        pass
-
-    @abstractmethod
-    def filter_output_for_loss(self, forward_out, target):
-        """Filter model outputs before passing to loss function.
-
-        Override this method in your model to customize what outputs are passed to the loss.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in loss computation or viceversa.
-
-        Args:
-            forward_out: Model output (typically concept predictions).
-            target: Ground truth concepts.
-        Returns:
-            dict: Filtered outputs for loss computation.
-        """
-        pass
-
-    @abstractmethod
-    def filter_output_for_metric(self, forward_out, target):
-        """Filter model outputs before passing to metric computation.
-
-        Override this method in your model to customize what outputs are passed to the metrics.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in metric computation or viceversa.
-
-        Args:
-            forward_out: Model output (typically concept predictions).
-            target: Ground truth concepts.
-        Returns:
-            dict: Filtered outputs for metric computation.
-        """
-        pass
 
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
@@ -209,5 +130,6 @@ class JointLearner(BaseLearner):
         # self.test_intervention(batch)
         # if 'Qualified' in self.c_names:
         #     self.test_intervention_fairness(batch)
+
         return loss
  

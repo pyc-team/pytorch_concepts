@@ -87,8 +87,8 @@ class BaseConstructor(torch.nn.Module):
                  encoder: LazyConstructor,  # layer for root concepts
                  predictor: LazyConstructor,
                  *args,
-                 **kwargs,
-                 ):
+                 **kwargs
+    ):
         super(BaseConstructor, self).__init__()
         self.input_size = input_size
         self.annotations = annotations

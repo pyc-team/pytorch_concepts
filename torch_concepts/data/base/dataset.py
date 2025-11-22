@@ -70,8 +70,8 @@ class ConceptDataset(Dataset):
                  precision: Union[int, str] = 32,
                  name: Optional[str] = None,
                  # TODO
-                 exogenous: Optional[Mapping[str, Union[np.ndarray, pd.DataFrame, Tensor]]] = None,
-                 ):
+                 exogenous: Optional[Mapping[str, Union[np.ndarray, pd.DataFrame, Tensor]]] = None
+    ):
         super(ConceptDataset, self).__init__()
 
         # Set info

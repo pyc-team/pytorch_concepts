@@ -95,7 +95,7 @@ class ConceptLoss(nn.Module):
         
         # Continuous concepts
         if self.continuous_fn is not None:
-            cont_preds = input[:, self.groups['continuous_concepts']]
+            cont_preds = input[:, self.groups['continuous_logits']]
             cont_targets = target[:, self.groups['continuous_concepts']]
             total_loss += self.continuous_fn(cont_preds, cont_targets)
         

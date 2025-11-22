@@ -115,8 +115,8 @@ class GraphModel(BaseConstructor):
                  predictor: LazyConstructor,
                  use_source_exogenous: bool = None,
                  source_exogenous: Optional[LazyConstructor] = None,
-                 internal_exogenous: Optional[LazyConstructor] = None,
-                 ):
+                 internal_exogenous: Optional[LazyConstructor] = None
+    ):
         super(GraphModel, self).__init__(
             input_size=input_size,
             annotations=annotations,

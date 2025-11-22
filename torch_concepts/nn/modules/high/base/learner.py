@@ -38,7 +38,7 @@ class BaseLearner(pl.LightningModule):
                 enable_summary_metrics: Optional[bool] = True,
                 enable_perconcept_metrics: Optional[Union[bool, list]] = False,
                 **kwargs
-                ):
+    ):
         
         super(BaseLearner, self).__init__(**kwargs)
 

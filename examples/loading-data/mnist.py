@@ -1,3 +1,5 @@
+# TODO: update example when dataset is fixed
+
 import torchvision.models as models
 from torchvision import transforms
 
