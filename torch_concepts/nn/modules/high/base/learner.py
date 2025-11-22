@@ -395,6 +395,31 @@ class BaseLearner(pl.LightningModule):
                  prog_bar=True,
                  **kwargs)
 
+    def _check_batch(self, batch):
+        """Validate batch structure and required keys.
+        
+        Args:
+            batch (dict): Batch dictionary from dataloader.
+        Raises:
+            KeyError: If required keys 'inputs' or 'concepts' are missing from batch
+        """
+        # Validate batch structure
+        if not isinstance(batch, dict):
+            raise TypeError(
+                f"Expected batch to be a dict, but got {type(batch).__name__}. "
+                f"Ensure your dataset returns batches as dictionaries with 'inputs' and 'concepts' keys."
+            )
+        
+        required_keys = ['inputs', 'concepts']
+        # TODO: add option to train an unsupervised concept-based model
+        missing_keys = [key for key in required_keys if key not in batch]
+        if missing_keys:
+            raise KeyError(
+                f"Batch is missing required keys: {missing_keys}. "
+                f"Found keys: {list(batch.keys())}. "
+                f"Ensure your dataset returns batches with 'inputs' and 'concepts' keys."
+            )
+
     def unpack_batch(self, batch):
         """Extract inputs, concepts, and transforms from batch dict.
         can be overridden by model-specific preprocessing.
@@ -405,6 +430,7 @@ class BaseLearner(pl.LightningModule):
         Returns:
             Tuple: (inputs, concepts, transforms) after model-specific preprocessing.
         """
+        self._check_batch(batch)
         inputs = batch['inputs']
         concepts = batch['concepts']
         transforms = batch.get('transforms', {})
