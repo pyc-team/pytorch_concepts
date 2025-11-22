@@ -72,12 +72,6 @@ class JointLearner(BaseLearner):
         #     c_loss = batch.transform['c'].transform(c)
         #     c_hat = batch.transform['c'].inverse_transform(c_hat)
 
-        if self.scale_concepts:
-            raise NotImplementedError("Scaling of concepts is not implemented yet.")
-            # # TODO: implement scaling only for continuous concepts 
-            # c_loss = batch.transform['c'].transform(c)
-            # c_hat = batch.transform['c'].inverse_transform(c_hat)
-
         # --- Compute loss ---
         # keys in in_loss_dict must match those expected by loss functions
         in_loss_dict = self.filter_output_for_loss(out, c_loss)
