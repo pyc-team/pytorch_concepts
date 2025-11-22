@@ -1,8 +1,10 @@
 import unittest
 import torch
+from torch import nn
 
 from torch_concepts.data.datasets import ToyDataset, CompletenessDataset
 from torch_concepts.data.datasets.toy import _xor, _trigonometry, _dot, _checkmark, _complete
+from torch_concepts.data.backbone import compute_backbone_embs
 
 
 class TestToyDataset(unittest.TestCase):
@@ -70,6 +72,66 @@ class TestToyDataset(unittest.TestCase):
             self.assertTrue(torch.equal(data, x[i]))
             self.assertTrue(torch.equal(concept_label, c[i]))
             self.assertTrue(torch.equal(target_label, y[i]))
+
+
+class TestBackboneTrainingStatePreservation(unittest.TestCase):
+    """Test that compute_backbone_embs preserves the training state of the model."""
+
+    def setUp(self):
+        # Create a simple backbone model
+        self.backbone = nn.Sequential(
+            nn.Linear(10, 5),
+            nn.ReLU()
+        )
+        # Create a simple dataset
+        X = torch.randn(20, 10)
+        self.dataset = [{'x': X[i]} for i in range(len(X))]
+
+    def test_preserves_training_mode(self):
+        """Test that a model in training mode is restored to training mode."""
+        self.backbone.train()
+        self.assertTrue(self.backbone.training, "Model should start in training mode")
+        
+        _ = compute_backbone_embs(
+            self.dataset, 
+            self.backbone, 
+            batch_size=4, 
+            show_progress=False
+        )
+        
+        self.assertTrue(
+            self.backbone.training, 
+            "Model should be restored to training mode after compute_backbone_embs"
+        )
+
+    def test_preserves_eval_mode(self):
+        """Test that a model in eval mode remains in eval mode."""
+        self.backbone.eval()
+        self.assertFalse(self.backbone.training, "Model should start in eval mode")
+        
+        _ = compute_backbone_embs(
+            self.dataset, 
+            self.backbone, 
+            batch_size=4, 
+            show_progress=False
+        )
+        
+        self.assertFalse(
+            self.backbone.training, 
+            "Model should remain in eval mode after compute_backbone_embs"
+        )
+
+    def test_embeddings_computed_correctly(self):
+        """Test that embeddings are computed with correct shape."""
+        embs = compute_backbone_embs(
+            self.dataset, 
+            self.backbone, 
+            batch_size=4, 
+            show_progress=False
+        )
+        
+        self.assertEqual(embs.shape[0], len(self.dataset), "Should have one embedding per sample")
+        self.assertEqual(embs.shape[1], 5, "Embedding dimension should match backbone output")
 
 
 if __name__ == '__main__':

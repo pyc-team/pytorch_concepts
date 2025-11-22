@@ -46,6 +46,9 @@ def compute_backbone_embs(
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
+    # Store original training state to restore later
+    was_training = backbone.training
+    
     # Move backbone to device and set to eval mode
     backbone = backbone.to(device)
     backbone.eval()
@@ -56,7 +59,6 @@ def compute_backbone_embs(
         batch_size=batch_size,
         shuffle=False,  # Important: maintain order
         num_workers=workers,
-        pin_memory=True if device.type == 'cuda' else False,
     )
     
     embeddings_list = []
@@ -70,6 +72,10 @@ def compute_backbone_embs(
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
     all_embeddings = torch.cat(embeddings_list, dim=0) # Concatenate all embeddings
+    
+    # Restore original training state
+    if was_training:
+        backbone.train()
     
     return all_embeddings
 
