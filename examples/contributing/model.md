@@ -1,6 +1,6 @@
 # Contributing a New Model
 
-This guide will help you implement a new model in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
+This guide will help you implement a new model in <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="../../doc/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
 
 ## Prerequisites
 
