@@ -93,7 +93,8 @@ class ConceptDataset(Dataset):
                                       })
         # assert first axis is annotated axis for concepts
         if 1 not in annotations.annotated_axes:
-            raise ValueError("Concept annotations must include axis 1 for concepts.")
+            raise ValueError("Concept annotations must include axis 1 for concepts. " \
+            "Axis 0 is always assumed to be the batch dimension")
 
         # sanity check
         axis_annotation = annotations[1]
