@@ -100,7 +100,6 @@ class AxisAnnotation:
                 )
             # check states length matches cardinalities
             inferred_cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
-            inferred_cardinalities = tuple(1 if card == 2 else card for card in inferred_cardinalities)
             if self.cardinalities != inferred_cardinalities:
                 raise ValueError(
                     f"Provided cardinalities {self.cardinalities} don't match "
