@@ -8,11 +8,14 @@ This module provides helper functions for:
 """
 
 import torch
+import logging
 import numpy as np
 import random
 import os
 import torch
 from omegaconf import DictConfig, open_dict
+
+logger = logging.getLogger(__name__)
 
 from env import DATA_ROOT
 
@@ -30,7 +33,7 @@ def seed_everything(seed: int):
         >>> seed_everything(42)
         Seed set to 42
     """
-    print(f"Seed set to {seed}")
+    logger.info(f"Seed set to {seed}")
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
@@ -41,8 +44,7 @@ def seed_everything(seed: int):
 def setup_run_env(cfg: DictConfig):
     """Configure runtime environment from Hydra configuration.
     
-    Sets up threading, random seeds, matrix multiplication precision, and
-    device selection (CUDA/CPU) based on configuration and availability.
+    Sets up threading, random seeds and matrix multiplication precision.
     
     Args:
         cfg: Hydra DictConfig containing runtime parameters:
@@ -51,20 +53,12 @@ def setup_run_env(cfg: DictConfig):
             - matmul_precision: Float32 matmul precision ('highest', 'high', 'medium')
             
     Returns:
-        Updated cfg with 'device' field set to 'cuda' or 'cpu'.
-        
-    Example:
-        >>> from omegaconf import DictConfig
-        >>> cfg = DictConfig({'seed': 42, 'num_threads': 4})
-        >>> cfg = setup_run_env(cfg)
-        >>> print(cfg.device)  # 'cuda' or 'cpu'
+        Updated cfg
     """
     torch.set_num_threads(cfg.get("num_threads", 1))
     seed_everything(cfg.get("seed"))
     if cfg.get("matmul_precision", None) is not None:
         torch.set_float32_matmul_precision(cfg.matmul_precision)
-    with open_dict(cfg): 
-        cfg.update(device="cuda" if torch.cuda.is_available() else "cpu")
     # set DATA_ROOT
     if not cfg.get("DATA_ROOT"):
         with open_dict(cfg):

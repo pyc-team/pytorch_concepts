@@ -39,7 +39,7 @@ def run_from_id(run_id: str) -> Run:
     return api.run(f"{wandb_entity}/{wandb_project}/{run_id}")
 
 
-def checkpoint_from_run(run: Run | str) -> dict:
+def checkpoint_from_run(run: Run | str, target_device: str = None) -> dict:
     """Download and load a PyTorch checkpoint from a W&B run.
     
     Downloads the model checkpoint artifact from W&B (if not already cached)
@@ -76,12 +76,13 @@ def checkpoint_from_run(run: Run | str) -> dict:
         artifact.download(root=str(checkpoint_path.parent))
     from torch import load
 
-    map_location = "cuda" if cuda.is_available() else "cpu"
-    checkpoint = load(checkpoint_path, map_location=map_location)
+    if target_device is None:
+        target_device = "cuda" if cuda.is_available() else "cpu"
+    checkpoint = load(checkpoint_path, map_location=target_device)
     return checkpoint
 
 
-def model_from_run(run: Run | str) -> LightningModule:
+def model_from_run(run: Run | str, target_device: str = None) -> LightningModule:
     """Load a trained PyTorch Lightning model from a W&B run.
     
     Reconstructs the model from the W&B config, loads trained weights from
@@ -100,7 +101,7 @@ def model_from_run(run: Run | str) -> LightningModule:
     """
     if isinstance(run, str):
         run = run_from_id(run)
-    checkpoint = checkpoint_from_run(run)
+    checkpoint = checkpoint_from_run(run, target_device=target_device)
     config = OmegaConf.create(run.config["hydra_cfg"])
     model = instantiate(config.engine, _convert_="all")
     model.load_state_dict(checkpoint["state_dict"])
