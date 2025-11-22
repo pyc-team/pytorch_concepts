@@ -34,7 +34,7 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------------
     logger.info("----------------------INIT DATA--------------------------------------")
     datamodule = instantiate(cfg.dataset)
-    datamodule.setup('fit')
+    datamodule.setup('fit', verbose=True)
     cfg = update_config_from_data(cfg, datamodule)
 
     # ----------------------------------

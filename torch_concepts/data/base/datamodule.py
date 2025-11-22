@@ -231,8 +231,9 @@ class ConceptDataModule(LightningDataModule):
                 _set = None  # Empty split
             setattr(self, name, _set)
 
-    def maybe_use_backbone_embs(self, precompute_embs: bool = False):
-        logger.info(f"Input shape: {tuple(self.dataset.input_data.shape)}")
+    def maybe_use_backbone_embs(self, precompute_embs: bool = False, verbose: bool = True):
+        if verbose:
+            logger.info(f"Input shape: {tuple(self.dataset.input_data.shape)}")
         if precompute_embs:
             if self.backbone is not None:
                 # Precompute embeddings with automatic caching
@@ -243,34 +244,41 @@ class ConceptDataModule(LightningDataModule):
                     batch_size=self.batch_size,
                     force_recompute=self.force_recompute,  # whether to recompute embeddings even if cached
                     workers=self.workers,
-                    show_progress=True,
+                    verbose=verbose,
                 )
                 self.dataset.input_data = embs
                 self.embs_precomputed = True
-                logger.info(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
+                if verbose:
+                    logger.info(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
             else:
                 self.embs_precomputed = False
-                logger.warning("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
+                if verbose:
+                    logger.warning("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
         else:
             # Use raw input data without preprocessing
             self.embs_precomputed = False
-            logger.info("Using raw input data without backbone preprocessing.")
-            if self.backbone is not None:
-                logger.info("Note: Backbone provided but precompute_embs=False. Using raw input data.")
+            if verbose:
+                logger.info("Using raw input data without backbone preprocessing.")
+                if self.backbone is not None:
+                    logger.info("Note: Backbone provided but precompute_embs=False. Using raw input data.")
 
-    def preprocess(self, precompute_embs: bool = False):
+    def preprocess(self, precompute_embs: bool = False, verbose: bool = True):
         """
         Preprocess the data. This method can be overridden by subclasses to
         implement custom preprocessing logic.
+        
+        Args:
+            precompute_embs: Whether to precompute embeddings using backbone.
+            verbose: Whether to print detailed logging information.
         """
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.maybe_use_backbone_embs(precompute_embs)
+        self.maybe_use_backbone_embs(precompute_embs, verbose=verbose)
 
 
 
-    def setup(self, stage: StageOptions = None):
+    def setup(self, stage: StageOptions = None, verbose: bool = True):
         """
         Prepare the data. This method is called by Lightning with both
         'fit' and 'test' stages.
@@ -278,6 +286,8 @@ class ConceptDataModule(LightningDataModule):
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'.
                 (default :obj:`None`, which means both 'fit' and 'test' stages)
+            verbose: Print detailed logging information during setup and preprocessing.
+                Defaults to True.
         
         Note:
             When precompute_embs=True:
@@ -293,7 +303,7 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.preprocess(self.precompute_embs)
+        self.preprocess(self.precompute_embs, verbose=verbose)
 
         # ----------------------------------
         # Splitting

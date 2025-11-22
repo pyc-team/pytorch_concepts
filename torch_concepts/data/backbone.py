@@ -17,7 +17,7 @@ def compute_backbone_embs(
     backbone: nn.Module,
     batch_size: int = 512,
     workers: int = 0,
-    show_progress: bool = True
+    verbose: bool = True
 ) -> torch.Tensor:
     """Extract embeddings from a dataset using a backbone model.
     
@@ -30,7 +30,7 @@ def compute_backbone_embs(
         backbone (nn.Module): Feature extraction model (e.g., ResNet encoder).
         batch_size (int, optional): Batch size for processing. Defaults to 512.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
-        show_progress (bool, optional): Display tqdm progress bar. Defaults to True.
+        verbose (bool, optional): Print detailed logging information. Defaults to True.
         
     Returns:
         torch.Tensor: Stacked embeddings with shape (n_samples, embedding_dim).
@@ -63,9 +63,10 @@ def compute_backbone_embs(
     
     embeddings_list = []
     
-    logger.info("Precomputing embeddings with backbone...")
+    if verbose:
+        logger.info("Precomputing embeddings with backbone...")
     with torch.no_grad():
-        iterator = tqdm(dataloader, desc="Extracting embeddings") if show_progress else dataloader
+        iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
         for batch in iterator:
             x = batch['x'].to(device) # Extract input data from batch
             embeddings = backbone(x) # Forward pass through backbone
@@ -85,7 +86,7 @@ def get_backbone_embs(path: str,
                     batch_size,
                     force_recompute=False,
                     workers=0,
-                    show_progress=True):
+                    verbose=True):
     """Get backbone embeddings with automatic caching.
     
     Loads embeddings from cache if available, otherwise computes and saves them.
@@ -98,7 +99,7 @@ def get_backbone_embs(path: str,
         batch_size: Batch size for computation.
         force_recompute (bool, optional): Recompute even if cached. Defaults to False.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
-        show_progress (bool, optional): Show progress bar. Defaults to True.
+        verbose (bool, optional): Print detailed logging information. Defaults to True.
         
     Returns:
         torch.Tensor: Cached or freshly computed embeddings.
@@ -119,12 +120,15 @@ def get_backbone_embs(path: str,
                                     backbone,
                                     batch_size=batch_size,
                                     workers=workers,
-                                    show_progress=show_progress)
+                                    verbose=verbose)
         # save
-        logger.info(f"Saving embeddings to {path}")
+        if verbose:
+            logger.info(f"Saving embeddings to {path}")
         torch.save(embs, path)
-        logger.info(f"✓ Saved embeddings with shape: {embs.shape}")
+        if verbose:
+            logger.info(f"✓ Saved embeddings with shape: {embs.shape}")
 
-    logger.info(f"Loading precomputed embeddings from {path}")
+    if verbose:
+        logger.info(f"Loading precomputed embeddings from {path}")
     embs = torch.load(path)
     return embs
