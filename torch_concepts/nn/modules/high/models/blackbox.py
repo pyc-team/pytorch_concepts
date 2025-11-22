@@ -31,8 +31,8 @@ class BlackBox(BaseModel, JointLearner):
 
         scheduler_class: Optional[Type] = None,
         scheduler_kwargs: Optional[Mapping] = None,     
-        enable_summary_metrics: Optional[bool] = True,
-        enable_perconcept_metrics: Optional[Union[bool, list]] = False,
+        summary_metrics: Optional[bool] = True,
+        perconcept_metrics: Optional[Union[bool, list]] = False,
         **kwargs
     ) -> None:
         # Initialize using super() to properly handle MRO
@@ -46,8 +46,8 @@ class BlackBox(BaseModel, JointLearner):
             optim_kwargs=optim_kwargs,
             scheduler_class=scheduler_class,
             scheduler_kwargs=scheduler_kwargs,
-            enable_summary_metrics=enable_summary_metrics,
-            enable_perconcept_metrics=enable_perconcept_metrics,
+            summary_metrics=summary_metrics,
+            perconcept_metrics=perconcept_metrics,
             #-- BaseModel args
             input_size=input_size,
             embs_precomputed=embs_precomputed,

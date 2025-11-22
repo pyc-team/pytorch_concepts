@@ -35,8 +35,8 @@ optim_kwargs:
   lr: 0.00075
 
 
-enable_summary_metrics: true
-enable_perconcept_metrics: ${dataset.default_task_names}
+summary_metrics: true
+perconcept_metrics: ${dataset.default_task_names}
 
 
 # TODO: implement this

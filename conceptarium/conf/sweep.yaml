@@ -11,15 +11,16 @@ hydra:
       seed: 1
       dataset: asia
       model: cbm_joint
-      model.loss.weight: 0.999
+      model/loss: weighted
+      model.loss.weight: 0.99
 
 model:
-  enable_summary_metrics: true
-  enable_perconcept_metrics: true #${dataset.default_task_names}
+  summary_metrics: true
+  perconcept_metrics: true #${dataset.default_task_names}
   # train_interv_prob: 0.8
   # test_interv_noise: 0.8   # for bndatasets only
   optim_kwargs:
-    lr: 0.01
+    lr: 0.001
 
 trainer:
   logger: null

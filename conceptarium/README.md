@@ -70,8 +70,8 @@ hydra:
 model:
   optim_kwargs:
     lr: 0.001
-  enable_summary_metrics: true
-  enable_perconcept_metrics: false
+  summary_metrics: true
+  perconcept_metrics: false
 
 trainer:
   max_epochs: 500
@@ -224,8 +224,8 @@ inference:
   _target_: "torch_concepts.nn.DeterministicInference"
   _partial_: true
 
-enable_summary_metrics: true       # enable/disable summary metrics over concepts
-enable_perconcept_metrics: false   # enable/disable per-concept metrics
+summary_metrics: true       # enable/disable summary metrics over concepts
+perconcept_metrics: false   # enable/disable per-concept metrics
 ```
 
 ### Common Parameters
@@ -237,9 +237,6 @@ From `_commons.yaml`:
   - **`activation`**: Activation function (relu, tanh, etc.) in encoder
   - **`dropout`**: Dropout probability in encoder
 - **`variable_distributions`**: Probability distributions with which concepts are modeled:
-  - `binary`: Relaxed Bernoulli
-  - `categorical`: Relaxed OneHot Categorical
-  - `continuous`: Normal distribution
 - **`optim_class`**: Optimizer class
 - **`optim_kwargs`**:
   - **`lr`**: 0.00075
@@ -263,9 +260,8 @@ fn_collection:
       path: "torch.nn.CrossEntropyLoss"
       kwargs: {}
       
-  continuous: 
-    path: "torch.nn.MSELoss"
-    kwargs: {}
+  # continuous: 
+  # ... not supported yet
 ```
 
 ### Metrics Configuration (`model/metrics/_default.yaml`)
