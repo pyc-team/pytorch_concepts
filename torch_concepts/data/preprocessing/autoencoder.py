@@ -147,6 +147,7 @@ class AutoencoderTrainer:
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.device = device
+        self.best_model_wts = None
 
     def train(self, dataset):
         """
@@ -168,14 +169,15 @@ class AutoencoderTrainer:
             self.model.train()
             train_loss = 0.0
             for data in self.data_loader:
-                if 'cuda' in self.device:
-                    data = data.to(self.device)
+                data = data.to(self.device)
                 self.optimizer.zero_grad()
                 _, outputs = self.model(data)
                 loss = self.criterion(outputs, data)
                 loss.backward()
                 self.optimizer.step()
                 train_loss += loss.item()
+            
+            train_loss /= len(self.data_loader)
 
             if epoch % 300 == 0:
                 logger.info(f'Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}')
@@ -183,7 +185,7 @@ class AutoencoderTrainer:
             if train_loss < best_loss:
                 best_loss = train_loss
                 patience_counter = 0
-                best_model_wts = self.model.state_dict()
+                self.best_model_wts = self.model.state_dict()
             else:
                 patience_counter += 1
                 
