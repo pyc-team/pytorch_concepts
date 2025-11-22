@@ -96,7 +96,7 @@ class TestBackboneTrainingStatePreservation(unittest.TestCase):
             self.dataset, 
             self.backbone, 
             batch_size=4, 
-            show_progress=False
+            verbose=False
         )
         
         self.assertTrue(
@@ -113,7 +113,7 @@ class TestBackboneTrainingStatePreservation(unittest.TestCase):
             self.dataset, 
             self.backbone, 
             batch_size=4, 
-            show_progress=False
+            verbose=False
         )
         
         self.assertFalse(
@@ -127,7 +127,7 @@ class TestBackboneTrainingStatePreservation(unittest.TestCase):
             self.dataset, 
             self.backbone, 
             batch_size=4, 
-            show_progress=False
+            verbose=False
         )
         
         self.assertEqual(embs.shape[0], len(self.dataset), "Should have one embedding per sample")
