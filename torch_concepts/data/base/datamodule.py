@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from .dataset import ConceptDataset
 
 from ..backbone import get_backbone_embs
-from ..scalers.standard import StandardScaler
 from ..splitters.random import RandomSplitter
 from ...typing import BackboneType
 
@@ -43,7 +42,7 @@ class ConceptDataModule(LightningDataModule):
             Defaults to False.
         scalers (Mapping, optional): Dict of custom scalers for data normalization. 
             Keys must match the target keys in the batch (e.g., 'input', 'concepts'). 
-            If None, uses StandardScaler. Defaults to None.
+            If None, no scaling is applied. Defaults to None.
         splitter (object, optional): Custom splitter for train/val/test splits.
             If None, uses RandomSplitter. Defaults to None.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
@@ -101,11 +100,6 @@ class ConceptDataModule(LightningDataModule):
         if scalers is not None:
             self.scalers = scalers
         else:
-            # TODO: use these scalers to process continuous data
-            # self.scalers = {
-            #     'input': StandardScaler(axis=0),
-            #     'concepts': StandardScaler(axis=0)
-            # }
             self.scalers = {}
             
         # set splitter

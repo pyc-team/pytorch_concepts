@@ -367,10 +367,10 @@ class YourDataModule(ConceptDataModule):
 ```
 
 ### 2.2 Available Default Components
-The following default scalers and splitters will be used if the 'scalers' and 'splitters' parameters are not specified.
+The following default components will be used if the corresponding parameters are not specified.
 
 #### Default Scalers
-- `StandardScaler`: Z-score normalization (default). Located in `torch_concepts/data/scalers/standard.py`.
+- **None**: No scaling is applied by default. You can provide custom scalers via the `scalers` parameter if normalization is needed (e.g., `StandardScaler` for Z-score normalization, located in `torch_concepts/data/scalers/standard.py`).
 
 #### Default Splitters
 - `RandomSplitter`: Random train/val/test split (default). Located in `torch_concepts/data/splitters/random.py`.

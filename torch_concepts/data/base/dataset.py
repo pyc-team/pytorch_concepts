@@ -186,7 +186,8 @@ class ConceptDataset(Dataset):
         sample = {
             'inputs': {'x': x},    # input data: multiple inputs can be stored in a dict
             'concepts': {'c': c},  # concepts: multiple concepts can be stored in a dict
-            # TODO: check if batch transforms work correctly inside the Predictor engine
+            # TODO: add scalers when these are set
+            # also check if batch transforms work correctly inside the model training loop
             # 'transforms': {'x': self.scalers.get('input', None),
             #               'c': self.scalers.get('concepts', None)}
         }
