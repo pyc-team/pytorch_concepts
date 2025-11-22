@@ -38,7 +38,8 @@ def check_collection(annotations: AxisAnnotation,
         ...     'loss'
         ... )
     """
-    assert collection_name in ['loss', 'metrics'], "collection_name must be either 'loss' or 'metrics'"
+    assert collection_name in ['loss', 'metrics'], f"collection_name must be \
+        either 'loss' or 'metrics', got '{collection_name}'"
 
     # Extract annotation properties
     metadata = annotations.metadata
