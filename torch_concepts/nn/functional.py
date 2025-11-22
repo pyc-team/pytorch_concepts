@@ -617,7 +617,7 @@ def edge_type(graph, i, j):
         raise ValueError(f'invalid edge type {i}, {j}')
 
 # graph similairty metrics
-def hamming_distance(first, second):
+def custom_hamming_distance(first, second):
     """Compute the graph edit distance between two partially direceted graphs"""
     first = first.loc[[row for row in first.index if '#virtual_' not in row],
                       [col for col in first.columns if '#virtual_' not in col]]
