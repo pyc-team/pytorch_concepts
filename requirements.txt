@@ -2,7 +2,6 @@ scikit-learn
 torch
 opencv-python
 pytorch-minimize
-torch_geometric
 pgmpy
 bnlearn
 pandas

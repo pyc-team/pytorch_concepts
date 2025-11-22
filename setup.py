@@ -29,7 +29,6 @@ INSTALL_REQUIRES = [
     'scipy',
     'torch',
     'pytorch-minimize',
-    'torch_geometric',
     'pytorch-lightning',
 ]
 CLASSIFIERS = [

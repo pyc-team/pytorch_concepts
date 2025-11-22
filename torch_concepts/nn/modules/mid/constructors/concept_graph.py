@@ -12,7 +12,38 @@ from typing import List, Tuple, Union, Optional, Set
 
 from torch import Tensor
 import networkx as nx
-import torch_geometric as pyg
+
+
+def _dense_to_sparse_pytorch(adj_matrix: Tensor) -> Tuple[Tensor, Tensor]:
+    """
+    Convert dense adjacency matrix to sparse COO format using pure PyTorch.
+
+    This is a differentiable alternative to torch_geometric's dense_to_sparse.
+
+    Args:
+        adj_matrix: Dense adjacency matrix of shape (n_nodes, n_nodes)
+
+    Returns:
+        edge_index: Tensor of shape (2, num_edges) with [source, target] indices
+        edge_weight: Tensor of shape (num_edges,) with edge weights
+    """
+    # Get non-zero indices using torch.nonzero (differentiable)
+    indices = torch.nonzero(adj_matrix, as_tuple=False)
+
+    if indices.numel() == 0:
+        # Empty graph - return empty tensors with proper shape
+        device = adj_matrix.device
+        dtype = adj_matrix.dtype
+        return (torch.empty((2, 0), dtype=torch.long, device=device),
+                torch.empty(0, dtype=dtype, device=device))
+
+    # Transpose to get shape (2, num_edges) for edge_index
+    edge_index = indices.t().contiguous()
+
+    # Extract edge weights at non-zero positions
+    edge_weight = adj_matrix[indices[:, 0], indices[:, 1]]
+
+    return edge_index, edge_weight
 
 
 class ConceptGraph:
@@ -107,8 +138,8 @@ class ConceptGraph:
         self._node_name_to_index = {name: idx for idx, name in enumerate(self.node_names)}
 
         # Convert to sparse format and store
-        self.edge_index, self.edge_weight = pyg.utils.dense_to_sparse(data)
-    
+        self.edge_index, self.edge_weight = _dense_to_sparse_pytorch(data)
+
     @classmethod
     def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):
         """
@@ -453,12 +484,10 @@ def dense_to_sparse(
     # Extract tensor data
     if isinstance(adj_matrix, ConceptGraph):
         adj_tensor = adj_matrix.data
-    elif isinstance(adj_matrix, AnnotatedTensor):
-        adj_tensor = adj_matrix.as_subclass(Tensor)
     else:
         adj_tensor = adj_matrix
 
-    return pyg.utils.dense_to_sparse(adj_tensor)
+    return _dense_to_sparse_pytorch(adj_tensor)
 
 
 def to_networkx_graph(

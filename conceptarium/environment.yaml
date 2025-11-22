@@ -1,6 +1,5 @@
 name: conceptarium
 channels:
-  - pyg
   - pytorch
   - nvidia
   - conda-forge
@@ -25,11 +24,6 @@ dependencies:
   - tqdm
   - openpyxl
 
-  # graphs
-  - networkx
-  - pyg:pyg=*=*cu*
-  - pyg:pytorch-scatter
-  - pyg:pytorch-sparse
 
   - pip
   - pip:
