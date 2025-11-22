@@ -41,9 +41,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         encoder_kwargs: Optional[Dict] = None,
 
         scheduler_class: Optional[Type] = None,
-        scheduler_kwargs: Optional[Mapping] = None,        
-        preprocess_inputs: Optional[bool] = False,
-        scale_concepts: Optional[bool] = False,
+        scheduler_kwargs: Optional[Mapping] = None,
         enable_summary_metrics: Optional[bool] = True,
         enable_perconcept_metrics: Optional[Union[bool, list]] = False,
         **kwargs
@@ -59,8 +57,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             optim_kwargs=optim_kwargs,
             scheduler_class=scheduler_class,
             scheduler_kwargs=scheduler_kwargs,
-            preprocess_inputs=preprocess_inputs,
-            scale_concepts=scale_concepts,
             enable_summary_metrics=enable_summary_metrics,
             enable_perconcept_metrics=enable_perconcept_metrics,
             # -- BaseModel args

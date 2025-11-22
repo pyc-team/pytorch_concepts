@@ -33,8 +33,6 @@ class BaseLearner(pl.LightningModule):
                 optim_kwargs: Mapping,
                 scheduler_class: Optional[Type] = None,
                 scheduler_kwargs: Optional[Mapping] = None,  
-                preprocess_inputs: Optional[bool] = False,
-                scale_concepts: Optional[bool] = False,
                 enable_summary_metrics: Optional[bool] = True,
                 enable_perconcept_metrics: Optional[Union[bool, list]] = False,
                 **kwargs
@@ -55,10 +53,6 @@ class BaseLearner(pl.LightningModule):
         self.groups = get_concept_groups(self.concept_annotations)
 
         self.loss_fn = loss(annotations=self.concept_annotations)
-
-        # transforms
-        self.preprocess_inputs = preprocess_inputs
-        self.scale_concepts = scale_concepts
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -407,33 +401,35 @@ class BaseLearner(pl.LightningModule):
         transforms = batch.get('transforms', {})
         return inputs, concepts, transforms
 
-    def maybe_apply_preprocessing(self, 
-                                  preprocess: bool,
-                                  inputs: Mapping,
-                                  transform: Mapping) -> torch.Tensor:
-        # apply batch preprocessing
-        if preprocess:
-            for key, transf in transform.items():
-                if key in inputs:
-                    inputs[key] = transf.transform(inputs[key])
-        return inputs
+    # TODO: implement input preprocessing with transforms from batch
+    # @staticmethod
+    # def maybe_apply_preprocessing(preprocess: bool,
+    #                               inputs: Mapping,
+    #                               transform: Mapping) -> torch.Tensor:
+    #     # apply batch preprocessing
+    #     if preprocess:
+    #         for key, transf in transform.items():
+    #             if key in inputs:
+    #                 inputs[key] = transf.transform(inputs[key])
+    #     return inputs
 
-    def maybe_apply_postprocessing(self, 
-                                   postprocess: bool,
-                                   forward_out: Union[torch.Tensor, Mapping],
-                                   transform: Mapping) -> torch.Tensor:
-        raise NotImplementedError("Postprocessing is not implemented yet.")
-        # # apply batch postprocess
-        # if postprocess:
-            # case isinstance(forward_out, Mapping):
-            #     ....
+    # TODO: implement concepts rescaling with transforms from batch
+    # @staticmethod
+    # def maybe_apply_postprocessing(postprocess: bool,
+    #                                forward_out: Union[torch.Tensor, Mapping],
+    #                                transform: Mapping) -> torch.Tensor:
+    #     raise NotImplementedError("Postprocessing is not implemented yet.")
+    #     # apply batch postprocess
+    #     if postprocess:
+    #         case isinstance(forward_out, Mapping):
+    #             ....
 
-            # case isinstance(forward_out, torch.Tensor):
-            #     only continuous concepts...
-            #     transf = transform.get('c')
-            #     if transf is not None:
-            #         out = transf.inverse_transform(forward_out)
-        # return out
+    #         case isinstance(forward_out, torch.Tensor):
+    #             only continuous concepts...
+    #             transf = transform.get('c')
+    #             if transf is not None:
+    #                 out = transf.inverse_transform(forward_out)
+    #     return out
 
     @abstractmethod
     def training_step(self, batch):

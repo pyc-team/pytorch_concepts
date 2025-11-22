@@ -18,8 +18,6 @@ class JointLearner(BaseLearner):
                 optim_kwargs: Mapping,
                 scheduler_class: Optional[Type] = None,
                 scheduler_kwargs: Optional[Mapping] = None,  
-                preprocess_inputs: Optional[bool] = False,
-                scale_concepts: Optional[bool] = False,
                 enable_summary_metrics: Optional[bool] = True,
                 enable_perconcept_metrics: Optional[Union[bool, list]] = False,
                 **kwargs
@@ -33,8 +31,6 @@ class JointLearner(BaseLearner):
             optim_kwargs=optim_kwargs,
             scheduler_class=scheduler_class,
             scheduler_kwargs=scheduler_kwargs,
-            preprocess_inputs=preprocess_inputs,
-            scale_concepts=scale_concepts,
             enable_summary_metrics=enable_summary_metrics,
             enable_perconcept_metrics=enable_perconcept_metrics,
             **kwargs
@@ -55,9 +51,11 @@ class JointLearner(BaseLearner):
         inputs, concepts, transforms = self.unpack_batch(batch)
         batch_size = batch['inputs']['x'].size(0)
         c = c_loss = concepts['c']
-        inputs = self.maybe_apply_preprocessing(self.preprocess_inputs, 
-                                                inputs, 
-                                                transforms)
+
+        # TODO: implement scaling only for continuous concepts 
+        # inputs = self.maybe_apply_preprocessing(preprocess_inputs_flag, 
+        #                                         inputs, 
+        #                                         transforms)
 
         # --- Model forward ---
         # joint training -> inference on all concepts
@@ -67,9 +65,12 @@ class JointLearner(BaseLearner):
         out = self.forward(x=inputs['x'], query=self.concept_names)
 
         # TODO: implement scaling only for continuous concepts 
-        # out = self.maybe_apply_postprocessing(not self.scale_concepts, 
+        # out = self.maybe_apply_postprocessing(not scale_concepts_flag, 
         #                                       out, 
         #                                       transforms)
+        # if scale_concepts_flag:
+        #     c_loss = batch.transform['c'].transform(c)
+        #     c_hat = batch.transform['c'].inverse_transform(c_hat)
 
         if self.scale_concepts:
             raise NotImplementedError("Scaling of concepts is not implemented yet.")

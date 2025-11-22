@@ -35,12 +35,6 @@ optim_kwargs:
   lr: 0.00075
 
 
-# for continuous / regression concepts
-# TODO: implement this
-preprocess_inputs: false
-scale_concepts: false
-
-
 enable_summary_metrics: true
 enable_perconcept_metrics: ${dataset.default_task_names}
 
