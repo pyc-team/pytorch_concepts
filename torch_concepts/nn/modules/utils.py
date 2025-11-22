@@ -43,8 +43,8 @@ def check_collection(annotations: AxisAnnotation,
     types = [c_meta['type'] for _, c_meta in metadata.items()]
     
     # Categorize concepts by type and cardinality
-    is_binary = [t == 'discrete' and card == 1 for t, card in zip(types, cardinalities)]
-    is_categorical = [t == 'discrete' and card > 1 for t, card in zip(types, cardinalities)]
+    is_binary = [x == ('discrete', 1) for x in zip(types, cardinalities)]
+    is_categorical = [x == ('discrete', 1) for x in zip(types, cardinalities)]
     is_continuous = [t == 'continuous' for t in types]
     
     has_binary = any(is_binary)
