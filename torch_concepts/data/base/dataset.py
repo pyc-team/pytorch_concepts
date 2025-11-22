@@ -11,7 +11,7 @@ import pandas as pd
 from torch import Tensor
 from torch.utils.data import Dataset
 from copy import deepcopy
-from typing import Dict, List, Mapping, Optional, Union
+from typing import Dict, List, Optional, Union
 import warnings
 
 from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
@@ -130,7 +130,7 @@ class ConceptDataset(Dataset):
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
         # allow more complex data structures in the future with a custom parser
-        self.input_data: Tensor = self._parse_tensor(input_data, 'input', self.precision)
+        self.input_data: Tensor = parse_tensor(input_data, 'input', self.precision)
 
         # Store concept data C
         self.concepts = None
@@ -395,11 +395,13 @@ class ConceptDataset(Dataset):
                    variables in the dataset.
         """
         if not isinstance(graph, pd.DataFrame):
-            raise TypeError("Graph must be a pandas DataFrame.")
+            raise TypeError(f"Graph must be a pandas DataFrame, got {type(graph).__name__}.")
         # eventually extract subset
         graph = graph.loc[self.concept_names, self.concept_names]
-        self._graph = ConceptGraph(data=self._parse_tensor(graph, 'graph', self.precision),
-                                         node_names=self.concept_names)
+        self._graph = ConceptGraph(
+            data=parse_tensor(graph, 'graph', self.precision),
+            node_names=self.concept_names
+        )
         
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
         """Set concept annotations for the dataset.
@@ -413,7 +415,7 @@ class ConceptDataset(Dataset):
         # concepts' length must match dataset's length
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
-                             f"input_data has {self.n_samples}.")
+                f"input_data has {self.n_samples}.")
         
         # eventually extract subset
         if isinstance(concepts, pd.DataFrame):
@@ -422,13 +424,14 @@ class ConceptDataset(Dataset):
             rows = [self.concept_names_all.index(name) for name in self.concept_names]
             concepts = concepts[:, rows]
         else:
-            raise TypeError("Concepts must be a np.ndarray, pd.DataFrame, or Tensor.")
+            raise TypeError(f"Concepts must be a np.ndarray, pd.DataFrame, "
+                f"or Tensor, got {type(concepts).__name__}.")
         
         #########################################################################
         ###### modify this to change convention for how to store concepts  ######
         #########################################################################
         # convert pd.Dataframe to tensor
-        concepts = self._parse_tensor(concepts, 'concepts', self.precision)
+        concepts = parse_tensor(concepts, 'concepts', self.precision)
         #########################################################################
 
         self.concepts = concepts
@@ -454,24 +457,3 @@ class ConceptDataset(Dataset):
         self.scalers[key] = scaler
 
     # Utilities ###########################################################
-
-    def _parse_tensor(self, 
-                      data: Union[np.ndarray, pd.DataFrame, Tensor],
-                      name: str,
-                      precision: Union[int, str]) -> Tensor:
-        """Convert input data to torch tensor with appropriate format."""
-        return parse_tensor(data, name, precision)
-
-    def _convert_precision(self, 
-                           tensor: Tensor,
-                           precision: Union[int, str]) -> Tensor:
-        """Convert tensor to the dataset's precision."""
-        return convert_precision(tensor, precision)
-
-    # def numpy(self) -> np.ndarray:
-    #     """Convert data tensor to numpy array."""
-    #     return self.input_data.numpy()
-
-    # def dataframe(self) -> pd.DataFrame:
-    #     """Convert data tensor to pandas DataFrame."""
-    #     return pd.DataFrame(self.input_data.numpy())
