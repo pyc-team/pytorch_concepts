@@ -351,7 +351,8 @@ class ConceptDataset(Dataset):
         self.concept_names_all = annotations.get_axis_labels(1)
         if concept_names_subset is not None:
             # sanity check, all subset concepts must be in all concepts
-            assert set(concept_names_subset).issubset(set(self.concept_names_all)), "All subset concepts must be in all concepts."
+            missing_concepts = set(concept_names_subset) - set(self.concept_names_all)
+            assert not missing_concepts, f"Concepts not found in dataset: {missing_concepts}"
             to_select = deepcopy(concept_names_subset)
             
             # Get indices of selected concepts
@@ -362,18 +363,17 @@ class ConceptDataset(Dataset):
             reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
             
             # Reduce cardinalities
-            reduced_cardinalities = None
             reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
         
             # Reduce states
-            reduced_states = None
             reduced_states = tuple(axis_annotation.states[i] for i in indices)
 
             # Reduce metadata if present
-            reduced_metadata = None
             if axis_annotation.metadata is not None:
                 reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
                                    for i in range(len(indices))}
+            else:
+                reduced_metadata = None
             
             # Create reduced annotations
             self._annotations = Annotations({
