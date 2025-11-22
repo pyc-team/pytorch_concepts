@@ -82,9 +82,8 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
         >>> # Multi-concept groups use weighted average of base embeddings
     """
     B, C, D = c_emb.shape
-    assert sum(groups) == C, "group_sizes must sum to n_concepts. Current group_sizes: {}, n_concepts: {}" \
-        .format(groups, C)
-    assert D % 2 == 0, "embedding dim must be even (two halves). Current dim: {}".format(D)
+    assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
+    assert D % 2 == 0, f"embedding dim must be even (two halves). Current dim: {D}"
     E = D // 2
 
     # Split concept embeddings into two halves

@@ -107,8 +107,8 @@ class RewiringIntervention(BaseIntervention):
 
             def forward(self, **kwargs) -> torch.Tensor:
                 y = self.orig(**kwargs)  # [B, F]
-                assert y.dim() == 2, "RewiringIntervention expects 2-D tensors [Batch, N_concepts]. Got shape: {}" \
-                    .format(y.shape)
+                assert y.dim() == 2, (f"RewiringIntervention expects 2-D tensors [Batch, N_concepts]. "
+                                      f"Got shape: {y.shape}")
                 t = parent._make_target(y)  # [B, F]
                 m = self.mask.to(dtype=y.dtype)
                 return y * m + t * (1.0 - m)

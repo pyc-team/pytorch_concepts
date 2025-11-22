@@ -23,7 +23,7 @@ import torch_concepts as pyc
 
 project = 'pytorch_concepts'
 author = 'PyC Team'
-copyright = '{}, {}'.format(datetime.datetime.now().year, author)
+copyright = f'{datetime.datetime.now().year}, {author}'
 
 version = pyc.__version__
 release = pyc.__version__

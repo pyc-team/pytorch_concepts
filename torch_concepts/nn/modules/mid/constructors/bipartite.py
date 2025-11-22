@@ -86,9 +86,9 @@ class BipartiteModel(GraphModel):
     ):
         # get label names
         label_names = annotations.get_axis_labels(axis=1)
-        assert all([t in label_names for t in task_names]), ("All tasks must be in axis label names. "
-                                                             "Tasks {} are not in labels {}") \
-            .format([t for t in task_names if t not in label_names], label_names)
+        assert all([t in label_names for t in task_names]), (f"All tasks must be in axis label names. "
+                                                             f"Tasks {[t for t in task_names if t not in label_names]} "
+                                                             f"are not in labels {label_names}")
         concept_names = [c for c in annotations.get_axis_annotation(1).labels if c not in task_names]
 
         # build bipartite graph
