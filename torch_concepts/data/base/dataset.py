@@ -4,6 +4,7 @@ Base dataset class for concept-annotated datasets.
 This module provides the ConceptDataset class, which serves as the foundation
 for all concept-based datasets in the torch_concepts package.
 """
+from abc import abstractmethod
 import os
 import numpy as np
 import pandas as pd
@@ -284,53 +285,40 @@ class ConceptDataset(Dataset):
         return root
         
     @property
-    def files_to_download_names(self) -> Mapping[str, str]:
-        """The name of the files in the :obj:`self.root_dir` folder that must be
-        present in order to skip downloading."""
-        raise NotImplementedError
+    @abstractmethod
+    def raw_filenames(self) -> List[str]:
+        """The list of raw filenames in the :obj:`self.root_dir` folder that must be
+        present in order to skip `download()`. Should be implemented by subclasses."""
+        pass
 
     @property
-    def files_to_build_names(self) -> Mapping[str, str]:
-        """The name of the files in the :obj:`self.root_dir` folder that must be
-        present in order to skip building."""
-        return {"input": "input.pt",
-                "concepts": "concepts.h5",
-                "graph": "graph.h5",
-                "concept_metadata": "concept_metadata.json"}
+    @abstractmethod
+    def processed_filenames(self) -> List[str]:
+        """The list of processed filenames in the :obj:`self.root_dir` folder that must be
+        present in order to skip `build()`. Should be implemented by subclasses."""
+        pass
 
     @property
-    def files_to_download_paths(self) -> Mapping[str, str]:
-        """The abs path of the files that must be present in order to skip downloading."""
-        files = self.files_to_download_names
-        return {
-            k: os.path.join(self.root_dir, f)
-            for k, f in files.items()
-        }
+    def raw_paths(self) -> List[str]:
+        """The absolute paths of the raw files that must be present in order to skip downloading."""
+        return [os.path.join(self.root_dir, f) for f in self.raw_filenames]
 
     @property
-    def files_to_build_paths(self) -> Mapping[str, str]:
-        """The abs path of the files that must be present in order to skip building."""
-        files = self.files_to_build_names
-        return {
-            k: os.path.join(self.root_dir, f)
-            for k, f in files.items()
-        }
+    def processed_paths(self) -> List[str]:
+        """The absolute paths of the processed files that must be present in order to skip building."""
+        return [os.path.join(self.root_dir, f) for f in self.processed_filenames]
 
     # Directory utilities ###########################################################
 
     # Loading pipeline: load() → load_raw() → build() → download()
 
     def maybe_download(self):
-        files = self.files_to_download_paths
-        files = list(files.values())        
-        if not files_exist(files):
+        if not files_exist(self.raw_paths):
             os.makedirs(self.root_dir, exist_ok=True)
             self.download()
 
     def maybe_build(self):
-        files = self.files_to_build_paths
-        files = list(files.values())
-        if not files_exist(files):
+        if not files_exist(self.processed_paths):
             os.makedirs(self.root_dir, exist_ok=True)
             self.build()
 
@@ -402,8 +390,6 @@ class ConceptDataset(Dataset):
                 )
             })
 
-
-
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 
         as a pandas DataFrame.
@@ -419,6 +405,7 @@ class ConceptDataset(Dataset):
         graph = graph.loc[self.concept_names, self.concept_names]
         self._graph = ConceptGraph(data=self._parse_tensor(graph, 'graph', self.precision),
                                          node_names=self.concept_names)
+        
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
         """Set concept annotations for the dataset.
         
