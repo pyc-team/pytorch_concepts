@@ -61,6 +61,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
         in_features_embedding: int,
         out_features: int,
         num_monte_carlo: int = 200,
+        eps: float = 1e-6,
     ):
         """
         Initialize the stochastic encoder.
@@ -88,6 +89,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
         )
         # Prevent exploding precision matrix at initialization
         self.sigma.weight.data *= (0.01)
+        self.eps = eps
 
     def _predict_sigma(self, x):
         """
@@ -105,7 +107,8 @@ class StochasticEncoderFromEmb(BaseEncoder):
         rows, cols = torch.tril_indices(row=self.out_features, col=self.out_features, offset=0)
         diag_idx = rows == cols
         c_triang_cov[:, rows, cols] = c_sigma
-        c_triang_cov[:, range(self.out_features), range(self.out_features)] = (F.softplus(c_sigma[:, diag_idx]) + 1e-6)
+        c_sigma_activated = F.softplus(c_sigma[:, diag_idx])
+        c_triang_cov[:, range(self.out_features), range(self.out_features)] = (c_sigma_activated + self.eps)
         return c_triang_cov
 
     def forward(self,
