@@ -11,7 +11,7 @@ from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type
 
 from .variable import Variable
-from .factor import Factor
+from .cpd import ParametricCPD
 
 
 def _reinitialize_with_new_param(instance, key, new_value):
@@ -63,23 +63,23 @@ class ProbabilisticModel(nn.Module):
 
     This class represents a directed acyclic graph (DAG) where nodes are concept
     variables and edges represent probabilistic dependencies. Each variable has
-    an associated factor (neural network module) that computes its conditional
+    an associated CPD (neural network module) that computes its conditional
     probability given its parents.
 
     Attributes:
         variables (List[Variable]): List of concept variables in the model.
-        factors (nn.ModuleDict): Dictionary mapping concept names to their factors.
+        parametric_cpds (nn.ModuleDict): Dictionary mapping concept names to their CPDs.
         concept_to_variable (Dict[str, Variable]): Mapping from concept names to variables.
 
     Args:
         variables: List of Variable objects defining the concepts.
-        factors: List of Factor objects defining the conditional distributions.
+        parametric_cpds: List of ParametricCPD objects defining the conditional distributions.
 
     Example:
         >>> import torch
         >>> from torch_concepts import Variable
         >>> from torch_concepts.nn import ProbabilisticModel
-        >>> from torch_concepts.nn import Factor
+        >>> from torch_concepts.nn import ParametricCPD
         >>> from torch_concepts.nn import ProbEncoderFromEmb
         >>> from torch_concepts.nn import ProbPredictor
         >>> from torch_concepts.distributions import Delta
@@ -89,47 +89,47 @@ class ProbabilisticModel(nn.Module):
         >>> c1_var = Variable(concepts='c1', parents=[emb_var], distribution=Delta, size=1)
         >>> c2_var = Variable(concepts='c2', parents=[c1_var], distribution=Delta, size=1)
         >>>
-        >>> # Define factors (neural network modules)
+        >>> # Define CPDs (neural network modules)
         >>> backbone = torch.nn.Linear(in_features=128, out_features=32)
         >>> encoder = ProbEncoderFromEmb(in_features_embedding=32, out_features=1)
         >>> predictor = ProbPredictor(in_features_logits=1, out_features=1)
         >>>
-        >>> factors = [
-        ...     Factor(concepts='embedding', module_class=backbone),
-        ...     Factor(concepts='c1', module_class=encoder),
-        ...     Factor(concepts='c2', module_class=predictor)
+        >>> parametric_cpds = [
+        ...     ParametricCPD(concepts='embedding', parametrization=backbone),
+        ...     ParametricCPD(concepts='c1', parametrization=encoder),
+        ...     ParametricCPD(concepts='c2', parametrization=predictor)
         ... ]
         >>>
         >>> # Create ProbabilisticModel
         >>> probabilistic_model = ProbabilisticModel(
         ...     variables=[emb_var, c1_var, c2_var],
-        ...     factors=factors
+        ...     parametric_cpds=parametric_cpds
         ... )
         >>>
         >>> print(f"Number of variables: {len(probabilistic_model.variables)}")
         Number of variables: 3
     """
-    def __init__(self, variables: List[Variable], factors: List[Factor]):
+    def __init__(self, variables: List[Variable], parametric_cpds: List[ParametricCPD]):
         super().__init__()
         self.variables = variables
 
         # single source of truth: concept -> module
-        self.factors = nn.ModuleDict()
+        self.parametric_cpds = nn.ModuleDict()
 
         self.concept_to_variable: Dict[str, Variable] = {}
 
-        # initialize using the input factors list; we don't store that list
-        self._initialize_model(factors)
+        # initialize using the input CPDs list; we don't store that list
+        self._initialize_model(parametric_cpds)
 
-    def _initialize_model(self, input_factors: List[Factor]):
+    def _initialize_model(self, input_parametric_cpds: List[ParametricCPD]):
         """
         Initialize the ProbabilisticModel by splitting multi-concept variables and resolving parents.
 
-        This internal method processes the input variables and factors to create
+        This internal method processes the input variables and CPDs to create
         an atomic representation where each variable represents a single concept.
 
         Args:
-            input_factors: List of Factor objects to initialize.
+            input_parametric_cpds: List of ParametricCPD objects to initialize.
         """
         new_variables = []
         temp_concept_to_variable: Dict[str, Variable] = {}
@@ -150,25 +150,25 @@ class ProbabilisticModel(nn.Module):
         self.variables = new_variables
         self.concept_to_variable = temp_concept_to_variable
 
-        # ---- Factor modules: fill only self.factors (ModuleDict) ----
-        for factor in input_factors:
-            if len(factor.concepts) > 1:
-                # Multi-concept factor: split into individual factors
-                for concept in factor.concepts:
-                    new_factor = Factor(concepts=[concept], module_class=copy.deepcopy(factor.module_class))
-                    # Link the factor to its variable
+        # ---- ParametricCPD modules: fill only self.parametric_cpds (ModuleDict) ----
+        for parametric_cpd in input_parametric_cpds:
+            if len(parametric_cpd.concepts) > 1:
+                # Multi-concept parametric_cpd: split into individual CPDs
+                for concept in parametric_cpd.concepts:
+                    new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=copy.deepcopy(parametric_cpd.parametrization))
+                    # Link the parametric_cpd to its variable
                     if concept in self.concept_to_variable:
-                        new_factor.variable = self.concept_to_variable[concept]
-                        new_factor.parents = self.concept_to_variable[concept].parents
-                    self.factors[concept] = new_factor
+                        new_parametric_cpd.variable = self.concept_to_variable[concept]
+                        new_parametric_cpd.parents = self.concept_to_variable[concept].parents
+                    self.parametric_cpds[concept] = new_parametric_cpd
             else:
-                # Single concept factor
-                concept = factor.concepts[0]
-                # Link the factor to its variable
+                # Single concept parametric_cpd
+                concept = parametric_cpd.concepts[0]
+                # Link the parametric_cpd to its variable
                 if concept in self.concept_to_variable:
-                    factor.variable = self.concept_to_variable[concept]
-                    factor.parents = self.concept_to_variable[concept].parents
-                self.factors[concept] = factor
+                    parametric_cpd.variable = self.concept_to_variable[concept]
+                    parametric_cpd.parents = self.concept_to_variable[concept].parents
+                self.parametric_cpds[concept] = parametric_cpd
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:
@@ -197,7 +197,7 @@ class ProbabilisticModel(nn.Module):
         """
         return [var for var in self.variables if var.distribution is distribution_class]
 
-    # concept_to_factor removed; if you need the module, use the method below
+    # concept_to_parametric_cpd removed; if you need the module, use the method below
     def get_variable_parents(self, concept_name: str) -> List[Variable]:
         """
         Get the parent variables of a concept.
@@ -219,24 +219,24 @@ class ProbabilisticModel(nn.Module):
             concept_name: Name of the concept.
 
         Returns:
-            Optional[nn.Module]: The factor module for the concept, or None if not found.
+            Optional[nn.Module]: The parametric_cpd module for the concept, or None if not found.
         """
-        return self.factors[concept_name] if concept_name in self.factors else None
+        return self.parametric_cpds[concept_name] if concept_name in self.parametric_cpds else None
 
-    def _make_temp_factor(self, concept: str, module: nn.Module) -> Factor:
+    def _make_temp_parametric_cpd(self, concept: str, module: nn.Module) -> ParametricCPD:
         """
-        Create a temporary Factor object for internal use.
+        Create a temporary ParametricCPD object for internal use.
 
-        Small helper to reuse existing Factor.build_* logic without keeping a Factor list.
+        Small helper to reuse existing ParametricCPD.build_* logic without keeping a ParametricCPD list.
 
         Args:
             concept: Concept name.
             module: Neural network module.
 
         Returns:
-            Factor: Temporary factor object.
+            ParametricCPD: Temporary parametric_cpd object.
         """
-        f = Factor(concepts=[concept], module_class=module)
+        f = ParametricCPD(concepts=[concept], parametrization=module)
         target_var = self.concept_to_variable[concept]
         f.variable = target_var
         f.parents = target_var.parents
@@ -250,9 +250,9 @@ class ProbabilisticModel(nn.Module):
             Dict[str, callable]: Dictionary mapping concept names to their potential functions.
         """
         potentials = {}
-        for concept, module in self.factors.items():
-            temp_factor = self._make_temp_factor(concept, module)
-            potentials[concept] = temp_factor.build_potential()
+        for concept, module in self.parametric_cpds.items():
+            temp_parametric_cpd = self._make_temp_parametric_cpd(concept, module)
+            potentials[concept] = temp_parametric_cpd.build_potential()
         return potentials
 
     def build_cpts(self):
@@ -263,7 +263,7 @@ class ProbabilisticModel(nn.Module):
             Dict[str, callable]: Dictionary mapping concept names to their CPT functions.
         """
         cpts = {}
-        for concept, module in self.factors.items():
-            temp_factor = self._make_temp_factor(concept, module)
-            cpts[concept] = temp_factor.build_cpt()
+        for concept, module in self.parametric_cpds.items():
+            temp_parametric_cpd = self._make_temp_parametric_cpd(concept, module)
+            cpts[concept] = temp_parametric_cpd.build_cpt()
         return cpts

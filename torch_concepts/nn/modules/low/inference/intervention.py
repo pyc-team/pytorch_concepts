@@ -11,7 +11,7 @@ from typing import List, Sequence, Union, Optional
 import torch
 import torch.nn as nn
 
-from ...mid.models.factor import Factor
+from ...mid.models.cpd import ParametricCPD
 from ..base.inference import BaseIntervention
 
 # ---------------- core helpers ----------------
@@ -28,10 +28,10 @@ def _set_submodule(model: nn.Module, dotted: str, new: nn.Module) -> None:
     if len(parts) > 1:
         setattr(parent, parts[-1], new)
     elif len(parts) == 1:
-        if isinstance(new, Factor):
+        if isinstance(new, ParametricCPD):
             setattr(parent, parts[0], new)
         else:
-            setattr(parent, parts[0], Factor(concepts=dotted, module_class=new))
+            setattr(parent, parts[0], ParametricCPD(concepts=dotted, parametrization=new))
     else:
         raise ValueError("Dotted path must not be empty")
 
@@ -300,11 +300,11 @@ class _InterventionWrapper(nn.Module):
         self.quantile = float(quantile)
         self.subset = subset
         self.eps = eps
-        if hasattr(original, "module_class"):
-            if hasattr(original.module_class, "forward_to_check"):
-                self.forward_to_check = original.module_class.forward_to_check
-            elif hasattr(original.module_class, "forward"):
-                self.forward_to_check = original.module_class.forward
+        if hasattr(original, "parametrization"):
+            if hasattr(original.parametrization, "forward_to_check"):
+                self.forward_to_check = original.parametrization.forward_to_check
+            elif hasattr(original.parametrization, "forward"):
+                self.forward_to_check = original.parametrization.forward
         else:
             self.forward_to_check = original.forward
 

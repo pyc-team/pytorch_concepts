@@ -1,7 +1,7 @@
 Interpretable Probabilistic Models
 =====================================
 
-The Mid-Level API uses **Variables**, **Factors**, and **Probabilistic Models** to build interpretable causal models.
+The Mid-Level API uses **Variables**, **ParametricCPDs**, and **Probabilistic Models** to build interpretable causal models.
 
 .. warning::
 
@@ -52,32 +52,32 @@ Variables represent random variables in the probabilistic model:
        distribution=torch.distributions.RelaxedBernoulli
    )
 
-Step 4: Define Factors
+Step 4: Define ParametricCPDs
 -----------------------
 
-Factors are conditional probability distributions parameterized by PyC layers:
+ParametricCPDs are conditional probability distributions parameterized by PyC layers:
 
 .. code-block:: python
 
-   # Factor for embeddings (no parents)
-   embedding_factor = pyc.nn.Factor(
+   # ParametricCPD for embeddings (no parents)
+   embedding_factor = pyc.nn.ParametricCPD(
        concepts=["embedding"],
-       module_class=torch.nn.Identity()
+       parametrization=torch.nn.Identity()
    )
 
-   # Factor for concepts (from embeddings)
-   concept_factors = pyc.nn.Factor(
+   # ParametricCPD for concepts (from embeddings)
+   concept_cpd = pyc.nn.ParametricCPD(
        concepts=["round", "smooth", "bright"],
-       module_class=pyc.nn.ProbEncoderFromEmb(
+       parametrization=pyc.nn.ProbEncoderFromEmb(
            in_features_embedding=embedding_dim,
            out_features=1
        )
    )
 
-   # Factor for tasks (from concepts)
-   task_factors = pyc.nn.Factor(
+   # ParametricCPD for tasks (from concepts)
+   task_cpd = pyc.nn.ParametricCPD(
        concepts=["class_A", "class_B"],
-       module_class=pyc.nn.ProbPredictor(
+       parametrization=pyc.nn.ProbPredictor(
            in_features_logits=3,
            out_features=1
        )
@@ -86,14 +86,14 @@ Factors are conditional probability distributions parameterized by PyC layers:
 Step 5: Build Probabilistic Model
 ----------------------------------
 
-Combine variables and factors:
+Combine variables and CPDs:
 
 .. code-block:: python
 
    # Create the probabilistic model
    prob_model = pyc.nn.ProbabilisticModel(
        variables=[embedding_var, *concepts, *tasks],
-       factors=[embedding_factor, *concept_factors, *task_factors]
+       parametric_cpds=[embedding_factor, *concept_cpd, *task_cpd]
    )
 
 Step 6: Perform Inference
@@ -139,7 +139,7 @@ Perform do-calculus interventions:
    from torch_concepts.nn import DoIntervention, UniformPolicy
    from torch_concepts.nn import intervention
 
-   strategy = DoIntervention(model=prob_model.factors, constants=100.0)
+   strategy = DoIntervention(model=prob_model.parametric_cpds, constants=100.0)
    policy = UniformPolicy(out_features=prob_model.concept_to_variable["round"].size)
 
    original_predictions = inference_engine.query(

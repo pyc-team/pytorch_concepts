@@ -4,7 +4,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, Variable
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
+from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
 
 
@@ -24,13 +24,13 @@ def main():
     concepts = Variable(concept_names, parents=["emb"], distribution=RelaxedBernoulli)
     tasks = Variable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
-    # Factor setup
-    backbone = Factor("emb", module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
-    y_predictor = Factor("xor", module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+    # ParametricCPD setup
+    backbone = ParametricCPD("emb", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
+    y_predictor = ParametricCPD("xor", parametrization=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
 
     # ProbabilisticModel Initialization
-    concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
+    concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
@@ -65,7 +65,7 @@ def main():
     print(cy_pred[:5])
 
     int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.factors, constants=-10)
+    int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):

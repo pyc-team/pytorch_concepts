@@ -15,7 +15,7 @@ Summary
    :nosignatures:
 
    ProbabilisticModel
-   Factor
+   ParametricCPD
    BipartiteModel
    GraphModel
 
@@ -28,7 +28,7 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: Factor
+.. autoclass:: ParametricCPD
    :members:
    :undoc-members:
    :show-inheritance:

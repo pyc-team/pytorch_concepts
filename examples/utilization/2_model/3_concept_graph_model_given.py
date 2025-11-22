@@ -81,7 +81,7 @@ def main():
 
     print("=== Interventions ===")
     int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.factors, constants=0)
+    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=0)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1"]):
@@ -97,7 +97,7 @@ def main():
         print()
 
         int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=c_train[:, 0:1])
+        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 0:1])
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=["c1"]):

@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 from torch_concepts.nn.modules.mid.models.variable import Variable
-from torch_concepts.nn.modules.mid.models.factor import Factor
+from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.inference.forward import ForwardInference
 from torch_concepts.distributions import Delta
@@ -31,12 +31,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -51,13 +51,13 @@ class TestForwardInference(unittest.TestCase):
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
         var_b = Variable('B', parents=[var_a], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
-        factor_b = Factor('B', module_class=nn.Linear(1, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(1, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a, var_b],
-            factors=[embedding_factor, factor_a, factor_b]
+            parametric_cpds=[embedding_factor, cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -74,14 +74,14 @@ class TestForwardInference(unittest.TestCase):
         var_b = Variable('B', parents=[embedding_var], distribution=Bernoulli, size=1)
         var_c = Variable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
-        factor_b = Factor('B', module_class=nn.Linear(10, 1))
-        factor_c = Factor('C', module_class=nn.Linear(2, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a, var_b, var_c],
-            factors=[embedding_factor, factor_a, factor_b, factor_c]
+            parametric_cpds=[embedding_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -100,12 +100,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -123,12 +123,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -146,14 +146,14 @@ class TestForwardInference(unittest.TestCase):
         var_b = Variable('B', parents=[embedding_var], distribution=Bernoulli, size=1)
         var_c = Variable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
-        factor_b = Factor('B', module_class=nn.Linear(10, 1))
-        factor_c = Factor('C', module_class=nn.Linear(2, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a, var_b, var_c],
-            factors=[embedding_factor, factor_a, factor_b, factor_c]
+            parametric_cpds=[embedding_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -168,11 +168,11 @@ class TestForwardInference(unittest.TestCase):
         """Test _compute_single_variable for root variable."""
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
 
         pgm = ProbabilisticModel(
             variables=[embedding_var],
-            factors=[embedding_factor]
+            parametric_cpds=[embedding_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -192,12 +192,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -216,11 +216,11 @@ class TestForwardInference(unittest.TestCase):
         """Test error when root variable missing from external_inputs."""
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
 
         pgm = ProbabilisticModel(
             variables=[embedding_var],
-            factors=[embedding_factor]
+            parametric_cpds=[embedding_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -236,12 +236,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -257,12 +257,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -270,7 +270,7 @@ class TestForwardInference(unittest.TestCase):
         parent_latent = [torch.randn(4, 10)]
         parent_logits = []
 
-        kwargs = inference.get_parent_kwargs(factor_a, parent_latent, parent_logits)
+        kwargs = inference.get_parent_kwargs(cpd_a, parent_latent, parent_logits)
         self.assertIsInstance(kwargs, dict)
 
     def test_concept_map(self):
@@ -278,12 +278,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor, factor_a]
+            parametric_cpds=[embedding_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -297,12 +297,12 @@ class TestForwardInference(unittest.TestCase):
         var_a = Variable('A', parents=[], distribution=Categorical, size=3)
         var_b = Variable('B', parents=[var_a], distribution=Bernoulli, size=1)
 
-        factor_a = Factor('A', module_class=nn.Linear(10, 3))
-        factor_b = Factor('B', module_class=nn.Linear(3, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 3))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(3, 1))
 
         pgm = ProbabilisticModel(
             variables=[var_a, var_b],
-            factors=[factor_a, factor_b]
+            parametric_cpds=[cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -319,14 +319,14 @@ class TestForwardInference(unittest.TestCase):
         var_b = Variable('B', parents=[embedding_var], distribution=Bernoulli, size=1)
         var_c = Variable('C', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
-        factor_b = Factor('B', module_class=nn.Linear(10, 1))
-        factor_c = Factor('C', module_class=nn.Linear(10, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(10, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a, var_b, var_c],
-            factors=[embedding_factor, factor_a, factor_b, factor_c]
+            parametric_cpds=[embedding_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -339,12 +339,12 @@ class TestForwardInference(unittest.TestCase):
         embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        # Missing factor_a
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        # Missing cpd_a
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a],
-            factors=[embedding_factor]
+            parametric_cpds=[embedding_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -369,15 +369,15 @@ class TestForwardInference(unittest.TestCase):
         # Level 3: D (depends on C)
         var_d = Variable('D', parents=[var_c], distribution=Bernoulli, size=1)
 
-        embedding_factor = Factor('embedding', module_class=nn.Identity())
-        factor_a = Factor('A', module_class=nn.Linear(10, 1))
-        factor_b = Factor('B', module_class=nn.Linear(10, 3))
-        factor_c = Factor('C', module_class=nn.Linear(4, 1))  # 1 + 3 inputs
-        factor_d = Factor('D', module_class=nn.Linear(1, 1))
+        embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 3))
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(4, 1))  # 1 + 3 inputs
+        cpd_d = ParametricCPD('D', parametrization=nn.Linear(1, 1))
 
         pgm = ProbabilisticModel(
             variables=[embedding_var, var_a, var_b, var_c, var_d],
-            factors=[embedding_factor, factor_a, factor_b, factor_c, factor_d]
+            parametric_cpds=[embedding_factor, cpd_a, cpd_b, cpd_c, cpd_d]
         )
 
         inference = SimpleForwardInference(pgm)

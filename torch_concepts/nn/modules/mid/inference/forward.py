@@ -49,7 +49,7 @@ class ForwardInference(BaseInference):
         >>> from torch.distributions import Bernoulli
         >>> from torch_concepts import Variable
         >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import ForwardInference, Factor, ProbabilisticModel
+        >>> from torch_concepts.nn import ForwardInference, ParametricCPD, ProbabilisticModel
         >>>
         >>> # Create a simple model: embedding -> A -> B
         >>> # Where A is a root concept and B depends on A
@@ -59,16 +59,16 @@ class ForwardInference(BaseInference):
         >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
         >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
-        >>> # Define factors (modules that compute each variable)
+        >>> # Define CPDs (modules that compute each variable)
         >>> from torch.nn import Identity, Linear
-        >>> embedding_factor = Factor('embedding', module_class=Identity())
-        >>> factor_A = Factor('A', module_class=Linear(10, 1))  # embedding -> A
-        >>> factor_B = Factor('B', module_class=Linear(1, 1))   # A -> B
+        >>> embedding_cpd = ParametricCPD('embedding', parametrization=Identity())
+        >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))  # embedding -> A
+        >>> cpd_B = ParametricCPD('B', parametrization=Linear(1, 1))   # A -> B
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A, var_B],
-        ...     factors=[embedding_factor, factor_A, factor_B]
+        ...     parametric_cpds=[embedding_cpd, cpd_A, cpd_B]
         ... )
         >>>
         >>> # Create forward inference engine
@@ -104,13 +104,13 @@ class ForwardInference(BaseInference):
     @abstractmethod
     def get_results(self, results: torch.tensor, parent_variable: Variable):
         """
-        Process the raw output tensor from a factor.
+        Process the raw output tensor from a CPD.
 
         This method should be implemented by subclasses to handle distribution-specific
         processing (e.g., sampling from Bernoulli, taking argmax from Categorical, etc.).
 
         Args:
-            results: Raw output tensor from the factor.
+            results: Raw output tensor from the CPD.
             parent_variable: The variable being computed.
 
         Returns:
@@ -182,23 +182,23 @@ class ForwardInference(BaseInference):
             Tuple of (concept_name, output_tensor).
 
         Raises:
-            RuntimeError: If factor is missing for the variable.
+            RuntimeError: If CPD is missing for the variable.
             ValueError: If root variable is missing from external_inputs.
             RuntimeError: If parent variable hasn't been computed yet.
         """
         concept_name = var.concepts[0]
-        factor = self.probabilistic_model.get_module_of_concept(concept_name)
+        parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
 
-        if factor is None:
-            raise RuntimeError(f"Missing factor for variable/concept: {concept_name}")
+        if parametric_cpd is None:
+            raise RuntimeError(f"Missing parametric_cpd for variable/concept: {concept_name}")
 
         # 1. Root nodes (no parents)
         if not var.parents:
             if concept_name not in external_inputs:
                 raise ValueError(f"Root variable '{concept_name}' requires an external input tensor in the 'external_inputs' dictionary.")
             input_tensor = external_inputs[concept_name]
-            parent_kwargs = self.get_parent_kwargs(factor, [input_tensor], [])
-            output_tensor = factor.forward(**parent_kwargs)
+            parent_kwargs = self.get_parent_kwargs(parametric_cpd, [input_tensor], [])
+            output_tensor = parametric_cpd.forward(**parent_kwargs)
             output_tensor = self.get_results(output_tensor, var)
 
         # 2. Child nodes (has parents)
@@ -221,9 +221,9 @@ class ForwardInference(BaseInference):
                     # For continuous parents, pass latent features
                     parent_latent.append(results[parent_name])
 
-            parent_kwargs = self.get_parent_kwargs(factor, parent_latent, parent_logits)
-            output_tensor = factor.forward(**parent_kwargs)
-            if not isinstance(factor.module_class, _InterventionWrapper):
+            parent_kwargs = self.get_parent_kwargs(parametric_cpd, parent_latent, parent_logits)
+            output_tensor = parametric_cpd.forward(**parent_kwargs)
+            if not isinstance(parametric_cpd.parametrization, _InterventionWrapper):
                 output_tensor = self.get_results(output_tensor, var)
 
         return concept_name, output_tensor
@@ -304,29 +304,29 @@ class ForwardInference(BaseInference):
 
         return results
 
-    def get_parent_kwargs(self, factor,
+    def get_parent_kwargs(self, parametric_cpd,
                           parent_latent: Union[List[torch.Tensor], torch.Tensor] = None,
                           parent_logits: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """
-        Prepare keyword arguments for factor forward pass based on parent outputs.
+        Prepare keyword arguments for CPD forward pass based on parent outputs.
 
-        This method inspects the factor's forward signature and constructs appropriate
+        This method inspects the CPD's forward signature and constructs appropriate
         kwargs, separating logits (from probabilistic parents) and latent features
         (from continuous parents).
 
         Args:
-            factor: The factor module to call.
+            parametric_cpd: The CPD module to call.
             parent_latent: List of continuous parent outputs (embeddings/exogenous).
             parent_logits: List of probabilistic parent outputs (concept logits).
 
         Returns:
-            Dictionary of kwargs ready for factor.forward(**kwargs).
+            Dictionary of kwargs ready for parametric_cpd.forward(**kwargs).
         """
         parent_kwargs = {}
-        if isinstance(factor.module_class, _InterventionWrapper):
-            forward_to_check = factor.module_class.forward_to_check
+        if isinstance(parametric_cpd.parametrization, _InterventionWrapper):
+            forward_to_check = parametric_cpd.parametrization.forward_to_check
         else:
-            forward_to_check = factor.module_class.forward
+            forward_to_check = parametric_cpd.parametrization.forward
 
         sig = inspect.signature(forward_to_check)
         params = sig.parameters
@@ -430,12 +430,12 @@ class ForwardInference(BaseInference):
         Build an 'unrolled' view of the ProbabilisticModel based on graph_learner adjacency.
 
         This method creates a modified PGM that reflects the learned graph structure,
-        applying rules for keeping/dropping factors based on root/non-root status
+        applying rules for keeping/dropping CPDs based on root/non-root status
         and recursively pruning unused variables.
 
         Rules:
-        - For root columns (no incoming edges): keep row factor, drop column factor
-        - For non-root columns: keep column factor, drop row factor
+        - For root columns (no incoming edges): keep row CPD, drop column CPD
+        - For non-root columns: keep column CPD, drop row CPD
         - Recursively drop variables whose children are all dropped
         - Apply adjacency gating to remove zero-weight edges
 
@@ -470,7 +470,7 @@ class ForwardInference(BaseInference):
         all_names: Set[str] = {var.concepts[0] for var in self.probabilistic_model.variables}
 
         # --- 1) Determine which side we keep for each row/col pair (using adjacency) ---
-        # Root factor (in adjacency sense) = column with no incoming edges
+        # Root CPD (in adjacency sense) = column with no incoming edges
         col_has_parent = (adj != 0).any(dim=0)  # bool per column
 
         rename_map: Dict[str, str] = {}   # old_name -> new_name
@@ -479,17 +479,17 @@ class ForwardInference(BaseInference):
 
         # For each index i, (row_labels[i], col_labels[i]) is a pair of copies
         for idx in range(min(n_rows, n_cols)):
-            src = row_labels[idx]  # "row" factor
-            dst = col_labels[idx]  # "column" factor
+            src = row_labels[idx]  # "row" CPD
+            dst = col_labels[idx]  # "column" CPD
 
             is_root = not bool(col_has_parent[idx].item())
             if is_root:
-                # Root column: keep row factor, drop its column copy
+                # Root column: keep row CPD, drop its column copy
                 rename_map[dst] = src
                 keep_names_initial.add(src)
                 drop_names.add(dst)
             else:
-                # Non-root column: keep column factor, drop original row factor
+                # Non-root column: keep column CPD, drop original row CPD
                 rename_map[src] = dst
                 keep_names_initial.add(dst)
                 drop_names.add(src)
@@ -573,28 +573,28 @@ class ForwardInference(BaseInference):
                 new_variables.append(var)
                 seen_var_names.add(name)
 
-        # --- 5) Unique list of factors corresponding to these variables ---
-        new_factors: List[object] = []
-        seen_factors: Set[object] = set()
+        # --- 5) Unique list of CPDs corresponding to these variables ---
+        new_parametric_cpds: List[object] = []
+        seen_parametric_cpds: Set[object] = set()
 
         repeats = [self.probabilistic_model.concept_to_variable[p].size for p in row_labels]
         for var in new_variables:
-            factor = self.probabilistic_model.factors[var.concepts[0]]
-            if factor is not None and factor not in seen_factors:
-                if factor.concepts[0] in rename_map.values() and factor.concepts[0] in col_labels:
-                    col_id = self.col_labels2id[factor.concepts[0]]
+            parametric_cpd = self.probabilistic_model.parametric_cpds[var.concepts[0]]
+            if parametric_cpd is not None and parametric_cpd not in seen_parametric_cpds:
+                if parametric_cpd.concepts[0] in rename_map.values() and parametric_cpd.concepts[0] in col_labels:
+                    col_id = self.col_labels2id[parametric_cpd.concepts[0]]
                     mask = adj[:, col_id] != 0
                     mask_without_self_loop = torch.cat((mask[:col_id], mask[col_id + 1:]))
                     rep = repeats[:col_id] + repeats[col_id + 1:]
                     mask_with_cardinalities = torch.repeat_interleave(mask_without_self_loop, torch.tensor(rep))
-                    factor.module_class.prune(mask_with_cardinalities)
-                new_factors.append(factor)
-                seen_factors.add(factor)
+                    parametric_cpd.parametrization.prune(mask_with_cardinalities)
+                new_parametric_cpds.append(parametric_cpd)
+                seen_parametric_cpds.add(parametric_cpd)
 
         # --- 6) Update available_query_vars to reflect the unrolled graph ---
         self._unrolled_query_vars = set(v.concepts[0] for v in new_variables)
 
-        return ProbabilisticModel(new_variables, new_factors)
+        return ProbabilisticModel(new_variables, new_parametric_cpds)
 
 
 class DeterministicInference(ForwardInference):
@@ -602,7 +602,7 @@ class DeterministicInference(ForwardInference):
     Deterministic forward inference for probabilistic graphical models.
 
     This inference engine performs deterministic (maximum likelihood) inference by
-    returning raw logits/outputs from factors without sampling. It's useful for
+    returning raw logits/outputs from CPDs without sampling. It's useful for
     prediction tasks where you want the most likely values rather than samples
     from the distribution.
 
@@ -614,23 +614,23 @@ class DeterministicInference(ForwardInference):
         >>> from torch.distributions import Bernoulli
         >>> from torch_concepts import Variable
         >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import DeterministicInference, Factor, ProbabilisticModel
+        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
         >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
         >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
-        >>> # Define factors
+        >>> # Define CPDs
         >>> from torch.nn import Identity, Linear
-        >>> embedding_factor = Factor('embedding', module_class=Identity())
-        >>> factor_A = Factor('A', module_class=Linear(10, 1))
-        >>> factor_B = Factor('B', module_class=Linear(1, 1))
+        >>> cpd_emb = ParametricCPD('embedding', parametrization=Identity())
+        >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=Linear(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A, var_B],
-        ...     factors=[embedding_factor, factor_A, factor_B]
+        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
         ... )
         >>>
         >>> # Create deterministic inference engine
@@ -662,7 +662,7 @@ class DeterministicInference(ForwardInference):
         Return raw output without sampling.
 
         Args:
-            results: Raw output tensor from the factor.
+            results: Raw output tensor from the CPD.
             parent_variable: The variable being computed (unused in deterministic mode).
 
         Returns:
@@ -695,23 +695,23 @@ class AncestralSamplingInference(ForwardInference):
         >>> from torch.distributions import Bernoulli
         >>> from torch_concepts import Variable
         >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import AncestralSamplingInference, Factor, ProbabilisticModel
+        >>> from torch_concepts.nn import AncestralSamplingInference, ParametricCPD, ProbabilisticModel
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
         >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
         >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
         >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
-        >>> # Define factors
+        >>> # Define CPDs
         >>> from torch.nn import Identity, Linear
-        >>> embedding_factor = Factor('embedding', module_class=Identity())
-        >>> factor_A = Factor('A', module_class=Linear(10, 1))
-        >>> factor_B = Factor('B', module_class=Linear(1, 1))
+        >>> cpd_emb = ParametricCPD('embedding', parametrization=Identity())
+        >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=Linear(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A, var_B],
-        ...     factors=[embedding_factor, factor_A, factor_B]
+        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
         ... )
         >>>
         >>> # Create ancestral sampling inference engine
@@ -744,7 +744,7 @@ class AncestralSamplingInference(ForwardInference):
         ...                          distribution=RelaxedBernoulli, size=1)
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A_relaxed, var_B],
-        ...     factors=[embedding_factor, factor_A, factor_B]
+        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
         ... )
         >>> inference_relaxed = AncestralSamplingInference(pgm, temperature=0.05)
         >>> # Now uses reparameterization trick (.rsample())
@@ -765,7 +765,7 @@ class AncestralSamplingInference(ForwardInference):
         and the computed logits/parameters, then draws a sample.
 
         Args:
-            results: Raw output tensor from the factor (logits or parameters).
+            results: Raw output tensor from the CPD (logits or parameters).
             parent_variable: The variable being computed (defines distribution type).
 
         Returns:

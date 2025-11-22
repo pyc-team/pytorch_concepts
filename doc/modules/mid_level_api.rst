@@ -42,19 +42,19 @@ At this API level, models are represented as Probabilistic Models where:
      concepts = pyc.Variable(concepts=["c1", "c2", "c3"], parents=[],
                              distribution=torch.distributions.RelaxedBernoulli)
 
-- **Factors**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three factors for the above concepts as:
+- **ParametricCPDs**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
 
   .. code-block:: python
 
-     concept_factors = pyc.nn.Factor(concepts=["c1", "c2", "c3"],
-                                     module_class=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
+     concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
+                                     parametrization=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
 
-- **Probabilistic Model**: a collection of variables and factors. For instance we can define a ProbabilisticModel as:
+- **Probabilistic Model**: a collection of variables and CPDs. For instance we can define a ProbabilisticModel as:
 
   .. code-block:: python
 
      probabilistic_model = pyc.nn.ProbabilisticModel(variables=concepts,
-                                                     factors=concept_factors)
+                                                     parametric_cpds=concept_cpd)
 
 Inference
 ^^^^^^^^^

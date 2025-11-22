@@ -4,7 +4,7 @@ from torch.nn import Identity
 from .....annotations import Annotations
 from ..models.variable import Variable
 from .concept_graph import ConceptGraph
-from ..models.factor import Factor
+from ..models.cpd import ParametricCPD
 from ..models.probabilistic_model import ProbabilisticModel
 from .....distributions import Delta
 from ..base.model import BaseConstructor
@@ -17,7 +17,7 @@ class GraphModel(BaseConstructor):
 
     This model builds a probabilistic model based on a provided
     concept graph structure. It automatically constructs the necessary variables
-    and factors following the graph's topological order, supporting both root
+    and CPDs following the graph's topological order, supporting both root
     concepts (encoded from inputs) and internal concepts (predicted from parents).
 
     The graph structure defines dependencies between concepts, enabling:
@@ -30,7 +30,7 @@ class GraphModel(BaseConstructor):
         root_nodes (List[str]): Concepts with no parents (encoded from inputs).
         internal_nodes (List[str]): Concepts with parents (predicted from other concepts).
         graph_order (List[str]): Topologically sorted concept names.
-        probabilistic_model (ProbabilisticModel): Underlying PGM with variables and factors.
+        probabilistic_model (ProbabilisticModel): Underlying PGM with variables and CPDs.
 
     Args:
         model_graph: ConceptGraph defining the structure (must be a DAG).
@@ -109,13 +109,13 @@ class GraphModel(BaseConstructor):
     """
     def __init__(self,
                  model_graph: ConceptGraph,
-                input_size: int,
-                annotations: Annotations,
-                encoder: LazyConstructor,
-                predictor: LazyConstructor,
-                use_source_exogenous: bool = None,
-                source_exogenous: Optional[LazyConstructor] = None,
-                internal_exogenous: Optional[LazyConstructor] = None,
+                 input_size: int,
+                 annotations: Annotations,
+                 encoder: LazyConstructor,
+                 predictor: LazyConstructor,
+                 use_source_exogenous: bool = None,
+                 source_exogenous: Optional[LazyConstructor] = None,
+                 internal_exogenous: Optional[LazyConstructor] = None,
                  ):
         super(GraphModel, self).__init__(
             input_size=input_size,
@@ -137,41 +137,41 @@ class GraphModel(BaseConstructor):
         self.graph_order_idx = [self.labels.index(i) for i in self.graph_order]
         self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
-        # embedding variable and factor
+        # embedding variable and CPDs
         embedding_var = Variable('embedding', parents=[], size=self.input_size)
-        embedding_factor = Factor('embedding', module_class=Identity())
+        embedding_cpd = ParametricCPD('embedding', parametrization=Identity())
 
         # concepts init
         if source_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
-            source_exogenous_vars, source_exogenous_factors = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=embedding_var, cardinalities=cardinalities)
-            encoder_vars, encoder_factors = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=source_exogenous_vars, cardinalities=cardinalities)
+            source_exogenous_vars, source_exogenous_cpds = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=source_exogenous_vars, cardinalities=cardinalities)
         else:
-            source_exogenous_vars, source_exogenous_factors = [], []
-            encoder_vars, encoder_factors = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[embedding_var])
+            source_exogenous_vars, source_exogenous_cpds = [], []
+            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[embedding_var])
 
         # tasks init
         if internal_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.internal_node_idx[idx]] for idx, c in enumerate(self.internal_nodes)]
-            internal_exogenous_vars, internal_exogenous_factors = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=embedding_var, cardinalities=cardinalities)
-            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, self_exog_vars=internal_exogenous_vars, cardinalities=cardinalities)
+            internal_exogenous_vars, internal_exogenous_cpds = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            predictor_vars, predictor_cpds = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, self_exog_vars=internal_exogenous_vars, cardinalities=cardinalities)
         elif use_source_exogenous:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
-            internal_exogenous_vars, internal_exogenous_factors = [], []
-            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, source_exog_vars=source_exogenous_vars, cardinalities=cardinalities)
+            internal_exogenous_vars, internal_exogenous_cpds = [], []
+            predictor_vars, predictor_cpds = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, source_exog_vars=source_exogenous_vars, cardinalities=cardinalities)
         else:
-            internal_exogenous_vars, internal_exogenous_factors = [], []
-            predictor_vars, predictor_factors = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars)
+            internal_exogenous_vars, internal_exogenous_cpds = [], []
+            predictor_vars, predictor_cpds = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars)
 
         # ProbabilisticModel Initialization
         self.probabilistic_model = ProbabilisticModel(
             variables=[embedding_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
-            factors=[embedding_factor, *source_exogenous_factors, *encoder_factors, *internal_exogenous_factors, *predictor_factors],
+            parametric_cpds=[embedding_cpd, *source_exogenous_cpds, *encoder_cpds, *internal_exogenous_cpds, *predictor_cpds],
         )
 
-    def _init_exog(self, layer: LazyConstructor, label_names, parent_var, cardinalities) -> Tuple[Variable, Factor]:
+    def _init_exog(self, layer: LazyConstructor, label_names, parent_var, cardinalities) -> Tuple[Variable, ParametricCPD]:
         """
-        Initialize exogenous variables and factors.
+        Initialize exogenous variables and parametric_cpds.
 
         Args:
             layer: LazyConstructor for exogenous features.
@@ -180,7 +180,7 @@ class GraphModel(BaseConstructor):
             cardinalities: Cardinalities of each concept.
 
         Returns:
-            Tuple of (exogenous variables, exogenous factors).
+            Tuple of (exogenous variables, exogenous parametric_cpds).
         """
         exog_names = [f"exog_{c}_state_{i}" for cix, c in enumerate(label_names) for i in range(cardinalities[cix])]
         exog_vars = Variable(exog_names,
@@ -195,12 +195,12 @@ class GraphModel(BaseConstructor):
             out_features=1,
         )
 
-        exog_factors = Factor(exog_names, module_class=lazy_constructor)
-        return exog_vars, exog_factors
+        exog_cpds = ParametricCPD(exog_names, parametrization=lazy_constructor)
+        return exog_vars, exog_cpds
 
-    def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, Factor]:
+    def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, ParametricCPD]:
         """
-        Initialize encoder variables and factors for root concepts.
+        Initialize encoder variables and parametric_cpds for root concepts.
 
         Args:
             layer: LazyConstructor for encoding.
@@ -209,7 +209,7 @@ class GraphModel(BaseConstructor):
             cardinalities: Optional cardinalities for concepts.
 
         Returns:
-            Tuple of (encoder variables, encoder factors).
+            Tuple of (encoder variables, encoder parametric_cpds).
         """
         if parent_vars[0].concepts[0] == 'embedding':
             encoder_vars = Variable(label_names,
@@ -226,14 +226,14 @@ class GraphModel(BaseConstructor):
                 in_features_exogenous=None,
                 out_features=encoder_vars[0].size,
             )
-            encoder_factors = Factor(label_names, module_class=lazy_constructor)
-            # Ensure encoder_factors is always a list
-            if not isinstance(encoder_factors, list):
-                encoder_factors = [encoder_factors]
+            encoder_cpds = ParametricCPD(label_names, parametrization=lazy_constructor)
+            # Ensure encoder_cpds is always a list
+            if not isinstance(encoder_cpds, list):
+                encoder_cpds = [encoder_cpds]
         else:
             assert len(parent_vars) == sum(cardinalities)
             encoder_vars = []
-            encoder_factors = []
+            encoder_cpds = []
             for label_name in label_names:
                 exog_vars = [v for v in parent_vars if v.concepts[0].startswith(f"exog_{label_name}")]
                 exog_vars_names = [v.concepts[0] for v in exog_vars]
@@ -247,10 +247,10 @@ class GraphModel(BaseConstructor):
                     in_features_exogenous=exog_vars[0].size,
                     out_features=encoder_var.size,
                 )
-                encoder_factor = Factor(label_name, module_class=lazy_constructor)
+                encoder_cpd = ParametricCPD(label_name, parametrization=lazy_constructor)
                 encoder_vars.append(encoder_var)
-                encoder_factors.append(encoder_factor)
-        return encoder_vars, encoder_factors
+                encoder_cpds.append(encoder_cpd)
+        return encoder_vars, encoder_cpds
 
     def _init_predictors(self,
                          layer: LazyConstructor,
@@ -258,9 +258,9 @@ class GraphModel(BaseConstructor):
                          available_vars,
                          cardinalities=None,
                          self_exog_vars=None,
-                         source_exog_vars=None) -> Tuple[List[Variable], List[Factor]]:
+                         source_exog_vars=None) -> Tuple[List[Variable], List[ParametricCPD]]:
         """
-        Initialize predictor variables and factors for internal concepts.
+        Initialize predictor variables and parametric_cpds for internal concepts.
 
         Args:
             layer: LazyConstructor for prediction.
@@ -271,10 +271,10 @@ class GraphModel(BaseConstructor):
             source_exog_vars: Optional source-exogenous variables.
 
         Returns:
-            Tuple of (predictor variables, predictor factors).
+            Tuple of (predictor variables, predictor parametric_cpds).
         """
         available_vars = [] + available_vars
-        predictor_vars, predictor_factors = [], []
+        predictor_vars, predictor_cpds = [], []
         for c_name in label_names:
             endogenous_parents_names = self.model_graph.get_predecessors(c_name)
             endogenous_parents_vars = [v for v in available_vars if v.concepts[0] in endogenous_parents_names]
@@ -310,11 +310,11 @@ class GraphModel(BaseConstructor):
                 cardinalities=[predictor_var.size]
             )
 
-            predictor_factor = Factor(c_name, module_class=lazy_constructor)
+            predictor_cpd = ParametricCPD(c_name, parametrization=lazy_constructor)
 
             predictor_vars.append(predictor_var)
-            predictor_factors.append(predictor_factor)
+            predictor_cpds.append(predictor_cpd)
 
             available_vars.append(predictor_var)
 
-        return predictor_vars, predictor_factors
+        return predictor_vars, predictor_cpds

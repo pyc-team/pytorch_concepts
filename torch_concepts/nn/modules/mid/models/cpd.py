@@ -10,33 +10,33 @@ from .variable import Variable
 from .....distributions import Delta
 
 
-class Factor(nn.Module):
+class ParametricCPD(nn.Module):
     """
-    A Factor represents a conditional probability distribution (CPD) in a probabilistic graphical model.
+    A ParametricCPD represents a conditional probability distribution (CPD) in a probabilistic graphical model.
 
-    A Factor links concepts to neural network modules that compute probability distributions.
-    It can automatically split multiple concepts into separate factors and supports building
+    A ParametricCPD links concepts to neural network modules that compute probability distributions.
+    It can automatically split multiple concepts into separate CPD and supports building
     conditional probability tables (CPTs) and potential tables for inference.
 
     Parameters
     ----------
     concepts : Union[str, List[str]]
         A single concept name or a list of concept names. If a list of N concepts is provided,
-        the Factor automatically splits into N separate Factor instances.
-    module_class : Union[nn.Module, List[nn.Module]]
+        the ParametricCPD automatically splits into N separate ParametricCPD instances.
+    module : Union[nn.Module, List[nn.Module]]
         A neural network module or list of modules that compute the probability distribution.
-        If concepts is a list of length N, module_class can be:
+        If concepts is a list of length N, module can be:
         - A single module (will be replicated for all concepts)
         - A list of N modules (one per concept)
 
     Attributes
     ----------
     concepts : List[str]
-        List of concept names associated with this factor.
-    module_class : nn.Module
+        List of concept names associated with this CPD.
+    module : nn.Module
         The neural network module used to compute probabilities.
     variable : Optional[Variable]
-        The Variable instance this factor is linked to (set by ProbabilisticModel).
+        The Variable instance this CPD is linked to (set by ProbabilisticModel).
     parents : List[Variable]
         List of parent Variables in the graphical model.
 
@@ -44,7 +44,7 @@ class Factor(nn.Module):
     --------
     >>> import torch
     >>> import torch.nn as nn
-    >>> from torch_concepts.nn import Factor
+    >>> from torch_concepts.nn import ParametricCPD
     >>>
     >>> # Create different modules for different concepts
     >>> module_a = nn.Linear(in_features=10, out_features=1)
@@ -54,77 +54,77 @@ class Factor(nn.Module):
     ...     nn.Linear(in_features=5, out_features=1)
     ... )
     >>>
-    >>> # Create factors with different modules
-    >>> factors = Factor(
+    >>> # Create CPD with different modules
+    >>> cpd = ParametricCPD(
     ...     concepts=["binary_concept", "complex_concept"],
-    ...     module_class=[module_a, module_b]
+    ...     parametrization=[module_a, module_b]
     ... )
     >>>
-    >>> print(factors[0].module_class)
+    >>> print(cpd[0].module)
     Linear(in_features=10, out_features=1, bias=True)
-    >>> print(factors[1].module_class)
+    >>> print(cpd[1].module)
     Sequential(...)
 
     Notes
     -----
-    - The Factor class uses a custom `__new__` method to automatically split multiple concepts
-      into separate Factor instances when a list is provided.
-    - Factors are typically created and managed by a ProbabilisticModel rather than directly.
-    - The module_class should accept an 'input' keyword argument in its forward pass.
+    - The ParametricCPD class uses a custom `__new__` method to automatically split multiple concepts
+      into separate ParametricCPD instances when a list is provided.
+    - ParametricCPDs are typically created and managed by a ProbabilisticModel rather than directly.
+    - The module should accept an 'input' keyword argument in its forward pass.
     - Supported distributions for CPT/potential building: Bernoulli, Categorical, Delta, Normal.
 
     See Also
     --------
     Variable : Represents a random variable in the probabilistic model.
-    ProbabilisticModel : Container that manages factors and variables.
+    ProbabilisticModel : Container that manages CPD and variables.
     """
     def __new__(cls, concepts: Union[str, List[str]],
-                module_class: Union[nn.Module, List[nn.Module]]):
+                parametrization: Union[nn.Module, List[nn.Module]]):
 
         if isinstance(concepts, str):
-            assert not isinstance(module_class, list)
+            assert not isinstance(parametrization, list)
             return object.__new__(cls)
 
         n_concepts = len(concepts)
 
-        # If single concept in list, treat as single Factor
+        # If single concept in list, treat as single ParametricCPD
         if n_concepts == 1:
-            assert not isinstance(module_class, list), "For single concept, module_class must be a single nn.Module."
+            assert not isinstance(parametrization, list), "For single concept, modules must be a single nn.Module."
             return object.__new__(cls)
 
-        # Standardize module_class: single value -> list of N values
-        if not isinstance(module_class, list):
-            module_list = [module_class] * n_concepts
+        # Standardize module: single value -> list of N values
+        if not isinstance(parametrization, list):
+            module_list = [parametrization] * n_concepts
         else:
-            module_list = module_class
+            module_list = parametrization
 
         if len(module_list) != n_concepts:
-            raise ValueError("If concepts list has length N > 1, module_class must either be a single value or a list of length N.")
+            raise ValueError("If concepts list has length N > 1, module must either be a single value or a list of length N.")
 
-        new_factors = []
+        new_cpd = []
         for i in range(n_concepts):
             instance = object.__new__(cls)
             instance.__init__(
                 concepts=[concepts[i]],
-                module_class=copy.deepcopy(module_list[i])
+                parametrization=copy.deepcopy(module_list[i])
             )
-            new_factors.append(instance)
-        return new_factors
+            new_cpd.append(instance)
+        return new_cpd
 
     def __init__(self, concepts: Union[str, List[str]],
-                 module_class: Union[nn.Module, List[nn.Module]]):
+                 parametrization: Union[nn.Module, List[nn.Module]]):
         super().__init__()
 
         if isinstance(concepts, str):
             concepts = [concepts]
 
         self.concepts = concepts
-        self.module_class = module_class
+        self.parametrization = parametrization
         self.variable: Optional[Variable] = None
         self.parents: List[Variable] = []
 
     def forward(self, **kwargs) -> torch.Tensor:
-        return self.module_class(**kwargs)
+        return self.parametrization(**kwargs)
 
     def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -133,7 +133,7 @@ class Factor(nn.Module):
         2. all_discrete_state_vectors: State vectors for discrete parents (for potential table rows).
         """
         if not self.parents:
-            in_features = self.module_class.in_features
+            in_features = self.parametrization.in_features
             placeholder_input = torch.zeros((1, in_features))
             return placeholder_input, torch.empty((1, 0))
 
@@ -203,21 +203,21 @@ class Factor(nn.Module):
 
     def build_cpt(self) -> torch.Tensor:
         if not self.variable:
-            raise RuntimeError("Factor not linked to a Variable in ProbabilisticModel.")
+            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
         all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
 
         input_batch = all_full_inputs
 
-        if input_batch.shape[-1] != self.module_class.in_features:
+        if input_batch.shape[-1] != self.parametrization.in_features:
             raise RuntimeError(
                 f"Input tensor dimension mismatch for CPT building. "
-                f"Factor module expects {self.module_class.in_features} features, "
+                f"ParametricCPD module expects {self.parametrization.in_features} features, "
                 f"but parent combinations resulted in {input_batch.shape[-1]} features. "
                 f"Check Variable definition and ProbabilisticModel resolution."
             )
 
-        logits = self.module_class(input=input_batch)
+        logits = self.parametrization(input=input_batch)
         probabilities = None
 
         if self.variable.distribution is Bernoulli:
@@ -240,11 +240,11 @@ class Factor(nn.Module):
 
     def build_potential(self) -> torch.Tensor:
         if not self.variable:
-            raise RuntimeError("Factor not linked to a Variable in ProbabilisticModel.")
+            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
         # We need the core probability part for potential calculation
         all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-        logits = self.module_class(input=all_full_inputs)
+        logits = self.parametrization(input=all_full_inputs)
 
         if self.variable.distribution is Bernoulli:
             cpt_core = torch.sigmoid(logits)
@@ -295,4 +295,4 @@ class Factor(nn.Module):
         return potential_table
 
     def __repr__(self):
-        return f"Factor(concepts={self.concepts}, module={self.module_class.__class__.__name__})"
+        return f"ParametricCPD(concepts={self.concepts}, parametrization={self.parametrization.__class__.__name__})"

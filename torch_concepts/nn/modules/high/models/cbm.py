@@ -144,7 +144,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 
 
 # class ConceptBottleneckModel_Joint_factors(BaseModel):
-#     """Mid-level Concept Bottleneck Model using Variables, Factors, and PGM.
+#     """Mid-level Concept Bottleneck Model using Variables, ParametricCPDs, and PGM.
 
 #     Provides more explicit control over the PGM structure compared to the
 #     high-level CBM implementation. Useful for:
@@ -206,7 +206,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #         )
 #         # init variable for the latent embedding from the encoder
 #         embedding = Variable("embedding", parents=[], distribution=Delta, size=self.encoder_out_features)
-#         embedding_factor = Factor("embedding", module_class=nn.Identity())
+#         embedding_factor = ParametricCPD("embedding", parametrization=nn.Identity())
 
 #         # variables initialization
 #         concept_names = [c for c in annotations.get_axis_labels(1) if c not in task_names]
@@ -221,18 +221,18 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #                          size=[annotations[1].cardinalities[annotations[1].get_index(c)] for c in task_names])
 
 #         # layers initialization
-#         concept_encoders = Factor(concept_names, 
-#                                   module_class=[ProbEncoderFromEmb(in_features_embedding=embedding.size, 
+#         concept_encoders = ParametricCPD(concept_names, 
+#                                   parametrization=[ProbEncoderFromEmb(in_features_embedding=embedding.size, 
 #                                                                    out_features=c.size) for c in concepts])
         
-#         task_predictors = Factor(task_names, 
-#                                  module_class=[ProbPredictor(in_features_logits=sum([c.size for c in concepts]), 
+#         task_predictors = ParametricCPD(task_names, 
+#                                  parametrization=[ProbPredictor(in_features_logits=sum([c.size for c in concepts]), 
 #                                                              out_features=t.size) for t in tasks])
 
 #         # ProbabilisticModel Initialization
 #         self.probabilistic_model = ProbabilisticModel(
 #             variables=[embedding, *concepts, *tasks],
-#             factors=[embedding_factor, *concept_encoders, *task_predictors]
+#             parametric_cpds=[embedding_factor, *concept_encoders, *task_predictors]
 #         )
 
 #         self.inference = inference(self.probabilistic_model)

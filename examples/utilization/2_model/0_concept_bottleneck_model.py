@@ -72,7 +72,7 @@ def main():
     emb = encoder(x_train)
 
     int_policy_c = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.factors, constants=-10)
+    int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):

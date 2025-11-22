@@ -42,7 +42,7 @@ from .modules.high.models.cbm import ConceptBottleneckModel, ConceptBottleneckMo
 from .modules.high.learners.joint import JointLearner
 
 # Models (mid-level)
-from .modules.mid.models.factor import Factor
+from .modules.mid.models.cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.constructors.bipartite import BipartiteModel
 from .modules.mid.constructors.graph import GraphModel
@@ -113,7 +113,7 @@ __all__ = [
     "JointLearner",
 
     # Models (mid-level)
-    "Factor",
+    "ParametricCPD",
     "ProbabilisticModel",
     "BipartiteModel",
     "GraphModel",

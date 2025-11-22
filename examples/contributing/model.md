@@ -15,7 +15,7 @@ Before implementing your model, ensure you have:
 The library provides three main API levels for model implementation:
 
 1. **High-Level API**: Use pre-built models like `BipartiteModel` for standard architectures
-2. **Mid-Level API**: Build custom models using `Variables`, `Factors`, and `ProbabilisticGraphicalModel`
+2. **Mid-Level API**: Build custom models using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`
 3. **Low-Level API**: Assemble custom architectures from basic interpretable layers
 
 **Recommendation**: Start with the high-level API if possible, and only use lower-level APIs when you need custom behavior.
@@ -156,13 +156,13 @@ class YourModel(BaseModel):
 
 ### 1.3 Mid-Level API Implementation
 
-For custom architectures using `Variables`, `Factors`, and `ProbabilisticGraphicalModel`:
+For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
 from torch_concepts import Variable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    Factor, 
+    ParametricCPD, 
     ProbabilisticGraphicalModel,
     ProbEncoderFromEmb,
     ProbPredictor,
@@ -170,8 +170,8 @@ from torch_concepts.nn import (
 )
 
 
-class YourModel_Factors(BaseModel):
-    """Mid-level implementation using Variables and Factors.
+class YourModel_ParametricCPDs(BaseModel):
+    """Mid-level implementation using Variables and ParametricCPDs.
     
     Use this approach when you need:
     - Custom concept dependencies
@@ -207,7 +207,7 @@ class YourModel_Factors(BaseModel):
             distribution=Delta, 
             size=self.encoder_out_features
         )
-        embedding_factor = Factor("embedding", module_class=nn.Identity())
+        embedding_cpd = ParametricCPD("embedding", parametrization=nn.Identity())
         
         # Step 2: Define concept variables
         concept_names = [c for c in annotations.get_axis_labels(1) 
@@ -231,10 +231,10 @@ class YourModel_Factors(BaseModel):
                  for c in task_names]
         )
         
-        # Step 4: Define concept encoder factors (layers)
-        concept_encoders = Factor(
+        # Step 4: Define concept encoder CPDs (layers)
+        concept_encoders = ParametricCPD(
             concept_names,
-            module_class=[
+            parametrization=[
                 ProbEncoderFromEmb(
                     in_features_embedding=embedding.size,
                     out_features=c.size
@@ -242,10 +242,10 @@ class YourModel_Factors(BaseModel):
             ]
         )
         
-        # Step 5: Define task predictor factors
-        task_predictors = Factor(
+        # Step 5: Define task predictor CPDs
+        task_predictors = ParametricCPD(
             task_names,
-            module_class=[
+            parametrization=[
                 ProbPredictor(
                     in_features_logits=sum([c.size for c in concepts]),
                     out_features=t.size
@@ -256,7 +256,7 @@ class YourModel_Factors(BaseModel):
         # Step 6: Build Probabilistic Graphical Model
         self.pgm = ProbabilisticGraphicalModel(
             variables=[embedding, *concepts, *tasks],
-            factors=[embedding_factor, *concept_encoders, *task_predictors]
+            parametric_cpds=[embedding_factor, *concept_encoders, *task_predictors]
         )
         
         # Step 7: Initialize inference
@@ -306,18 +306,18 @@ concepts = Variable(['age', 'gender', 'bmi'],
                    size=[1, 1, 1])
 ```
 
-#### Factors
+#### ParametricCPDs
 Represent computational modules (neural network layers):
-- `name`: Factor identifier(s) matching variable names
+- `name`: ParametricCPD identifier(s) matching variable names
 - `module_class`: PyTorch module(s) that compute the factor
 
 ```python
 # Single factor
-encoder = Factor("smoking", module_class=ProbEncoderFromEmb(...))
+encoder = ParametricCPD("smoking", parametrization=ProbEncoderFromEmb(...))
 
-# Multiple factors
-encoders = Factor(['age', 'gender'], 
-                 module_class=[ProbEncoderFromEmb(...), ProbEncoderFromEmb(...)])
+# Multiple CPDs
+encoders = ParametricCPD(['age', 'gender'], 
+                 parametrization=[ProbEncoderFromEmb(...), ProbEncoderFromEmb(...)])
 ```
 
 #### LazyConstructor

@@ -113,7 +113,7 @@ def main():
         intervened_concept = query_concepts[0]
 
         int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
-        int_strategy_c1 = DoIntervention(model=concept_model_new.factors, constants=-10)
+        int_strategy_c1 = DoIntervention(model=concept_model_new.parametric_cpds, constants=-10)
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=[intervened_concept]):
@@ -124,7 +124,7 @@ def main():
             print()
 
             int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
-            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=int_policy_c1,
                               strategies=int_strategy_c1,
                               target_concepts=[intervened_concept]):
