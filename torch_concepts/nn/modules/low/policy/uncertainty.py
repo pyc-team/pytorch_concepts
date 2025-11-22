@@ -5,23 +5,26 @@ from ..base.layer import BaseConceptLayer
 
 class UncertaintyInterventionPolicy(BaseConceptLayer):
     """
-    Uncertainty-based intervention policy using concept logit magnitudes.
+    Uncertainty-based intervention policy using distance from a maximum uncertainty point.
 
-    This policy uses the absolute value of concept logits as a measure of
-    certainty/uncertainty. Higher absolute values indicate higher certainty,
-    while values near zero indicate higher uncertainty.
+    This policy measures uncertainty as the distance of concept logits from a
+    maximum uncertainty point. Values closer to this point are considered more uncertain,
+    while values further from this point are considered more certain.
 
     Attributes:
         out_features (int): Number of output features.
+        max_uncertainty_point (float): The point where uncertainty is maximum.
 
     Args:
         out_features: Number of output concept features.
+        max_uncertainty_point: The value representing maximum uncertainty (default: 0.0).
+            Values closer to this point are more uncertain, values further away are more certain.
 
     Example:
         >>> import torch
         >>> from torch_concepts.nn import UncertaintyInterventionPolicy
         >>>
-        >>> # Create uncertainty policy
+        >>> # Create uncertainty policy with default max uncertainty point (0.0)
         >>> policy = UncertaintyInterventionPolicy(out_features=10)
         >>>
         >>> # Generate concept logits with varying confidence
@@ -30,7 +33,7 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         ...     [0.5, 0.3, -0.4, 2.0, -1.5]   # Mixed confidence
         ... ])
         >>>
-        >>> # Apply policy - returns absolute values (certainty scores)
+        >>> # Apply policy - returns distance from max uncertainty point (certainty scores)
         >>> scores = policy(logits)
         >>> print(scores)
         >>> # tensor([[3.0, 2.5, 0.1, 0.2, 4.0],
@@ -40,27 +43,39 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         >>> # For intervention, you'd typically intervene on LOW scores
         >>> print(scores[0].argmin())  # tensor(2) - most uncertain concept
         >>> print(scores[0].argmax())  # tensor(4) - most certain concept
+        >>>
+        >>> # Use custom max uncertainty point (e.g., 0.5 for probabilities)
+        >>> policy_prob = UncertaintyInterventionPolicy(out_features=5, max_uncertainty_point=0.5)
+        >>> probs = torch.tensor([[0.1, 0.5, 0.9, 0.45, 0.55]])
+        >>> certainty = policy_prob(probs)
+        >>> print(certainty)
+        >>> # tensor([[0.4, 0.0, 0.4, 0.05, 0.05]])
+        >>> # Values at 0.5 are most uncertain, values at 0.1 or 0.9 are most certain
     """
 
     def __init__(
         self,
         out_features: int,
+        max_uncertainty_point: float = 0.0,
     ):
         super().__init__(
             out_features=out_features,
         )
+        self.max_uncertainty_point = max_uncertainty_point
 
     def forward(
         self,
         logits: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute certainty scores from concept logits.
+        Compute certainty scores as distance from maximum uncertainty point.
 
         Args:
             logits: Input concept logits of shape (batch_size, n_concepts).
 
         Returns:
-            torch.Tensor: Absolute values (certainty scores) of same shape as input.
+            torch.Tensor: Distance from max uncertainty point (certainty scores) of same shape as input.
+                Higher values indicate higher certainty (further from max uncertainty point).
+                Lower values indicate higher uncertainty (closer to max uncertainty point).
         """
-        return logits.abs()
+        return (logits - self.max_uncertainty_point).abs()
