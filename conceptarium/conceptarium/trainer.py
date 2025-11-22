@@ -1,8 +1,7 @@
 """PyTorch Lightning Trainer configuration and setup utilities.
 
 This module extends PyTorch Lightning's Trainer class with project-specific
-configurations including W&B logging, model checkpointing, early stopping,
-and automatic device selection.
+configurations including W&B logging, model checkpointing, and early stopping.
 """
 
 from time import time
@@ -16,7 +15,6 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.loggers.logger import DummyLogger
-from torch import cuda
 
 from env import PROJECT_NAME, WANDB_ENTITY
 from hydra.core.hydra_config import HydraConfig
@@ -73,7 +71,7 @@ class Trainer(_Trainer_):
     - Early stopping (if patience is specified)
     - Learning rate monitoring
     - W&B logging (if logger is specified)
-    - GPU/CPU device selection
+    - Device accelerator from config
     
     Args:
         cfg (DictConfig): Hydra configuration containing trainer settings:
@@ -123,14 +121,13 @@ class Trainer(_Trainer_):
                 logging_interval="step",
             )
         )
-        if cuda.is_available():
-            accelerator = "gpu"
-        else:
-            accelerator = "cpu"
+
+        # logger selection and setup
         if cfg.trainer.get("logger") is not None:
             logger = _get_logger(cfg)
         else:
             logger = DummyLogger()
+
         trainer_kwargs = {
             k: v
             for k, v in cfg.trainer.items()
@@ -138,7 +135,6 @@ class Trainer(_Trainer_):
         }
         super().__init__(
             callbacks=callbacks,
-            accelerator=accelerator,
             logger=logger,
             **trainer_kwargs,
         )

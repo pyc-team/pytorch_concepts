@@ -13,12 +13,11 @@ hydra:
     subdir: "${hydra.job.num}"
 
 trainer:
+  logger: null
   max_epochs: 200
-  # limit_train_batches: 600
-  # gradient_clip_val: 1.0
-  # gradient_clip_algorithm: norm
   monitor: "val_loss"
   patience: 20
+  accelerator: "auto"
 
 seed: 42
 notes: null
