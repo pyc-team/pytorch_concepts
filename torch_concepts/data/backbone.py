@@ -5,9 +5,12 @@ models (e.g., ResNet, ViT) to speed up training of concept-based models.
 """
 import os
 import torch
+import logging
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 def compute_backbone_embs(
     dataset,
@@ -58,7 +61,7 @@ def compute_backbone_embs(
     
     embeddings_list = []
     
-    print("Precomputing embeddings with backbone...")
+    logger.info("Precomputing embeddings with backbone...")
     with torch.no_grad():
         iterator = tqdm(dataloader, desc="Extracting embeddings") if show_progress else dataloader
         for batch in iterator:
@@ -112,10 +115,10 @@ def get_backbone_embs(path: str,
                                     workers=workers,
                                     show_progress=show_progress)
         # save
-        print(f"Saving embeddings to {path}")
+        logger.info(f"Saving embeddings to {path}")
         torch.save(embs, path)
-        print(f"✓ Saved embeddings with shape: {embs.shape}")
+        logger.info(f"✓ Saved embeddings with shape: {embs.shape}")
 
-    print(f"Loading precomputed embeddings from {path}")
+    logger.info(f"Loading precomputed embeddings from {path}")
     embs = torch.load(path)
     return embs

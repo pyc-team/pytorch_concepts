@@ -5,11 +5,14 @@ configuration for concept-based learning tasks.
 """
 
 import os
+import logging
 from typing import Literal, Mapping, Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
+
+logger = logging.getLogger(__name__)
 
 from ..backbone import get_backbone_embs
 from ..splitters.random import RandomSplitter
@@ -229,7 +232,7 @@ class ConceptDataModule(LightningDataModule):
             setattr(self, name, _set)
 
     def maybe_use_backbone_embs(self, precompute_embs: bool = False):
-        print(f"Input shape: {tuple(self.dataset.input_data.shape)}")
+        logger.info(f"Input shape: {tuple(self.dataset.input_data.shape)}")
         if precompute_embs:
             if self.backbone is not None:
                 # Precompute embeddings with automatic caching
@@ -244,16 +247,16 @@ class ConceptDataModule(LightningDataModule):
                 )
                 self.dataset.input_data = embs
                 self.embs_precomputed = True
-                print(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
+                logger.info(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
             else:
                 self.embs_precomputed = False
-                print("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
+                logger.warning("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
         else:
             # Use raw input data without preprocessing
             self.embs_precomputed = False
-            print("Using raw input data without backbone preprocessing.")
+            logger.info("Using raw input data without backbone preprocessing.")
             if self.backbone is not None:
-                print("Note: Backbone provided but precompute_embs=False. Using raw input data.")
+                logger.info("Note: Backbone provided but precompute_embs=False. Using raw input data.")
 
     def preprocess(self, precompute_embs: bool = False):
         """

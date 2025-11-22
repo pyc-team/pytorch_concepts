@@ -9,9 +9,12 @@ import pickle
 import tarfile
 import urllib.request
 import zipfile
+import logging
 from typing import Any, Optional
 
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
 def extract_zip(path: str, folder: str, log: bool = True):
@@ -23,7 +26,7 @@ def extract_zip(path: str, folder: str, log: bool = True):
         folder: The destination folder.
         log: If False, will not log anything (default: True).
     """
-    print(f"Extracting {path}")
+    logger.info(f"Extracting {path}")
     with zipfile.ZipFile(path, 'r') as f:
         f.extractall(folder)
 
@@ -37,7 +40,7 @@ def extract_tar(path: str, folder: str, log: bool = True):
         folder: The destination folder.
         log: If False, will not log anything (default: True).
     """
-    print(f"Extracting {path}")
+    logger.info(f"Extracting {path}")
     with tarfile.open(path, 'r') as tar:
         for member in tqdm(iterable=tar.getmembers(),
                            total=len(tar.getmembers())):
@@ -119,10 +122,10 @@ def download_url(url: str,
     path = os.path.join(folder, filename)
 
     if os.path.exists(path):
-        print(f'Using existing file {filename}')
+        logger.info(f'Using existing file {filename}')
         return path
 
-    print(f'Downloading {url}')
+    logger.info(f'Downloading {url}')
 
     os.makedirs(folder, exist_ok=True)
 

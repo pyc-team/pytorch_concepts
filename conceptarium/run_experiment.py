@@ -5,6 +5,9 @@ import warnings
 # Suppress Pydantic warnings from third-party libraries
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
+import logging
+logger = logging.getLogger(__name__)
+
 import hydra
 from omegaconf import DictConfig
 from hydra.utils import instantiate
@@ -29,7 +32,7 @@ def main(cfg: DictConfig) -> None:
     # 2. Setup the data (preprocess with backbone, split, fit scalers)
     # 3. Update config based on data
     # ----------------------------------
-    print("\n----------------------INIT DATA--------------------------------------")
+    logger.info("----------------------INIT DATA--------------------------------------")
     datamodule = instantiate(cfg.dataset)
     datamodule.setup('fit')
     cfg = update_config_from_data(cfg, datamodule)
@@ -37,10 +40,10 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------------
     # Model
     # ----------------------------------
-    print("\n----------------------INIT MODEL-------------------------------------")
+    logger.info("----------------------INIT MODEL-------------------------------------")
     model = instantiate(cfg.model, annotations=datamodule.annotations, graph=datamodule.graph)
 
-    print("\n----------------------BEGIN TRAINING---------------------------------")
+    logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:
         trainer = Trainer(cfg)
         trainer.logger.log_hyperparams(parse_hyperparams(cfg))

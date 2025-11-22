@@ -3,11 +3,14 @@ import gzip
 import shutil
 import pandas as pd
 import torch
+import logging
 from typing import List, Optional
 import bnlearn as bn
 from pgmpy.sampling import BayesianModelSampling
 
 from ...annotations import Annotations, AxisAnnotation
+
+logger = logging.getLogger(__name__)
 
 from ..base import ConceptDataset
 from ..preprocessing.autoencoder import extract_embs_from_autoencoder
@@ -132,7 +135,7 @@ class BnLearnDataset(ConceptDataset):
 
         # ---- save all ----
         # save embeddings
-        print(f"Saving dataset to {self.root_dir}")
+        logger.info(f"Saving dataset to {self.root_dir}")
         torch.save(embeddings, self.processed_paths[0])
         # save concepts
         concepts.to_hdf(self.processed_paths[1], key="concepts", mode="w")
@@ -143,7 +146,7 @@ class BnLearnDataset(ConceptDataset):
 
     def load_raw(self):
         self.maybe_build()
-        print(f"Loading dataset from {self.root_dir}")
+        logger.info(f"Loading dataset from {self.root_dir}")
         embeddings = torch.load(self.processed_paths[0])
         concepts = pd.read_hdf(self.processed_paths[1], "concepts")
         annotations = torch.load(self.processed_paths[2])

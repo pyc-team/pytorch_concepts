@@ -7,8 +7,11 @@ representations of high-dimensional concept data.
 import torch.nn as nn
 import torch
 import torch.optim as optim
+import logging
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleAutoencoder(nn.Module):
@@ -160,7 +163,7 @@ class AutoencoderTrainer:
         best_loss = float('inf')
         patience_counter = 0
 
-        print('Autoencoder training started...')
+        logger.info('Autoencoder training started...')
         for epoch in tqdm(range(self.epochs)):
             self.model.train()
             train_loss = 0.0
@@ -175,7 +178,7 @@ class AutoencoderTrainer:
                 train_loss += loss.item()
 
             if epoch % 300 == 0:
-                print(f'Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}')
+                logger.info(f'Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}')
 
             if train_loss < best_loss:
                 best_loss = train_loss
@@ -185,11 +188,11 @@ class AutoencoderTrainer:
                 patience_counter += 1
                 
             if patience_counter >= self.patience:
-                print('Early stopping')
+                logger.info('Early stopping')
                 break
 
-        print(f'Epoch {epoch+1}/{self.epochs}, Final Train Loss: {train_loss:.4f}')
-        self.best_model_wts = best_model_wts
+        logger.info(f'Epoch {epoch+1}/{self.epochs}, Final Train Loss: {train_loss:.4f}')
+        self.is_fitted = True
 
     def extract_latent(self):
         """

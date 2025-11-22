@@ -7,11 +7,14 @@ conversion, image colorization, and affine transformations.
 import os
 import numpy as np
 import pandas as pd
+import logging
 from typing import Any, List, Sequence, Union
 import torch
 import random
 from torch import Tensor
 from torchvision.transforms import v2
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_list(value: Any) -> List:
@@ -134,10 +137,10 @@ def affine_transform(images, degrees, scales, batch_size=512):
         Tensor: Transformed images with same shape as input.
     """
     if degrees is None:
-        print("Degrees for affine transformation of images not provided, setting to 0.")
+        logger.warning("Degrees for affine transformation of images not provided, setting to 0.")
         degrees = torch.zeros(images.shape[0], device=images.device)
     if scales is None:
-        print("Scales for affine transformation of images not provided, setting to 1.")
+        logger.warning("Scales for affine transformation of images not provided, setting to 1.")
         scales = torch.ones(images.shape[0], device=images.device)
 
     N = images.shape[0]

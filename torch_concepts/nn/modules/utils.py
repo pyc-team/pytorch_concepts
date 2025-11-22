@@ -1,8 +1,11 @@
 from typing import Mapping, Optional, Tuple, Dict, Union, List
 import warnings
+import logging
 import torch
 
 from torch_concepts import AxisAnnotation
+
+logger = logging.getLogger(__name__)
 
 def check_collection(annotations: AxisAnnotation, 
                      collection: Mapping,
@@ -127,10 +130,10 @@ def check_collection(annotations: AxisAnnotation,
     if has_continuous:
         concept_types.append("continuous" if not (has_binary or has_categorical) else "with continuous")
     
-    print(f"{collection_name} configuration validated ({', '.join(concept_types)}):")
-    print(f"  Binary (card=1): {binary if needs_binary else 'unused'}")
-    print(f"  Categorical (card>1): {categorical if needs_categorical else 'unused'}")
-    print(f"  continuous: {continuous if needs_continuous else 'unused'}")
+    logger.info(f"{collection_name} configuration validated ({', '.join(concept_types)}):")
+    logger.info(f"  Binary (card=1): {binary if needs_binary else 'unused'}")
+    logger.info(f"  Categorical (card>1): {categorical if needs_categorical else 'unused'}")
+    logger.info(f"  continuous: {continuous if needs_continuous else 'unused'}")
     
     # Return only needed items (others set to None)
     return (binary if needs_binary else None,
