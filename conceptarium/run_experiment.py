@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+"""Run concept-based model experiments using Hydra configuration."""
+
 import warnings
 # Suppress Pydantic warnings from third-party libraries
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
