@@ -15,7 +15,7 @@
   <a href="https://pytorch-concepts.readthedocs.io/en/factors/guides/using.html">💻 User guide</a>
 </p>
 
-<img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
+<img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
 
 The name of the library stands for both
@@ -24,26 +24,39 @@ The name of the library stands for both
 
 ---
 
+# Quick Start
+
+You can install PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
+
+```bash
+pip install pytorch-concepts
+```
+
+After installation, you can import it in your Python scripts as:
+
+```python
+import torch_concepts as pyc
+```
+
+Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/factors/guides/using.html) to get started with building interpretable models using PyC!
+
+---
+
 # <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC Software Stack
 The library is organized to be modular and accessible at different levels of abstraction:
-- **No-code APIs. Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files.
-- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code.
-- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a probabilistic graphical model interface.
-- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain pytorch-like interface. These APIs also include metrics, losses, and datasets.
+- <img src="doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API). Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files. Built on top of <img src="doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
+- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code. This interface is built in <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily standardize training and evaluation.
+- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference.
+- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include metrics, losses, and datasets.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="40%">
+  <img src="doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="90%">
 </p>
 
 ---
 
 # Contributing
-
-- Use the `dev` branch to write and test your contributions locally.
-- Make small commits and use ["Gitmoji"](https://gitmoji.dev/) to add emojis to your commit messages.
-- Make sure to write documentation and tests for your contributions.
-- Make sure all tests pass before submitting the pull request.
-- Submit a pull request to the `main` branch.
+Contributions are welcome! Please check our [contributing guidelines](CONTRIBUTING.md) to get started.
 
 Thanks to all contributors! 🧡
 
@@ -60,7 +73,7 @@ Thanks to all contributors! 🧡
 
 
 
-# Cite this library
+# Cite this Library
 
 If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
 
@@ -89,5 +102,3 @@ This project is supported by the following organizations:
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
 </p>
-
----
