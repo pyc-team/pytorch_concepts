@@ -33,20 +33,20 @@ Variables represent random variables in the probabilistic model:
 .. code-block:: python
 
    # Define embedding variable
-   embedding_var = pyc.Variable(
+   embedding_var = pyc.LatentVariable(
        concepts=["embedding"],
        parents=[],
    )
 
    # Define concept variables
-   concepts = pyc.Variable(
+   concepts = pyc.EndogenousVariable(
        concepts=["round", "smooth", "bright"],
        parents=["embedding"],
        distribution=torch.distributions.RelaxedBernoulli
    )
 
    # Define task variables
-   tasks = pyc.Variable(
+   tasks = pyc.EndogenousVariable(
        concepts=["class_A", "class_B"],
        parents=["round", "smooth", "bright"],
        distribution=torch.distributions.RelaxedBernoulli

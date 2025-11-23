@@ -2,7 +2,7 @@ from typing import List, Tuple, Optional
 from torch.nn import Identity
 
 from .....annotations import Annotations
-from ..models.variable import Variable
+from ..models.variable import Variable, LatentVariable, ExogenousVariable, EndogenousVariable
 from .concept_graph import ConceptGraph
 from ..models.cpd import ParametricCPD
 from ..models.probabilistic_model import ProbabilisticModel
@@ -138,7 +138,7 @@ class GraphModel(BaseConstructor):
         self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
         # embedding variable and CPDs
-        embedding_var = Variable('embedding', parents=[], size=self.input_size)
+        embedding_var = LatentVariable('embedding', parents=[], size=self.input_size)
         embedding_cpd = ParametricCPD('embedding', parametrization=Identity())
 
         # concepts init
@@ -183,7 +183,7 @@ class GraphModel(BaseConstructor):
             Tuple of (exogenous variables, exogenous parametric_cpds).
         """
         exog_names = [f"exog_{c}_state_{i}" for cix, c in enumerate(label_names) for i in range(cardinalities[cix])]
-        exog_vars = Variable(exog_names,
+        exog_vars = ExogenousVariable(exog_names,
                             parents=parent_var.concepts,
                             distribution = Delta,
                             size = layer._module_kwargs['embedding_size'])
@@ -212,7 +212,7 @@ class GraphModel(BaseConstructor):
             Tuple of (encoder variables, encoder parametric_cpds).
         """
         if parent_vars[0].concepts[0] == 'embedding':
-            encoder_vars = Variable(label_names,
+            encoder_vars = EndogenousVariable(label_names,
                                 parents=['embedding'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
                                 size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
@@ -237,7 +237,7 @@ class GraphModel(BaseConstructor):
             for label_name in label_names:
                 exog_vars = [v for v in parent_vars if v.concepts[0].startswith(f"exog_{label_name}")]
                 exog_vars_names = [v.concepts[0] for v in exog_vars]
-                encoder_var = Variable(label_name,
+                encoder_var = EndogenousVariable(label_name,
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
@@ -296,7 +296,7 @@ class GraphModel(BaseConstructor):
                 used_exog_vars = []
                 in_features_exogenous = None
 
-            predictor_var = Variable(c_name,
+            predictor_var = EndogenousVariable(c_name,
                                      parents=endogenous_parents_names+exog_vars_names,
                                     distribution=self.annotations[1].metadata[c_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])

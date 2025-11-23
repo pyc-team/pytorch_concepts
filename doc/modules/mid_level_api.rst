@@ -22,9 +22,10 @@ Documentation
    :maxdepth: 1
 
    nn.base.mid
+   nn.variable
+   nn.models
    nn.constructors
    nn.inference.mid
-   nn.models
 
 
 Design principles
@@ -39,15 +40,15 @@ At this API level, models are represented as Probabilistic Models where:
 
   .. code-block:: python
 
-     concepts = pyc.Variable(concepts=["c1", "c2", "c3"], parents=[],
-                             distribution=torch.distributions.RelaxedBernoulli)
+     concepts = pyc.EndogenousVariable(concepts=["c1", "c2", "c3"], parents=[],
+                                       distribution=torch.distributions.RelaxedBernoulli)
 
 - **ParametricCPDs**: represent conditional probability distributions (CPDs) between variables in the Probabilistic Model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
 
   .. code-block:: python
 
      concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
-                                     parametrization=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
+                                        parametrization=pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3))
 
 - **Probabilistic Model**: a collection of variables and CPDs. For instance we can define a ProbabilisticModel as:
 

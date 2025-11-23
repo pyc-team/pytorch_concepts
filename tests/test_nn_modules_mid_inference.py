@@ -7,6 +7,8 @@ import unittest
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
+
+from torch_concepts import LatentVariable, EndogenousVariable
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
@@ -28,8 +30,8 @@ class TestForwardInference(unittest.TestCase):
     def test_initialization_simple_model(self):
         """Test initialization with simple model."""
         # Create simple model: embedding -> A
-        embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
+        embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
         embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
         cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
@@ -47,9 +49,9 @@ class TestForwardInference(unittest.TestCase):
     def test_topological_sort(self):
         """Test topological sorting of variables."""
         # Create chain: embedding -> A -> B
-        embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
-        var_b = Variable('B', parents=[var_a], distribution=Bernoulli, size=1)
+        embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
+        var_b = EndogenousVariable('B', parents=[var_a], distribution=Bernoulli, size=1)
 
         embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
         cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
@@ -69,10 +71,10 @@ class TestForwardInference(unittest.TestCase):
     def test_levels_computation(self):
         """Test level-based grouping for parallel computation."""
         # Create diamond structure
-        embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
-        var_b = Variable('B', parents=[embedding_var], distribution=Bernoulli, size=1)
-        var_c = Variable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
+        embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
+        var_b = EndogenousVariable('B', parents=[embedding_var], distribution=Bernoulli, size=1)
+        var_c = EndogenousVariable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
 
         embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
         cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
@@ -97,8 +99,8 @@ class TestForwardInference(unittest.TestCase):
 
     def test_predict_simple_chain(self):
         """Test predict method with simple chain."""
-        embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
+        embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', parents=[embedding_var], distribution=Bernoulli, size=1)
 
         embedding_factor = ParametricCPD('embedding', parametrization=nn.Identity())
         cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
-from ..models.variable import Variable
+from ..models.variable import Variable, EndogenousVariable
 from ...low.base.graph import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
@@ -47,7 +47,7 @@ class ForwardInference(BaseInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import Variable
+        >>> from torch_concepts import LatentVariable, EndogenousVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import ForwardInference, ParametricCPD, ProbabilisticModel
         >>>
@@ -55,9 +55,9 @@ class ForwardInference(BaseInference):
         >>> # Where A is a root concept and B depends on A
         >>>
         >>> # Define variables
-        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
-        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = EndogenousVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs (modules that compute each variable)
         >>> from torch.nn import Identity, Linear
@@ -211,7 +211,7 @@ class ForwardInference(BaseInference):
                     # Should not happen with correct topological sort
                     raise RuntimeError(f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
 
-                if parent_var.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
+                if isinstance(parent_var, EndogenousVariable):
                     # For probabilistic parents, pass logits
                     weight = 1
                     if self.graph_learner is not None:
@@ -710,14 +710,14 @@ class DeterministicInference(ForwardInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import Variable
+        >>> from torch_concepts import LatentVariable, EndogenousVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
-        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
-        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = EndogenousVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs
         >>> from torch.nn import Identity, Linear
@@ -791,14 +791,14 @@ class AncestralSamplingInference(ForwardInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import Variable
+        >>> from torch_concepts import LatentVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import AncestralSamplingInference, ParametricCPD, ProbabilisticModel
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
-        >>> embedding_var = Variable('embedding', parents=[], distribution=Delta, size=10)
-        >>> var_A = Variable('A', parents=['embedding'], distribution=Bernoulli, size=1)
-        >>> var_B = Variable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = EndogenousVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs
         >>> from torch.nn import Identity, Linear

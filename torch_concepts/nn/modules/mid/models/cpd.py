@@ -2,7 +2,7 @@ import copy
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Optional, Tuple, Union
 from itertools import product
 
@@ -144,17 +144,17 @@ class ParametricCPD(nn.Module):
         for parent in self.parents:
             parent_var = parent
 
-            if parent_var.distribution in [Bernoulli, Categorical]:
+            if parent_var.distribution in [Bernoulli, RelaxedBernoulli, Categorical, RelaxedOneHotCategorical]:
                 out_dim = parent_var.out_features
 
                 input_combinations = []
                 state_combinations = []
 
-                if parent_var.distribution is Bernoulli:
+                if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
                     input_combinations = list(product([0.0, 1.0], repeat=out_dim))
                     state_combinations = input_combinations
 
-                elif parent_var.distribution is Categorical:
+                elif parent_var.distribution in [Categorical, RelaxedOneHotCategorical]:
                     for i in range(out_dim):
                         one_hot = torch.zeros(out_dim)
                         one_hot[i] = 1.0

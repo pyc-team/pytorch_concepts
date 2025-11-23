@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, Variable
+from torch_concepts import Annotations, AxisAnnotation, Variable, LatentVariable, EndogenousVariable
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
@@ -20,9 +20,9 @@ def main():
     task_names = ['xor']
 
     # Variable setup
-    latent_var = Variable("emb", parents=[], size=latent_dims)
-    concepts = Variable(concept_names, parents=["emb"], distribution=RelaxedBernoulli)
-    tasks = Variable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    latent_var = LatentVariable("emb", parents=[], size=latent_dims)
+    concepts = EndogenousVariable(concept_names, parents=["emb"], distribution=RelaxedBernoulli)
+    tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
     backbone = ParametricCPD("emb", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))

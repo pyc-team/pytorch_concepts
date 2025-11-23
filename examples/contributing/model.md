@@ -159,10 +159,10 @@ class YourModel(BaseModel):
 For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
-from torch_concepts import Variable
+from torch_concepts import Variable, LatentVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, 
+    ParametricCPD,
     ProbabilisticGraphicalModel,
     ProbEncoderFromEmb,
     ProbPredictor,
@@ -178,18 +178,18 @@ class YourModel_ParametricCPDs(BaseModel):
     - Non-standard graph structures
     - Fine-grained control over layer instantiation
     """
-    
+
     def __init__(
-        self,
-        task_names: Union[List[str], str, List[int]],
-        inference: BaseInference,
-        input_size: int,
-        annotations: Annotations,
-        variable_distributions: Mapping,
-        embs_precomputed: bool = False,
-        backbone: Optional[callable] = None,
-        encoder_kwargs: Dict = None,
-        **kwargs
+            self,
+            task_names: Union[List[str], str, List[int]],
+            inference: BaseInference,
+            input_size: int,
+            annotations: Annotations,
+            variable_distributions: Mapping,
+            embs_precomputed: bool = False,
+            backbone: Optional[callable] = None,
+            encoder_kwargs: Dict = None,
+            **kwargs
     ) -> None:
         super().__init__(
             annotations=annotations,
@@ -199,38 +199,38 @@ class YourModel_ParametricCPDs(BaseModel):
             backbone=backbone,
             encoder_kwargs=encoder_kwargs,
         )
-        
+
         # Step 1: Define embedding variable (latent representation from encoder)
-        embedding = Variable(
-            "embedding", 
-            parents=[], 
-            distribution=Delta, 
+        embedding = LatentVariable(
+            "embedding",
+            parents=[],
+            distribution=Delta,
             size=self.encoder_out_features
         )
         embedding_cpd = ParametricCPD("embedding", parametrization=nn.Identity())
-        
+
         # Step 2: Define concept variables
-        concept_names = [c for c in annotations.get_axis_labels(1) 
-                        if c not in task_names]
+        concept_names = [c for c in annotations.get_axis_labels(1)
+                         if c not in task_names]
         concepts = Variable(
             concept_names,
             parents=['embedding'],  # All concepts depend on embedding
-            distribution=[annotations[1].metadata[c]['distribution'] 
-                         for c in concept_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)] 
-                 for c in concept_names]
+            distribution=[annotations[1].metadata[c]['distribution']
+                          for c in concept_names],
+            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+                  for c in concept_names]
         )
-        
+
         # Step 3: Define task variables
         tasks = Variable(
             task_names,
             parents=concept_names,  # Tasks depend on concepts
-            distribution=[annotations[1].metadata[c]['distribution'] 
-                         for c in task_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)] 
-                 for c in task_names]
+            distribution=[annotations[1].metadata[c]['distribution']
+                          for c in task_names],
+            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+                  for c in task_names]
         )
-        
+
         # Step 4: Define concept encoder CPDs (layers)
         concept_encoders = ParametricCPD(
             concept_names,
@@ -241,7 +241,7 @@ class YourModel_ParametricCPDs(BaseModel):
                 ) for c in concepts
             ]
         )
-        
+
         # Step 5: Define task predictor CPDs
         task_predictors = ParametricCPD(
             task_names,
@@ -252,31 +252,31 @@ class YourModel_ParametricCPDs(BaseModel):
                 ) for t in tasks
             ]
         )
-        
+
         # Step 6: Build Probabilistic Graphical Model
         self.pgm = ProbabilisticGraphicalModel(
             variables=[embedding, *concepts, *tasks],
             parametric_cpds=[embedding_factor, *concept_encoders, *task_predictors]
         )
-        
+
         # Step 7: Initialize inference
         self.inference = inference(self.pgm)
-    
+
     def forward(
-        self,
-        x: torch.Tensor,
-        query: List[str] = None,
-        backbone_kwargs: Optional[Mapping[str, Any]] = None,
-        **kwargs
+            self,
+            x: torch.Tensor,
+            query: List[str] = None,
+            backbone_kwargs: Optional[Mapping[str, Any]] = None,
+            **kwargs
     ) -> torch.Tensor:
         features = self.maybe_apply_backbone(x, backbone_kwargs)
         features = self.encoder(features)
         out = self.inference.query(query, evidence={'embedding': features})
         return out
-    
+
     def filter_output_for_loss(self, forward_out):
         return forward_out
-    
+
     def filter_output_for_metric(self, forward_out):
         return forward_out
 ```
