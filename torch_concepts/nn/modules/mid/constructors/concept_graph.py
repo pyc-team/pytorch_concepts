@@ -140,6 +140,9 @@ class ConceptGraph:
         # Convert to sparse format and store
         self.edge_index, self.edge_weight = _dense_to_sparse_pytorch(data)
 
+        # Cache networkx graph for faster repeated access
+        self._nx_graph_cache = None
+
     @classmethod
     def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):
         """
@@ -172,7 +175,10 @@ class ConceptGraph:
 
         instance.edge_index = edge_index
         instance.edge_weight = edge_weight
-        
+
+        # Cache networkx graph for faster repeated access
+        instance._nx_graph_cache = None
+
         return instance
 
     @property
@@ -280,6 +286,21 @@ class ConceptGraph:
             columns=self.node_names
         )
 
+    @property
+    def _nx_graph(self) -> nx.DiGraph:
+        """
+        Get cached NetworkX graph (lazy initialization).
+
+        This property caches the NetworkX graph for faster repeated access.
+        The cache is created on first access.
+
+        Returns:
+            nx.DiGraph: Cached NetworkX directed graph
+        """
+        if self._nx_graph_cache is None:
+            self._nx_graph_cache = self.to_networkx()
+        return self._nx_graph_cache
+
     def to_networkx(self, threshold: float = 0.0) -> nx.DiGraph:
         """
         Convert to NetworkX directed graph.
@@ -295,6 +316,10 @@ class ConceptGraph:
             >>> list(G.nodes())
             ['A', 'B', 'C']
         """
+        # If threshold is 0.0 and we have a cache, return it
+        if threshold == 0.0 and self._nx_graph_cache is not None:
+            return self._nx_graph_cache
+
         # Create empty directed graph
         G = nx.DiGraph()
         
@@ -316,6 +341,10 @@ class ConceptGraph:
                 target_name = self.node_names[target_idx]
                 G.add_edge(source_name, target_name, weight=weight)
         
+        # Cache if threshold is 0.0
+        if threshold == 0.0 and self._nx_graph_cache is None:
+            self._nx_graph_cache = G
+
         return G
 
     def dense_to_sparse(self, threshold: float = 0.0) -> Tuple[Tensor, Tensor]:
@@ -347,7 +376,7 @@ class ConceptGraph:
         Returns:
             List of root node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         return [node for node, degree in G.in_degree() if degree == 0]
 
     def get_leaf_nodes(self) -> List[str]:
@@ -357,7 +386,7 @@ class ConceptGraph:
         Returns:
             List of leaf node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         return [node for node, degree in G.out_degree() if degree == 0]
 
     def topological_sort(self) -> List[str]:
@@ -372,7 +401,7 @@ class ConceptGraph:
         Raises:
             nx.NetworkXError: If graph contains cycles
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         return list(nx.topological_sort(G))
 
     def get_predecessors(self, node: Union[str, int]) -> List[str]:
@@ -385,7 +414,7 @@ class ConceptGraph:
         Returns:
             List of predecessor node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         node_name = self.node_names[node] if isinstance(node, int) else node
         return list(G.predecessors(node_name))
 
@@ -399,7 +428,7 @@ class ConceptGraph:
         Returns:
             List of successor node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         node_name = self.node_names[node] if isinstance(node, int) else node
         return list(G.successors(node_name))
 
@@ -413,7 +442,7 @@ class ConceptGraph:
         Returns:
             Set of ancestor node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         node_name = self.node_names[node] if isinstance(node, int) else node
         return nx.ancestors(G, node_name)
 
@@ -427,7 +456,7 @@ class ConceptGraph:
         Returns:
             Set of descendant node names
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         node_name = self.node_names[node] if isinstance(node, int) else node
         return nx.descendants(G, node_name)
 
@@ -438,7 +467,7 @@ class ConceptGraph:
         Returns:
             True if graph is a DAG, False otherwise
         """
-        G = self.to_networkx()
+        G = self._nx_graph
         return nx.is_directed_acyclic_graph(G)
 
     def is_dag(self) -> bool:
