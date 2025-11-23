@@ -436,23 +436,32 @@ class _GlobalPolicyState:
             self.global_mask = torch.ones((B, 0), device=device, dtype=dtype)
             return
 
-        if F_total == 1:
-            # Edge case: single concept globally
-            keep = torch.ones((B, 1), device=device, dtype=dtype) if self.quantile < 1.0 \
-                else torch.zeros((B, 1), device=device, dtype=dtype)
+        # quantile determines the fraction of concepts to intervene on
+        # quantile=0 -> intervene on 0% (mask=1 for all, keep all)
+        # quantile=1 -> intervene on 100% (mask=0 for all, replace all)
+        num_to_intervene = int(max(0, min(F_total, math.ceil(self.quantile * F_total))))
 
-            # STE proxy
-            row_max = all_logits.max(dim=1, keepdim=True).values + self.eps
-            soft_proxy = torch.log1p(all_logits) / torch.log1p(row_max)
-            self.global_mask = (keep - soft_proxy).detach() + soft_proxy
+        if num_to_intervene == 0:
+            # Don't intervene on any concepts - keep all predictions
+            # mask=1 means keep, so all ones
+            self.global_mask = torch.ones((B, F_total), device=device, dtype=dtype)
             return
 
-        # K > 1: standard per-row quantile via kthvalue
-        k = int(max(1, min(F_total, 1 + math.floor(self.quantile * (F_total - 1)))))
+        if num_to_intervene == F_total:
+            # Intervene on all concepts - replace all predictions
+            # mask=0 means intervene, so all zeros
+            self.global_mask = torch.zeros((B, F_total), device=device, dtype=dtype)
+            return
+
+        # Find the threshold: intervene on the top num_to_intervene concepts by policy logits
+        # kthvalue(k) returns the k-th smallest value, so for top-k we use (F_total - num_to_intervene + 1)
+        k = F_total - num_to_intervene + 1
         thr, _ = torch.kthvalue(all_logits, k, dim=1, keepdim=True)  # [B,1]
 
-        # Use strict '>' so ties at the threshold are replaced
-        mask_hard = (all_logits > thr).to(dtype)  # [B, F_total]
+        # mask=1 means keep (don't intervene), mask=0 means replace (do intervene)
+        # Intervene on concepts with logits >= threshold (top-k by policy score)
+        # So those get mask=0, others get mask=1
+        mask_hard = (all_logits < thr).to(dtype)  # [B, F_total] - 1 where we keep, 0 where we intervene
 
         # STE proxy
         row_max = all_logits.max(dim=1, keepdim=True).values + self.eps

@@ -277,7 +277,7 @@ class ForwardInference(BaseInference):
                     results[concept_name] = output_tensor
 
                 # Apply global policy interventions if needed
-                self._apply_global_interventions_for_level(level, results)
+                self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
                 continue
 
             # === PARALLEL MODE ===
@@ -306,20 +306,44 @@ class ForwardInference(BaseInference):
                 results[concept_name] = output_tensor
 
             # Apply global policy interventions if needed
-            self._apply_global_interventions_for_level(level, results)
+            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
 
         return results
 
-    def _apply_global_interventions_for_level(self, level: List, results: Dict[str, torch.Tensor]) -> None:
+    def _apply_single_global_intervention(
+            self,
+            concept_name: str,
+            wrapper: _GlobalPolicyInterventionWrapper,
+            results: Dict[str, torch.Tensor]
+    ) -> Tuple[str, torch.Tensor]:
+        """
+        Apply a global policy intervention for a single concept.
+
+        Args:
+            concept_name: Name of the concept to intervene on.
+            wrapper: The global policy intervention wrapper.
+            results: Dictionary of computed results.
+
+        Returns:
+            Tuple of (concept_name, intervened_output).
+        """
+        original_output = results[concept_name]
+        intervened_output = wrapper.apply_intervention(original_output)
+        return concept_name, intervened_output
+
+    def _apply_global_interventions_for_level(self, level: List, results: Dict[str, torch.Tensor], debug: bool, use_cuda: bool) -> None:
         """
         Apply global policy interventions for all concepts in a level.
 
         This method checks if any concepts in the level have global policy wrappers,
         and if so, applies interventions after all concepts have been computed.
+        Supports parallel execution via CUDA streams (GPU) or ThreadPoolExecutor (CPU).
 
         Args:
             level: List of variables in the current level
             results: Dictionary of computed results to update
+            debug: If True, runs sequentially for easier debugging (disables parallelism)
+            use_cuda: If True, uses CUDA streams for parallel execution; otherwise uses CPU threads
         """
         # Check if any concept in this level has a global policy wrapper
         global_wrappers = []
@@ -335,11 +359,44 @@ class ForwardInference(BaseInference):
             # Check if all wrappers in the shared state are ready
             first_wrapper = global_wrappers[0][1]
             if first_wrapper.shared_state.is_ready():
-                # Apply interventions to all concepts with global wrappers
-                for concept_name, wrapper in global_wrappers:
-                    original_output = results[concept_name]
-                    intervened_output = wrapper.apply_intervention(original_output)
-                    results[concept_name] = intervened_output
+
+                # === DEBUG MODE or single wrapper: always run sequentially ===
+                if debug or len(global_wrappers) <= 1:
+                    for concept_name, wrapper in global_wrappers:
+                        original_output = results[concept_name]
+                        intervened_output = wrapper.apply_intervention(original_output)
+                        results[concept_name] = intervened_output
+
+                # === PARALLEL MODE ===
+                else:
+                    intervention_outputs = []
+
+                    # GPU: parallel via CUDA streams
+                    if use_cuda:
+                        streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in global_wrappers]
+
+                        for (concept_name, wrapper), stream in zip(global_wrappers, streams):
+                            with torch.cuda.stream(stream):
+                                concept_name_out, intervened_output = self._apply_single_global_intervention(
+                                    concept_name, wrapper, results
+                                )
+                                intervention_outputs.append((concept_name_out, intervened_output))
+
+                        torch.cuda.synchronize()
+
+                    # CPU: parallel via threads
+                    else:
+                        with ThreadPoolExecutor(max_workers=len(global_wrappers)) as executor:
+                            futures = [
+                                executor.submit(self._apply_single_global_intervention, concept_name, wrapper, results)
+                                for concept_name, wrapper in global_wrappers
+                            ]
+                            for fut in futures:
+                                intervention_outputs.append(fut.result())
+
+                    # Update results with intervened outputs
+                    for concept_name, intervened_output in intervention_outputs:
+                        results[concept_name] = intervened_output
 
                 # Reset shared state for next batch/level
                 first_wrapper.shared_state.reset()
