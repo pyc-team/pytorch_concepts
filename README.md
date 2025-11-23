@@ -10,12 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="#get-started">🚀 Getting Started</a> - 
+  <a href="https://pytorch-concepts.readthedocs.io/en/factors/guides/installation.html">🚀 Getting Started</a> - 
   <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> - 
-  <a href="https://colab.research.google.com/github/pyc-team/pytorch_concepts/blob/master/examples/introductory_notebook.ipynb">💻 Introductory notebook</a>
+  <a href="https://pytorch-concepts.readthedocs.io/en/factors/guides/using.html">💻 User guide</a>
 </p>
-
-# PyC
 
 <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
@@ -26,200 +24,16 @@ The name of the library stands for both
 
 ---
 
-## Get Started
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 📥 Installation
-Learn how to install PyC and set up your environment.
-
-[→ Installation Guide](doc/guides/installation.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### ▶️ Using PyC
-Explore tutorials and examples to get started with PyC.
-
-[→ Using PyC](doc/guides/using.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### 💻 Contributing
-Contribute to PyC and help improve the library.
-
-[→ Contributing Guide](doc/guides/contributing.rst)
-
-</td>
-</tr>
-</table>
-
----
-
-## Explore Based on Your Background
-
-PyC is designed to accommodate users with different backgrounds and expertise levels.
-Pick the best entry point based on your experience:
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 💻 Pure torch user?
-Start from the Low-Level API to build models from basic interpretable layers.
-
-[→ Low-Level API](doc/modules/low_level_api.rst)
-
-</td>
-<td width="50%" valign="top">
-
-### 📊 Probabilistic modeling user?
-Start from the Mid-Level API to build custom probabilistic models.
-
-[→ Mid-Level API](doc/modules/mid_level_api.rst)
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🚀 Just want to use state-of-the-art models out-of-the-box?
-Start from the High-Level API to use pre-defined models with one line of code.
-
-[→ High-Level API](doc/modules/high_level_api.rst)
-
-</td>
-<td width="50%" valign="top">
-
-### 🧪 No experience with programming?
-Use Conceptarium, a no-code framework built on top of PyC for running large-scale experiments on concept-based models.
-
-[→ Conceptarium](doc/modules/conceptarium.rst)
-
-</td>
-</tr>
-</table>
-
----
-
-## API Reference
-
-### Main Modules
-
-The main modules of the library are organized into three levels of abstraction: Low-Level API, Mid-Level API, and High-Level API.
-These modules allow users with different levels of abstraction to build interpretable models.
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🔧 Low-Level API
-Build architectures from basic interpretable layers in a plain <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface.
-
-[→ Low-Level API](doc/modules/low_level_api.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### 📊 Mid-Level API
-Build custom interpretable and causally transparent probabilistic models.
-
-> ⚠️ **Warning:** This API is still under development and interfaces might change in future releases.
-
-[→ Mid-Level API](doc/modules/mid_level_api.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### 🚀 High-Level API
-Use out-of-the-box state-of-the-art models with one line of code.
-
-[→ High-Level API](doc/modules/high_level_api.rst)
-
-</td>
-</tr>
-</table>
-
-### Shared Modules
-
-The library also includes shared modules that provide additional functionalities such as loss functions, metrics, and utilities.
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🔥 Loss Functions
-Various loss functions for concept-based models.
-
-[→ Loss Functions](doc/modules/other_modules.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### 📈 Metrics
-Evaluation metrics for concept-based models.
-
-[→ Metrics](doc/modules/other_modules.rst)
-
-</td>
-<td width="33%" valign="top">
-
-### 📦 Utilities
-Helper utilities and tools for concept-based models.
-
-[→ Utilities](doc/modules/other_modules.rst)
-
-</td>
-</tr>
-</table>
-
-### Extra Modules
-
-Extra modules provide additional APIs for data handling and probability distributions.
-These modules have additional dependencies and can be installed separately.
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 💾 Data API
-Access datasets, dataloaders, preprocessing, and data utilities.
-
-[→ Data API](doc/modules/data_api.rst)
-
-</td>
-<td width="50%" valign="top">
-
-### ∞ Distributions API
-Work with probability distributions for probabilistic modeling.
-
-[→ Distributions API](doc/modules/distributions_api.rst)
-
-</td>
-</tr>
-</table>
-
-### Conceptarium
-
-Conceptarium is a no-code framework for running large-scale experiments on concept-based models.
-The interface is based on configuration files, making it easy to set up and run experiments without writing code.
-This framework is intended for benchmarking or researchers in other fields who want to use concept-based models without programming knowledge.
-
-<table>
-<tr>
-<td valign="top">
-
-### 🧪 Conceptarium
-<img src="doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium** is a no-code framework for running large-scale experiments on concept-based models. Built on top of <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC with <img src="doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra, <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> PyTorch Lightning, and <img src="doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
-
-[→ Conceptarium Documentation](doc/modules/conceptarium.rst)
-
-</td>
-</tr>
-</table>
+# <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC Software Stack
+The library is organized to be modular and accessible at different levels of abstraction:
+- **No-code APIs. Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files.
+- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code.
+- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference using a probabilistic graphical model interface.
+- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain pytorch-like interface. These APIs also include metrics, losses, and datasets.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="40%">
+</p>
 
 ---
 
