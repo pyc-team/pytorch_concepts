@@ -7,7 +7,7 @@ inference, enabling causal reasoning and what-if analysis in concept-based model
 import math
 import contextlib
 from abc import abstractmethod
-from typing import List, Sequence, Union, Optional
+from typing import List, Sequence, Union, Optional, Dict
 import torch
 import torch.nn as nn
 
@@ -373,6 +373,192 @@ class _InterventionWrapper(nn.Module):
         replacer = self.strategy.query(cached, mask)
         return replacer(**kwargs)
 
+# ---------------- global policy wrapper ----------------
+
+class _GlobalPolicyState:
+    """
+    Shared state for coordinating global policy across multiple wrappers.
+
+    This state object is shared among all wrappers when global_policy=True.
+    It collects policy logits from all layers, computes a global mask once,
+    then distributes slices to each wrapper.
+
+    This implementation works with sequential, threaded, and CUDA stream execution.
+    """
+    def __init__(self, n_wrappers: int, quantile: float, eps: float = 1e-12):
+        self.n_wrappers = n_wrappers
+        self.quantile = float(quantile)
+        self.eps = eps
+        # Store logits and outputs indexed by wrapper_id
+        self.logits_cache: Dict[int, torch.Tensor] = {}
+        self.outputs_cache: Dict[int, torch.Tensor] = {}
+        self.global_mask: Optional[torch.Tensor] = None
+        self.batch_size: Optional[int] = None
+
+    def reset(self):
+        """Reset state for a new forward pass."""
+        self.logits_cache.clear()
+        self.outputs_cache.clear()
+        self.global_mask = None
+        self.batch_size = None
+
+    def register(self, wrapper_id: int, logits: torch.Tensor, output: torch.Tensor):
+        """Register logits and output from a wrapper."""
+        # Detect new batch by checking batch size change
+        if self.batch_size is not None and logits.shape[0] != self.batch_size:
+            self.reset()
+        self.batch_size = logits.shape[0]
+
+        self.logits_cache[wrapper_id] = logits
+        self.outputs_cache[wrapper_id] = output
+
+    def is_ready(self) -> bool:
+        """Check if all wrappers have registered their logits."""
+        return len(self.logits_cache) == self.n_wrappers
+
+    def compute_global_mask(self):
+        """Compute the global mask once all logits are collected."""
+        if self.global_mask is not None:
+            return  # Already computed
+
+        if not self.is_ready():
+            raise RuntimeError(
+                f"Cannot compute global mask: only {len(self.logits_cache)}/{self.n_wrappers} wrappers registered"
+            )
+
+        # Concatenate all logits in wrapper_id order
+        all_logits = torch.cat([self.logits_cache[i] for i in range(self.n_wrappers)], dim=1)
+        B, F_total = all_logits.shape
+        device = all_logits.device
+        dtype = all_logits.dtype
+
+        if F_total == 0:
+            self.global_mask = torch.ones((B, 0), device=device, dtype=dtype)
+            return
+
+        if F_total == 1:
+            # Edge case: single concept globally
+            keep = torch.ones((B, 1), device=device, dtype=dtype) if self.quantile < 1.0 \
+                else torch.zeros((B, 1), device=device, dtype=dtype)
+
+            # STE proxy
+            row_max = all_logits.max(dim=1, keepdim=True).values + self.eps
+            soft_proxy = torch.log1p(all_logits) / torch.log1p(row_max)
+            self.global_mask = (keep - soft_proxy).detach() + soft_proxy
+            return
+
+        # K > 1: standard per-row quantile via kthvalue
+        k = int(max(1, min(F_total, 1 + math.floor(self.quantile * (F_total - 1)))))
+        thr, _ = torch.kthvalue(all_logits, k, dim=1, keepdim=True)  # [B,1]
+
+        # Use strict '>' so ties at the threshold are replaced
+        mask_hard = (all_logits > thr).to(dtype)  # [B, F_total]
+
+        # STE proxy
+        row_max = all_logits.max(dim=1, keepdim=True).values + self.eps
+        soft_proxy = torch.log1p(all_logits) / torch.log1p(row_max)
+        self.global_mask = (mask_hard - soft_proxy).detach() + soft_proxy
+
+    def get_mask_slice(self, wrapper_id: int) -> torch.Tensor:
+        """Get the mask slice for a specific wrapper."""
+        if self.global_mask is None:
+            raise RuntimeError("Global mask not computed yet")
+
+        # Calculate start/end index for this wrapper based on output shapes
+        start_idx = sum(self.outputs_cache[i].shape[1] for i in range(wrapper_id))
+        end_idx = start_idx + self.outputs_cache[wrapper_id].shape[1]
+
+        return self.global_mask[:, start_idx:end_idx]
+
+
+class _GlobalPolicyInterventionWrapper(nn.Module):
+    """
+    Intervention wrapper that uses a shared global state for coordinated masking.
+
+    This wrapper defers intervention application until all wrappers in the level
+    have computed their policy logits. During forward pass, it only collects
+    logits and returns the original output. The actual intervention is applied
+    via apply_intervention() after all wrappers are ready.
+    """
+    def __init__(
+        self,
+        original: nn.Module,
+        policy: nn.Module,
+        strategy: RewiringIntervention,
+        wrapper_id: int,
+        shared_state: '_GlobalPolicyState',
+    ):
+        super().__init__()
+        self.original = original
+        self.policy = policy
+        self.strategy = strategy
+        self.wrapper_id = wrapper_id
+        self.shared_state = shared_state
+
+        if hasattr(original, "parametrization"):
+            if hasattr(original.parametrization, "forward_to_check"):
+                self.forward_to_check = original.parametrization.forward_to_check
+            elif hasattr(original.parametrization, "forward"):
+                self.forward_to_check = original.parametrization.forward
+        else:
+            self.forward_to_check = original.forward
+
+    def forward(self, **kwargs) -> torch.Tensor:
+        """
+        Forward pass that collects policy logits but does NOT apply intervention.
+
+        Returns the original output. Intervention is applied later via apply_intervention().
+        """
+        # Get output from original module
+        y = self.original(**kwargs)
+
+        # Compute policy logits
+        logits = self.policy(y)  # [B, F_i]
+
+        # Register with shared state
+        self.shared_state.register(self.wrapper_id, logits, y)
+
+        # Always return original output - intervention applied later
+        return y
+
+    def apply_intervention(self, y: torch.Tensor) -> torch.Tensor:
+        """
+        Apply intervention to the output after all wrappers are ready.
+
+        This should be called after all wrappers in the level have completed forward().
+
+        Args:
+            y: The original output from forward()
+
+        Returns:
+            Intervened output
+        """
+        if not self.shared_state.is_ready():
+            raise RuntimeError(
+                f"Cannot apply intervention: only {len(self.shared_state.logits_cache)}/{self.shared_state.n_wrappers} wrappers registered"
+            )
+
+        # Compute global mask if not already computed
+        if self.shared_state.global_mask is None:
+            self.shared_state.compute_global_mask()
+
+        # Get mask slice for this wrapper
+        mask = self.shared_state.get_mask_slice(self.wrapper_id)
+
+        # Create cached output wrapper
+        class _CachedOutput(nn.Module):
+            def __init__(self, y_cached: torch.Tensor):
+                super().__init__()
+                self.y_cached = y_cached
+            def forward(self, **kwargs) -> torch.Tensor:
+                return self.y_cached
+
+        cached = _CachedOutput(y)
+        replacer = self.strategy.query(cached, mask)
+        result = replacer()
+
+        return result
+
 # ---------------- context manager (now multi-layer) ----------------
 
 @contextlib.contextmanager
@@ -383,6 +569,7 @@ def intervention(
     target_concepts: Union[str, int, Sequence[Union[str, int]]],
     quantiles: Optional[Union[float, Sequence[float]]] = 1.,
     model: nn.Module = None,
+    global_policy: bool = False,
 ):
     """
     Context manager for applying interventions to concept-based models.
@@ -396,6 +583,10 @@ def intervention(
         target_concepts: Concept names/paths or indices to intervene on.
         quantiles: Quantile thresholds for selective intervention (default: 1.0).
         model: Optional model reference (default: strategies[0].model).
+        global_policy: If True, multiple policies are coordinated globally to create
+            a unified mask across all layers. If False (default), each policy operates
+            independently on its layer. Only applies when target_concepts are strings
+            and multiple policies are provided.
 
     Yields:
         The intervention wrapper (if target_concepts are indices) or None.
@@ -439,6 +630,9 @@ def intervention(
         >>>
         >>> print(f"Output shape: {output.shape}")
         Output shape: torch.Size([4, 3])
+        >>>
+        >>> # Example with global_policy=True for coordinated multi-layer intervention
+        >>> # (requires multiple layers and policies)
     """
     # Normalise on_layers to list and compute N
     if isinstance(target_concepts, str):
@@ -459,6 +653,7 @@ def intervention(
             assert not isinstance(policies, Sequence), "When target_concepts are indices, only a single policy is supported"
             assert not isinstance(strategies, Sequence), "When target_concepts are indices, only a single strategy is supported"
             assert not isinstance(quantiles, Sequence), "When target_concepts are indices, only a single quantile is supported"
+            assert not global_policy, "global_policy not supported for index-based interventions"
             wrap = _InterventionWrapper(
                 original=strategies.model,
                 policy=policies,
@@ -474,17 +669,50 @@ def intervention(
             strategies = _as_list(strategies, N)
             quantiles = _as_list(quantiles, N)
 
-            for path, pol, strat, q in zip(target_concepts, policies, strategies, quantiles):
-                orig = _get_submodule(ref_model, path)
-                originals.append((path, orig))
-                wrap = _InterventionWrapper(
-                    original=orig,
-                    policy=pol,
-                    strategy=strat,
-                    quantile=q,
-                )
-                _set_submodule(ref_model, path, wrap)
-            yield
+            if global_policy:
+                # Global policy mode: coordinate all policies to create unified global mask
+
+                # Validate: all quantiles must be the same for global policy
+                if not all(q == quantiles[0] for q in quantiles):
+                    raise ValueError(
+                        "When global_policy=True, all quantiles must be the same. "
+                        f"Got: {quantiles}"
+                    )
+
+                global_quantile = quantiles[0]
+
+                # Create shared state for coordination
+                shared_state = _GlobalPolicyState(n_wrappers=N, quantile=global_quantile)
+
+                # Create global wrappers for each layer
+                for wrapper_id, (path, pol, strat) in enumerate(zip(target_concepts, policies, strategies)):
+                    orig = _get_submodule(ref_model, path)
+                    originals.append((path, orig))
+
+                    wrapper = _GlobalPolicyInterventionWrapper(
+                        original=orig,
+                        policy=pol,
+                        strategy=strat,
+                        wrapper_id=wrapper_id,
+                        shared_state=shared_state,
+                    )
+                    _set_submodule(ref_model, path, wrapper)
+
+                # Don't yield anything - wrappers coordinate automatically during forward pass
+                yield
+            else:
+                # Independent mode (default/backward compatible): each policy creates its own mask
+                for path, pol, strat, q in zip(target_concepts, policies, strategies, quantiles):
+                    orig = _get_submodule(ref_model, path)
+                    originals.append((path, orig))
+                    wrap = _InterventionWrapper(
+                        original=orig,
+                        policy=pol,
+                        strategy=strat,
+                        quantile=q,
+                    )
+                    _set_submodule(ref_model, path, wrap)
+                yield
     finally:
         # restore originals
         for path, orig in originals:

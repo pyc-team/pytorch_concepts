@@ -9,7 +9,7 @@ from ..models.variable import Variable
 from ...low.base.graph import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
-from ...low.inference.intervention import _InterventionWrapper
+from ...low.inference.intervention import _InterventionWrapper, _GlobalPolicyInterventionWrapper
 from ..models.probabilistic_model import ProbabilisticModel
 from ...low.base.inference import BaseInference
 
@@ -275,6 +275,9 @@ class ForwardInference(BaseInference):
                 for var in level:
                     concept_name, output_tensor = self._compute_single_variable(var, external_inputs, results)
                     results[concept_name] = output_tensor
+
+                # Apply global policy interventions if needed
+                self._apply_global_interventions_for_level(level, results)
                 continue
 
             # === PARALLEL MODE ===
@@ -302,7 +305,44 @@ class ForwardInference(BaseInference):
             for concept_name, output_tensor in level_outputs:
                 results[concept_name] = output_tensor
 
+            # Apply global policy interventions if needed
+            self._apply_global_interventions_for_level(level, results)
+
         return results
+
+    def _apply_global_interventions_for_level(self, level: List, results: Dict[str, torch.Tensor]) -> None:
+        """
+        Apply global policy interventions for all concepts in a level.
+
+        This method checks if any concepts in the level have global policy wrappers,
+        and if so, applies interventions after all concepts have been computed.
+
+        Args:
+            level: List of variables in the current level
+            results: Dictionary of computed results to update
+        """
+        # Check if any concept in this level has a global policy wrapper
+        global_wrappers = []
+        for var in level:
+            concept_name = var.concepts[0]
+            parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
+            if parametric_cpd is not None:
+                if isinstance(parametric_cpd.parametrization, _GlobalPolicyInterventionWrapper):
+                    global_wrappers.append((concept_name, parametric_cpd.parametrization))
+
+        # If we found global wrappers, check if they're ready and apply interventions
+        if global_wrappers:
+            # Check if all wrappers in the shared state are ready
+            first_wrapper = global_wrappers[0][1]
+            if first_wrapper.shared_state.is_ready():
+                # Apply interventions to all concepts with global wrappers
+                for concept_name, wrapper in global_wrappers:
+                    original_output = results[concept_name]
+                    intervened_output = wrapper.apply_intervention(original_output)
+                    results[concept_name] = intervened_output
+
+                # Reset shared state for next batch/level
+                first_wrapper.shared_state.reset()
 
     def get_parent_kwargs(self, parametric_cpd,
                           parent_latent: Union[List[torch.Tensor], torch.Tensor] = None,
@@ -323,7 +363,8 @@ class ForwardInference(BaseInference):
             Dictionary of kwargs ready for parametric_cpd.forward(**kwargs).
         """
         parent_kwargs = {}
-        if isinstance(parametric_cpd.parametrization, _InterventionWrapper):
+        if (isinstance(parametric_cpd.parametrization, _InterventionWrapper) or
+                isinstance(parametric_cpd.parametrization, _GlobalPolicyInterventionWrapper)):
             forward_to_check = parametric_cpd.parametrization.forward_to_check
         else:
             forward_to_check = parametric_cpd.parametrization.forward
