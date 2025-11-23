@@ -21,10 +21,10 @@ Documentation
 
    nn.base.low
    nn.encoders
-   nn.graph
+   nn.predictors
    nn.inference
    nn.policy
-   nn.predictors
+   nn.graph
    nn.dense_layers
 
 

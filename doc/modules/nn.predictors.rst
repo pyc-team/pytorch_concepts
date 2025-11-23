@@ -1,4 +1,4 @@
-Predictors
+Concept Predictors
 =======================
 
 This module provides predictor implementations that map from concepts to target predictions.

@@ -1,4 +1,4 @@
-Encoders
+Concept Encoders
 =====================
 
 This module provides encoder implementations that transform input features into concept representations.

@@ -185,13 +185,13 @@ The library also includes shared modules that provide additional functionalities
 
         Evaluation metrics for concept-based models.
 
-    .. grid-item-card::  :octicon:`package;1em;sd-text-primary` Utilities
+    .. grid-item-card::  :octicon:`gear;1em;sd-text-primary` Functional
         :link: modules/utilities
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Helper utilities and tools for concept-based models.
+        Functional utilities for concept-based models.
 
 
 Extra Modules
@@ -245,12 +245,8 @@ This framework is intended for benchmarking or researchers in other fields who w
 
 Contributing
 --------------
-
-- Use the ``dev`` branch to write and test your contributions locally.
-- Make small commits and use `Gitmoji <https://gitmoji.dev/>`_ to add emojis to your commit messages.
-- Make sure to write documentation and tests for your contributions.
-- Make sure all tests pass before submitting the pull request.
-- Submit a pull request to the ``main`` branch.
+We welcome contributions from the community to help improve |pyc_logo| PyC!
+Follow the instructions in the `Contributing Guide <guides/contributing>`_ to get started.
 
 Thanks to all contributors! 🧡
 
@@ -350,9 +346,9 @@ Indices and Tables
    modules/high_level_api
    modules/nn.loss
    modules/nn.metrics
-   modules/utilities
+   modules/nn.functional
    modules/data_api
-   modules/distributions_api
+   modules/distributions
 
 .. toctree::
    :glob:

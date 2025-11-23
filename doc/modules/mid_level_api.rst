@@ -24,8 +24,8 @@ Documentation
    nn.base.mid
    nn.variable
    nn.models
-   nn.constructors
    nn.inference.mid
+   nn.constructors
 
 
 Design principles

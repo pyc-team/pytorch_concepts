@@ -1,4 +1,4 @@
-Variable Classes
+Random Variables
 ==================================
 
 This module provides variable representations for concept-based probabilistic models.

@@ -1,7 +1,7 @@
 Interpretable Probabilistic Models
 =====================================
 
-The Mid-Level API uses **Variables**, **ParametricCPDs**, and **Probabilistic Models** to build interpretable causal models.
+The Mid-Level API uses **Variables**, **ParametricCPDs**, and **Probabilistic Models** to build interpretable and causally-transparent concept-based models.
 
 .. warning::
 
