@@ -18,6 +18,20 @@ Key Principles
 - **Predictors**: Must take as input a set of endogenous variables
 - **Special layers**: Perform operations like memory selection or graph learning
 
+**Layer naming convention:**
+In order to easily identify the type of layer, PyC uses a consistent naming convention using the format:
+
+``<LayerType><InputType><OutputType>``
+
+where:
+
+- ``LayerType``: Type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
+- ``InputType`` and ``OutputType``: Types of objects the layer takes as input and produces as output:
+
+  - ``Z``: Input
+  - ``U``: Exogenous
+  - ``C``: Endogenous
+
 Step 1: Import Libraries
 -------------------------
 

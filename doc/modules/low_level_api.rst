@@ -43,7 +43,22 @@ In |pyc_logo| PyC there are three types of objects:
 Layers
 """"""
 
-There are only three types of layers:
+**Layer naming convention:**
+In order to easily identify the type of layer, PyC uses a consistent naming convention using the format:
+
+``<LayerType><InputType><OutputType>``
+
+where:
+
+- ``LayerType``: Type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
+- ``InputType`` and ``OutputType``: Types of objects the layer takes as input and produces as output:
+
+  - ``Z``: Input
+  - ``U``: Exogenous
+  - ``C``: Endogenous
+
+
+In practice, there are only three types of layers:
 
 - **Encoders**: Never take as input endogenous variables, e.g.:
 
