@@ -31,12 +31,12 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
+    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
                                out_features=y_annotations.shape[1],
-                               embedding_size=11)
-    y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
+                               exogenous_size=11)
+    y_predictor = HyperLinearPredictor(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=11,
                                        embedding_size=latent_dims)
     model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)
@@ -49,9 +49,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        emb_rule = exog_encoder(embedding=emb)
-        y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
+        c_pred = encoder_layer(latent=emb)
+        emb_rule = exog_encoder(latent=emb)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

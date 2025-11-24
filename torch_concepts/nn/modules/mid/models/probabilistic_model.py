@@ -85,17 +85,17 @@ class ProbabilisticModel(nn.Module):
         >>> from torch_concepts.distributions import Delta
         >>>
         >>> # Define variables
-        >>> emb_var = LatentVariable(concepts='embedding', parents=[], distribution=Delta, size=32)
+        >>> emb_var = LatentVariable(concepts='latent', parents=[], distribution=Delta, size=32)
         >>> c1_var = EndogenousVariable(concepts='c1', parents=[emb_var], distribution=Delta, size=1)
         >>> c2_var = EndogenousVariable(concepts='c2', parents=[c1_var], distribution=Delta, size=1)
         >>>
         >>> # Define CPDs (neural network modules)
         >>> backbone = torch.nn.Linear(in_features=128, out_features=32)
-        >>> encoder = ProbEncoderFromEmb(in_features_embedding=32, out_features=1)
-        >>> predictor = ProbPredictor(in_features_logits=1, out_features=1)
+        >>> encoder = ProbEncoderFromEmb(in_features_latent=32, out_features=1)
+        >>> predictor = ProbPredictor(in_features_endogenous=1, out_features=1)
         >>>
         >>> parametric_cpds = [
-        ...     ParametricCPD(concepts='embedding', parametrization=backbone),
+        ...     ParametricCPD(concepts='latent', parametrization=backbone),
         ...     ParametricCPD(concepts='c1', parametrization=encoder),
         ...     ParametricCPD(concepts='c2', parametrization=predictor)
         ... ]

@@ -73,8 +73,8 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (4, 1))
 
@@ -89,11 +89,11 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
-        # Verify output is sum of sigmoid(logits)
-        expected = torch.sigmoid(logits).sum(dim=1, keepdim=True)
+        # Verify output is sum of sigmoid(endogenous)
+        expected = torch.sigmoid(endogenous).sum(dim=1, keepdim=True)
         torch.testing.assert_close(output, expected)
 
     def test_forward_quadratic_function(self):
@@ -110,8 +110,8 @@ class TestCallablePredictorForward(unittest.TestCase):
         )
 
         batch_size = 32
-        logits = torch.randn(batch_size, 3)
-        output = predictor(logits)
+        endogenous = torch.randn(batch_size, 3)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (batch_size, 2))
 
@@ -125,11 +125,11 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=True
         )
 
-        logits = torch.randn(4, 5)
+        endogenous = torch.randn(4, 5)
 
         # Run multiple times and check outputs are different (due to stochastic bias)
-        output1 = predictor(logits)
-        output2 = predictor(logits)
+        output1 = predictor(endogenous)
+        output2 = predictor(endogenous)
 
         self.assertEqual(output1.shape, (4, 1))
         self.assertEqual(output2.shape, (4, 1))
@@ -150,8 +150,8 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (4, 3))
 
@@ -167,10 +167,10 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
+        endogenous = torch.randn(4, 5)
         weights = torch.tensor([0.5, 1.0, 1.5, 2.0, 2.5])
 
-        output = predictor(logits, weights=weights)
+        output = predictor(endogenous, weights=weights)
         self.assertEqual(output.shape, (4, 1))
 
     def test_forward_with_args(self):
@@ -183,10 +183,10 @@ class TestCallablePredictorForward(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
+        endogenous = torch.randn(4, 5)
         scale = 2.0
 
-        output = predictor(logits, scale)
+        output = predictor(endogenous, scale)
         self.assertEqual(output.shape, (4, 1))
 
 
@@ -203,13 +203,13 @@ class TestCallablePredictorGradients(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(2, 8, requires_grad=True)
-        output = predictor(logits)
+        endogenous = torch.randn(2, 8, requires_grad=True)
+        output = predictor(endogenous)
         loss = output.sum()
         loss.backward()
 
-        self.assertIsNotNone(logits.grad)
-        self.assertEqual(logits.grad.shape, logits.shape)
+        self.assertIsNotNone(endogenous.grad)
+        self.assertEqual(endogenous.grad.shape, endogenous.shape)
 
     def test_gradient_flow_with_bias(self):
         """Test gradient flow with learnable bias parameters."""
@@ -221,12 +221,12 @@ class TestCallablePredictorGradients(unittest.TestCase):
             use_bias=True
         )
 
-        logits = torch.randn(4, 5, requires_grad=True)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5, requires_grad=True)
+        output = predictor(endogenous)
         loss = output.sum()
         loss.backward()
 
-        self.assertIsNotNone(logits.grad)
+        self.assertIsNotNone(endogenous.grad)
         self.assertIsNotNone(predictor.bias_mean.grad)
         self.assertIsNotNone(predictor.bias_raw_std.grad)
 
@@ -240,12 +240,12 @@ class TestCallablePredictorGradients(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5, requires_grad=True)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5, requires_grad=True)
+        output = predictor(endogenous)
         loss = output.sum()
         loss.backward()
 
-        self.assertIsNotNone(logits.grad)
+        self.assertIsNotNone(endogenous.grad)
 
 
 class TestCallablePredictorBiasStd(unittest.TestCase):
@@ -310,8 +310,8 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(1, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(1, 5)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (1, 1))
 
@@ -326,8 +326,8 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         )
 
         batch_size = 1000
-        logits = torch.randn(batch_size, 10)
-        output = predictor(logits)
+        endogenous = torch.randn(batch_size, 10)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (batch_size, 1))
 
@@ -341,11 +341,11 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
-        # Output should equal input logits (with identity activation)
-        torch.testing.assert_close(output, logits)
+        # Output should equal input endogenous (with identity activation)
+        torch.testing.assert_close(output, endogenous)
 
     def test_complex_function(self):
         """Test with complex mathematical function."""
@@ -361,8 +361,8 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
         self.assertEqual(output.shape, (4, 3))
 
@@ -376,10 +376,10 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
             use_bias=False
         )
 
-        logits = torch.randn(4, 5)
+        endogenous = torch.randn(4, 5)
 
-        output1 = predictor(logits)
-        output2 = predictor(logits)
+        output1 = predictor(endogenous)
+        output2 = predictor(endogenous)
 
         # Should be identical without bias
         torch.testing.assert_close(output1, output2)
@@ -398,8 +398,8 @@ class TestCallablePredictorDeviceCompatibility(unittest.TestCase):
             use_bias=True
         )
 
-        logits = torch.randn(4, 5)
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5)
+        output = predictor(endogenous)
 
         self.assertEqual(output.device.type, 'cpu')
 
@@ -414,8 +414,8 @@ class TestCallablePredictorDeviceCompatibility(unittest.TestCase):
             use_bias=True
         ).cuda()
 
-        logits = torch.randn(4, 5).cuda()
-        output = predictor(logits)
+        endogenous = torch.randn(4, 5).cuda()
+        output = predictor(endogenous)
 
         self.assertEqual(output.device.type, 'cuda')
 

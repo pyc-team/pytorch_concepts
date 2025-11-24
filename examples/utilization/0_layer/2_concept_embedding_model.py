@@ -11,7 +11,7 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    embedding_size = 8
+    exogenous_size = 8
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
     concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
@@ -29,13 +29,13 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
                                out_features=c_annotations.shape[1],
-                               embedding_size=embedding_size*2)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=embedding_size,
+                               exogenous_size=exogenous_size*2)
+    c_encoder = ProbEncoderFromExog(in_features_exogenous=exogenous_size,
                                     n_exogenous_per_concept=2)
-    y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
-                                       in_features_exogenous=embedding_size,
+    y_predictor = MixProbExogPredictor(in_features_endogenous=c_annotations.shape[1],
+                                       in_features_exogenous=exogenous_size,
                                        out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, exog_encoder, c_encoder, y_predictor)
 
@@ -47,9 +47,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        exog = exog_encoder(embedding=emb)
+        exog = exog_encoder(latent=emb)
         c_pred = c_encoder(exogenous=exog)
-        y_pred = y_predictor(logits=c_pred, exogenous=exog)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=exog)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

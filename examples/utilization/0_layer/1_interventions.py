@@ -32,8 +32,8 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1], out_features=y_annotations.shape[1])
+    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims, out_features=c_annotations.shape[1])
+    y_predictor = ProbPredictor(in_features_endogenous=c_annotations.shape[1], out_features=y_annotations.shape[1])
 
     # all models in a ModuleDict for easier intervention
     model = torch.nn.ModuleDict({
@@ -50,8 +50,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = encoder_layer(latent=emb)
+        y_pred = y_predictor(endogenous=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -74,8 +74,8 @@ def main():
                       strategies=int_strategy_c,
                       target_concepts=[0, 1]) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(latent=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5])
         print("\nGround truth (first 5):")
@@ -91,8 +91,8 @@ def main():
             target_concepts=[1],
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(latent=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5, :2])
 
@@ -107,8 +107,8 @@ def main():
             quantiles=0.5
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(latent=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5, :2])
 
@@ -122,7 +122,7 @@ def main():
             quantiles=.5
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
+        c_pred = new_encoder_layer(latent=emb)
         y_pred = model["y_predictor"](c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5])

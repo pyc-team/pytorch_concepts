@@ -1,7 +1,7 @@
 """
-Exogenous encoder module for concept embeddings.
+Exogenous encoder module.
 
-This module provides encoders that transform embeddings into exogenous variables
+This module provides encoders that transform latent into exogenous variables
 for concept-based models, supporting the Concept Embedding Models architecture.
 """
 import numpy as np
@@ -13,21 +13,21 @@ from typing import Tuple
 
 class ExogEncoder(BaseEncoder):
     """
-    Exogenous encoder that creates supervised concept embeddings.
+    Exogenous encoder that creates concept exogenous.
 
-    Transforms input embeddings into exogenous variables (external features) for
-    each concept, producing a 2D output of shape (out_features, embedding_size).
+    Transforms input latent code into exogenous variables (external features) for
+    each concept, producing a 2D output of shape (out_features, exogenous_size).
     Implements the 'embedding generators' from Concept Embedding Models (Zarlenga et al., 2022).
 
     Attributes:
-        embedding_size (int): Dimension of each concept's embedding.
-        out_logits_dim (int): Number of output concepts.
+        exogenous_size (int): Dimension of each concept's exogenous.
+        out_endogenous_dim (int): Number of output concepts.
         encoder (nn.Sequential): The encoding network.
 
     Args:
-        in_features_embedding: Number of input embedding features.
+        in_features_latent: Number of input latent features.
         out_features: Number of output concepts.
-        embedding_size: Dimension of each concept's embedding.
+        exogenous_size: Dimension of each concept's exogenous.
 
     Example:
         >>> import torch
@@ -35,20 +35,20 @@ class ExogEncoder(BaseEncoder):
         >>>
         >>> # Create exogenous encoder
         >>> encoder = ExogEncoder(
-        ...     in_features_embedding=128,
+        ...     in_features_latent=128,
         ...     out_features=5,
-        ...     embedding_size=16
+        ...     exogenous_size=16
         ... )
         >>>
         >>> # Forward pass
-        >>> embeddings = torch.randn(4, 128)  # batch_size=4
-        >>> exog = encoder(embeddings)
+        >>> latent = torch.randn(4, 128)  # batch_size=4
+        >>> exog = encoder(latent)
         >>> print(exog.shape)
         torch.Size([4, 5, 16])
         >>>
-        >>> # Each concept has its own 16-dimensional embedding
-        >>> print(f"Concept 0 embedding shape: {exog[:, 0, :].shape}")
-        Concept 0 embedding shape: torch.Size([4, 16])
+        >>> # Each concept has its own 16-dimensional exogenous
+        >>> print(f"Concept 0 exogenous shape: {exog[:, 0, :].shape}")
+        Concept 0 exogenous shape: torch.Size([4, 16])
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -58,31 +58,31 @@ class ExogEncoder(BaseEncoder):
 
     def __init__(
         self,
-        in_features_embedding: int,
+        in_features_latent: int,
         out_features: int,
-        embedding_size: int
+        exogenous_size: int
     ):
         """
         Initialize the exogenous encoder.
 
         Args:
-            in_features_embedding: Number of input embedding features.
+            in_features_latent: Number of input latent features.
             out_features: Number of output concepts.
-            embedding_size: Dimension of each concept's embedding.
+            exogenous_size: Dimension of each concept's exogenous.
         """
         super().__init__(
-            in_features_embedding=in_features_embedding,
+            in_features_latent=in_features_latent,
             out_features=out_features,
         )
-        self.embedding_size = embedding_size
+        self.exogenous_size = exogenous_size
 
-        self.out_logits_dim = out_features
-        self.out_exogenous_shape = (self.out_logits_dim, embedding_size)
+        self.out_endogenous_dim = out_features
+        self.out_exogenous_shape = (self.out_endogenous_dim, exogenous_size)
         self.out_encoder_dim = np.prod(self.out_exogenous_shape).item()
 
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_embedding,
+                in_features_latent,
                 self.out_encoder_dim
             ),
             torch.nn.Unflatten(-1, self.out_exogenous_shape),
@@ -91,16 +91,16 @@ class ExogEncoder(BaseEncoder):
 
     def forward(
         self,
-        embedding: torch.Tensor
+        latent: torch.Tensor
     ) -> Tuple[torch.Tensor]:
         """
-        Encode embeddings into exogenous variables.
+        Encode latent into exogenous variables.
 
         Args:
-            embedding: Input embeddings of shape (batch_size, in_features_embedding).
+            latent: Input latent of shape (batch_size, in_features_latent).
 
         Returns:
             Tuple[torch.Tensor]: Exogenous variables of shape
-                                (batch_size, out_features, embedding_size).
+                                (batch_size, out_features, exogenous_size).
         """
-        return self.encoder(embedding)
+        return self.encoder(latent)

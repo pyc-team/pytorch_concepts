@@ -32,13 +32,13 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
+    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    selector = MemorySelector(in_features_embedding=latent_dims,
+    selector = MemorySelector(in_features_latent=latent_dims,
                               memory_size=memory_size,
-                              embedding_size=latent_dims,
+                              exogenous_size=latent_dims,
                               out_features=y_annotations.shape[1])
-    y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
+    y_predictor = HyperLinearPredictor(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
                                        embedding_size=latent_dims)
     model = torch.nn.Sequential(encoder, selector, encoder_layer, y_predictor)
@@ -51,10 +51,10 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        emb_rule = selector(embedding=emb, sampling=False)
+        c_pred = encoder_layer(latent=emb)
+        emb_rule = selector(latent=emb, sampling=False)
         emb_rule = torch.nn.functional.leaky_relu(emb_rule)
-        y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -68,9 +68,9 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred > 0.)
 
-            emb_rule = selector(embedding=emb, sampling=True)
+            emb_rule = selector(latent=emb, sampling=True)
             emb_rule = torch.nn.functional.leaky_relu(emb_rule)
-            y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
+            y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 
             task_accuracy_sampling = accuracy_score(y_train, y_pred > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f} | Task Acc w/ Sampling: {task_accuracy_sampling:.2f}")

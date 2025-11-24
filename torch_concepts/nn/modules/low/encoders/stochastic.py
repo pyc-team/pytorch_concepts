@@ -15,7 +15,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
     """
     Stochastic encoder that predicts concept distributions with uncertainty.
 
-    Encodes input embeddings into concept distributions by predicting both mean
+    Encodes input latent into concept distributions by predicting both mean
     and covariance matrices. Uses Monte Carlo sampling from the predicted
     multivariate normal distribution to generate concept representations.
 
@@ -25,7 +25,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
         sigma (nn.Linear): Network for predicting covariance lower triangle.
 
     Args:
-        in_features_embedding: Number of input embedding features.
+        in_features_latent: Number of input latent features.
         out_features: Number of output concepts.
         num_monte_carlo: Number of Monte Carlo samples for uncertainty (default: 200).
 
@@ -35,19 +35,19 @@ class StochasticEncoderFromEmb(BaseEncoder):
         >>>
         >>> # Create stochastic encoder
         >>> encoder = StochasticEncoderFromEmb(
-        ...     in_features_embedding=128,
+        ...     in_features_latent=128,
         ...     out_features=5,
         ...     num_monte_carlo=100
         ... )
         >>>
         >>> # Forward pass with mean reduction
-        >>> embeddings = torch.randn(4, 128)
-        >>> concept_logits = encoder(embeddings, reduce=True)
-        >>> print(concept_logits.shape)
+        >>> latent = torch.randn(4, 128)
+        >>> concept_endogenous = encoder(latent, reduce=True)
+        >>> print(concept_endogenous.shape)
         torch.Size([4, 5])
         >>>
         >>> # Forward pass keeping all MC samples
-        >>> concept_samples = encoder(embeddings, reduce=False)
+        >>> concept_samples = encoder(latent, reduce=False)
         >>> print(concept_samples.shape)
         torch.Size([4, 5, 100])
 
@@ -58,7 +58,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
 
     def __init__(
         self,
-        in_features_embedding: int,
+        in_features_latent: int,
         out_features: int,
         num_monte_carlo: int = 200,
         eps: float = 1e-6,
@@ -67,24 +67,24 @@ class StochasticEncoderFromEmb(BaseEncoder):
         Initialize the stochastic encoder.
 
         Args:
-            in_features_embedding: Number of input embedding features.
+            in_features_latent: Number of input latent features.
             out_features: Number of output concepts.
             num_monte_carlo: Number of Monte Carlo samples (default: 200).
         """
         super().__init__(
-            in_features_embedding=in_features_embedding,
+            in_features_latent=in_features_latent,
             out_features=out_features,
         )
         self.num_monte_carlo = num_monte_carlo
         self.mu = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_embedding,
+                in_features_latent,
                 out_features,
             ),
             torch.nn.Unflatten(-1, (out_features,)),
         )
         self.sigma = torch.nn.Linear(
-            in_features_embedding,
+            in_features_latent,
             int(out_features * (out_features + 1) / 2),
         )
         # Prevent exploding precision matrix at initialization
@@ -112,7 +112,7 @@ class StochasticEncoderFromEmb(BaseEncoder):
         return c_triang_cov
 
     def forward(self,
-        embedding: torch.Tensor,
+        latent: torch.Tensor,
         reduce: bool = True,
     ) -> torch.Tensor:
         """
@@ -122,16 +122,16 @@ class StochasticEncoderFromEmb(BaseEncoder):
         from it using the reparameterization trick.
 
         Args:
-            embedding: Input embeddings of shape (batch_size, in_features_embedding).
+            latent: Input latent code of shape (batch_size, in_features_latent).
             reduce: If True, return mean over MC samples; if False, return all samples
                    (default: True).
 
         Returns:
-            torch.Tensor: Concept logits of shape (batch_size, out_features) if reduce=True,
+            torch.Tensor: Concept endogenous of shape (batch_size, out_features) if reduce=True,
                          or (batch_size, out_features, num_monte_carlo) if reduce=False.
         """
-        c_mu = self.mu(embedding)
-        c_triang_cov = self._predict_sigma(embedding)
+        c_mu = self.mu(latent)
+        c_triang_cov = self._predict_sigma(latent)
         # Sample from predicted normal distribution
         c_dist = MultivariateNormal(c_mu, scale_tril=c_triang_cov)
         c_mcmc_logit = c_dist.rsample([self.num_monte_carlo]).movedim(0, -1)  # [batch_size,num_concepts,mcmc_size]

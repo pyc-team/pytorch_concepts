@@ -25,17 +25,17 @@ class RandomPolicy(BaseConceptLayer):
         >>> # Create random policy
         >>> policy = RandomPolicy(out_features=10, scale=2.0)
         >>>
-        >>> # Generate random concept logits
-        >>> logits = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> # Generate random concept endogenous
+        >>> endogenous = torch.randn(4, 10)  # batch_size=4, n_concepts=10
         >>>
         >>> # Apply policy to get random intervention scores
-        >>> scores = policy(logits)
+        >>> scores = policy(endogenous)
         >>> print(scores.shape)  # torch.Size([4, 10])
         >>> print(scores.min() >= 0.0)  # True (absolute values)
         >>> print(scores.max() <= 2.0)  # True (scaled by 2.0)
         >>>
         >>> # Each call generates different random values
-        >>> scores2 = policy(logits)
+        >>> scores2 = policy(endogenous)
         >>> print(torch.equal(scores, scores2))  # False
     """
 
@@ -51,15 +51,15 @@ class RandomPolicy(BaseConceptLayer):
 
     def forward(
         self,
-        logits: torch.Tensor
+        endogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Generate random intervention scores.
 
         Args:
-            logits: Input concept logits of shape (batch_size, n_concepts).
+            endogenous: Input concept endogenous of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Random scores of same shape as input, scaled by self.scale.
         """
-        return torch.rand_like(logits).abs() * self.scale
+        return torch.rand_like(endogenous).abs() * self.scale

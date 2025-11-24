@@ -268,8 +268,8 @@ class TestInterventionWrapper(unittest.TestCase):
         strategy = ConcreteRewiringIntervention(model)
 
         wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.0)
-        policy_logits = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_logits)
+        policy_endogenous = torch.randn(2, 5)
+        mask = wrapper._build_mask(policy_endogenous)
 
         self.assertEqual(mask.shape, (2, 5))
         # With quantile=0, should keep most concepts
@@ -282,8 +282,8 @@ class TestInterventionWrapper(unittest.TestCase):
         strategy = ConcreteRewiringIntervention(model)
 
         wrapper = _InterventionWrapper(original, policy, strategy, quantile=1.0)
-        policy_logits = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_logits)
+        policy_endogenous = torch.randn(2, 5)
+        mask = wrapper._build_mask(policy_endogenous)
 
         self.assertEqual(mask.shape, (2, 5))
 
@@ -296,8 +296,8 @@ class TestInterventionWrapper(unittest.TestCase):
 
         subset = [0, 2, 4]
         wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_logits = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_logits)
+        policy_endogenous = torch.randn(2, 5)
+        mask = wrapper._build_mask(policy_endogenous)
 
         self.assertEqual(mask.shape, (2, 5))
 
@@ -310,8 +310,8 @@ class TestInterventionWrapper(unittest.TestCase):
 
         subset = [2]
         wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_logits = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_logits)
+        policy_endogenous = torch.randn(2, 5)
+        mask = wrapper._build_mask(policy_endogenous)
 
         self.assertEqual(mask.shape, (2, 5))
 
@@ -324,11 +324,11 @@ class TestInterventionWrapper(unittest.TestCase):
 
         subset = []
         wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_logits = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_logits)
+        policy_endogenous = torch.randn(2, 5)
+        mask = wrapper._build_mask(policy_endogenous)
 
         # Empty subset should return all ones (keep all)
-        self.assertTrue(torch.allclose(mask, torch.ones_like(policy_logits)))
+        self.assertTrue(torch.allclose(mask, torch.ones_like(policy_endogenous)))
 
     def test_forward(self):
         """Test forward pass through wrapper."""

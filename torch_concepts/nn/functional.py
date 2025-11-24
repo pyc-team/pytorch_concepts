@@ -2,7 +2,7 @@
 Functional utilities for concept-based neural networks.
 
 This module provides functional operations for concept manipulation, intervention,
-embedding mixture, and evaluation metrics for concept-based models.
+exogenous mixture, and evaluation metrics for concept-based models.
 """
 import torch
 from collections import defaultdict
@@ -31,27 +31,27 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     return concept_names
 
 
-def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
+def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
                                       c_scores: torch.Tensor,
                                       groups: list[int]) -> torch.Tensor:
     """
-    Vectorized version of grouped concept embedding mixture.
+    Vectorized version of grouped concept exogenous mixture.
 
-    Extends concept_embedding_mixture to handle grouped concepts where
+    Extends  to handle grouped concepts where
     some groups may contain multiple related concepts. Adapted from "Concept Embedding Models:
     Beyond the Accuracy-Explainability Trade-Off" (Espinosa Zarlenga et al., 2022).
 
     Args:
-        c_emb: Concept embeddings of shape (B, n_concepts, emb_size).
+        c_emb: Concept exogenous of shape (B, n_concepts, emb_size).
         c_scores: Concept scores of shape (B, sum(groups)).
         groups: List of group sizes (e.g., [3, 4] for two groups).
 
     Returns:
-        Tensor: Mixed embeddings of shape (B, len(groups), emb_size // 2).
+        Tensor: Mixed exogenous of shape (B, len(groups), emb_size // 2).
 
     Raises:
         AssertionError: If group sizes don't sum to n_concepts.
-        AssertionError: If embedding dimension is not even.
+        AssertionError: If exogenous dimension is not even.
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -60,7 +60,7 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.functional import grouped_concept_embedding_mixture
+        >>> from torch_concepts.nn.functional import grouped_concept_exogenous_mixture
         >>>
         >>> # 10 concepts in 3 groups: [3, 4, 3]
         >>> # Embedding size = 20 (must be even)
@@ -69,24 +69,24 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
         >>> emb_size = 20
         >>> groups = [3, 4, 3]
         >>>
-        >>> # Generate random embeddings and scores
+        >>> # Generate random latent and scores
         >>> c_emb = torch.randn(batch_size, n_concepts, emb_size)
         >>> c_scores = torch.rand(batch_size, n_concepts)  # Probabilities
         >>>
         >>> # Apply grouped mixture
-        >>> mixed = grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+        >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
         >>> print(mixed.shape)  # torch.Size([4, 3, 10])
         >>> # Output shape: (batch_size, n_groups, emb_size // 2)
         >>>
         >>> # Singleton groups use two-half mixture
-        >>> # Multi-concept groups use weighted average of base embeddings
+        >>> # Multi-concept groups use weighted average of base exogenous
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
-    assert D % 2 == 0, f"embedding dim must be even (two halves). Current dim: {D}"
+    assert D % 2 == 0, f"exogenous dim must be even (two halves). Current dim: {D}"
     E = D // 2
 
-    # Split concept embeddings into two halves
+    # Split concept exogenous into two halves
     emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
@@ -101,7 +101,7 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
     eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
                       s * emb_a)                                           # multi: weight base embedding
 
-    # Sum weighted embeddings within each group (no loops)
+    # Sum weighted exogenous within each group (no loops)
     out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
     index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
     out = out.scatter_add(1, index, eff)                                   # [B, G, E]

@@ -152,7 +152,7 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
     
     Creates index mappings to slice tensors by concept type. Returns indices at two levels:
     1. Concept-level indices: Position in concept list (e.g., concept 0, 1, 2...)
-    2. Logit-level indices: Position in flattened logits tensor (accounting for cardinality)
+    2. Logit-level indices: Position in flattened endogenous tensor (accounting for cardinality)
     
     These precomputed indices avoid repeated computation during training.
     
@@ -164,13 +164,13 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
             - 'binary_concepts': Indices of binary concepts in concept list
             - 'categorical_concepts': Indices of categorical concepts in concept list  
             - 'continuous_concepts': Indices of continuous concepts in concept list
-            - 'binary_logits': Indices in flattened logits tensor for binary concepts
-            - 'categorical_logits': Indices in flattened logits tensor for categorical concepts
-            - 'continuous_logits': Indices in flattened logits tensor for continuous concepts
+            - 'binary_endogenous': Indices in flattened endogenous tensor for binary concepts
+            - 'categorical_endogenous': Indices in flattened endogenous tensor for categorical concepts
+            - 'continuous_endogenous': Indices in flattened endogenous tensor for continuous concepts
             
     Example:
         >>> groups = get_concept_groups(annotations)
-        >>> binary_logits = logits[:, groups['binary_logits']]  # Extract logits of binary concepts
+        >>> binary_endogenous = endogenous[:, groups['binary_endogenous']]  # Extract endogenous of binary concepts
         >>> binary_labels = concept_labels[:, groups['binary_concepts']]  # Extract labels of binary concepts
     """
     cardinalities = annotations.cardinalities
@@ -188,26 +188,26 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
     cumulative_indices = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
 
     # Logit-level indices: position in flattened tensor (accounting for cardinality)
-    binary_logits = []
+    binary_endogenous = []
     for concept_idx in binary_concepts:
-        binary_logits.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+        binary_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
     
-    categorical_logits = []
+    categorical_endogenous = []
     for concept_idx in categorical_concepts:
-        categorical_logits.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+        categorical_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
     
-    continuous_logits = []
+    continuous_endogenous = []
     for concept_idx in continuous_concepts:
-        continuous_logits.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+        continuous_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
     
     return {
         'cumulative_indices': cumulative_indices,
         'binary_concepts': binary_concepts,
         'categorical_concepts': categorical_concepts,
         'continuous_concepts': continuous_concepts,
-        'binary_logits': binary_logits,
-        'categorical_logits': categorical_logits,
-        'continuous_logits': continuous_logits,
+        'binary_endogenous': binary_endogenous,
+        'categorical_endogenous': categorical_endogenous,
+        'continuous_endogenous': continuous_endogenous,
     }
 
 

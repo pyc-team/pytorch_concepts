@@ -2,7 +2,7 @@
 Comprehensive tests for torch_concepts.nn.functional
 
 Tests all functional operations for concept-based neural networks including:
-- Concept embedding mixture operations
+- Concept exogenous mixture operations
 - Selection evaluation
 - Linear equation evaluation and explanation
 - Logic rule evaluation and explanation
@@ -17,7 +17,7 @@ import torch
 import pandas as pd
 from torch.nn import Linear
 from torch_concepts.nn.functional import (
-    grouped_concept_embedding_mixture,
+    grouped_concept_exogenous_mixture,
     selection_eval,
     linear_equation_eval,
     linear_equation_expl,
@@ -59,8 +59,8 @@ class TestDefaultConceptNames(unittest.TestCase):
         self.assertEqual(names, {})
 
 
-class TestGroupedConceptEmbeddingMixture(unittest.TestCase):
-    """Test grouped concept embedding mixture."""
+class TestGroupedConceptExogenousMixture(unittest.TestCase):
+    """Test grouped concept exogenous mixture."""
 
     def test_grouped_mixture_basic(self):
         """Test basic grouped mixture."""
@@ -72,7 +72,7 @@ class TestGroupedConceptEmbeddingMixture(unittest.TestCase):
         c_emb = torch.randn(batch_size, n_concepts, emb_size)
         c_scores = torch.rand(batch_size, n_concepts)
 
-        result = grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+        result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
         self.assertEqual(result.shape, (batch_size, len(groups), emb_size // 2))
 
@@ -86,7 +86,7 @@ class TestGroupedConceptEmbeddingMixture(unittest.TestCase):
         c_emb = torch.randn(batch_size, n_concepts, emb_size)
         c_scores = torch.rand(batch_size, n_concepts)
 
-        result = grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+        result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
         self.assertEqual(result.shape, (batch_size, 3, emb_size // 2))
 
     def test_grouped_mixture_invalid_groups(self):
@@ -96,16 +96,16 @@ class TestGroupedConceptEmbeddingMixture(unittest.TestCase):
         groups = [2, 2]  # Doesn't sum to 5
 
         with self.assertRaises(AssertionError):
-            grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+            grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
-    def test_grouped_mixture_odd_embedding_dim(self):
-        """Test with odd embedding dimension."""
+    def test_grouped_mixture_odd_exogenous_dim(self):
+        """Test with odd exogenous dimension."""
         c_emb = torch.randn(2, 3, 9)  # Odd dimension
         c_scores = torch.rand(2, 3)
         groups = [3]
 
         with self.assertRaises(AssertionError):
-            grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+            grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
 
 class TestSelectionEval(unittest.TestCase):

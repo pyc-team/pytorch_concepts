@@ -18,17 +18,17 @@ class TestProbEncoderFromEmb(unittest.TestCase):
     def test_initialization(self):
         """Test encoder initialization."""
         encoder = ProbEncoderFromEmb(
-            in_features_embedding=128,
+            in_features_latent=128,
             out_features=10
         )
-        self.assertEqual(encoder.in_features_embedding, 128)
+        self.assertEqual(encoder.in_features_latent, 128)
         self.assertEqual(encoder.out_features, 10)
         self.assertIsInstance(encoder.encoder, nn.Sequential)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
         encoder = ProbEncoderFromEmb(
-            in_features_embedding=128,
+            in_features_latent=128,
             out_features=10
         )
         embeddings = torch.randn(4, 128)
@@ -38,7 +38,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
         encoder = ProbEncoderFromEmb(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=5
         )
         embeddings = torch.randn(2, 64, requires_grad=True)
@@ -50,7 +50,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
     def test_batch_processing(self):
         """Test different batch sizes."""
         encoder = ProbEncoderFromEmb(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=5
         )
         for batch_size in [1, 4, 8]:
@@ -61,7 +61,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
     def test_with_bias_false(self):
         """Test encoder without bias."""
         encoder = ProbEncoderFromEmb(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=5,
             bias=False
         )
@@ -121,20 +121,20 @@ class TestExogEncoder(unittest.TestCase):
     def test_initialization(self):
         """Test encoder initialization."""
         encoder = ExogEncoder(
-            in_features_embedding=128,
+            in_features_latent=128,
             out_features=10,
-            embedding_size=16
+            exogenous_size=16
         )
-        self.assertEqual(encoder.in_features_embedding, 128)
+        self.assertEqual(encoder.in_features_latent, 128)
         self.assertEqual(encoder.out_features, 10)
-        self.assertEqual(encoder.embedding_size, 16)
+        self.assertEqual(encoder.exogenous_size, 16)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
         encoder = ExogEncoder(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=5,
-            embedding_size=8
+            exogenous_size=8
         )
         embeddings = torch.randn(4, 64)
         output = encoder(embeddings)
@@ -143,9 +143,9 @@ class TestExogEncoder(unittest.TestCase):
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
         encoder = ExogEncoder(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
-            embedding_size=4
+            exogenous_size=4
         )
         embeddings = torch.randn(2, 32, requires_grad=True)
         output = encoder(embeddings)
@@ -157,9 +157,9 @@ class TestExogEncoder(unittest.TestCase):
         """Test various embedding sizes."""
         for emb_size in [4, 8, 16, 32]:
             encoder = ExogEncoder(
-                in_features_embedding=64,
+                in_features_latent=64,
                 out_features=5,
-                embedding_size=emb_size
+                exogenous_size=emb_size
             )
             embeddings = torch.randn(2, 64)
             output = encoder(embeddings)
@@ -168,19 +168,19 @@ class TestExogEncoder(unittest.TestCase):
     def test_encoder_output_dimension(self):
         """Test output dimension calculation."""
         encoder = ExogEncoder(
-            in_features_embedding=128,
+            in_features_latent=128,
             out_features=10,
-            embedding_size=16
+            exogenous_size=16
         )
-        self.assertEqual(encoder.out_logits_dim, 10)
+        self.assertEqual(encoder.out_endogenous_dim, 10)
         self.assertEqual(encoder.out_encoder_dim, 10 * 16)
 
     def test_leaky_relu_activation(self):
         """Test that LeakyReLU is applied."""
         encoder = ExogEncoder(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
-            embedding_size=4
+            exogenous_size=4
         )
         embeddings = torch.randn(2, 32)
         output = encoder(embeddings)
@@ -194,50 +194,50 @@ class TestMemorySelector(unittest.TestCase):
     def test_initialization(self):
         """Test selector initialization."""
         selector = MemorySelector(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=5,
             memory_size=20,
-            embedding_size=8
+            exogenous_size=8
         )
-        self.assertEqual(selector.in_features_embedding, 64)
+        self.assertEqual(selector.in_features_latent, 64)
         self.assertEqual(selector.out_features, 5)
         self.assertEqual(selector.memory_size, 20)
-        self.assertEqual(selector.embedding_size, 8)
+        self.assertEqual(selector.exogenous_size, 8)
 
     def test_forward_without_sampling(self):
         """Test forward pass without sampling (soft selection)."""
         selector = MemorySelector(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=4,
             memory_size=10,
-            embedding_size=6
+            exogenous_size=6
         )
-        embeddings = torch.randn(2, 64)
-        output = selector(embedding=embeddings, sampling=False)
+        latent = torch.randn(2, 64)
+        output = selector(latent=latent, sampling=False)
         self.assertEqual(output.shape, (2, 4, 6))
 
     def test_forward_with_sampling(self):
         """Test forward pass with sampling (Gumbel-softmax)."""
         selector = MemorySelector(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=4,
             memory_size=10,
-            embedding_size=6
+            exogenous_size=6
         )
-        embeddings = torch.randn(2, 64)
-        output = selector(embedding=embeddings, sampling=True)
+        latent = torch.randn(2, 64)
+        output = selector(latent=latent, sampling=True)
         self.assertEqual(output.shape, (2, 4, 6))
 
     def test_gradient_flow_soft(self):
         """Test gradient flow with soft selection."""
         selector = MemorySelector(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
             memory_size=8,
-            embedding_size=4
+            exogenous_size=4
         )
         embeddings = torch.randn(2, 32, requires_grad=True)
-        output = selector(embedding=embeddings, sampling=False)
+        output = selector(latent=embeddings, sampling=False)
         loss = output.sum()
         loss.backward()
         self.assertIsNotNone(embeddings.grad)
@@ -245,13 +245,13 @@ class TestMemorySelector(unittest.TestCase):
     def test_gradient_flow_hard(self):
         """Test gradient flow with hard selection."""
         selector = MemorySelector(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
             memory_size=8,
-            embedding_size=4
+            exogenous_size=4
         )
         embeddings = torch.randn(2, 32, requires_grad=True)
-        output = selector(embedding=embeddings, sampling=True)
+        output = selector(latent=embeddings, sampling=True)
         loss = output.sum()
         loss.backward()
         self.assertIsNotNone(embeddings.grad)
@@ -260,24 +260,24 @@ class TestMemorySelector(unittest.TestCase):
         """Test with different temperature values."""
         for temp in [0.1, 0.5, 1.0, 2.0]:
             selector = MemorySelector(
-                in_features_embedding=32,
+                in_features_latent=32,
                 out_features=3,
                 memory_size=8,
-                embedding_size=4,
+                exogenous_size=4,
                 temperature=temp
             )
             self.assertEqual(selector.temperature, temp)
             embeddings = torch.randn(2, 32)
-            output = selector(embedding=embeddings, sampling=False)
+            output = selector(latent=embeddings, sampling=False)
             self.assertEqual(output.shape, (2, 3, 4))
 
     def test_memory_initialization(self):
         """Test memory bank initialization."""
         selector = MemorySelector(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=5,
             memory_size=10,
-            embedding_size=8
+            exogenous_size=8
         )
         # Check memory has correct shape
         self.assertEqual(selector.memory.weight.shape, (5, 80))  # out_features x (memory_size * embedding_size)
@@ -285,10 +285,10 @@ class TestMemorySelector(unittest.TestCase):
     def test_selector_network(self):
         """Test selector network structure."""
         selector = MemorySelector(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=4,
             memory_size=10,
-            embedding_size=6
+            exogenous_size=6
         )
         # Check selector is a Sequential module
         self.assertIsInstance(selector.selector, nn.Sequential)
@@ -296,14 +296,14 @@ class TestMemorySelector(unittest.TestCase):
     def test_batch_processing(self):
         """Test different batch sizes."""
         selector = MemorySelector(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
             memory_size=5,
-            embedding_size=4
+            exogenous_size=4
         )
         for batch_size in [1, 4, 8]:
             embeddings = torch.randn(batch_size, 32)
-            output = selector(embedding=embeddings, sampling=False)
+            output = selector(latent=embeddings, sampling=False)
             self.assertEqual(output.shape, (batch_size, 3, 4))
 
 
@@ -313,11 +313,11 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_initialization(self):
         """Test encoder initialization."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=128,
+            in_features_latent=128,
             out_features=5,
             num_monte_carlo=100
         )
-        self.assertEqual(encoder.in_features_embedding, 128)
+        self.assertEqual(encoder.in_features_latent, 128)
         self.assertEqual(encoder.out_features, 5)
         self.assertEqual(encoder.num_monte_carlo, 100)
         self.assertIsNotNone(encoder.mu)
@@ -326,7 +326,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_forward_with_reduce(self):
         """Test forward pass with reduce=True."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=64,
+            in_features_latent=64,
             out_features=5,
             num_monte_carlo=50
         )
@@ -337,7 +337,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_forward_without_reduce(self):
         """Test forward pass with reduce=False."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=3,
             num_monte_carlo=20
         )
@@ -348,7 +348,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_gradient_flow(self):
         """Test gradient flow through stochastic encoder."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=4,
             num_monte_carlo=10
         )
@@ -361,7 +361,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_predict_sigma(self):
         """Test internal _predict_sigma method."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=3,
             num_monte_carlo=10
         )
@@ -377,7 +377,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_positive_diagonal_covariance(self):
         """Test that diagonal of covariance is positive."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=3,
             num_monte_carlo=10
         )
@@ -391,7 +391,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_monte_carlo_samples_variability(self):
         """Test that MC samples show variability."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=2,
             num_monte_carlo=100
         )
@@ -405,7 +405,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
         """Test various MC sample sizes."""
         for mc_size in [10, 50, 200]:
             encoder = StochasticEncoderFromEmb(
-                in_features_embedding=16,
+                in_features_latent=16,
                 out_features=3,
                 num_monte_carlo=mc_size
             )
@@ -417,7 +417,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
         """Test that mean of samples approximates mu."""
         torch.manual_seed(42)
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=2,
             num_monte_carlo=1000
         )
@@ -436,7 +436,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_batch_processing(self):
         """Test different batch sizes."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=32,
+            in_features_latent=32,
             out_features=4,
             num_monte_carlo=20
         )
@@ -450,7 +450,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_sigma_weight_initialization(self):
         """Test that sigma weights are scaled down at init."""
         encoder = StochasticEncoderFromEmb(
-            in_features_embedding=16,
+            in_features_latent=16,
             out_features=3,
             num_monte_carlo=10
         )

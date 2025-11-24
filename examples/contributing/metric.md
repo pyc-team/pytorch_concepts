@@ -144,7 +144,7 @@ class YourModel(BaseModel):
         
         Example: Apply activation function
         """
-        # Convert logits to probabilities
+        # Convert endogenous to probabilities
         return torch.sigmoid(forward_out)
 ```
 

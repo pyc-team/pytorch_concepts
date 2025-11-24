@@ -127,7 +127,7 @@ class YourModel(BaseModel):
             backbone_kwargs: Optional kwargs for backbone
             
         Returns:
-            Output logits for queried concepts (batch_size, sum(concept_cardinalities))
+            Output endogenous for queried concepts (batch_size, sum(concept_cardinalities))
         """
         # (batch, input_size) -> (batch, backbone_out_features)
         features = self.maybe_apply_backbone(x, backbone_kwargs)
@@ -236,7 +236,7 @@ class YourModel_ParametricCPDs(BaseModel):
             concept_names,
             parametrization=[
                 ProbEncoderFromEmb(
-                    in_features_embedding=embedding.size,
+                    in_features_latent=embedding.size,
                     out_features=c.size
                 ) for c in concepts
             ]
@@ -247,7 +247,7 @@ class YourModel_ParametricCPDs(BaseModel):
             task_names,
             parametrization=[
                 ProbPredictor(
-                    in_features_logits=sum([c.size for c in concepts]),
+                    in_features_endogenous=sum([c.size for c in concepts]),
                     out_features=t.size
                 ) for t in tasks
             ]
@@ -350,7 +350,7 @@ from torch_concepts.nn import (
 from torch_concepts.nn import (
     ProbPredictor,           # Linear predictor
     HyperLinearPredictor,    # Hypernetwork-based predictor
-    MixProbExogPredictor,    # Mix of logits and exogenous
+    MixProbExogPredictor,    # Mix of endogenous and exogenous
 )
 ```
 
@@ -372,11 +372,11 @@ def filter_output_for_loss(self, forward_out):
     
     Example: Split concepts and tasks for weighted loss
     """
-    concept_logits = forward_out[:, :self.n_concepts]
-    task_logits = forward_out[:, self.n_concepts:]
+    concept_endogenous = forward_out[:, :self.n_concepts]
+    task_endogenous = forward_out[:, self.n_concepts:]
     return {
-        'concept_input': concept_logits,
-        'task_input': task_logits
+        'concept_input': concept_endogenous,
+        'task_input': task_endogenous
     }
 
 def filter_output_for_metric(self, forward_out):

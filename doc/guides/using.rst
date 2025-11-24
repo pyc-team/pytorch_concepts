@@ -87,19 +87,19 @@ Here's a minimal example using the low-Level API:
    # Create a concept bottleneck model
    model = torch.nn.ModuleDict({
        'encoder': pyc.nn.ProbEncoderFromEmb(
-           in_features_embedding=64,
+           in_features_latent=64,
            out_features=10
        ),
        'predictor': pyc.nn.ProbPredictor(
-           in_features_logits=10,
+           in_features_endogenous=10,
            out_features=5
        ),
    })
 
    # Forward pass
-   embedding = torch.randn(32, 64)
-   concepts = model['encoder'](embedding=embedding)
-   predictions = model['predictor'](logits=concepts)
+   latent = torch.randn(32, 64)
+   concepts = model['encoder'](latent=latent)
+   predictions = model['predictor'](endogenous=concepts)
 
 For complete examples with training, interventions, and evaluation, see the individual API guides above.
 

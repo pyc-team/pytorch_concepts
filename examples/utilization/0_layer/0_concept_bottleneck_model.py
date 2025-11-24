@@ -29,9 +29,9 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
+    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1],
+    y_predictor = ProbPredictor(in_features_endogenous=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
     model = ModuleDict(
         {"encoder": encoder,
@@ -47,8 +47,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = encoder_layer(latent=emb)
+        y_pred = y_predictor(endogenous=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -70,8 +70,8 @@ def main():
                       target_concepts=[1],
                       quantiles=1) as new_encoder:
         emb = encoder(x_train)
-        c_pred = new_encoder(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = new_encoder(latent=emb)
+        y_pred = y_predictor(endogenous=c_pred)
         cy_pred = torch.cat([c_pred, y_pred], dim=1)
         print(cy_pred[:5])
 

@@ -22,17 +22,17 @@ class TestRandomPolicy(unittest.TestCase):
     def test_forward_shape(self):
         """Test forward pass output shape."""
         policy = RandomPolicy(out_features=10, scale=1.0)
-        logits = torch.randn(4, 10)
-        output = policy(logits)
+        endogenous = torch.randn(4, 10)
+        output = policy(endogenous)
         self.assertEqual(output.shape, (4, 10))
 
     def test_random_values(self):
         """Test that output contains random values."""
         policy = RandomPolicy(out_features=10, scale=1.0)
-        logits = torch.randn(4, 10)
+        endogenous = torch.randn(4, 10)
 
-        output1 = policy(logits)
-        output2 = policy(logits)
+        output1 = policy(endogenous)
+        output2 = policy(endogenous)
 
         # Outputs should be different (random)
         self.assertFalse(torch.equal(output1, output2))
@@ -40,8 +40,8 @@ class TestRandomPolicy(unittest.TestCase):
     def test_value_range(self):
         """Test that values are in expected range."""
         policy = RandomPolicy(out_features=10, scale=2.0)
-        logits = torch.randn(100, 10)
-        output = policy(logits)
+        endogenous = torch.randn(100, 10)
+        output = policy(endogenous)
 
         # Should be non-negative and scaled
         self.assertTrue(torch.all(output >= 0.0))
@@ -49,13 +49,13 @@ class TestRandomPolicy(unittest.TestCase):
 
     def test_scale_effect(self):
         """Test that scale parameter affects output."""
-        logits = torch.randn(100, 10)
+        endogenous = torch.randn(100, 10)
 
         policy_small = RandomPolicy(out_features=10, scale=0.5)
         policy_large = RandomPolicy(out_features=10, scale=5.0)
 
-        output_small = policy_small(logits)
-        output_large = policy_large(logits)
+        output_small = policy_small(endogenous)
+        output_large = policy_large(endogenous)
 
         # Larger scale should produce larger values on average
         self.assertLess(output_small.mean(), output_large.mean())
@@ -72,18 +72,18 @@ class TestUncertaintyInterventionPolicy(unittest.TestCase):
     def test_forward_shape(self):
         """Test forward pass output shape."""
         policy = UncertaintyInterventionPolicy(out_features=10)
-        logits = torch.randn(4, 10)
-        output = policy(logits)
+        endogenous = torch.randn(4, 10)
+        output = policy(endogenous)
         self.assertEqual(output.shape, (4, 10))
 
     def test_uncertainty_measure(self):
         """Test that certainty is measured correctly (returns absolute values)."""
         policy = UncertaintyInterventionPolicy(out_features=10)
 
-        # High certainty (logits far from 0)
+        # High certainty (endogenous far from 0)
         high_certainty = torch.tensor([[10.0, -10.0, 10.0, -10.0]])
 
-        # Low certainty (logits near 0)
+        # Low certainty (endogenous near 0)
         low_certainty = torch.tensor([[0.1, -0.1, 0.2, -0.2]])
 
         certainty_high = policy(high_certainty)
@@ -95,11 +95,11 @@ class TestUncertaintyInterventionPolicy(unittest.TestCase):
     def test_gradient_flow(self):
         """Test gradient flow through policy."""
         policy = UncertaintyInterventionPolicy(out_features=5)
-        logits = torch.randn(2, 5, requires_grad=True)
-        output = policy(logits)
+        endogenous = torch.randn(2, 5, requires_grad=True)
+        output = policy(endogenous)
         loss = output.sum()
         loss.backward()
-        self.assertIsNotNone(logits.grad)
+        self.assertIsNotNone(endogenous.grad)
 
 
 class TestUniformPolicy(unittest.TestCase):
@@ -113,15 +113,15 @@ class TestUniformPolicy(unittest.TestCase):
     def test_forward_shape(self):
         """Test forward pass output shape."""
         policy = UniformPolicy(out_features=10)
-        logits = torch.randn(4, 10)
-        output = policy(logits)
+        endogenous = torch.randn(4, 10)
+        output = policy(endogenous)
         self.assertEqual(output.shape, (4, 10))
 
     def test_uniform_values(self):
         """Test that output is uniform across concepts."""
         policy = UniformPolicy(out_features=10)
-        logits = torch.randn(4, 10)
-        output = policy(logits)
+        endogenous = torch.randn(4, 10)
+        output = policy(endogenous)
 
         # All values in each row should be equal
         for i in range(output.shape[0]):
@@ -132,11 +132,11 @@ class TestUniformPolicy(unittest.TestCase):
         """Test that different inputs produce same uniform output."""
         policy = UniformPolicy(out_features=5)
 
-        logits1 = torch.randn(2, 5)
-        logits2 = torch.randn(2, 5)
+        endogenous1 = torch.randn(2, 5)
+        endogenous2 = torch.randn(2, 5)
 
-        output1 = policy(logits1)
-        output2 = policy(logits2)
+        output1 = policy(endogenous1)
+        output2 = policy(endogenous2)
 
         # Outputs should be same (uniform policy)
         self.assertTrue(torch.allclose(output1, output2))

@@ -217,21 +217,21 @@ class ParametricCPD(nn.Module):
                 f"Check Variable definition and ProbabilisticModel resolution."
             )
 
-        logits = self.parametrization(input=input_batch)
+        endogenous = self.parametrization(input=input_batch)
         probabilities = None
 
         if self.variable.distribution is Bernoulli:
             # Traditional P(X=1) output
-            p_c1 = torch.sigmoid(logits)
+            p_c1 = torch.sigmoid(endogenous)
 
             # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
             probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
 
         elif self.variable.distribution is Categorical:
-            probabilities = torch.softmax(logits, dim=-1)
+            probabilities = torch.softmax(endogenous, dim=-1)
 
         elif self.variable.distribution is Delta:
-            probabilities = logits
+            probabilities = endogenous
 
         else:
             raise NotImplementedError(f"CPT for {self.variable.distribution.__name__} not supported.")
@@ -244,14 +244,14 @@ class ParametricCPD(nn.Module):
 
         # We need the core probability part for potential calculation
         all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-        logits = self.parametrization(input=all_full_inputs)
+        endogenous = self.parametrization(input=all_full_inputs)
 
         if self.variable.distribution is Bernoulli:
-            cpt_core = torch.sigmoid(logits)
+            cpt_core = torch.sigmoid(endogenous)
         elif self.variable.distribution is Categorical:
-            cpt_core = torch.softmax(logits, dim=-1)
+            cpt_core = torch.softmax(endogenous, dim=-1)
         elif self.variable.distribution is Delta:
-            cpt_core = logits
+            cpt_core = endogenous
         else:
             raise NotImplementedError("Potential table construction not supported for this distribution.")
 

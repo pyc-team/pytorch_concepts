@@ -407,10 +407,10 @@ class ExogenousVariable(Variable):
         >>> 
         >>> # Exogenous high-dim representation for has_wings
         >>> wings_features = ExogenousVariable(
-        ...     concepts='wings_embedding',
+        ...     concepts='wings_exogenous',
         ...     parents=[],
         ...     distribution=Delta,
-        ...     size=128,  # 128-dimensional embedding
+        ...     size=128,  # 128-dimensional exogenous
         ...     endogenous_var=has_wings
         ... )
     """
@@ -467,11 +467,11 @@ class LatentVariable(Variable):
     Example:
         >>> from torch_concepts.distributions import Delta
         >>> # Global latent representation from input image
-        >>> image_embedding = LatentVariable(
+        >>> image_latent = LatentVariable(
         ...     concepts='global_image_features',
         ...     parents=[],
         ...     distribution=Delta,
-        ...     size=512  # 512-dimensional global embedding
+        ...     size=512  # 512-dimensional global latent
         ... )
         >>> 
         >>> # Multiple latent variables for hierarchical representation

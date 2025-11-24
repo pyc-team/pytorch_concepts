@@ -114,8 +114,8 @@ class LazyConstructor(torch.nn.Module):
         >>> # Build the module when dimensions are known
         >>> module = propagator.build(
         ...     out_features=3,
-        ...     in_features_logits=5,
-        ...     in_features_embedding=None,
+        ...     in_features_endogenous=5,
+        ...     in_features_latent=None,
         ...     in_features_exogenous=None
         ... )
         >>>
@@ -150,8 +150,8 @@ class LazyConstructor(torch.nn.Module):
 
     def build(self,
               out_features: int,
-              in_features_logits: Optional[int],
-              in_features_embedding: Optional[int],
+              in_features_endogenous: Optional[int],
+              in_features_latent: Optional[int],
               in_features_exogenous: Optional[int],
               **kwargs
               ) -> torch.nn.Module:
@@ -163,8 +163,8 @@ class LazyConstructor(torch.nn.Module):
 
         Args:
             out_features: Number of output features.
-            in_features_logits: Number of input logit features (optional).
-            in_features_embedding: Number of input embedding features (optional).
+            in_features_endogenous: Number of input logit features (optional).
+            in_features_latent: Number of input latent features (optional).
             in_features_exogenous: Number of exogenous input features (optional).
             **kwargs: Additional keyword arguments for the module.
 
@@ -176,21 +176,21 @@ class LazyConstructor(torch.nn.Module):
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.propagator import LazyConstructor
-            >>> from torch_concepts.nn.modules.predictors.linear import ProbPredictor
+            >>> from torch_concepts.nn import LazyConstructor
+            >>> from torch_concepts.nn import ProbPredictor
             >>>
-            >>> lazy_constructorLazyConstructor(ProbPredictor)
-            >>> module = propagator.build(
+            >>> lazy_constructor = LazyConstructor(ProbPredictor)
+            >>> module = lazy_constructor.build(
             ...     out_features=3,
-            ...     in_features_logits=5,
-            ...     in_features_embedding=None,
+            ...     in_features_endogenous=5,
+            ...     in_features_latent=None,
             ...     in_features_exogenous=None
             ... )
             >>> print(type(module).__name__)
             ProbPredictor
         """
-        in_features = in_features_logits if in_features_logits is not None else 0
-        in_features += in_features_embedding if in_features_embedding is not None else 0
+        in_features = in_features_endogenous if in_features_endogenous is not None else 0
+        in_features += in_features_latent if in_features_latent is not None else 0
         in_features += in_features_exogenous if in_features_exogenous is not None else 0
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
@@ -199,8 +199,8 @@ class LazyConstructor(torch.nn.Module):
             *self._module_args,
             **{
                 "in_features": in_features,
-                "in_features_logits": in_features_logits,
-                "in_features_embedding": in_features_embedding,
+                "in_features_endogenous": in_features_endogenous,
+                "in_features_latent": in_features_latent,
                 "in_features_exogenous": in_features_exogenous,
                 "out_features": out_features,
                 **self._module_kwargs,  # user-provided extras
@@ -238,8 +238,8 @@ class LazyConstructor(torch.nn.Module):
             >>> lazy_constructorLazyConstructor(ProbPredictor)
             >>> propagator.build(
             ...     out_features=3,
-            ...     in_features_logits=5,
-            ...     in_features_embedding=None,
+            ...     in_features_endogenous=5,
+            ...     in_features_latent=None,
             ...     in_features_exogenous=None
             ... )
             >>>

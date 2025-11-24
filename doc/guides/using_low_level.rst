@@ -14,8 +14,8 @@ Key Principles
 
 **Three types of layers:**
 
-- **Encoders**: Map latent representations to logits
-- **Predictors**: Map logits to other logits
+- **Encoders**: Map latent representations to endogenous
+- **Predictors**: Map endogenous to other endogenous
 - **Special layers**: Perform operations like memory selection or graph learning
 
 Step 1: Import Libraries
@@ -29,17 +29,17 @@ Step 1: Import Libraries
 Step 2: Create Sample Data
 ---------------------------
 
-Generate random embeddings and targets for demonstration:
+Generate random latent codes and targets for demonstration:
 
 .. code-block:: python
 
    batch_size = 32
-   embedding_dim = 64
+   latent_dim = 64
    n_concepts = 5
    n_tasks = 3
 
-   # Random input embeddings
-   embedding = torch.randn(batch_size, embedding_dim)
+   # Random input latent code
+   latent = torch.randn(batch_size, latent_dim)
 
    # Random concept labels (binary)
    concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()
@@ -57,11 +57,11 @@ Use a ModuleDict to combine encoder and predictor:
    # Create model using ModuleDict
    model = torch.nn.ModuleDict({
        'encoder': pyc.nn.ProbEncoderFromEmb(
-           in_features_embedding=embedding_dim,
+           in_features_latent=latent_dim,
            out_features=n_concepts
        ),
        'predictor': pyc.nn.ProbPredictor(
-           in_features_logits=n_concepts,
+           in_features_endogenous=n_concepts,
            out_features=n_tasks
        ),
    })
@@ -69,18 +69,18 @@ Use a ModuleDict to combine encoder and predictor:
 Step 4: Forward Pass
 ---------------------
 
-Compute concept logits, then task predictions:
+Compute concept endogenous, then task predictions:
 
 .. code-block:: python
 
-   # Get concept logits from embeddings
-   concept_logits = model['encoder'](embedding=embedding)
+   # Get concept endogenous from latent code
+   concept_endogenous = model['encoder'](latent=latent)
 
-   # Get task predictions from concept logits
-   task_logits = model['predictor'](logits=concept_logits)
+   # Get task predictions from concept endogenous
+   task_endogenous = model['predictor'](endogenous=concept_endogenous)
 
-   print(f"Concept logits shape: {concept_logits.shape}")  # [32, 5]
-   print(f"Task logits shape: {task_logits.shape}")        # [32, 3]
+   print(f"Concept endogenous shape: {concept_endogenous.shape}")  # [32, 5]
+   print(f"Task endogenous shape: {task_endogenous.shape}")        # [32, 3]
 
 Step 5: Compute Loss and Train
 -------------------------------
@@ -92,10 +92,10 @@ Train with both concept and task supervision:
    import torch.nn.functional as F
 
    # Compute losses
-   concept_loss = F.binary_cross_entropy_with_logits(
-       concept_logits, concept_labels
+   concept_loss = F.binary_cross_entropy_with_endogenous(
+       concept_endogenous, concept_labels
    )
-   task_loss = F.cross_entropy(task_logits, task_labels)
+   task_loss = F.cross_entropy(task_endogenous, task_labels)
    total_loss = task_loss + 0.5 * concept_loss
 
    # Backpropagation
@@ -110,7 +110,7 @@ Step 6: Perform Interventions
 Intervene using the ``intervention`` context manager which replaces the encoder layer temporarily.
 The context manager takes two main arguments: **strategies** and **policies**.
 
-- Intervention strategies define how the layer behaves during the intervention, e.g., setting concept logits to ground truth values.
+- Intervention strategies define how the layer behaves during the intervention, e.g., setting concept endogenous to ground truth values.
 - Intervention policies define the priority/order of concepts to intervene on.
 
 .. code-block:: python
@@ -118,7 +118,7 @@ The context manager takes two main arguments: **strategies** and **policies**.
    from torch_concepts.nn import GroundTruthIntervention, UniformPolicy
    from torch_concepts.nn import intervention
 
-   ground_truth = 10 * torch.rand_like(concept_logits)
+   ground_truth = 10 * torch.rand_like(concept_endogenous)
    strategy = GroundTruthIntervention(model=model['encoder'], ground_truth=ground_truth)
    policy = UniformPolicy(out_features=n_concepts)
 
@@ -126,12 +126,12 @@ The context manager takes two main arguments: **strategies** and **policies**.
    with intervention(policies=policy,
                      strategies=strategy,
                      target_concepts=[0, 2]) as new_encoder_layer:
-       intervened_concepts = new_encoder_layer(embedding=embedding)
-       intervened_tasks = model['predictor'](logits=intervened_concepts)
+       intervened_concepts = new_encoder_layer(latent=latent)
+       intervened_tasks = model['predictor'](endogenous=intervened_concepts)
 
-   print(f"Original concept logits: {concept_logits[0]}")
-   print(f"Original task predictions: {task_logits[0]}")
-   print(f"Intervened concept logits: {intervened_concepts[0]}")
+   print(f"Original concept endogenous: {concept_endogenous[0]}")
+   print(f"Original task predictions: {task_endogenous[0]}")
+   print(f"Intervened concept endogenous: {intervened_concepts[0]}")
    print(f"Intervened task predictions: {intervened_tasks[0]}")
 
 Using Special Layers

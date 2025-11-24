@@ -28,14 +28,14 @@ class TestBaseConceptLayer(unittest.TestCase):
 
         layer = ConcreteLayer(
             out_features=5,
-            in_features_logits=10,
-            in_features_embedding=8,
+            in_features_endogenous=10,
+            in_features_latent=8,
             in_features_exogenous=2
         )
 
         self.assertEqual(layer.out_features, 5)
-        self.assertEqual(layer.in_features_logits, 10)
-        self.assertEqual(layer.in_features_embedding, 8)
+        self.assertEqual(layer.in_features_endogenous, 10)
+        self.assertEqual(layer.in_features_latent, 8)
         self.assertEqual(layer.in_features_exogenous, 2)
 
     def test_initialization_minimal(self):
@@ -47,8 +47,8 @@ class TestBaseConceptLayer(unittest.TestCase):
         layer = ConcreteLayer(out_features=5)
 
         self.assertEqual(layer.out_features, 5)
-        self.assertIsNone(layer.in_features_logits)
-        self.assertIsNone(layer.in_features_embedding)
+        self.assertIsNone(layer.in_features_endogenous)
+        self.assertIsNone(layer.in_features_latent)
         self.assertIsNone(layer.in_features_exogenous)
 
     def test_abstract_forward(self):
@@ -62,17 +62,17 @@ class TestBaseConceptLayer(unittest.TestCase):
     def test_subclass_implementation(self):
         """Test proper subclass implementation."""
         class MyLayer(BaseConceptLayer):
-            def __init__(self, out_features, in_features_logits):
+            def __init__(self, out_features, in_features_endogenous):
                 super().__init__(
                     out_features=out_features,
-                    in_features_logits=in_features_logits
+                    in_features_endogenous=in_features_endogenous
                 )
-                self.linear = nn.Linear(in_features_logits, out_features)
+                self.linear = nn.Linear(in_features_endogenous, out_features)
 
-            def forward(self, logits):
-                return torch.sigmoid(self.linear(logits))
+            def forward(self, endogenous):
+                return torch.sigmoid(self.linear(endogenous))
 
-        layer = MyLayer(out_features=5, in_features_logits=10)
+        layer = MyLayer(out_features=5, in_features_endogenous=10)
         x = torch.randn(2, 10)
         output = layer(x)
 
@@ -91,45 +91,45 @@ class TestBaseEncoder(unittest.TestCase):
 
         encoder = ConcreteEncoder(
             out_features=10,
-            in_features_embedding=784
+            in_features_latent=784
         )
 
         self.assertEqual(encoder.out_features, 10)
-        self.assertEqual(encoder.in_features_embedding, 784)
-        self.assertIsNone(encoder.in_features_logits)  # Encoders don't use logits
+        self.assertEqual(encoder.in_features_latent, 784)
+        self.assertIsNone(encoder.in_features_endogenous)  # Encoders don't use endogenous
 
-    def test_no_logits_input(self):
-        """Test that encoders don't accept logits."""
+    def test_no_endogenous_input(self):
+        """Test that encoders don't accept endogenous."""
         class ConcreteEncoder(BaseEncoder):
             def forward(self, x):
                 return x
 
         encoder = ConcreteEncoder(
             out_features=10,
-            in_features_embedding=784
+            in_features_latent=784
         )
 
-        # in_features_logits should always be None for encoders
-        self.assertIsNone(encoder.in_features_logits)
+        # in_features_endogenous should always be None for encoders
+        self.assertIsNone(encoder.in_features_endogenous)
 
     def test_encoder_implementation(self):
         """Test concrete encoder implementation."""
         class MyEncoder(BaseEncoder):
-            def __init__(self, out_features, in_features_embedding):
+            def __init__(self, out_features, in_features_latent):
                 super().__init__(
                     out_features=out_features,
-                    in_features_embedding=in_features_embedding
+                    in_features_latent=in_features_latent
                 )
                 self.net = nn.Sequential(
-                    nn.Linear(in_features_embedding, 128),
+                    nn.Linear(in_features_latent, 128),
                     nn.ReLU(),
                     nn.Linear(128, out_features)
                 )
 
-            def forward(self, embedding):
-                return self.net(embedding)
+            def forward(self, latent):
+                return self.net(latent)
 
-        encoder = MyEncoder(out_features=10, in_features_embedding=784)
+        encoder = MyEncoder(out_features=10, in_features_latent=784)
         x = torch.randn(4, 784)
         concepts = encoder(x)
 
@@ -138,22 +138,22 @@ class TestBaseEncoder(unittest.TestCase):
     def test_with_exogenous_features(self):
         """Test encoder with exogenous features."""
         class EncoderWithExogenous(BaseEncoder):
-            def __init__(self, out_features, in_features_embedding, in_features_exogenous):
+            def __init__(self, out_features, in_features_latent, in_features_exogenous):
                 super().__init__(
                     out_features=out_features,
-                    in_features_embedding=in_features_embedding,
+                    in_features_latent=in_features_latent,
                     in_features_exogenous=in_features_exogenous
                 )
-                total_features = in_features_embedding + in_features_exogenous
+                total_features = in_features_latent + in_features_exogenous
                 self.net = nn.Linear(total_features, out_features)
 
-            def forward(self, embedding, exogenous):
-                combined = torch.cat([embedding, exogenous], dim=-1)
+            def forward(self, latent, exogenous):
+                combined = torch.cat([latent, exogenous], dim=-1)
                 return self.net(combined)
 
         encoder = EncoderWithExogenous(
             out_features=5,
-            in_features_embedding=10,
+            in_features_latent=10,
             in_features_exogenous=3
         )
 
@@ -175,11 +175,11 @@ class TestBasePredictor(unittest.TestCase):
 
         predictor = ConcretePredictor(
             out_features=3,
-            in_features_logits=10
+            in_features_endogenous=10
         )
 
         self.assertEqual(predictor.out_features, 3)
-        self.assertEqual(predictor.in_features_logits, 10)
+        self.assertEqual(predictor.in_features_endogenous, 10)
         self.assertIsNotNone(predictor.in_activation)
 
     def test_default_activation(self):
@@ -190,7 +190,7 @@ class TestBasePredictor(unittest.TestCase):
 
         predictor = ConcretePredictor(
             out_features=3,
-            in_features_logits=10
+            in_features_endogenous=10
         )
 
         # Default should be sigmoid
@@ -204,7 +204,7 @@ class TestBasePredictor(unittest.TestCase):
 
         predictor = ConcretePredictor(
             out_features=3,
-            in_features_logits=10,
+            in_features_endogenous=10,
             in_activation=torch.tanh
         )
 
@@ -213,75 +213,75 @@ class TestBasePredictor(unittest.TestCase):
     def test_predictor_implementation(self):
         """Test concrete predictor implementation."""
         class MyPredictor(BasePredictor):
-            def __init__(self, out_features, in_features_logits):
+            def __init__(self, out_features, in_features_endogenous):
                 super().__init__(
                     out_features=out_features,
-                    in_features_logits=in_features_logits,
+                    in_features_endogenous=in_features_endogenous,
                     in_activation=torch.sigmoid
                 )
-                self.linear = nn.Linear(in_features_logits, out_features)
+                self.linear = nn.Linear(in_features_endogenous, out_features)
 
-            def forward(self, logits):
-                # Apply activation to input logits
-                probs = self.in_activation(logits)
+            def forward(self, endogenous):
+                # Apply activation to input endogenous
+                probs = self.in_activation(endogenous)
                 # Predict next concepts
                 return self.linear(probs)
 
-        predictor = MyPredictor(out_features=3, in_features_logits=10)
-        concept_logits = torch.randn(4, 10)
-        task_logits = predictor(concept_logits)
+        predictor = MyPredictor(out_features=3, in_features_endogenous=10)
+        concept_endogenous = torch.randn(4, 10)
+        task_endogenous = predictor(concept_endogenous)
 
-        self.assertEqual(task_logits.shape, (4, 3))
+        self.assertEqual(task_endogenous.shape, (4, 3))
 
     def test_with_embedding_features(self):
         """Test predictor with embedding features."""
         class PredictorWithEmbedding(BasePredictor):
-            def __init__(self, out_features, in_features_logits, in_features_embedding):
+            def __init__(self, out_features, in_features_endogenous, in_features_latent):
                 super().__init__(
                     out_features=out_features,
-                    in_features_logits=in_features_logits,
-                    in_features_embedding=in_features_embedding
+                    in_features_endogenous=in_features_endogenous,
+                    in_features_latent=in_features_latent
                 )
-                total_features = in_features_logits + in_features_embedding
+                total_features = in_features_endogenous + in_features_latent
                 self.linear = nn.Linear(total_features, out_features)
 
-            def forward(self, logits, embedding):
-                probs = self.in_activation(logits)
-                combined = torch.cat([probs, embedding], dim=-1)
+            def forward(self, endogenous, latent):
+                probs = self.in_activation(endogenous)
+                combined = torch.cat([probs, latent], dim=-1)
                 return self.linear(combined)
 
         predictor = PredictorWithEmbedding(
             out_features=3,
-            in_features_logits=10,
-            in_features_embedding=8
+            in_features_endogenous=10,
+            in_features_latent=8
         )
 
-        logits = torch.randn(2, 10)
-        embedding = torch.randn(2, 8)
-        output = predictor(logits, embedding)
+        endogenous = torch.randn(2, 10)
+        latent = torch.randn(2, 8)
+        output = predictor(endogenous, latent)
 
         self.assertEqual(output.shape, (2, 3))
 
     def test_activation_application(self):
         """Test that activation is properly applied."""
         class SimplePredictor(BasePredictor):
-            def __init__(self, out_features, in_features_logits):
+            def __init__(self, out_features, in_features_endogenous):
                 super().__init__(
                     out_features=out_features,
-                    in_features_logits=in_features_logits,
+                    in_features_endogenous=in_features_endogenous,
                     in_activation=torch.sigmoid
                 )
-                self.linear = nn.Linear(in_features_logits, out_features)
+                self.linear = nn.Linear(in_features_endogenous, out_features)
 
-            def forward(self, logits):
-                activated = self.in_activation(logits)
+            def forward(self, endogenous):
+                activated = self.in_activation(endogenous)
                 return self.linear(activated)
 
-        predictor = SimplePredictor(out_features=3, in_features_logits=5)
+        predictor = SimplePredictor(out_features=3, in_features_endogenous=5)
 
-        # Test with extreme logits
-        logits = torch.tensor([[-10.0, -5.0, 0.0, 5.0, 10.0]])
-        output = predictor(logits)
+        # Test with extreme endogenous
+        endogenous = torch.tensor([[-10.0, -5.0, 0.0, 5.0, 10.0]])
+        output = predictor(endogenous)
 
         # Output should be finite
         self.assertFalse(torch.isnan(output).any())
@@ -294,25 +294,25 @@ class TestLayerIntegration(unittest.TestCase):
     def test_encoder_to_predictor_pipeline(self):
         """Test encoder followed by predictor."""
         class SimpleEncoder(BaseEncoder):
-            def __init__(self, out_features, in_features_embedding):
-                super().__init__(out_features, in_features_embedding)
-                self.linear = nn.Linear(in_features_embedding, out_features)
+            def __init__(self, out_features, in_features_latent):
+                super().__init__(out_features, in_features_latent)
+                self.linear = nn.Linear(in_features_latent, out_features)
 
             def forward(self, x):
                 return self.linear(x)
 
         class SimplePredictor(BasePredictor):
-            def __init__(self, out_features, in_features_logits):
-                super().__init__(out_features, in_features_logits)
-                self.linear = nn.Linear(in_features_logits, out_features)
+            def __init__(self, out_features, in_features_endogenous):
+                super().__init__(out_features, in_features_endogenous)
+                self.linear = nn.Linear(in_features_endogenous, out_features)
 
-            def forward(self, logits):
-                probs = self.in_activation(logits)
+            def forward(self, endogenous):
+                probs = self.in_activation(endogenous)
                 return self.linear(probs)
 
         # Create pipeline
-        encoder = SimpleEncoder(out_features=10, in_features_embedding=784)
-        predictor = SimplePredictor(out_features=5, in_features_logits=10)
+        encoder = SimpleEncoder(out_features=10, in_features_latent=784)
+        predictor = SimplePredictor(out_features=5, in_features_endogenous=10)
 
         # Test pipeline
         x = torch.randn(2, 784)
@@ -325,24 +325,24 @@ class TestLayerIntegration(unittest.TestCase):
     def test_gradient_flow_through_pipeline(self):
         """Test gradient flow through encoder-predictor pipeline."""
         class SimpleEncoder(BaseEncoder):
-            def __init__(self, out_features, in_features_embedding):
-                super().__init__(out_features, in_features_embedding)
-                self.linear = nn.Linear(in_features_embedding, out_features)
+            def __init__(self, out_features, in_features_latent):
+                super().__init__(out_features, in_features_latent)
+                self.linear = nn.Linear(in_features_latent, out_features)
 
             def forward(self, x):
                 return self.linear(x)
 
         class SimplePredictor(BasePredictor):
-            def __init__(self, out_features, in_features_logits):
-                super().__init__(out_features, in_features_logits)
-                self.linear = nn.Linear(in_features_logits, out_features)
+            def __init__(self, out_features, in_features_endogenous):
+                super().__init__(out_features, in_features_endogenous)
+                self.linear = nn.Linear(in_features_endogenous, out_features)
 
-            def forward(self, logits):
-                probs = self.in_activation(logits)
+            def forward(self, endogenous):
+                probs = self.in_activation(endogenous)
                 return self.linear(probs)
 
-        encoder = SimpleEncoder(out_features=10, in_features_embedding=20)
-        predictor = SimplePredictor(out_features=5, in_features_logits=10)
+        encoder = SimpleEncoder(out_features=10, in_features_latent=20)
+        predictor = SimplePredictor(out_features=5, in_features_endogenous=10)
 
         x = torch.randn(2, 20, requires_grad=True)
         concepts = encoder(x)

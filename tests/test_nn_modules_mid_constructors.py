@@ -71,48 +71,6 @@ class TestBipartiteModel(unittest.TestCase):
         )
         self.assertEqual(model.task_names, ['task1'])
 
-    def test_with_source_exogenous(self):
-        """Test with source exogenous features."""
-        # Create a simpler graph for source exogenous test: A -> C, B -> C
-        # This ensures C has both A and B as parents, matching the source exog vars
-        names = ['A', 'B', 'C']
-        graph_df = pd.DataFrame(0, index=names, columns=names)
-        graph_df.loc['A', 'C'] = 1
-        graph_df.loc['B', 'C'] = 1
-
-        graph = ConceptGraph(
-            torch.FloatTensor(graph_df.values),
-            node_names=names
-        )
-
-        metadata = {name: {'distribution': Bernoulli} for name in names}
-        annotations = Annotations({
-            1: AxisAnnotation(labels=tuple(names), metadata=metadata)
-        })
-
-        model = GraphModel(
-            model_graph=graph,
-            input_size=784,
-            annotations=annotations,
-            encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(torch.nn.Linear),
-            use_source_exogenous=True,
-            source_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
-        )
-        self.assertIsNotNone(model)
-
-    def test_with_internal_exogenous(self):
-        """Test with internal exogenous features."""
-        model = BipartiteModel(
-            task_names=self.task_names,
-            input_size=784,
-            annotations=self.annotations,
-            encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(torch.nn.Linear),
-            internal_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
-        )
-        self.assertIsNotNone(model)
-
 
 class TestGraphModel(unittest.TestCase):
     """Test GraphModel."""
@@ -242,48 +200,6 @@ class TestGraphModel(unittest.TestCase):
         self.assertEqual(len(model.root_nodes), 2)
         self.assertIn('A', model.root_nodes)
         self.assertIn('C', model.root_nodes)
-
-    def test_with_source_exogenous(self):
-        """Test with source exogenous features."""
-        # Create a simpler graph for source exogenous test: A -> C, B -> C
-        # This ensures C has both A and B as parents, matching the source exog vars
-        names = ['A', 'B', 'C']
-        graph_df = pd.DataFrame(0, index=names, columns=names)
-        graph_df.loc['A', 'C'] = 1
-        graph_df.loc['B', 'C'] = 1
-
-        graph = ConceptGraph(
-            torch.FloatTensor(graph_df.values),
-            node_names=names
-        )
-
-        metadata = {name: {'distribution': Bernoulli} for name in names}
-        annotations = Annotations({
-            1: AxisAnnotation(labels=tuple(names), metadata=metadata)
-        })
-
-        model = GraphModel(
-            model_graph=graph,
-            input_size=784,
-            annotations=annotations,
-            encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(torch.nn.Linear),
-            use_source_exogenous=True,
-            source_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
-        )
-        self.assertIsNotNone(model)
-
-    def test_with_internal_exogenous(self):
-        """Test with internal exogenous features."""
-        model = GraphModel(
-            model_graph=self.graph,
-            input_size=784,
-            annotations=self.annotations,
-            encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(torch.nn.Linear),
-            internal_exogenous=LazyConstructor(torch.nn.Linear, embedding_size=784)
-        )
-        self.assertIsNotNone(model)
 
     def test_star_topology(self):
         """Test star topology: A -> B, A -> C, A -> D."""

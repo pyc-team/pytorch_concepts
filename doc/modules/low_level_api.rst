@@ -45,24 +45,24 @@ Layers
 
 There are only three types of layers:
 
-- **Encoders**: layers that map latent representations (embeddings or exogenous) to logits, e.g.:
+- **Encoders**: layers that map latent representations (latet code or exogenous) to endogenous, e.g.:
 
   .. code-block:: python
 
-     pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3)
+     pyc.nn.ProbEncoderFromEmb(in_features_latent=10, out_features=3)
 
-- **Predictors**: layers that map logits (plus optionally latent representations) to other logits.
+- **Predictors**: layers that map endogenous (plus optionally latent representations) to other endogenous.
 
   .. code-block:: python
 
-     pyc.nn.HyperLinearPredictor(in_features_logits=10, in_features_exogenous=7,
+     pyc.nn.HyperLinearPredictor(in_features_endogenous=10, in_features_exogenous=7,
                                  embedding_size=24, out_features=3)
 
 - **Special layers**: layers that perform special helpful operations such as memory selection:
 
   .. code-block:: python
 
-     pyc.nn.MemorySelector(in_features_embedding=10, memory_size=5,
+     pyc.nn.MemorySelector(in_features_latent=10, memory_size=5,
                            embedding_size=24, out_features=3)
 
   and graph learners:
@@ -79,8 +79,8 @@ A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3),
-       'predictor': pyc.nn.ProbPredictor(in_features_logits=3, out_features=2),
+       'encoder': pyc.nn.ProbEncoderFromEmb(in_features_latent=10, out_features=3),
+       'predictor': pyc.nn.ProbPredictor(in_features_endogenous=3, out_features=2),
    })
 
 Inference
@@ -92,12 +92,12 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     logits_concepts = concept_bottleneck_model['encoder'](embedding=embedding)
-     logits_tasks = concept_bottleneck_model['predictor'](logits=logits_concepts)
+     endogenous_concepts = concept_bottleneck_model['encoder'](latent=latent)
+     endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 
 - **Interventions**: interventions are context managers that temporarily modify a layer.
 
-  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept logits to a constant value:
+  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept endogenous to a constant value:
 
   .. code-block:: python
 
@@ -118,6 +118,6 @@ At this API level, there are two types of inference that can be performed:
                               strategies=int_strategy,
                               target_concepts=[0, 2]) as new_encoder_layer:
 
-         logits_concepts = new_encoder_layer(embedding=embedding)
-         logits_tasks = concept_bottleneck_model['predictor'](logits=logits_concepts)
+         endogenous_concepts = new_encoder_layer(latent=latent)
+         endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 

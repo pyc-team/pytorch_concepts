@@ -19,7 +19,7 @@ class CallablePredictor(BasePredictor):
         func: Callable function that takes concept probabilities and returns task predictions.
               Should accept a tensor of shape (batch_size, n_concepts) and return
               a tensor of shape (batch_size, out_features).
-        in_activation: Activation function to apply to input logits before passing to func.
+        in_activation: Activation function to apply to input endogenous before passing to func.
                       Default is identity (lambda x: x).
         use_bias: Whether to add learnable stochastic bias to the output. Default is True.
         init_bias_mean: Initial value for the bias mean parameter. Default is 0.0.
@@ -33,7 +33,7 @@ class CallablePredictor(BasePredictor):
         >>> # Generate sample data
         >>> batch_size = 32
         >>> n_concepts = 3
-        >>> logits = torch.randn(batch_size, n_concepts)
+        >>> endogenous = torch.randn(batch_size, n_concepts)
         >>>
         >>> # Define a polynomial function with fixed weights for 3 inputs, 2 outputs
         >>> def quadratic_predictor(probs):
@@ -46,7 +46,7 @@ class CallablePredictor(BasePredictor):
         ...     func=quadratic_predictor,
         ...     use_bias=True
         ... )
-        >>> predictions = predictor(logits)
+        >>> predictions = predictor(endogenous)
         >>> print(predictions.shape)  # torch.Size([32, 2])
 
         References
@@ -63,7 +63,7 @@ class CallablePredictor(BasePredictor):
         min_std: float = 1e-6
     ):
         super().__init__(
-            in_features_logits=-1,
+            in_features_endogenous=-1,
             out_features=-1,
             in_activation=in_activation,
         )
@@ -95,18 +95,18 @@ class CallablePredictor(BasePredictor):
 
     def forward(
             self,
-            logits: torch.Tensor,
+            endogenous: torch.Tensor,
             *args,
             **kwargs
     ) -> torch.Tensor:
-        in_probs = self.in_activation(logits)
-        out_logits = self.func(in_probs, *args, **kwargs)
+        in_probs = self.in_activation(endogenous)
+        out_endogenous = self.func(in_probs, *args, **kwargs)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable
-            eps = torch.randn_like(out_logits)              # ~ N(0,1)
-            std = self._bias_std().to(out_logits.dtype).to(out_logits.device)  # scalar -> broadcast
-            mean = self.bias_mean.to(out_logits.dtype).to(out_logits.device)   # scalar -> broadcast
-            out_logits = out_logits + mean + std * eps
+            eps = torch.randn_like(out_endogenous)              # ~ N(0,1)
+            std = self._bias_std().to(out_endogenous.dtype).to(out_endogenous.device)  # scalar -> broadcast
+            mean = self.bias_mean.to(out_endogenous.dtype).to(out_endogenous.device)   # scalar -> broadcast
+            out_endogenous = out_endogenous + mean + std * eps
 
-        return out_logits
+        return out_endogenous

@@ -14,7 +14,7 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   grouped_concept_embedding_mixture
+   grouped_concept_exogenous_mixture
    selection_eval
    confidence_selection
    soft_select
@@ -74,7 +74,7 @@ Function Documentation
 Concept Operations
 ~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: grouped_concept_embedding_mixture
+.. autofunction:: grouped_concept_exogenous_mixture
 
 .. autofunction:: selection_eval
 

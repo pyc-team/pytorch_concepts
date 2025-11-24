@@ -60,7 +60,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         """Forward pass through CBM.
 
         Args:
-            x (torch.Tensor): Input data (raw or pre-computed embeddings).
+            x (torch.Tensor): Input data (raw or pre-computed latent codes).
             query (List[str], optional): Variables to query from PGM.
                 Typically all concepts and tasks. Defaults to None.
             backbone_kwargs (Optional[Mapping[str, Any]], optional): Arguments
@@ -68,7 +68,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             *args, **kwargs: Additional arguments for future extensions.
 
         Returns:
-            torch.Tensor: Concatenated logits for queried variables.
+            torch.Tensor: Concatenated endogenous for queried variables.
                 Shape: (batch_size, sum of variable cardinalities).
         """
 
@@ -79,39 +79,38 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         latent = self.latent_encoder(features)
 
         # inference
-        # get logits for the query concepts
+        # get endogenous for the query concepts
         # (b, latent_size) -> (b, sum(concept_cardinalities))
-        # FIXME: rename 'embedding' -> 'latent' ?
-        logits = self.inference.query(query, evidence={'embedding': latent})
-        return logits
+        endogenous = self.inference.query(query, evidence={'latent': latent})
+        return endogenous
 
     def filter_output_for_loss(self, forward_out, target):
-        """No filtering needed - return raw logits for standard loss computation.
+        """No filtering needed - return raw endogenous for standard loss computation.
 
         Args:
-            forward_out: Model output logits.
+            forward_out: Model output endogenous.
             target: Ground truth labels.
 
         Returns:
             Dict with 'input' and 'target' for loss computation.
         """
-        # forward_out: logits
-        # return: logits
+        # forward_out: endogenous
+        # return: endogenous
         return {'input': forward_out,
                 'target': target}
 
     def filter_output_for_metric(self, forward_out, target):
-        """No filtering needed - return raw logits for metric computation.
+        """No filtering needed - return raw endogenous for metric computation.
 
         Args:
-            forward_out: Model output logits.
+            forward_out: Model output endogenous.
             target: Ground truth labels.
 
         Returns:
             Dict with 'input' and 'target' for metric computation.
         """
-        # forward_out: logits
-        # return: logits
+        # forward_out: endogenous
+        # return: endogenous
         return {'input': forward_out,
                 'target': target}
         

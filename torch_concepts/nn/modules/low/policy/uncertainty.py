@@ -7,7 +7,7 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
     """
     Uncertainty-based intervention policy using distance from a maximum uncertainty point.
 
-    This policy measures uncertainty as the distance of concept logits from a
+    This policy measures uncertainty as the distance of concept endogenous from a
     maximum uncertainty point. Values closer to this point are considered more uncertain,
     while values further from this point are considered more certain.
 
@@ -27,14 +27,14 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         >>> # Create uncertainty policy with default max uncertainty point (0.0)
         >>> policy = UncertaintyInterventionPolicy(out_features=10)
         >>>
-        >>> # Generate concept logits with varying confidence
-        >>> logits = torch.tensor([
+        >>> # Generate concept endogenous with varying confidence
+        >>> endogenous = torch.tensor([
         ...     [3.0, -2.5, 0.1, -0.2, 4.0],  # High confidence for 1st, 2nd, 5th
         ...     [0.5, 0.3, -0.4, 2.0, -1.5]   # Mixed confidence
         ... ])
         >>>
         >>> # Apply policy - returns distance from max uncertainty point (certainty scores)
-        >>> scores = policy(logits)
+        >>> scores = policy(endogenous)
         >>> print(scores)
         >>> # tensor([[3.0, 2.5, 0.1, 0.2, 4.0],
         >>> #         [0.5, 0.3, 0.4, 2.0, 1.5]])
@@ -65,17 +65,17 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
 
     def forward(
         self,
-        logits: torch.Tensor
+        endogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Compute certainty scores as distance from maximum uncertainty point.
 
         Args:
-            logits: Input concept logits of shape (batch_size, n_concepts).
+            endogenous: Input concept endogenous of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Distance from max uncertainty point (certainty scores) of same shape as input.
                 Higher values indicate higher certainty (further from max uncertainty point).
                 Lower values indicate higher uncertainty (closer to max uncertainty point).
         """
-        return (logits - self.max_uncertainty_point).abs()
+        return (endogenous - self.max_uncertainty_point).abs()

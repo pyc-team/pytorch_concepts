@@ -266,7 +266,7 @@ class BaseLearner(pl.LightningModule):
         concepts with varying cardinalities.
         
         Args:
-            c_hat (torch.Tensor): Predicted concepts (logits or values).
+            c_hat (torch.Tensor): Predicted concepts (endogenous or values).
             c_true (torch.Tensor): Ground truth concepts.
             binary_fn (Optional[Callable]): Function for binary concepts 
                 (metric.update).
@@ -278,33 +278,33 @@ class BaseLearner(pl.LightningModule):
                 else None (metrics updated in-place).
                 
         Note:
-            For categorical concepts, logits are padded to max_card and stacked
+            For categorical concepts, endogenous are padded to max_card and stacked
             for batch processing. This is a known performance bottleneck (FIXME).
         """
 
         if binary_fn:
-            c_hat_binary = c_hat[:, self.groups['binary_logits']]
+            c_hat_binary = c_hat[:, self.groups['binary_endogenous']]
             c_true_binary = c_true[:, self.groups['binary_concepts']].float()
             binary_fn.update(c_hat_binary, c_true_binary)
 
         if categorical_fn:
             # Pad all tensors to max cardinality and stack
             # FIXME: optimize this operation, could this for loop be avoided?
-            split_tuple = torch.split(c_hat[:, self.groups['categorical_logits']], 
+            split_tuple = torch.split(c_hat[:, self.groups['categorical_endogenous']], 
                                       [self.concept_annotations.cardinalities[i] 
                                        for i in self.groups['categorical_concepts']], dim=1)
-            padded_logits = [
-                torch.nn.functional.pad(logits, (0, self.max_card - logits.shape[1]), value=float('-inf'))
-                for logits in split_tuple
+            padded_endogenous = [
+                torch.nn.functional.pad(endogenous, (0, self.max_card - endogenous.shape[1]), value=float('-inf'))
+                for endogenous in split_tuple
             ]
-            c_hat_group = torch.cat(padded_logits, dim=0)
+            c_hat_group = torch.cat(padded_endogenous, dim=0)
             c_true_group = c_true[:, self.groups['categorical_concepts']].T.reshape(-1).long()
             
             categorical_fn.update(c_hat_group, c_true_group)
 
         if continuous_fn:
             # TODO: verify correctness
-            c_hat_continuous = c_hat[:, self.groups['continuous_logits']]
+            c_hat_continuous = c_hat[:, self.groups['continuous_endogenous']]
             c_true_continuous = c_true[:, self.groups['continuous_concepts']]
             continuous_fn.update(c_hat_continuous, c_true_continuous)
 
@@ -374,7 +374,7 @@ class BaseLearner(pl.LightningModule):
                     metric_collection[key].update(c_hat[:, start_idx:end_idx], 
                                                   c_true[:, c_id:c_id+1].float())
                 elif c_type == 'discrete' and card > 1:
-                    # Extract logits for this categorical concept
+                    # Extract endogenous for this categorical concept
                     metric_collection[key].update(c_hat[:, start_idx:end_idx], 
                                                   c_true[:, c_id].long())
                 elif c_type == 'continuous':

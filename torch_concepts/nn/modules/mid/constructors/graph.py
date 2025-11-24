@@ -137,23 +137,23 @@ class GraphModel(BaseConstructor):
         self.graph_order_idx = [self.labels.index(i) for i in self.graph_order]
         self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
-        # embedding variable and CPDs
-        embedding_var = LatentVariable('embedding', parents=[], size=self.input_size)
-        embedding_cpd = ParametricCPD('embedding', parametrization=Identity())
+        # latent variable and CPDs
+        latent_var = LatentVariable('latent', parents=[], size=self.input_size)
+        latent_cpd = ParametricCPD('latent', parametrization=Identity())
 
         # concepts init
         if source_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
-            source_exogenous_vars, source_exogenous_cpds = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            source_exogenous_vars, source_exogenous_cpds = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=latent_var, cardinalities=cardinalities)
             encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=source_exogenous_vars, cardinalities=cardinalities)
         else:
             source_exogenous_vars, source_exogenous_cpds = [], []
-            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[embedding_var])
+            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[latent_var])
 
         # tasks init
         if internal_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.internal_node_idx[idx]] for idx, c in enumerate(self.internal_nodes)]
-            internal_exogenous_vars, internal_exogenous_cpds = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=embedding_var, cardinalities=cardinalities)
+            internal_exogenous_vars, internal_exogenous_cpds = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=latent_var, cardinalities=cardinalities)
             predictor_vars, predictor_cpds = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, self_exog_vars=internal_exogenous_vars, cardinalities=cardinalities)
         elif use_source_exogenous:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
@@ -165,8 +165,8 @@ class GraphModel(BaseConstructor):
 
         # ProbabilisticModel Initialization
         self.probabilistic_model = ProbabilisticModel(
-            variables=[embedding_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
-            parametric_cpds=[embedding_cpd, *source_exogenous_cpds, *encoder_cpds, *internal_exogenous_cpds, *predictor_cpds],
+            variables=[latent_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
+            parametric_cpds=[latent_cpd, *source_exogenous_cpds, *encoder_cpds, *internal_exogenous_cpds, *predictor_cpds],
         )
 
     def _init_exog(self, layer: LazyConstructor, label_names, parent_var, cardinalities) -> Tuple[Variable, ParametricCPD]:
@@ -176,7 +176,7 @@ class GraphModel(BaseConstructor):
         Args:
             layer: LazyConstructor for exogenous features.
             label_names: Names of concepts to create exogenous features for.
-            parent_var: Parent variable (typically embedding).
+            parent_var: Parent variable (typically latent).
             cardinalities: Cardinalities of each concept.
 
         Returns:
@@ -185,12 +185,12 @@ class GraphModel(BaseConstructor):
         exog_names = [f"exog_{c}_state_{i}" for cix, c in enumerate(label_names) for i in range(cardinalities[cix])]
         exog_vars = ExogenousVariable(exog_names,
                             parents=parent_var.concepts,
-                            distribution = Delta,
-                            size = layer._module_kwargs['embedding_size'])
+                            distribution=Delta,
+                            size=layer._module_kwargs['exogenous_size'])
 
         lazy_constructor = layer.build(
-            in_features_embedding=parent_var.size,
-            in_features_logits=None,
+            in_features_latent=parent_var.size,
+            in_features_endogenous=None,
             in_features_exogenous=None,
             out_features=1,
         )
@@ -205,15 +205,15 @@ class GraphModel(BaseConstructor):
         Args:
             layer: LazyConstructor for encoding.
             label_names: Names of root concepts.
-            parent_vars: Parent variables (embedding or exogenous).
+            parent_vars: Parent variables (latent or exogenous).
             cardinalities: Optional cardinalities for concepts.
 
         Returns:
             Tuple of (encoder variables, encoder parametric_cpds).
         """
-        if parent_vars[0].concepts[0] == 'embedding':
+        if parent_vars[0].concepts[0] == 'latent':
             encoder_vars = EndogenousVariable(label_names,
-                                parents=['embedding'],
+                                parents=['latent'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
                                 size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
             # Ensure encoder_vars is always a list
@@ -221,8 +221,8 @@ class GraphModel(BaseConstructor):
                 encoder_vars = [encoder_vars]
 
             lazy_constructor = layer.build(
-                in_features_embedding=parent_vars[0].size,
-                in_features_logits=None,
+                in_features_latent=parent_vars[0].size,
+                in_features_endogenous=None,
                 in_features_exogenous=None,
                 out_features=encoder_vars[0].size,
             )
@@ -242,8 +242,8 @@ class GraphModel(BaseConstructor):
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
                 lazy_constructor = layer.build(
-                    in_features_embedding=None,
-                    in_features_logits=None,
+                    in_features_latent=None,
+                    in_features_endogenous=None,
                     in_features_exogenous=exog_vars[0].size,
                     out_features=encoder_var.size,
                 )
@@ -278,7 +278,7 @@ class GraphModel(BaseConstructor):
         for c_name in label_names:
             endogenous_parents_names = self.model_graph.get_predecessors(c_name)
             endogenous_parents_vars = [v for v in available_vars if v.concepts[0] in endogenous_parents_names]
-            in_features_logits = sum([c.size for c in endogenous_parents_vars])
+            in_features_endogenous = sum([c.size for c in endogenous_parents_vars])
 
             # check exogenous
             if self_exog_vars is not None:
@@ -301,11 +301,11 @@ class GraphModel(BaseConstructor):
                                     distribution=self.annotations[1].metadata[c_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])
 
-            # TODO: we currently assume predictors can use exogenous vars if any, but not embedding
+            # TODO: we currently assume predictors can use exogenous vars if any, but not latent
             lazy_constructor = layer.build(
-                in_features_logits=in_features_logits,
+                in_features_endogenous=in_features_endogenous,
                 in_features_exogenous=in_features_exogenous,
-                in_features_embedding=None,
+                in_features_latent=None,
                 out_features=predictor_var.size,
                 cardinalities=[predictor_var.size]
             )

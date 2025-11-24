@@ -129,10 +129,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        logits = model(x_batch, query=query)
+        endogenous = model(x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output logits shape: {logits.shape}")
+    print(f"Output endogenous shape: {endogenous.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -163,9 +163,9 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        logits = model(x_train, query=query)
-        c_pred = logits[:, :n_concepts]
-        y_pred = logits[:, n_concepts:]
+        endogenous = model(x_train, query=query)
+        c_pred = endogenous[:, :n_concepts]
+        y_pred = endogenous[:, n_concepts:]
         
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()

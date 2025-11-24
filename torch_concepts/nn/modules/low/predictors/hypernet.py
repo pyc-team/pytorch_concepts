@@ -15,7 +15,7 @@ class HyperLinearPredictor(BasePredictor):
     stochastic biases with learnable mean and standard deviation.
 
     Attributes:
-        in_features_logits (int): Number of input concept logits.
+        in_features_endogenous (int): Number of input concept endogenous.
         in_features_exogenous (int): Number of exogenous features.
         embedding_size (int): Hidden size of the hypernetwork.
         out_features (int): Number of output features.
@@ -23,10 +23,9 @@ class HyperLinearPredictor(BasePredictor):
         hypernet (nn.Module): Hypernetwork that generates weights.
 
     Args:
-        in_features_logits: Number of input concept logits.
+        in_features_endogenous: Number of input concept endogenous.
         in_features_exogenous: Number of exogenous input features.
         embedding_size: Hidden dimension of hypernetwork.
-        out_features: Number of output task features.
         in_activation: Activation function for concepts (default: identity).
         use_bias: Whether to add stochastic bias (default: True).
         init_bias_mean: Initial mean for bias distribution (default: 0.0).
@@ -39,40 +38,40 @@ class HyperLinearPredictor(BasePredictor):
         >>>
         >>> # Create hypernetwork predictor
         >>> predictor = HyperLinearPredictor(
-        ...     in_features_logits=10,      # 10 concepts
+        ...     in_features_endogenous=10,      # 10 concepts
         ...     in_features_exogenous=128,   # 128-dim context features
         ...     embedding_size=64,           # Hidden dim of hypernet
         ...     use_bias=True
         ... )
         >>>
         >>> # Generate random inputs
-        >>> concept_logits = torch.randn(4, 10)   # batch_size=4, n_concepts=10
+        >>> concept_endogenous = torch.randn(4, 10)   # batch_size=4, n_concepts=10
         >>> exogenous = torch.randn(4, 3, 128)         # batch_size=4, n_tasks=3, exogenous_dim=128
         >>>
         >>> # Forward pass - generates per-sample weights via hypernetwork
-        >>> task_logits = predictor(logits=concept_logits, exogenous=exogenous)
-        >>> print(task_logits.shape)  # torch.Size([4, 3])
+        >>> task_endogenous = predictor(endogenous=concept_endogenous, exogenous=exogenous)
+        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
         >>>
         >>> # The hypernetwork generates different weights for each sample
         >>> # This enables sample-adaptive predictions
         >>>
         >>> # Example without bias
         >>> predictor_no_bias = HyperLinearPredictor(
-        ...     in_features_logits=10,
+        ...     in_features_endogenous=10,
         ...     in_features_exogenous=128,
         ...     embedding_size=64,
         ...     use_bias=False
         ... )
         >>>
-        >>> task_logits = predictor_no_bias(logits=concept_logits, exogenous=exogenous)
-        >>> print(task_logits.shape)  # torch.Size([4, 3])
+        >>> task_endogenous = predictor_no_bias(endogenous=concept_endogenous, exogenous=exogenous)
+        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
 
     References:
         Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024. https://arxiv.org/abs/2407.15527
     """
     def __init__(
         self,
-        in_features_logits: int,
+        in_features_endogenous: int,
         in_features_exogenous: int,
         embedding_size: int,
         in_activation: Callable = lambda x: x,
@@ -83,7 +82,7 @@ class HyperLinearPredictor(BasePredictor):
     ):
         in_features_exogenous = in_features_exogenous
         super().__init__(
-            in_features_logits=in_features_logits,
+            in_features_endogenous=in_features_endogenous,
             in_features_exogenous=in_features_exogenous,
             out_features=-1,
             in_activation=in_activation,
@@ -97,7 +96,7 @@ class HyperLinearPredictor(BasePredictor):
             torch.nn.LeakyReLU(),
             torch.nn.Linear(
                 embedding_size,
-                in_features_logits
+                in_features_endogenous
             ),
         )
 
@@ -119,14 +118,14 @@ class HyperLinearPredictor(BasePredictor):
 
     def forward(
             self,
-            logits: torch.Tensor,
+            endogenous: torch.Tensor,
             exogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Forward pass through hypernetwork predictor.
 
         Args:
-            logits: Concept logits of shape (batch_size, n_concepts).
+            endogenous: Concept endogenous of shape (batch_size, n_concepts).
             exogenous: Exogenous features of shape (batch_size, exog_dim).
 
         Returns:
@@ -134,17 +133,17 @@ class HyperLinearPredictor(BasePredictor):
         """
         weights = self.hypernet(exogenous)
 
-        in_probs = self.in_activation(logits)
-        out_logits = torch.einsum('bc,byc->by', in_probs, weights)
+        in_probs = self.in_activation(endogenous)
+        out_endogenous = torch.einsum('bc,byc->by', in_probs, weights)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable
-            eps = torch.randn_like(out_logits)              # ~ N(0,1)
-            std = self._bias_std().to(out_logits.dtype).to(out_logits.device)  # scalar -> broadcast
-            mean = self.bias_mean.to(out_logits.dtype).to(out_logits.device)   # scalar -> broadcast
-            out_logits = out_logits + mean + std * eps
+            eps = torch.randn_like(out_endogenous)              # ~ N(0,1)
+            std = self._bias_std().to(out_endogenous.dtype).to(out_endogenous.device)  # scalar -> broadcast
+            mean = self.bias_mean.to(out_endogenous.dtype).to(out_endogenous.device)   # scalar -> broadcast
+            out_endogenous = out_endogenous + mean + std * eps
 
-        return out_logits
+        return out_endogenous
 
     def prune(self, mask: torch.Tensor):
         """
@@ -153,5 +152,5 @@ class HyperLinearPredictor(BasePredictor):
         Args:
             mask: Binary mask of shape (n_concepts,) indicating which concepts to keep.
         """
-        self.in_features_logits = mask.int().sum().item()
+        self.in_features_endogenous = mask.int().sum().item()
         self.hypernet[-1] = prune_linear_layer(self.hypernet[-1], mask, dim=1)

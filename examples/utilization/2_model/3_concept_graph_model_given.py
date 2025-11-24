@@ -46,8 +46,8 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(ExogEncoder, embedding_size=12),
-                                   internal_exogenous=LazyConstructor(ExogEncoder, embedding_size=13),
+                                   source_exogenous=LazyConstructor(ExogEncoder, exogenous_size=12),
+                                   internal_exogenous=LazyConstructor(ExogEncoder, exogenous_size=13),
                                    encoder=LazyConstructor(ProbEncoderFromExog),
                                    predictor=LazyConstructor(HyperLinearPredictor, embedding_size=11))
 
@@ -65,7 +65,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
         y2_pred = cy_pred[:, c_train.shape[1]+1:]
@@ -91,7 +91,7 @@ def main():
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
         y2_pred = cy_pred[:, c_train.shape[1]+1:]
@@ -107,7 +107,7 @@ def main():
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=["c1"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
             y2_pred = cy_pred[:, c_train.shape[1]+1:]

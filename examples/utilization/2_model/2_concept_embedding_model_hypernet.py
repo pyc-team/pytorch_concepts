@@ -26,6 +26,7 @@ def main():
     task_names = ['xor']
 
     y_train = torch.cat([y_train, 1-y_train], dim=1)
+    cy_train = torch.cat([c_train, y_train], dim=1)
 
     cardinalities = [1, 1, 2]
     metadata = {
@@ -40,8 +41,8 @@ def main():
     concept_model = BipartiteModel(task_names=list(task_names),
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(ExogEncoder, embedding_size=12),
-                                   internal_exogenous=LazyConstructor(ExogEncoder, embedding_size=13),
+                                   source_exogenous=LazyConstructor(ExogEncoder, exogenous_size=12),
+                                   internal_exogenous=LazyConstructor(ExogEncoder, exogenous_size=13),
                                    encoder=LazyConstructor(ProbEncoderFromExog),
                                    predictor=LazyConstructor(HyperLinearPredictor, embedding_size=11))
 
@@ -62,14 +63,14 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
         with intervention(policies=[int_policy_c, int_policy_c],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
             c_pred_int = cy_pred[:, :c_train.shape[1]]
             y_pred_int = cy_pred[:, c_train.shape[1]:]
 
@@ -98,7 +99,7 @@ def main():
     with intervention(policies=int_policy_random,
                       strategies=int_strategy_random,
                       target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
         task_accuracy = accuracy_score(y_train, y_pred > 0.5)
@@ -110,7 +111,7 @@ def main():
         with intervention(policies=[int_policy_c, int_policy_c],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:]
             task_accuracy = accuracy_score(y_train, y_pred > 0.5)

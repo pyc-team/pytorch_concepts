@@ -154,10 +154,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        logits = model(x_batch, query=query)
+        endogenous = model(x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output logits shape: {logits.shape}")
+    print(f"Output endogenous shape: {endogenous.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 

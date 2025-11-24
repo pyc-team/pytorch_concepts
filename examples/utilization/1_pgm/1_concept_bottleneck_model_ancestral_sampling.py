@@ -30,8 +30,8 @@ def main():
 
     # ParametricCPD setup
     backbone = ParametricCPD("emb", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
-    y_predictor = ParametricCPD("xor", parametrization=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=ProbEncoderFromEmb(in_features_latent=latent_dims, out_features=concepts[0].size))
+    y_predictor = ParametricCPD("xor", parametrization=ProbPredictor(in_features_endogenous=sum(c.size for c in concepts), out_features=tasks.size))
 
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])

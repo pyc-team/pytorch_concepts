@@ -65,35 +65,35 @@ class BlackBox(BaseModel, JointLearner):
                 query: List[str] = None,
         ) -> torch.Tensor:
         features = self.maybe_apply_backbone(x)
-        logits = self.mlp(features)
-        return logits
+        endogenous = self.mlp(features)
+        return endogenous
 
     def filter_output_for_loss(self, forward_out, target):
-        """No filtering needed - return raw logits for standard loss computation.
+        """No filtering needed - return raw endogenous for standard loss computation.
 
         Args:
-            forward_out: Model output logits.
+            forward_out: Model output endogenous.
             target: Ground truth labels.
 
         Returns:
             Dict with 'input' and 'target' for loss computation.
         """
-        # forward_out: logits
-        # return: logits
+        # forward_out: endogenous
+        # return: endogenous
         return {'input': forward_out,
                 'target': target}
 
     def filter_output_for_metric(self, forward_out, target):
-        """No filtering needed - return raw logits for metric computation.
+        """No filtering needed - return raw endogenous for metric computation.
 
         Args:
-            forward_out: Model output logits.
+            forward_out: Model output endogenous.
             target: Ground truth labels.
 
         Returns:
             Dict with 'input' and 'target' for metric computation.
         """
-        # forward_out: logits
-        # return: logits
+        # forward_out: endogenous
+        # return: endogenous
         return {'input': forward_out,
                 'target': target}

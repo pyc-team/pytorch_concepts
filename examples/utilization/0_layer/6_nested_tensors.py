@@ -47,11 +47,11 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
                                out_features=c_annotations.shape[1],
-                               embedding_size=latent_dims)
+                               exogenous_size=latent_dims)
     c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims)
-    y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
+    y_predictor = MixProbExogPredictor(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
                                        out_features=y_annotations.shape[1],
                                        cardinalities=c_annotations.get_axis_annotation(1).cardinalities)
@@ -69,9 +69,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        exog = exog_encoder(embedding=emb)
+        exog = exog_encoder(latent=emb)
         c_pred = c_encoder(exogenous=exog)
-        y_pred = y_predictor(logits=c_pred, exogenous=exog)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=exog)
 
         # compute loss
         concept_loss = 0

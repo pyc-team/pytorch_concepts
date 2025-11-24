@@ -26,7 +26,7 @@ from .modules.low.encoders.selector import MemorySelector
 
 # Predictors
 from .modules.low.predictors.linear import ProbPredictor
-from .modules.low.predictors.embedding import MixProbExogPredictor
+from .modules.low.predictors.exogenous import MixProbExogPredictor
 from .modules.low.predictors.hypernet import HyperLinearPredictor
 from .modules.low.predictors.call import CallablePredictor
 
