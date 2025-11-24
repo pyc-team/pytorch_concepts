@@ -23,13 +23,12 @@ LICENSE = 'Apache 2.0'
 DOWNLOAD_URL = 'https://github.com/pyc-team/pytorch_concepts'
 VERSION = about["__version__"]
 INSTALL_REQUIRES = [
-    'numpy',
-    'Pillow',
     'scikit-learn',
     'scipy',
     'torch',
     'pytorch-minimize',
     'pytorch-lightning',
+    'networkx',
 ]
 CLASSIFIERS = [
     'Intended Audience :: Developers',
@@ -56,6 +55,7 @@ EXTRAS_REQUIRE = {
         'bnlearn',
         'datasets',
         'transformers',
+        'pytables',
     ],
     'tests': [
         'pytest-cov',

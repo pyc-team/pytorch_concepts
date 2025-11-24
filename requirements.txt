@@ -1,10 +1,7 @@
 scikit-learn
 torch
-opencv-python
 pytorch-minimize
 pgmpy
-bnlearn
 pandas
-torchvision
-datasets
-transformers
+pytorch-lightning
+networkx
