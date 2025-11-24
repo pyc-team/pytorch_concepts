@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Type, Union, Mapping, override
+from typing import Dict, List, Optional, Type, Union, Mapping
 from torch import nn
 import torch
 
@@ -53,7 +53,6 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 
         self.inference = inference(self.model.probabilistic_model)
 
-    @override
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None
