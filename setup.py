@@ -55,7 +55,7 @@ EXTRAS_REQUIRE = {
         'bnlearn',
         'datasets',
         'transformers',
-        'pytables',
+        'tables',
     ],
     'tests': [
         'pytest-cov',
