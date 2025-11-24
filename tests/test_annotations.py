@@ -15,57 +15,57 @@ class TestAxisAnnotation(unittest.TestCase):
 
     def test_binary_concepts_initialization(self):
         """Test initialization of binary concepts (non-nested)."""
-        axis = AxisAnnotation(labels=('has_wheels', 'has_windows', 'is_red'))
+        axis = AxisAnnotation(labels=['has_wheels', 'has_windows', 'is_red'])
 
-        self.assertEqual(axis.labels, ('has_wheels', 'has_windows', 'is_red'))
+        self.assertEqual(axis.labels, ['has_wheels', 'has_windows', 'is_red'])
         self.assertFalse(axis.is_nested)
-        self.assertEqual(axis.cardinalities, (1, 1, 1))
+        self.assertEqual(axis.cardinalities, [1, 1, 1])
         self.assertEqual(len(axis), 3)
         self.assertEqual(axis.shape, 3)
 
     def test_nested_concepts_with_states(self):
         """Test initialization of nested concepts with explicit states."""
         axis = AxisAnnotation(
-            labels=('color', 'shape', 'size'),
-            states=(('red', 'green', 'blue'), ('circle', 'square', 'triangle'), ('small', 'large'))
+            labels=['color', 'shape', 'size'],
+            states=[['red', 'green', 'blue'], ['circle', 'square', 'triangle'], ['small', 'large']]
         )
 
-        self.assertEqual(axis.labels, ('color', 'shape', 'size'))
+        self.assertEqual(axis.labels, ['color', 'shape', 'size'])
         self.assertTrue(axis.is_nested)
-        self.assertEqual(axis.cardinalities, (3, 3, 2))  # When only states provided, cardinality is length of states
-        self.assertEqual(axis.states, (('red', 'green', 'blue'), ('circle', 'square', 'triangle'), ('small', 'large')))
+        self.assertEqual(axis.cardinalities, [3, 3, 2])  # When only states provided, cardinality is length of states
+        self.assertEqual(axis.states, [['red', 'green', 'blue'], ['circle', 'square', 'triangle'], ['small', 'large']])
         self.assertEqual(axis.shape, 8)  # 3 + 3 + 2
 
     def test_nested_concepts_with_cardinalities(self):
         """Test initialization of nested concepts with only cardinalities."""
         axis = AxisAnnotation(
-            labels=('size', 'material'),
-            cardinalities=(3, 4)
+            labels=['size', 'material'],
+            cardinalities=[3, 4]
         )
 
-        self.assertEqual(axis.labels, ('size', 'material'))
+        self.assertEqual(axis.labels, ['size', 'material'])
         self.assertTrue(axis.is_nested)
-        self.assertEqual(axis.cardinalities, (3, 4))
+        self.assertEqual(axis.cardinalities, [3, 4])
         # Auto-generated states
-        self.assertEqual(axis.states[0], ('0', '1', '2'))
-        self.assertEqual(axis.states[1], ('0', '1', '2', '3'))
+        self.assertEqual(axis.states[0], ['0', '1', '2'])
+        self.assertEqual(axis.states[1], ['0', '1', '2', '3'])
 
     def test_states_and_cardinalities_consistency(self):
         """Test that states and cardinalities are validated for consistency."""
         # Valid: states match cardinalities
         axis = AxisAnnotation(
-            labels=('color',),
+            labels=['color',],
             states=(('red', 'green', 'blue'),),
-            cardinalities=(3,)
+            cardinalities=[3,]
         )
-        self.assertEqual(axis.cardinalities, (3,))
+        self.assertEqual(axis.cardinalities, [3,])
 
         # Invalid: cardinalities don't match states
         with self.assertRaises(ValueError) as context:
             AxisAnnotation(
-                labels=('color',),
+                labels=['color',],
                 states=(('red', 'green', 'blue'),),
-                cardinalities=(2,)
+                cardinalities=[2,]
             )
         self.assertIn("don't match", str(context.exception))
 
@@ -73,7 +73,7 @@ class TestAxisAnnotation(unittest.TestCase):
         """Test error when states length doesn't match labels length."""
         with self.assertRaises(ValueError) as context:
             AxisAnnotation(
-                labels=('color', 'shape'),
+                labels=['color', 'shape'],
                 states=(('red', 'green', 'blue'),)  # Missing state tuple for 'shape'
             )
         self.assertIn("must match", str(context.exception))
@@ -82,8 +82,8 @@ class TestAxisAnnotation(unittest.TestCase):
         """Test error when cardinalities length doesn't match labels length."""
         with self.assertRaises(ValueError) as context:
             AxisAnnotation(
-                labels=('color', 'shape'),
-                cardinalities=(3,)  # Missing cardinality for 'shape'
+                labels=['color', 'shape'],
+                cardinalities=[3,]  # Missing cardinality for 'shape'
             )
         self.assertIn("must match", str(context.exception))
 
@@ -91,15 +91,15 @@ class TestAxisAnnotation(unittest.TestCase):
         """Test warning when neither states nor cardinalities provided."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            axis = AxisAnnotation(labels=('concept1', 'concept2'))
+            axis = AxisAnnotation(labels=['concept1', 'concept2'])
 
             self.assertEqual(len(w), 1)
             self.assertIn("binary", str(w[0].message))
-            self.assertEqual(axis.cardinalities, (1, 1))
+            self.assertEqual(axis.cardinalities, [1, 1])
 
     def test_get_index_and_label(self):
         """Test get_index and get_label methods."""
-        axis = AxisAnnotation(labels=('a', 'b', 'c'))
+        axis = AxisAnnotation(labels=['a', 'b', 'c'])
 
         self.assertEqual(axis.get_index('a'), 0)
         self.assertEqual(axis.get_index('b'), 1)
@@ -119,7 +119,7 @@ class TestAxisAnnotation(unittest.TestCase):
 
     def test_getitem(self):
         """Test __getitem__ method."""
-        axis = AxisAnnotation(labels=('a', 'b', 'c'))
+        axis = AxisAnnotation(labels=['a', 'b', 'c'])
 
         self.assertEqual(axis[0], 'a')
         self.assertEqual(axis[1], 'b')
@@ -131,12 +131,12 @@ class TestAxisAnnotation(unittest.TestCase):
     def test_get_total_cardinality(self):
         """Test get_total_cardinality method."""
         axis_nested = AxisAnnotation(
-            labels=('color', 'shape'),
-            cardinalities=(3, 2)
+            labels=['color', 'shape'],
+            cardinalities=[3, 2]
         )
         self.assertEqual(axis_nested.get_total_cardinality(), 5)
 
-        axis_flat = AxisAnnotation(labels=('a', 'b', 'c'))
+        axis_flat = AxisAnnotation(labels=['a', 'b', 'c'])
         self.assertEqual(axis_flat.get_total_cardinality(), 3)
 
     def test_metadata(self):
@@ -146,8 +146,8 @@ class TestAxisAnnotation(unittest.TestCase):
             'shape': {'type': 'discrete', 'group': 'geometry'}
         }
         axis = AxisAnnotation(
-            labels=('color', 'shape'),
-            cardinalities=(3, 2),
+            labels=['color', 'shape'],
+            cardinalities=[3, 2],
             metadata=metadata
         )
 
@@ -160,8 +160,8 @@ class TestAxisAnnotation(unittest.TestCase):
 
         with self.assertRaises(ValueError) as context:
             AxisAnnotation(
-                labels=('color', 'shape'),
-                cardinalities=(3, 2),
+                labels=['color', 'shape'],
+                cardinalities=[3, 2],
                 metadata=metadata
             )
         self.assertIn("Metadata missing", str(context.exception))
@@ -174,7 +174,7 @@ class TestAxisAnnotation(unittest.TestCase):
             'size': {'type': 'continuous', 'group': 'geometry'}
         }
         axis = AxisAnnotation(
-            labels=('color', 'shape', 'size'),
+            labels=['color', 'shape', 'size'],
             metadata=metadata
         )
 
@@ -191,8 +191,8 @@ class TestAxisAnnotation(unittest.TestCase):
     def test_to_dict_and_from_dict(self):
         """Test serialization and deserialization."""
         axis = AxisAnnotation(
-            labels=('color', 'shape'),
-            states=(('red', 'green', 'blue'), ('circle', 'square', 'triangle')),
+            labels=['color', 'shape'],
+            states=[['red', 'green', 'blue'], ['circle', 'square', 'triangle']],
             metadata={'color': {'type': 'discrete'}, 'shape': {'type': 'discrete'}}
         )
 
@@ -208,14 +208,14 @@ class TestAxisAnnotation(unittest.TestCase):
 
     def test_repr(self):
         """Test __repr__ method."""
-        axis = AxisAnnotation(labels=('a', 'b'))
+        axis = AxisAnnotation(labels=['a', 'b'])
         repr_str = repr(axis)
         self.assertIn('AxisAnnotation', repr_str)
         self.assertIn('a', repr_str)
 
     def test_str(self):
         """Test __str__ method."""
-        axis = AxisAnnotation(labels=('concept1', 'concept2'))
+        axis = AxisAnnotation(labels=['concept1', 'concept2'])
         str_output = str(axis)
         self.assertIsInstance(str_output, str)
         self.assertIn('concept1', str_output)
@@ -231,8 +231,8 @@ class TestAnnotations(unittest.TestCase):
 
     def test_initialization_with_axes(self):
         """Test initialization with axis annotations."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
-        axis2 = AxisAnnotation(labels=('x', 'y', 'z'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
+        axis2 = AxisAnnotation(labels=['x', 'y', 'z'])
 
         annotations = Annotations(axis_annotations={1: axis1, 2: axis2})
         self.assertEqual(len(annotations.axis_annotations), 2)
@@ -241,7 +241,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_getitem(self):
         """Test __getitem__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         retrieved = annotations[1]
@@ -250,14 +250,14 @@ class TestAnnotations(unittest.TestCase):
     def test_setitem(self):
         """Test __setitem__ method."""
         annotations = Annotations()
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
 
         annotations[1] = axis1
         self.assertEqual(annotations[1], axis1)
 
     def test_delitem(self):
         """Test __delitem__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         del annotations[1]
@@ -265,7 +265,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_contains(self):
         """Test __contains__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         self.assertTrue(1 in annotations)
@@ -273,16 +273,16 @@ class TestAnnotations(unittest.TestCase):
 
     def test_len(self):
         """Test __len__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
-        axis2 = AxisAnnotation(labels=('x', 'y'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
+        axis2 = AxisAnnotation(labels=['x', 'y'])
         annotations = Annotations(axis_annotations={1: axis1, 2: axis2})
 
         self.assertEqual(len(annotations), 2)
 
     def test_iter(self):
         """Test __iter__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
-        axis2 = AxisAnnotation(labels=('x', 'y'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
+        axis2 = AxisAnnotation(labels=['x', 'y'])
         annotations = Annotations(axis_annotations={1: axis1, 2: axis2})
 
         keys = list(annotations)
@@ -290,7 +290,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_keys(self):
         """Test keys method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         keys = list(annotations.keys())
@@ -298,7 +298,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_values(self):
         """Test values method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         values = list(annotations.values())
@@ -307,7 +307,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_items(self):
         """Test items method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         items = list(annotations.items())
@@ -316,8 +316,8 @@ class TestAnnotations(unittest.TestCase):
 
     def test_to_dict_and_from_dict(self):
         """Test serialization and deserialization."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
-        axis2 = AxisAnnotation(labels=('x', 'y', 'z'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
+        axis2 = AxisAnnotation(labels=['x', 'y', 'z'])
         annotations = Annotations(axis_annotations={1: axis1, 2: axis2})
 
         # Serialize
@@ -330,9 +330,9 @@ class TestAnnotations(unittest.TestCase):
 
     def test_multiple_axes(self):
         """Test with multiple axis annotations."""
-        axis0 = AxisAnnotation(labels=('batch',))
-        axis1 = AxisAnnotation(labels=('color', 'shape'))
-        axis2 = AxisAnnotation(labels=('x', 'y', 'z'))
+        axis0 = AxisAnnotation(labels=['batch',])
+        axis1 = AxisAnnotation(labels=['color', 'shape'])
+        axis2 = AxisAnnotation(labels=['x', 'y', 'z'])
 
         annotations = Annotations(axis_annotations={0: axis0, 1: axis1, 2: axis2})
         self.assertEqual(len(annotations), 3)
@@ -340,8 +340,8 @@ class TestAnnotations(unittest.TestCase):
     def test_nested_concepts_in_annotations(self):
         """Test annotations with nested concepts."""
         axis = AxisAnnotation(
-            labels=('color', 'shape'),
-            cardinalities=(3, 4)
+            labels=['color', 'shape'],
+            cardinalities=[3, 4]
         )
         annotations = Annotations(axis_annotations={1: axis})
 
@@ -349,7 +349,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_repr(self):
         """Test __repr__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         repr_str = repr(annotations)
@@ -358,7 +358,7 @@ class TestAnnotations(unittest.TestCase):
 
     def test_str(self):
         """Test __str__ method."""
-        axis1 = AxisAnnotation(labels=('a', 'b'))
+        axis1 = AxisAnnotation(labels=['a', 'b'])
         annotations = Annotations(axis_annotations={1: axis1})
 
         str_output = str(annotations)
@@ -378,7 +378,7 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
 
     def test_single_label(self):
         """Test with single label."""
-        axis = AxisAnnotation(labels=('single',))
+        axis = AxisAnnotation(labels=['single',])
         self.assertEqual(len(axis), 1)
         self.assertEqual(axis[0], 'single')
 
@@ -391,8 +391,8 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
     def test_large_cardinality(self):
         """Test with large cardinality."""
         axis = AxisAnnotation(
-            labels=('concept',),
-            cardinalities=(1000,)
+            labels=['concept',],
+            cardinalities=[1000,]
         )
         self.assertEqual(axis.cardinalities[0], 1000)
         self.assertEqual(len(axis.states[0]), 1000)
@@ -400,14 +400,14 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
     def test_mixed_cardinalities(self):
         """Test with mixed cardinalities (binary and multi-class)."""
         axis = AxisAnnotation(
-            labels=('binary', 'ternary', 'quad', 'many'),
-            cardinalities=(1, 3, 4, 10)
+            labels=['binary', 'ternary', 'quad', 'many'],
+            cardinalities=[1, 3, 4, 10]
         )
-        self.assertEqual(axis.cardinalities, (1, 3, 4, 10))
+        self.assertEqual(axis.cardinalities, [1, 3, 4, 10])
 
     def test_get_label_negative_index(self):
         """Test get_label with negative index."""
-        axis = AxisAnnotation(labels=('a', 'b', 'c'))
+        axis = AxisAnnotation(labels=['a', 'b', 'c'])
         # Negative indexing might not be supported
         with self.assertRaises((IndexError, ValueError)):
             axis.get_label(-1)
@@ -416,7 +416,7 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
         """Test warning or error with duplicate labels."""
         # Depending on implementation, this might raise or warn
         try:
-            axis = AxisAnnotation(labels=('a', 'b', 'a'))
+            axis = AxisAnnotation(labels=['a', 'b', 'a'])
             # If no error, check behavior
             self.assertEqual(len(axis.labels), 3)
         except ValueError:
@@ -425,7 +425,7 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
     def test_empty_metadata(self):
         """Test with empty metadata dict."""
         axis = AxisAnnotation(
-            labels=('a', 'b'),
+            labels=['a', 'b'],
             metadata={}
         )
         # Should work or raise error
@@ -433,18 +433,18 @@ class TestAxisAnnotationEdgeCases(unittest.TestCase):
 
     def test_special_characters_in_labels(self):
         """Test labels with special characters."""
-        axis = AxisAnnotation(labels=('label-1', 'label_2', 'label.3', 'label@4'))
+        axis = AxisAnnotation(labels=['label-1', 'label_2', 'label.3', 'label@4'])
         self.assertEqual(len(axis), 4)
 
     def test_unicode_labels(self):
         """Test labels with unicode characters."""
-        axis = AxisAnnotation(labels=('色彩', 'форма', '🎨'))
+        axis = AxisAnnotation(labels=['色彩', 'форма', '🎨'])
         self.assertEqual(len(axis), 3)
 
     def test_very_long_label_names(self):
         """Test with very long label names."""
         long_label = 'a' * 1000
-        axis = AxisAnnotation(labels=(long_label, 'short'))
+        axis = AxisAnnotation(labels=[long_label, 'short'])
         self.assertEqual(axis[0], long_label)
 
 

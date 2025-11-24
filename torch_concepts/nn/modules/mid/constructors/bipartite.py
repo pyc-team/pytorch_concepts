@@ -7,7 +7,7 @@ from .....annotations import Annotations
 from .concept_graph import ConceptGraph
 from ...low.lazy import LazyConstructor
 from .graph import GraphModel
-
+from .....data.utils import ensure_list
 
 class BipartiteModel(GraphModel):
     """
@@ -75,7 +75,7 @@ class BipartiteModel(GraphModel):
     """
     def __init__(
             self,
-            task_names: Union[List[str], str, List[int]],
+            task_names: Union[List[str], str],
             input_size: int,
             annotations: Annotations,
             encoder: LazyConstructor,
@@ -84,6 +84,7 @@ class BipartiteModel(GraphModel):
             source_exogenous: Optional[LazyConstructor] = None,
             internal_exogenous: Optional[LazyConstructor] = None,
     ):
+        task_names = ensure_list(task_names)
         # get label names
         label_names = annotations.get_axis_labels(axis=1)
         assert all([t in label_names for t in task_names]), (f"All tasks must be in axis label names. "

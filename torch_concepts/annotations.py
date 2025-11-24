@@ -22,16 +22,16 @@ class AxisAnnotation:
     supporting both simple binary concepts and nested multi-state concepts.
 
     Attributes:
-        labels (tuple[str, ...]): Ordered, unique labels for this axis.
-        states (Optional[tuple[tuple[str, ...], ...]]): State labels for each concept (if nested).
-        cardinalities (Optional[tuple[int, ...]]): Cardinality of each concept.
+        labels (list[str]): Ordered, unique labels for this axis.
+        states (Optional[list[list[str]]]): State labels for each concept (if nested).
+        cardinalities (Optional[list[int]]): Cardinality of each concept.
         metadata (Optional[Dict[str, Dict]]): Additional metadata for each label.
         is_nested (bool): Whether this axis has nested/hierarchical structure.
 
     Args:
-        labels: Tuple of concept names for this axis.
-        states: Optional tuple of state tuples for nested concepts.
-        cardinalities: Optional tuple of cardinalities per concept.
+        labels: List of concept names for this axis.
+        states: Optional list of state lists for nested concepts.
+        cardinalities: Optional list of cardinalities per concept.
         metadata: Optional metadata dictionary keyed by label names.
 
     Example:
@@ -39,29 +39,29 @@ class AxisAnnotation:
         >>>
         >>> # Simple binary concepts
         >>> axis_binary = AxisAnnotation(
-        ...     labels=('has_wheels', 'has_windows', 'is_red')
+        ...     labels=['has_wheels', 'has_windows', 'is_red']
         ... )
-        >>> print(axis_binary.labels)  # ('has_wheels', 'has_windows', 'is_red')
+        >>> print(axis_binary.labels)  # ['has_wheels', 'has_windows', 'is_red']
         >>> print(axis_binary.is_nested)  # False
-        >>> print(axis_binary.cardinalities)  # (1, 1, 1) - binary concepts
+        >>> print(axis_binary.cardinalities)  # [1, 1, 1] - binary concepts
         >>>
         >>> # Nested concepts with explicit states
         >>> axis_nested = AxisAnnotation(
-        ...     labels=('color', 'shape'),
-        ...     states=(('red', 'green', 'blue'), ('circle', 'square')),
+        ...     labels=['color', 'shape'],
+        ...     states=[['red', 'green', 'blue'], ['circle', 'square']],
         ... )
-        >>> print(axis_nested.labels)  # ('color', 'shape')
+        >>> print(axis_nested.labels)  # ['color', 'shape']
         >>> print(axis_nested.is_nested)  # True
-        >>> print(axis_nested.cardinalities)  # (3, 2)
-        >>> print(axis_nested.states[0])  # ('red', 'green', 'blue')
+        >>> print(axis_nested.cardinalities)  # [3, 2]
+        >>> print(axis_nested.states[0])  # ['red', 'green', 'blue']
         >>>
         >>> # With cardinalities only (auto-generates state labels)
         >>> axis_cards = AxisAnnotation(
-        ...     labels=('size', 'material'),
-        ...     cardinalities=(3, 4)  # 3 sizes, 4 materials
+        ...     labels=['size', 'material'],
+        ...     cardinalities=[3, 4]  # 3 sizes, 4 materials
         ... )
-        >>> print(axis_cards.cardinalities)  # (3, 4)
-        >>> print(axis_cards.states[0])  # ('0', '1', '2')
+        >>> print(axis_cards.cardinalities)  # [3, 4]
+        >>> print(axis_cards.states[0])  # ['0', '1', '2']
         >>>
         >>> # Access methods
         >>> idx = axis_binary.get_index('has_wheels')
@@ -69,9 +69,9 @@ class AxisAnnotation:
         >>> label = axis_binary.get_label(1)
         >>> print(label)  # 'has_windows'
     """
-    labels: Tuple[str, ...]
-    states: Optional[Tuple[Tuple[str, ...], ...]] = field(default=None)
-    cardinalities: Optional[Tuple[int, ...]] = field(default=None)
+    labels: List[str]
+    states: Optional[List[List[str]]] = field(default=None)
+    cardinalities: Optional[List[int]] = field(default=None)
     metadata: Optional[Dict[str, Dict]] = field(default=None)
 
     def __setattr__(self, key, value):
@@ -88,21 +88,21 @@ class AxisAnnotation:
         # Initialize states and cardinalities based on what's provided
         if self.states is not None and self.cardinalities is None:
             # Infer cardinalities from states
-            self.cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
+            self.cardinalities = [len(state_tuple) for state_tuple in self.states]
         elif self.states is None and self.cardinalities is not None:
             # Generate default state labels from cardinalities
-            self.states = tuple(
-                tuple(str(i) for i in range(card)) if card > 1 else ('0',)
+            self.states = [
+                [str(i) for i in range(card)] if card > 1 else ['0']
                 for card in self.cardinalities
-            )
+            ]
         elif self.states is None and self.cardinalities is None:
             # Neither provided - assume binary
             warnings.warn(
                 "Annotations: neither 'states' nor 'cardinalities' provided; "
                 "assuming all concepts are binary."
             )
-            self.cardinalities = tuple(1 for _ in self.labels)
-            self.states = tuple(('0',) for _ in self.labels)
+            self.cardinalities = [1 for _ in self.labels]
+            self.states = [['0'] for _ in self.labels]
         else:
             # Both provided - use as-is for now, will validate below
             pass
@@ -120,8 +120,9 @@ class AxisAnnotation:
             )
 
         # Verify states length matches cardinalities
-        inferred_cardinalities = tuple(len(state_tuple) for state_tuple in self.states)
-        if self.cardinalities != inferred_cardinalities:
+        # does not break with tuple cardinalities
+        inferred_cardinalities = [len(state_tuple) for state_tuple in self.states]
+        if list(self.cardinalities) != inferred_cardinalities:
             raise ValueError(
                 f"Provided cardinalities {self.cardinalities} don't match "
                 f"inferred cardinalities {inferred_cardinalities} from states"
@@ -153,6 +154,12 @@ class AxisAnnotation:
         if self.is_nested:
             return sum(self.cardinalities)
         return len(self.labels)
+    
+    def has_metadata(self, key) -> bool:
+        """Check if metadata contains a specific key for all labels."""
+        if self.metadata is None:
+            return False
+        return all(key in self.metadata.get(label, {}) for label in self.labels)
 
     def groupby_metadata(self, key, layout: str='labels') -> dict:
         """Check if metadata contains a specific key for all labels."""
@@ -244,10 +251,10 @@ class AxisAnnotation:
         AxisAnnotation
             Reconstructed AxisAnnotation object.
         """
-        # Convert lists back to tuples
-        labels = tuple(data['labels'])
-        states = tuple(tuple(s) for s in data['states']) if data.get('states') else None
-        cardinalities = tuple(data['cardinalities']) if data.get('cardinalities') else None
+        # Keep as lists (native format)
+        labels = data['labels']
+        states = [list(s) for s in data['states']] if data.get('states') else None
+        cardinalities = data['cardinalities']
 
         return cls(
             labels=labels,
@@ -274,11 +281,11 @@ class AxisAnnotation:
         idxs = [self.get_index(lab) for lab in keep_labels]
 
         # 2) slice labels / states / cardinalities
-        new_labels = tuple(self.labels[i] for i in idxs)
+        new_labels = [self.labels[i] for i in idxs]
 
         if self.states is not None:
-            new_states = tuple(self.states[i] for i in idxs)
-            new_cards = tuple(len(s) for s in new_states)
+            new_states = [self.states[i] for i in idxs]
+            new_cards = [len(s) for s in new_states]
         else:
             new_states = None
             new_cards = None
@@ -298,8 +305,8 @@ class AxisAnnotation:
 
     # --- AxisAnnotation: add a tiny union helper (non-nested kept non-nested) ---
     def union_with(self, other: "AxisAnnotation") -> "AxisAnnotation":
-        left = tuple(self.labels)
-        right_only = tuple(l for l in other.labels if l not in set(left))
+        left = list(self.labels)
+        right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
         # keep it simple: stay non-nested; merge metadata left-win
         meta = None
@@ -335,15 +342,15 @@ class Annotations:
         >>> # Axis 0: batch (typically not annotated)
         >>> # Axis 1: concepts
         >>> concept_ann = AxisAnnotation(
-        ...     labels=('color', 'shape', 'size'),
-        ...     cardinalities=(3, 2, 1)  # 3 colors, 2 shapes, 1 binary size
+        ...     labels=['color', 'shape', 'size'],
+        ...     cardinalities=[3, 2, 1]  # 3 colors, 2 shapes, 1 binary size
         ... )
         >>>
         >>> # Create annotations object
         >>> annotations = Annotations({1: concept_ann})
         >>>
         >>> # Access concept labels
-        >>> print(annotations.get_axis_labels(1))  # ('color', 'shape', 'size')
+        >>> print(annotations.get_axis_labels(1))  # ['color', 'shape', 'size']
         >>>
         >>> # Get index of a concept
         >>> idx = annotations.get_index(1, 'color')
@@ -353,13 +360,13 @@ class Annotations:
         >>> print(annotations.is_axis_nested(1))  # True
         >>>
         >>> # Get cardinalities
-        >>> print(annotations.get_axis_cardinalities(1))  # (3, 2, 1)
+        >>> print(annotations.get_axis_cardinalities(1))  # [3, 2, 1]
         >>>
         >>> # Access via indexing
-        >>> print(annotations[1].labels)  # ('color', 'shape', 'size')
+        >>> print(annotations[1].labels)  # ['color', 'shape', 'size']
         >>>
         >>> # Multiple axes example
-        >>> task_ann = AxisAnnotation(labels=('task1', 'task2', 'task3'))
+        >>> task_ann = AxisAnnotation(labels=['task1', 'task2', 'task3'])
         >>> multi_ann = Annotations({
         ...     1: concept_ann,
         ...     2: task_ann
@@ -428,11 +435,11 @@ class Annotations:
             raise ValueError(f"Axis {axis} is not annotated")
         return self._axis_annotations[axis]
 
-    def get_axis_labels(self, axis: int) -> Tuple[str, ...]:
+    def get_axis_labels(self, axis: int) -> List[str]:
         """Get ordered labels for an axis."""
         return self.get_axis_annotation(axis).labels
 
-    def get_axis_cardinalities(self, axis: int) -> Optional[Tuple[int, ...]]:
+    def get_axis_cardinalities(self, axis: int) -> Optional[List[int]]:
         """Get cardinalities for an axis (if nested), or None."""
         return self.get_axis_annotation(axis).cardinalities
 
@@ -448,11 +455,11 @@ class Annotations:
         """Get label at index within an axis."""
         return self.get_axis_annotation(axis).get_label(idx)
 
-    def get_states(self, axis: int) -> Optional[Tuple[Tuple[str, ...], ...]]:
+    def get_states(self, axis: int) -> Optional[List[List[str]]]:
         """Get states for a nested axis, or None."""
         return self.get_axis_annotation(axis).states
 
-    def get_label_states(self, axis: int, label: str) -> Tuple[str, ...]:
+    def get_label_states(self, axis: int, label: str) -> List[str]:
         """Get states of a concept in a nested axis."""
         ann = self.get_axis_annotation(axis)
         if ann.states is None:
@@ -460,7 +467,7 @@ class Annotations:
         idx = ann.get_index(label)
         return ann.states[idx]
 
-    def get_label_state(self, axis: int, label: str, idx: int) -> Tuple[str, ...]:
+    def get_label_state(self, axis: int, label: str, idx: int) -> str:
         """Get states of a concept in a nested axis."""
         ann = self.get_axis_annotation(axis)
         if ann.states is None:
