@@ -3,7 +3,7 @@ Random Variables
 
 This module provides variable representations for concept-based probabilistic models.
 
-.. currentmodule:: torch_concepts.nn.modules.mid.models.variable
+.. currentmodule:: torch_concepts
 
 Summary
 -------
