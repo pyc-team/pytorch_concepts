@@ -114,62 +114,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # return: logits
         return {'input': forward_out,
                 'target': target}
-
-
-class ConceptBottleneckModel_Independent(BaseModel, IndependentLearner):
-    """High-level Concept Bottleneck Model using BipartiteModel.
-
-    Implements a two-stage architecture:
-    1. Backbone + Encoder → Concept predictions
-    2. Concept predictions → Task predictions
-    """
-    def __init__(
-        self,
-        task_names: Union[List[str], str, List[int]],
-        inference: BaseInference,
-        input_size: int,
-
-        loss: nn.Module,
-        metrics: Mapping,
-        annotations: Annotations,
-        variable_distributions: Mapping,
-        optim_class: Type,
-        optim_kwargs: Mapping,
-
-        backbone: Optional[BackboneType] = None,
-        latent_encoder: Optional[nn.Module] = None,
-        latent_encoder_kwargs: Optional[Dict] = None,
-
-        scheduler_class: Optional[Type] = None,
-        scheduler_kwargs: Optional[Mapping] = None,
-        summary_metrics: Optional[bool] = True,
-        perconcept_metrics: Optional[Union[bool, list]] = False,
-        **kwargs
-    ) -> None:
-        # Initialize using super() to properly handle MRO
-        super().__init__(
-            #-- Learner args
-            loss=loss,
-            metrics=metrics,
-            annotations=annotations,
-            variable_distributions=variable_distributions,
-            optim_class=optim_class,
-            optim_kwargs=optim_kwargs,
-            scheduler_class=scheduler_class,
-            scheduler_kwargs=scheduler_kwargs,
-            summary_metrics=summary_metrics,
-            perconcept_metrics=perconcept_metrics,
-            # -- BaseModel args
-            input_size=input_size,
-            backbone=backbone,
-            latent_encoder=latent_encoder,
-            latent_encoder_kwargs=latent_encoder_kwargs
-        )
-        model = BipartiteModel(task_names=task_names,
-                               input_size=self.latent_size,
-                               annotations=annotations,
-                               encoder=LazyConstructor(ProbEncoderFromEmb),
-                               predictor=LazyConstructor(ProbPredictor))
+    
 
 class ConceptBottleneckModel(ConceptBottleneckModel_Joint):
     """Alias for ConceptBottleneckModel_Joint for backward compatibility."""
