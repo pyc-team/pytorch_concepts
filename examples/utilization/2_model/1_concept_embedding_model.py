@@ -13,13 +13,19 @@ def main():
     n_epochs = 200
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = ['c1', 'c2']
+    task_names = ['xor']
+
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
-    concept_names = ('c1', 'c2')
-    task_names = ('xor',)
-    cardinalities = (1, 1, 2)
+    cardinalities = [1, 1, 2]
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},

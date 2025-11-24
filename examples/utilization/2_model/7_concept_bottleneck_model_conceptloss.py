@@ -48,12 +48,14 @@ def main():
     print("=" * 60)
     
     n_samples = 1000
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train = data.data
-    c_train = data.concept_labels 
-    y_train = data.target_labels
-    concept_names = data.concept_attr_names
-    task_names = data.task_attr_names
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
     
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
