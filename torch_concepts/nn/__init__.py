@@ -15,6 +15,7 @@ from torch_concepts.nn.modules.low.base.layer import (
 from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
 
 # LazyConstructor
+from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
@@ -27,6 +28,9 @@ from .modules.low.encoders.selector import MemorySelector
 from .modules.low.predictors.linear import ProbPredictor
 from .modules.low.predictors.embedding import MixProbExogPredictor
 from .modules.low.predictors.hypernet import HyperLinearPredictor
+
+# Dense layers
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
@@ -77,6 +81,7 @@ __all__ = [
     "BaseModel",
     "BaseInference",
     "BaseIntervention",
+    "BaseConstructor",
 
     # LazyConstructor
     "LazyConstructor",
@@ -93,6 +98,11 @@ __all__ = [
     "ProbPredictor",
     "MixProbExogPredictor",
     "HyperLinearPredictor",
+
+    # Dense layers
+    "Dense",
+    "ResidualMLP",
+    "MLP",
 
     "MemorySelector",
 
