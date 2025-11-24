@@ -22,4 +22,5 @@ python:
       extra_requirements:
         - tests
         - docs
+        - data
     - requirements: requirements.txt
