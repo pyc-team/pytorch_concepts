@@ -17,6 +17,7 @@ Summary
    ProbPredictor
    MixProbExogPredictor
    HyperLinearPredictor
+   CallablePredictor
 
 
 Class Documentation
@@ -33,6 +34,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: HyperLinearPredictor
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: CallablePredictor
    :members:
    :undoc-members:
    :show-inheritance:

@@ -28,6 +28,7 @@ from .modules.low.encoders.selector import MemorySelector
 from .modules.low.predictors.linear import ProbPredictor
 from .modules.low.predictors.embedding import MixProbExogPredictor
 from .modules.low.predictors.hypernet import HyperLinearPredictor
+from .modules.low.predictors.call import CallablePredictor
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
@@ -98,6 +99,7 @@ __all__ = [
     "ProbPredictor",
     "MixProbExogPredictor",
     "HyperLinearPredictor",
+    "CallablePredictor",
 
     # Dense layers
     "Dense",
