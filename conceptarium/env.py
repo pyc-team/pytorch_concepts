@@ -33,7 +33,7 @@ CACHE = Path(
         ),
     )
 ).expanduser()
-CACHE.mkdir(exist_ok=True)
+CACHE.mkdir(parents=True, exist_ok=True)
 
 # Directory where datasets are stored
 # By default, uses CACHE directory

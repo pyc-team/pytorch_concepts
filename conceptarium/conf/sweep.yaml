@@ -16,7 +16,7 @@ hydra:
 
 model:
   summary_metrics: true
-  perconcept_metrics: true #${dataset.default_task_names}
+  perconcept_metrics: ${dataset.default_task_names}
   # train_interv_prob: 0.8
   # test_interv_noise: 0.8   # for bndatasets only
   optim_kwargs:

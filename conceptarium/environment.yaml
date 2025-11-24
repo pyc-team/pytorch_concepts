@@ -24,7 +24,6 @@ dependencies:
   - tqdm
   - openpyxl
 
-
   - pip
   - pip:
     - pytorch-concepts

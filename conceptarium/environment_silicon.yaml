@@ -11,6 +11,9 @@ dependencies:
   - pytorch::torchvision>=0.17.1
   - torchmetrics>=0.7
 
+  # Image processing libraries required by torchvision
+  - conda-forge::jpeg
+  
   - lightning
   - hydra-core
   - wandb
