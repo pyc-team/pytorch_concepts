@@ -28,8 +28,8 @@ class BnLearnDataset(ConceptDataset):
     def __init__(
             self,
             name: str, # name of the bnlearn DAG
-            root: str, # root directory to store/load the dataset
-            seed: int, # seed for data generation
+            root: str = None, # root directory to store/load the dataset
+            seed: int = 42, # seed for data generation
             n_gen: int = 10000,
             concept_subset: Optional[list] = None, # subset of concept labels
             label_descriptions: Optional[dict] = None,
@@ -37,6 +37,11 @@ class BnLearnDataset(ConceptDataset):
     ):
         self.name = name
         self.seed = seed
+
+        # If root is not provided, create a local folder automatically
+        if root is None:
+            root = os.path.join(os.getcwd(), 'data', self.name)
+            
         self.root = root
         self.n_gen = n_gen
 

@@ -79,5 +79,9 @@ lightning_logs/
 # results
 model_results.csv
 
+# data folder (but not torch_concepts/data/)
+data/
+!torch_concepts/data/
+
 # conceptarium logs
 outputs/
