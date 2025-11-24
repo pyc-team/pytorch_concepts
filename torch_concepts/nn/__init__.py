@@ -22,7 +22,7 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.encoders.exogenous import LinearZU
 from .modules.low.encoders.linear import LinearZC, LinearUC
 from .modules.low.encoders.stochastic import StochasticZC
-from .modules.low.encoders.selector import MemorySelector
+from .modules.low.encoders.selector import SelectorZU
 
 # Predictors
 from .modules.low.predictors.linear import LinearCC
@@ -106,7 +106,7 @@ __all__ = [
     "ResidualMLP",
     "MLP",
 
-    "MemorySelector",
+    "SelectorZU",
 
     # COSMO
     "WANDAGraphLearner",

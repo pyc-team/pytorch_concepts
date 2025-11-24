@@ -18,7 +18,7 @@ Summary
    LinearUC
    StochasticZC
    LinearZU
-   MemorySelector
+   SelectorZU
 
 
 Class Documentation
@@ -44,7 +44,7 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: MemorySelector
+.. autoclass:: SelectorZU
    :members:
    :undoc-members:
    :show-inheritance:

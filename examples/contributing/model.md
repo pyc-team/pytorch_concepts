@@ -357,7 +357,7 @@ from torch_concepts.nn import (
 #### Special Layers
 ```python
 from torch_concepts.nn import (
-    MemorySelector,          # Memory-augmented selection
+    SelectorZU,          # Memory-augmented selection
     WANDAGraphLearner,       # Learn concept graph structure
 )
 ```

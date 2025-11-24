@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import LinearZC, HyperLinearCUC, MemorySelector
+from torch_concepts.nn import LinearZC, HyperLinearCUC, SelectorZU
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
     )
     encoder_layer = LinearZC(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    selector = MemorySelector(in_features_latent=latent_dims,
+    selector = SelectorZU(in_features_latent=latent_dims,
                               memory_size=memory_size,
                               exogenous_size=latent_dims,
                               out_features=y_annotations.shape[1])

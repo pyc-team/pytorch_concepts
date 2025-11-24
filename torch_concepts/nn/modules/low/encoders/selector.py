@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from ..base.layer import BaseEncoder
 
 
-class MemorySelector(BaseEncoder):
+class SelectorZU(BaseEncoder):
     """
     Memory-based selector for concept exogenous with attention mechanism.
 
@@ -38,10 +38,10 @@ class MemorySelector(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import MemorySelector
+        >>> from torch_concepts.nn import SelectorZU
         >>>
         >>> # Create memory selector
-        >>> selector = MemorySelector(
+        >>> selector = SelectorZU(
         ...     in_features_latent=64,
         ...     memory_size=10,
         ...     exogenous_size=32,

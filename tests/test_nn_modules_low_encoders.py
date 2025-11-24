@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch_concepts.nn.modules.low.encoders.linear import LinearZC, LinearUC
 from torch_concepts.nn.modules.low.encoders.exogenous import LinearZU
-from torch_concepts.nn.modules.low.encoders.selector import MemorySelector
+from torch_concepts.nn.modules.low.encoders.selector import SelectorZU
 from torch_concepts.nn.modules.low.encoders.stochastic import StochasticZC
 
 
@@ -188,12 +188,12 @@ class TestLinearZU(unittest.TestCase):
         self.assertIsNotNone(output)
 
 
-class TestMemorySelector(unittest.TestCase):
-    """Test MemorySelector."""
+class TestSelectorZU(unittest.TestCase):
+    """Test SelectorZU."""
 
     def test_initialization(self):
         """Test selector initialization."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=64,
             out_features=5,
             memory_size=20,
@@ -206,7 +206,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_forward_without_sampling(self):
         """Test forward pass without sampling (soft selection)."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=64,
             out_features=4,
             memory_size=10,
@@ -218,7 +218,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_forward_with_sampling(self):
         """Test forward pass with sampling (Gumbel-softmax)."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=64,
             out_features=4,
             memory_size=10,
@@ -230,7 +230,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_gradient_flow_soft(self):
         """Test gradient flow with soft selection."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=32,
             out_features=3,
             memory_size=8,
@@ -244,7 +244,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_gradient_flow_hard(self):
         """Test gradient flow with hard selection."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=32,
             out_features=3,
             memory_size=8,
@@ -259,7 +259,7 @@ class TestMemorySelector(unittest.TestCase):
     def test_different_temperatures(self):
         """Test with different temperature values."""
         for temp in [0.1, 0.5, 1.0, 2.0]:
-            selector = MemorySelector(
+            selector = SelectorZU(
                 in_features_latent=32,
                 out_features=3,
                 memory_size=8,
@@ -273,7 +273,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_memory_initialization(self):
         """Test memory bank initialization."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=32,
             out_features=5,
             memory_size=10,
@@ -284,7 +284,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_selector_network(self):
         """Test selector network structure."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=64,
             out_features=4,
             memory_size=10,
@@ -295,7 +295,7 @@ class TestMemorySelector(unittest.TestCase):
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        selector = MemorySelector(
+        selector = SelectorZU(
             in_features_latent=32,
             out_features=3,
             memory_size=5,

@@ -62,7 +62,7 @@ There are only three types of layers:
 
   .. code-block:: python
 
-     pyc.nn.MemorySelector(in_features_latent=10, memory_size=5,
+     pyc.nn.SelectorZU(in_features_latent=10, memory_size=5,
                            embedding_size=24, out_features=3)
 
   and graph learners:
