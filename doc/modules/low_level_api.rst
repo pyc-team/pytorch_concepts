@@ -36,33 +36,33 @@ Objects
 
 In |pyc_logo| PyC there are three types of objects:
 
-- **Embedding**: high-dimensional latent representations shared across all concepts.
-- **Exogenous**: high-dimensional latent representations related to a specific concept.
-- **Logits**: Concept scores before applying an activation function.
+- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
+- **Exogenous**: Representations that are direct causes of endogenous variables
+- **Endogenous**: Representations of observable quantities of interest
 
 Layers
 """"""
 
 There are only three types of layers:
 
-- **Encoders**: layers that map latent representations (latet code or exogenous) to endogenous, e.g.:
+- **Encoders**: Never take as input endogenous variables, e.g.:
 
   .. code-block:: python
 
-     pyc.nn.LinearZC(in_features_latent=10, out_features=3)
+     pyc.nn.LinearZC(in_features=10, out_features=3)
 
-- **Predictors**: layers that map endogenous (plus optionally latent representations) to other endogenous.
+- **Predictors**: Must take as input a set of endogenous variables, e.g.:
 
   .. code-block:: python
 
      pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
                                  embedding_size=24, out_features=3)
 
-- **Special layers**: layers that perform special helpful operations such as memory selection:
+- **Special layers**: Perform operations like memory selection or graph learning
 
   .. code-block:: python
 
-     pyc.nn.SelectorZU(in_features_latent=10, memory_size=5,
+     pyc.nn.SelectorZU(in_features=10, memory_size=5,
                            embedding_size=24, out_features=3)
 
   and graph learners:
@@ -79,7 +79,7 @@ A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearZC(in_features_latent=10, out_features=3),
+       'encoder': pyc.nn.LinearZC(in_features=10, out_features=3),
        'predictor': pyc.nn.LinearCC(in_features_endogenous=3, out_features=2),
    })
 
@@ -92,7 +92,7 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     endogenous_concepts = concept_bottleneck_model['encoder'](latent=latent)
+     endogenous_concepts = concept_bottleneck_model['encoder'](input=x)
      endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 
 - **Interventions**: interventions are context managers that temporarily modify a layer.
@@ -118,6 +118,6 @@ At this API level, there are two types of inference that can be performed:
                               strategies=int_strategy,
                               target_concepts=[0, 2]) as new_encoder_layer:
 
-         endogenous_concepts = new_encoder_layer(latent=latent)
+         endogenous_concepts = new_encoder_layer(input=x)
          endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 

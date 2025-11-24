@@ -87,7 +87,7 @@ Here's a minimal example using the low-Level API:
    # Create a concept bottleneck model
    model = torch.nn.ModuleDict({
        'encoder': pyc.nn.LinearZC(
-           in_features_latent=64,
+           in_features=64,
            out_features=10
        ),
        'predictor': pyc.nn.LinearCC(
@@ -97,8 +97,8 @@ Here's a minimal example using the low-Level API:
    })
 
    # Forward pass
-   latent = torch.randn(32, 64)
-   concepts = model['encoder'](latent=latent)
+   x = torch.randn(32, 64)
+   concepts = model['encoder'](input=x)
    predictions = model['predictor'](endogenous=concepts)
 
 For complete examples with training, interventions, and evaluation, see the individual API guides above.

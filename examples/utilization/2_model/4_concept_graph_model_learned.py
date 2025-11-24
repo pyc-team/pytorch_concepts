@@ -76,7 +76,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
         c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
         y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
 
@@ -110,7 +110,7 @@ def main():
         print("=== Unrolled Model Predictions ===")
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
         print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
 
@@ -123,7 +123,7 @@ def main():
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=[intervened_concept]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
             task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
             print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
             print(cy_pred[:5])
@@ -134,7 +134,7 @@ def main():
             with intervention(policies=int_policy_c1,
                               strategies=int_strategy_c1,
                               target_concepts=[intervened_concept]):
-                cy_pred = inference_engine.query(query_concepts, evidence={'latent': emb})
+                cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
                 task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
                 print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
                 print(cy_pred[:5])

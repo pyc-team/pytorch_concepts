@@ -29,7 +29,7 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = LinearZU(in_features_latent=latent_dims,
+    exog_encoder = LinearZU(in_features=latent_dims,
                                out_features=c_annotations.shape[1],
                                exogenous_size=exogenous_size*2)
     c_encoder = LinearUC(in_features_exogenous=exogenous_size,
@@ -47,7 +47,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        exog = exog_encoder(latent=emb)
+        exog = exog_encoder(input=emb)
         c_pred = c_encoder(exogenous=exog)
         y_pred = y_predictor(endogenous=c_pred, exogenous=exog)
 

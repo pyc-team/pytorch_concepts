@@ -159,7 +159,7 @@ class YourModel(BaseModel):
 For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
-from torch_concepts import Variable, LatentVariable
+from torch_concepts import Variable, InputVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
@@ -201,7 +201,7 @@ class YourModel_ParametricCPDs(BaseModel):
         )
 
         # Step 1: Define embedding variable (latent representation from encoder)
-        embedding = LatentVariable(
+        embedding = InputVariable(
             "embedding",
             parents=[],
             distribution=Delta,
@@ -236,7 +236,7 @@ class YourModel_ParametricCPDs(BaseModel):
             concept_names,
             parametrization=[
                 LinearZC(
-                    in_features_latent=embedding.size,
+                    in_features=embedding.size,
                     out_features=c.size
                 ) for c in concepts
             ]

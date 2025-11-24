@@ -1,7 +1,7 @@
 Backbone Networks
 ==================
 
-This module provides backbone network utilities for feature extraction and latent precomputation.
+This module provides backbone network utilities for feature extraction and input precomputation.
 
 .. currentmodule:: torch_concepts.data.backbone
 

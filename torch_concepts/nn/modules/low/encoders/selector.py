@@ -28,7 +28,7 @@ class SelectorZU(BaseEncoder):
         selector (nn.Sequential): Attention network for memory selection.
 
     Args:
-        in_features_latent: Number of input latent features.
+        in_features: Number of input latent features.
         memory_size: Number of memory slots per concept.
         exogenous_size: Dimension of each memory exogenous.
         out_features: Number of output concepts.
@@ -42,7 +42,7 @@ class SelectorZU(BaseEncoder):
         >>>
         >>> # Create memory selector
         >>> selector = SelectorZU(
-        ...     in_features_latent=64,
+        ...     in_features=64,
         ...     memory_size=10,
         ...     exogenous_size=32,
         ...     out_features=5,
@@ -65,7 +65,7 @@ class SelectorZU(BaseEncoder):
     """
     def __init__(
         self,
-        in_features_latent: int,
+        in_features: int,
         memory_size : int,
         exogenous_size: int,
         out_features: int,
@@ -77,7 +77,7 @@ class SelectorZU(BaseEncoder):
         Initialize the memory selector.
 
         Args:
-            in_features_latent: Number of input latent features.
+            in_features: Number of input latent features.
             memory_size: Number of memory slots per concept.
             exogenous_size: Dimension of each memory exogenous.
             out_features: Number of output concepts.
@@ -86,7 +86,7 @@ class SelectorZU(BaseEncoder):
             **kwargs: Additional keyword arguments for the linear layer.
         """
         super().__init__(
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             out_features=out_features,
         )
         self.temperature = temperature
@@ -102,7 +102,7 @@ class SelectorZU(BaseEncoder):
 
         # init selector [B, out_features]
         self.selector = torch.nn.Sequential(
-            torch.nn.Linear(in_features_latent, exogenous_size),
+            torch.nn.Linear(in_features, exogenous_size),
             torch.nn.LeakyReLU(),
             torch.nn.Linear(
                 exogenous_size,
@@ -115,18 +115,18 @@ class SelectorZU(BaseEncoder):
 
     def forward(
         self,
-        latent: torch.Tensor = None,
+        input: torch.Tensor = None,
         sampling: bool = False,
     ) -> torch.Tensor:
         """
-        Select memory exogenous based on input latent code.
+        Select memory exogenous based on input input.
 
         Computes attention weights over memory slots and returns a weighted
         combination of memory exogenous. Can use soft attention or hard
         selection via Gumbel-softmax.
 
         Args:
-            latent: Input latent of shape (batch_size, in_features_latent).
+            input: Input latent of shape (batch_size, in_features).
             sampling: If True, use Gumbel-softmax for hard selection;
                      if False, use soft attention (default: False).
 
@@ -135,7 +135,7 @@ class SelectorZU(BaseEncoder):
                          (batch_size, out_features, exogenous_size).
         """
         memory = self.memory.weight.view(-1, self.memory_size, self.exogenous_size)
-        mixing_coeff = self.selector(latent)
+        mixing_coeff = self.selector(input)
         if sampling:
             mixing_probs = F.gumbel_softmax(mixing_coeff, dim=1, tau=self.temperature, hard=True)
         else:

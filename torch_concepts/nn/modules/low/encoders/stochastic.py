@@ -25,7 +25,7 @@ class StochasticZC(BaseEncoder):
         sigma (nn.Linear): Network for predicting covariance lower triangle.
 
     Args:
-        in_features_latent: Number of input latent features.
+        in_features: Number of input latent features.
         out_features: Number of output concepts.
         num_monte_carlo: Number of Monte Carlo samples for uncertainty (default: 200).
 
@@ -35,7 +35,7 @@ class StochasticZC(BaseEncoder):
         >>>
         >>> # Create stochastic encoder
         >>> encoder = StochasticZC(
-        ...     in_features_latent=128,
+        ...     in_features=128,
         ...     out_features=5,
         ...     num_monte_carlo=100
         ... )
@@ -58,7 +58,7 @@ class StochasticZC(BaseEncoder):
 
     def __init__(
         self,
-        in_features_latent: int,
+        in_features: int,
         out_features: int,
         num_monte_carlo: int = 200,
         eps: float = 1e-6,
@@ -67,24 +67,24 @@ class StochasticZC(BaseEncoder):
         Initialize the stochastic encoder.
 
         Args:
-            in_features_latent: Number of input latent features.
+            in_features: Number of input latent features.
             out_features: Number of output concepts.
             num_monte_carlo: Number of Monte Carlo samples (default: 200).
         """
         super().__init__(
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             out_features=out_features,
         )
         self.num_monte_carlo = num_monte_carlo
         self.mu = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_latent,
+                in_features,
                 out_features,
             ),
             torch.nn.Unflatten(-1, (out_features,)),
         )
         self.sigma = torch.nn.Linear(
-            in_features_latent,
+            in_features,
             int(out_features * (out_features + 1) / 2),
         )
         # Prevent exploding precision matrix at initialization
@@ -112,7 +112,7 @@ class StochasticZC(BaseEncoder):
         return c_triang_cov
 
     def forward(self,
-        latent: torch.Tensor,
+        input: torch.Tensor,
         reduce: bool = True,
     ) -> torch.Tensor:
         """
@@ -122,7 +122,7 @@ class StochasticZC(BaseEncoder):
         from it using the reparameterization trick.
 
         Args:
-            latent: Input latent code of shape (batch_size, in_features_latent).
+            input: Input input of shape (batch_size, in_features).
             reduce: If True, return mean over MC samples; if False, return all samples
                    (default: True).
 
@@ -130,8 +130,8 @@ class StochasticZC(BaseEncoder):
             torch.Tensor: Concept endogenous of shape (batch_size, out_features) if reduce=True,
                          or (batch_size, out_features, num_monte_carlo) if reduce=False.
         """
-        c_mu = self.mu(latent)
-        c_triang_cov = self._predict_sigma(latent)
+        c_mu = self.mu(input)
+        c_triang_cov = self._predict_sigma(input)
         # Sample from predicted normal distribution
         c_dist = MultivariateNormal(c_mu, scale_tril=c_triang_cov)
         c_mcmc_logit = c_dist.rsample([self.num_monte_carlo]).movedim(0, -1)  # [batch_size,num_concepts,mcmc_size]

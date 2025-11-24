@@ -57,7 +57,7 @@ class BipartiteModel(GraphModel):
         ...     input_size=784,
         ...     annotations=annotations,
         ...     encoder=LazyConstructor(torch.nn.Linear),
-        ...     predictor=LazyConstructor(torch.nn.Linear)
+        ...     predictor=LazyConstructor(LinearCC)
         ... )
         >>>
         >>> # Generate random input

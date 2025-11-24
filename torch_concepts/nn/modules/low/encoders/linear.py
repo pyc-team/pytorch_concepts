@@ -15,15 +15,15 @@ class LinearZC(BaseEncoder):
 
     This encoder transforms input latent into concept endogenous using a
     linear layer. It's typically used as the first layer in concept bottleneck
-    models to extract concepts from neural network latent code.
+    models to extract concepts from neural network input.
 
     Attributes:
-        in_features_latent (int): Number of input latent features.
+        in_features (int): Number of input latent features.
         out_features (int): Number of output concept features.
         encoder (nn.Sequential): The encoding network.
 
     Args:
-        in_features_latent: Number of input latent features.
+        in_features: Number of input latent features.
         out_features: Number of output concept features.
         *args: Additional arguments for torch.nn.Linear.
         **kwargs: Additional keyword arguments for torch.nn.Linear.
@@ -34,7 +34,7 @@ class LinearZC(BaseEncoder):
         >>>
         >>> # Create encoder
         >>> encoder = LinearZC(
-        ...     in_features_latent=128,
+        ...     in_features=128,
         ...     out_features=10
         ... )
         >>>
@@ -55,7 +55,7 @@ class LinearZC(BaseEncoder):
     """
     def __init__(
         self,
-        in_features_latent: int,
+        in_features: int,
         out_features: int,
         *args,
         **kwargs,
@@ -64,18 +64,18 @@ class LinearZC(BaseEncoder):
         Initialize the latent encoder.
 
         Args:
-            in_features_latent: Number of input latent features.
+            in_features: Number of input latent features.
             out_features: Number of output concept features.
             *args: Additional arguments for torch.nn.Linear.
             **kwargs: Additional keyword arguments for torch.nn.Linear.
         """
         super().__init__(
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             out_features=out_features,
         )
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_latent,
+                in_features,
                 out_features,
                 *args,
                 **kwargs,
@@ -85,18 +85,18 @@ class LinearZC(BaseEncoder):
 
     def forward(
         self,
-        latent: torch.Tensor,
+        input: torch.Tensor,
     ) -> torch.Tensor:
         """
         Encode latent into concept endogenous.
 
         Args:
-            latent: Input latent code of shape (batch_size, in_features_latent).
+            input: Input input of shape (batch_size, in_features).
 
         Returns:
             torch.Tensor: Concept endogenous of shape (batch_size, out_features).
         """
-        return self.encoder(latent)
+        return self.encoder(input)
 
 
 class LinearUC(BaseEncoder):

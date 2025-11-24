@@ -28,7 +28,7 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = StochasticZC(in_features_latent=latent_dims,
+    encoder_layer = StochasticZC(in_features=latent_dims,
                                              out_features=c_annotations.shape[1])
     y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
@@ -42,7 +42,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(latent=emb)
+        c_pred = encoder_layer(input=emb)
         y_pred = y_predictor(endogenous=c_pred)
 
         # compute loss

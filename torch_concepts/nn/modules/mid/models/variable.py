@@ -447,7 +447,7 @@ class ExogenousVariable(Variable):
         return f"ExogenousVariable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{endo_str}{meta_str})"
 
 
-class LatentVariable(Variable):
+class InputVariable(Variable):
     """
     Represents a latent variable in a concept-based model.
     
@@ -462,12 +462,12 @@ class LatentVariable(Variable):
         parents (List[Variable]): List of parent variables in the graphical model (typically empty).
         distribution (Type[Distribution]): PyTorch distribution class for this variable.
         size (int): Dimensionality of the latent representation.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'latent'.
+        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'input'.
         
     Example:
         >>> from torch_concepts.distributions import Delta
         >>> # Global latent representation from input image
-        >>> image_latent = LatentVariable(
+        >>> image_latent = InputVariable(
         ...     concepts='global_image_features',
         ...     parents=[],
         ...     distribution=Delta,
@@ -475,13 +475,13 @@ class LatentVariable(Variable):
         ... )
         >>> 
         >>> # Multiple latent variables for hierarchical representation
-        >>> low_level_features = LatentVariable(
+        >>> low_level_features = InputVariable(
         ...     concepts='low_level_features',
         ...     parents=[],
         ...     distribution=Delta,
         ...     size=256
         ... )
-        >>> high_level_features = LatentVariable(
+        >>> high_level_features = InputVariable(
         ...     concepts='high_level_features',
         ...     parents=[low_level_features],
         ...     distribution=Delta,
@@ -495,7 +495,7 @@ class LatentVariable(Variable):
                  size: Union[int, List[int]] = 1,
                  metadata: Dict[str, Any] = None):
         """
-        Initialize a LatentVariable instance.
+        Initialize a InputVariable instance.
         
         Args:
             concepts: Single concept name or list of concept names.
@@ -506,5 +506,5 @@ class LatentVariable(Variable):
         """
         if metadata is None:
             metadata = {}
-        metadata['variable_type'] = 'latent'
+        metadata['variable_type'] = 'input'
         super().__init__(concepts, parents, distribution, size, metadata)

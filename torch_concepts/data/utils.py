@@ -322,7 +322,7 @@ def colorize_and_transform(data, targets, training_percentage=0.8, test_percenta
         test_kwargs: List of dictionaries containing additional arguments for each test mode.
  
     Returns:
-        latent: Tensor of shape (N, 3, 28, 28) containing colorized and/or transformed images.
+        input: Tensor of shape (N, 3, 28, 28) containing colorized and/or transformed images.
         concepts: Dictionary containing values of the parameters used for coloring and transformations (e.g., colors, scales, degrees).
         targets: Tensor of shape (N) containing target values (0-9).
         coloring_mode: List of strings indicating the coloring mode used for each sample ('training' or 'test').

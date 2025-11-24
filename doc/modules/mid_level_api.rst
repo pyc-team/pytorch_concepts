@@ -48,7 +48,7 @@ At this API level, models are represented as Probabilistic Models where:
   .. code-block:: python
 
      concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
-                                        parametrization=pyc.nn.LinearZC(in_features_latent=10, out_features=3))
+                                        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3))
 
 - **Probabilistic Model**: a collection of variables and CPDs. For instance we can define a ProbabilisticModel as:
 
@@ -66,4 +66,4 @@ Inference is performed using efficient tensorial probabilistic inference algorit
 
    inference_engine = pyc.nn.AncestralSamplingInference(probabilistic_model=probabilistic_model,
                                                         graph_learner=wanda, temperature=1.)
-   predictions = inference_engine.query(["c1"], evidence={'latent': latent})
+   predictions = inference_engine.query(["c1"], evidence={'input': x})

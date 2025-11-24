@@ -60,7 +60,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         """Forward pass through CBM.
 
         Args:
-            x (torch.Tensor): Input data (raw or pre-computed latent codes).
+            x (torch.Tensor): Input data (raw or pre-computed inputs).
             query (List[str], optional): Variables to query from PGM.
                 Typically all concepts and tasks. Defaults to None.
             backbone_kwargs (Optional[Mapping[str, Any]], optional): Arguments
@@ -81,7 +81,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # inference
         # get endogenous for the query concepts
         # (b, latent_size) -> (b, sum(concept_cardinalities))
-        endogenous = self.inference.query(query, evidence={'latent': latent})
+        endogenous = self.inference.query(query, evidence={'input': latent})
         return endogenous
 
     def filter_output_for_loss(self, forward_out, target):

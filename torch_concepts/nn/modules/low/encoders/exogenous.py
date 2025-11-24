@@ -15,7 +15,7 @@ class LinearZU(BaseEncoder):
     """
     Exogenous encoder that creates concept exogenous.
 
-    Transforms input latent code into exogenous variables (external features) for
+    Transforms input input into exogenous variables (external features) for
     each concept, producing a 2D output of shape (out_features, exogenous_size).
     Implements the 'embedding generators' from Concept Embedding Models (Zarlenga et al., 2022).
 
@@ -25,7 +25,7 @@ class LinearZU(BaseEncoder):
         encoder (nn.Sequential): The encoding network.
 
     Args:
-        in_features_latent: Number of input latent features.
+        in_features: Number of input latent features.
         out_features: Number of output concepts.
         exogenous_size: Dimension of each concept's exogenous.
 
@@ -35,7 +35,7 @@ class LinearZU(BaseEncoder):
         >>>
         >>> # Create exogenous encoder
         >>> encoder = LinearZU(
-        ...     in_features_latent=128,
+        ...     in_features=128,
         ...     out_features=5,
         ...     exogenous_size=16
         ... )
@@ -58,7 +58,7 @@ class LinearZU(BaseEncoder):
 
     def __init__(
         self,
-        in_features_latent: int,
+        in_features: int,
         out_features: int,
         exogenous_size: int
     ):
@@ -66,12 +66,12 @@ class LinearZU(BaseEncoder):
         Initialize the exogenous encoder.
 
         Args:
-            in_features_latent: Number of input latent features.
+            in_features: Number of input latent features.
             out_features: Number of output concepts.
             exogenous_size: Dimension of each concept's exogenous.
         """
         super().__init__(
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             out_features=out_features,
         )
         self.exogenous_size = exogenous_size
@@ -82,7 +82,7 @@ class LinearZU(BaseEncoder):
 
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_latent,
+                in_features,
                 self.out_encoder_dim
             ),
             torch.nn.Unflatten(-1, self.out_exogenous_shape),
@@ -91,16 +91,16 @@ class LinearZU(BaseEncoder):
 
     def forward(
         self,
-        latent: torch.Tensor
+        input: torch.Tensor
     ) -> Tuple[torch.Tensor]:
         """
         Encode latent into exogenous variables.
 
         Args:
-            latent: Input latent of shape (batch_size, in_features_latent).
+            input: Input latent of shape (batch_size, in_features).
 
         Returns:
             Tuple[torch.Tensor]: Exogenous variables of shape
                                 (batch_size, out_features, exogenous_size).
         """
-        return self.encoder(latent)
+        return self.encoder(input)

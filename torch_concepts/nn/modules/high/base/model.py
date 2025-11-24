@@ -75,7 +75,7 @@ class BaseModel(nn.Module, ABC):
 
     @property
     def latent_encoder(self) -> nn.Module:
-        """The encoder mapping backbone output to latent code(s).
+        """The encoder mapping backbone output to input(s).
 
         Returns:
             nn.Module: Latent encoder network.

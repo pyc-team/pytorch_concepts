@@ -8,14 +8,14 @@ Key Principles
 
 **Three types of objects:**
 
-- **Embedding**: High-dimensional latent representations shared across all concepts
-- **Exogenous**: High-dimensional latent representations for a specific concept
-- **Logits**: Concept scores before activation
+- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
+- **Exogenous**: Representations that are direct causes of endogenous variables
+- **Endogenous**: Representations of observable quantities of interest
 
 **Three types of layers:**
 
-- **Encoders**: Map latent representations to endogenous
-- **Predictors**: Map endogenous to other endogenous
+- **Encoders**: Never take as input endogenous variables
+- **Predictors**: Must take as input a set of endogenous variables
 - **Special layers**: Perform operations like memory selection or graph learning
 
 Step 1: Import Libraries
@@ -29,17 +29,17 @@ Step 1: Import Libraries
 Step 2: Create Sample Data
 ---------------------------
 
-Generate random latent codes and targets for demonstration:
+Generate random inputs and targets for demonstration:
 
 .. code-block:: python
 
    batch_size = 32
-   latent_dim = 64
+   input_dim = 64
    n_concepts = 5
    n_tasks = 3
 
-   # Random input latent code
-   latent = torch.randn(batch_size, latent_dim)
+   # Random input
+   x = torch.randn(batch_size, input_dim)
 
    # Random concept labels (binary)
    concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()
@@ -57,7 +57,7 @@ Use a ModuleDict to combine encoder and predictor:
    # Create model using ModuleDict
    model = torch.nn.ModuleDict({
        'encoder': pyc.nn.LinearZC(
-           in_features_latent=latent_dim,
+           in_features=input_dim,
            out_features=n_concepts
        ),
        'predictor': pyc.nn.LinearCC(
@@ -73,8 +73,8 @@ Compute concept endogenous, then task predictions:
 
 .. code-block:: python
 
-   # Get concept endogenous from latent code
-   concept_endogenous = model['encoder'](latent=latent)
+   # Get concept endogenous from input
+   concept_endogenous = model['encoder'](input=x)
 
    # Get task predictions from concept endogenous
    task_endogenous = model['predictor'](endogenous=concept_endogenous)
@@ -126,7 +126,7 @@ The context manager takes two main arguments: **strategies** and **policies**.
    with intervention(policies=policy,
                      strategies=strategy,
                      target_concepts=[0, 2]) as new_encoder_layer:
-       intervened_concepts = new_encoder_layer(latent=latent)
+       intervened_concepts = new_encoder_layer(input=x)
        intervened_tasks = model['predictor'](endogenous=intervened_concepts)
 
    print(f"Original concept endogenous: {concept_endogenous[0]}")

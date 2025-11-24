@@ -77,7 +77,7 @@ class ProbabilisticModel(nn.Module):
 
     Example:
         >>> import torch
-        >>> from torch_concepts import LatentVariable, EndogenousVariable
+        >>> from torch_concepts import InputVariable, EndogenousVariable
         >>> from torch_concepts.nn import ProbabilisticModel
         >>> from torch_concepts.nn import ParametricCPD
         >>> from torch_concepts.nn import LinearZC
@@ -85,17 +85,17 @@ class ProbabilisticModel(nn.Module):
         >>> from torch_concepts.distributions import Delta
         >>>
         >>> # Define variables
-        >>> emb_var = LatentVariable(concepts='latent', parents=[], distribution=Delta, size=32)
+        >>> emb_var = InputVariable(concepts='input', parents=[], distribution=Delta, size=32)
         >>> c1_var = EndogenousVariable(concepts='c1', parents=[emb_var], distribution=Delta, size=1)
         >>> c2_var = EndogenousVariable(concepts='c2', parents=[c1_var], distribution=Delta, size=1)
         >>>
         >>> # Define CPDs (neural network modules)
         >>> backbone = torch.nn.Linear(in_features=128, out_features=32)
-        >>> encoder = LinearZC(in_features_latent=32, out_features=1)
+        >>> encoder = LinearZC(in_features=32, out_features=1)
         >>> predictor = LinearCC(in_features_endogenous=1, out_features=1)
         >>>
         >>> parametric_cpds = [
-        ...     ParametricCPD(concepts='latent', parametrization=backbone),
+        ...     ParametricCPD(concepts='input', parametrization=backbone),
         ...     ParametricCPD(concepts='c1', parametrization=encoder),
         ...     ParametricCPD(concepts='c2', parametrization=predictor)
         ... ]

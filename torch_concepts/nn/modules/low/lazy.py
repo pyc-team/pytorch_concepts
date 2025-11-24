@@ -115,7 +115,7 @@ class LazyConstructor(torch.nn.Module):
         >>> module = propagator.build(
         ...     out_features=3,
         ...     in_features_endogenous=5,
-        ...     in_features_latent=None,
+        ...     in_features=None,
         ...     in_features_exogenous=None
         ... )
         >>>
@@ -151,7 +151,7 @@ class LazyConstructor(torch.nn.Module):
     def build(self,
               out_features: int,
               in_features_endogenous: Optional[int],
-              in_features_latent: Optional[int],
+              in_features: Optional[int],
               in_features_exogenous: Optional[int],
               **kwargs
               ) -> torch.nn.Module:
@@ -164,7 +164,7 @@ class LazyConstructor(torch.nn.Module):
         Args:
             out_features: Number of output features.
             in_features_endogenous: Number of input logit features (optional).
-            in_features_latent: Number of input latent features (optional).
+            in_features: Number of input latent features (optional).
             in_features_exogenous: Number of exogenous input features (optional).
             **kwargs: Additional keyword arguments for the module.
 
@@ -183,15 +183,12 @@ class LazyConstructor(torch.nn.Module):
             >>> module = lazy_constructor.build(
             ...     out_features=3,
             ...     in_features_endogenous=5,
-            ...     in_features_latent=None,
+            ...     in_features=None,
             ...     in_features_exogenous=None
             ... )
             >>> print(type(module).__name__)
             LinearCC
         """
-        in_features = in_features_endogenous if in_features_endogenous is not None else 0
-        in_features += in_features_latent if in_features_latent is not None else 0
-        in_features += in_features_exogenous if in_features_exogenous is not None else 0
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
         self.module = instantiate_adaptive(
@@ -200,7 +197,6 @@ class LazyConstructor(torch.nn.Module):
             **{
                 "in_features": in_features,
                 "in_features_endogenous": in_features_endogenous,
-                "in_features_latent": in_features_latent,
                 "in_features_exogenous": in_features_exogenous,
                 "out_features": out_features,
                 **self._module_kwargs,  # user-provided extras
@@ -239,7 +235,7 @@ class LazyConstructor(torch.nn.Module):
             >>> propagator.build(
             ...     out_features=3,
             ...     in_features_endogenous=5,
-            ...     in_features_latent=None,
+            ...     in_features=None,
             ...     in_features_exogenous=None
             ... )
             >>>

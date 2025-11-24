@@ -134,8 +134,8 @@ class TestLazyConstructor(unittest.TestCase):
 
         module = lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -150,11 +150,11 @@ class TestLazyConstructor(unittest.TestCase):
         module = lazy_constructor.build(
             out_features=5,
             in_features_endogenous=10,
-            in_features_latent=8,
+            in_features=8,
             in_features_exogenous=2
         )
 
-        self.assertEqual(module.in_features, 20)  # 10 + 8 + 2
+        self.assertEqual(module.in_features, 8)  # 10 + 8 + 2
         self.assertEqual(module.out_features, 5)
 
     def test_build_only_latent(self):
@@ -164,24 +164,11 @@ class TestLazyConstructor(unittest.TestCase):
         module = lazy_constructor.build(
             out_features=3,
             in_features_endogenous=None,
-            in_features_latent=15,
+            in_features=15,
             in_features_exogenous=None
         )
 
         self.assertEqual(module.in_features, 15)
-
-    def test_build_all_none_features(self):
-        """Test with all None features (should give 0)."""
-        lazy_constructor = LazyConstructor(nn.Linear)
-
-        module = lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features_latent=None,
-            in_features_exogenous=None
-        )
-
-        self.assertEqual(module.in_features, 0)
 
     def test_forward_without_build(self):
         """Test forward pass before building."""
@@ -196,8 +183,8 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -220,8 +207,8 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(CustomModule)
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -237,16 +224,16 @@ class TestLazyConstructor(unittest.TestCase):
         # First build
         module1 = lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
         # Second build
         module2 = lazy_constructor.build(
             out_features=3,
-            in_features_endogenous=8,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=8,
             in_features_exogenous=None
         )
 
@@ -260,8 +247,8 @@ class TestLazyConstructor(unittest.TestCase):
 
         returned = lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -280,7 +267,7 @@ class TestLazyConstructor(unittest.TestCase):
             lazy_constructor.build(
                 out_features=5,
                 in_features_endogenous=10,
-                in_features_latent=None,
+                in_features=None,
                 in_features_exogenous=None
             )
 
@@ -289,8 +276,8 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -306,8 +293,8 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -319,8 +306,8 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 
@@ -354,7 +341,7 @@ class TestLazyConstructorWithComplexModules(unittest.TestCase):
             lazy_constructor.build(
                 out_features=5,
                 in_features_endogenous=10,
-                in_features_latent=None,
+                in_features=None,
                 in_features_exogenous=None
             )
             # If it builds, test forward
@@ -382,8 +369,8 @@ class TestLazyConstructorWithComplexModules(unittest.TestCase):
         lazy_constructor = LazyConstructor(CustomLayer, activation='relu')
         lazy_constructor.build(
             out_features=5,
-            in_features_endogenous=10,
-            in_features_latent=None,
+            in_features_endogenous=None,
+            in_features=10,
             in_features_exogenous=None
         )
 

@@ -21,9 +21,9 @@ Step 2: Create Sample Data
 .. code-block:: python
 
    batch_size = 16
-   latent_dim = 64
+   input_dim = 64
 
-   latent = torch.randn(batch_size, latent_dim)
+   x = torch.randn(batch_size, input_dim)
 
 Step 3: Define Variables
 -------------------------
@@ -32,16 +32,16 @@ Variables represent random variables in the probabilistic model:
 
 .. code-block:: python
 
-   # Define latent variable
-   latent_var = pyc.LatentVariable(
-       concepts=["latent"],
+   # Define input variable
+   input_var = pyc.InputVariable(
+       concepts=["input"],
        parents=[],
    )
 
    # Define concept variables
    concepts = pyc.EndogenousVariable(
        concepts=["round", "smooth", "bright"],
-       parents=["latent"],
+       parents=["input"],
        distribution=torch.distributions.RelaxedBernoulli
    )
 
@@ -59,17 +59,17 @@ ParametricCPDs are conditional probability distributions parameterized by PyC la
 
 .. code-block:: python
 
-   # ParametricCPD for latent code (no parents)
-   latent_factor = pyc.nn.ParametricCPD(
-       concepts=["latent"],
+   # ParametricCPD for input (no parents)
+   input_factor = pyc.nn.ParametricCPD(
+       concepts=["input"],
        parametrization=torch.nn.Identity()
    )
 
-   # ParametricCPD for concepts (from latent code)
+   # ParametricCPD for concepts (from input)
    concept_cpd = pyc.nn.ParametricCPD(
        concepts=["round", "smooth", "bright"],
        parametrization=pyc.nn.LinearZC(
-           in_features_latent=latent_dim,
+           in_features=input_dim,
            out_features=1
        )
    )
@@ -92,8 +92,8 @@ Combine variables and CPDs:
 
    # Create the probabilistic model
    prob_model = pyc.nn.ProbabilisticModel(
-       variables=[latent_var, *concepts, *tasks],
-       parametric_cpds=[latent_factor, *concept_cpd, *task_cpd]
+       variables=[input_var, *concepts, *tasks],
+       parametric_cpds=[input_factor, *concept_cpd, *task_cpd]
    )
 
 Step 6: Perform Inference
@@ -112,14 +112,14 @@ Query the model using ancestral sampling:
    # Query concept predictions
    concept_predictions = inference_engine.query(
        query_concepts=["round", "smooth", "bright"],
-       evidence={'latent': latent}
+       evidence={'input': x}
    )
 
    # Query task predictions given concepts
    task_predictions = inference_engine.query(
        query_concepts=["class_A", "class_B"],
        evidence={
-           'latent': latent,
+           'input': x,
            'round': concept_predictions[:, 0],
            'smooth': concept_predictions[:, 1],
            'bright': concept_predictions[:, 2]
@@ -144,7 +144,7 @@ Perform do-calculus interventions:
 
    original_predictions = inference_engine.query(
        query_concepts=["round", "smooth", "bright", "class_A", "class_B"],
-       evidence={'latent': latent}
+       evidence={'input': x}
    )
 
    # Apply intervention to encoder
@@ -153,7 +153,7 @@ Perform do-calculus interventions:
                      target_concepts=["round", "smooth"]):
        intervened_predictions = inference_engine.query(
            query_concepts=["round", "smooth", "bright", "class_A", "class_B"],
-           evidence={'latent': latent}
+           evidence={'input': x}
        )
 
    print(f"Original endogenous: {original_predictions[0]}")

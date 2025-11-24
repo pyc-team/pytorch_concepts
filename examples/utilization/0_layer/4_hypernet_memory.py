@@ -32,9 +32,9 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = LinearZC(in_features_latent=latent_dims,
+    encoder_layer = LinearZC(in_features=latent_dims,
                                        out_features=c_annotations.shape[1])
-    selector = SelectorZU(in_features_latent=latent_dims,
+    selector = SelectorZU(in_features=latent_dims,
                               memory_size=memory_size,
                               exogenous_size=latent_dims,
                               out_features=y_annotations.shape[1])
@@ -51,8 +51,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(latent=emb)
-        emb_rule = selector(latent=emb, sampling=False)
+        c_pred = encoder_layer(input=emb)
+        emb_rule = selector(input=emb, sampling=False)
         emb_rule = torch.nn.functional.leaky_relu(emb_rule)
         y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 
@@ -68,7 +68,7 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred > 0.)
 
-            emb_rule = selector(latent=emb, sampling=True)
+            emb_rule = selector(input=emb, sampling=True)
             emb_rule = torch.nn.functional.leaky_relu(emb_rule)
             y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 

@@ -21,14 +21,14 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     Attributes:
         in_features_endogenous (int): Number of input logit features.
-        in_features_latent (int): Number of input latent features.
+        in_features (int): Number of input latent features.
         in_features_exogenous (int): Number of exogenous input features.
         out_features (int): Number of output features.
 
     Args:
         out_features: Number of output features.
         in_features_endogenous: Number of input logit features (optional).
-        in_features_latent: Number of input latent features (optional).
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
 
     Example:
@@ -62,14 +62,14 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self,
         out_features: int,
         in_features_endogenous: int = None,
-        in_features_latent: int = None,
+        in_features: int = None,
         in_features_exogenous: int = None,
         *args,
         **kwargs,
     ):
         super().__init__()
         self.in_features_endogenous = in_features_endogenous
-        self.in_features_latent = in_features_latent
+        self.in_features = in_features
         self.in_features_exogenous = in_features_exogenous
         self.out_features = out_features
 
@@ -101,7 +101,7 @@ class BaseEncoder(BaseConceptLayer):
 
     Args:
         out_features: Number of output concept features.
-        in_features_latent: Number of input latent features (optional).
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
 
     Example:
@@ -110,13 +110,13 @@ class BaseEncoder(BaseConceptLayer):
         >>>
         >>> # Create a custom encoder
         >>> class MyEncoder(BaseEncoder):
-        ...     def __init__(self, out_features, in_features_latent):
+        ...     def __init__(self, out_features, in_features):
         ...         super().__init__(
         ...             out_features=out_features,
-        ...             in_features_latent=in_features_latent
+        ...             in_features=in_features
         ...         )
         ...         self.net = torch.nn.Sequential(
-        ...             torch.nn.Linear(in_features_latent, 128),
+        ...             torch.nn.Linear(in_features, 128),
         ...             torch.nn.ReLU(),
         ...             torch.nn.Linear(128, out_features)
         ...         )
@@ -125,7 +125,7 @@ class BaseEncoder(BaseConceptLayer):
         ...         return self.net(latent)
         >>>
         >>> # Example usage
-        >>> encoder = MyEncoder(out_features=10, in_features_latent=784)
+        >>> encoder = MyEncoder(out_features=10, in_features=784)
         >>>
         >>> # Generate random image latent (e.g., flattened MNIST)
         >>> x = torch.randn(4, 784)  # batch_size=4, pixels=784
@@ -137,11 +137,11 @@ class BaseEncoder(BaseConceptLayer):
 
     def __init__(self,
                  out_features: int,
-                 in_features_latent: int = None,
+                 in_features: int = None,
                  in_features_exogenous: int = None):
         super().__init__(
             in_features_endogenous=None,
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             in_features_exogenous=in_features_exogenous,
             out_features=out_features
         )
@@ -160,7 +160,7 @@ class BasePredictor(BaseConceptLayer):
     Args:
         out_features: Number of output concept features.
         in_features_endogenous: Number of input logit features.
-        in_features_latent: Number of input latent features (optional).
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
         in_activation: Activation function for input (default: torch.sigmoid).
 
@@ -202,12 +202,12 @@ class BasePredictor(BaseConceptLayer):
     def __init__(self,
                  out_features: int,
                  in_features_endogenous: int,
-                 in_features_latent: int = None,
+                 in_features: int = None,
                  in_features_exogenous: int = None,
                  in_activation: Callable = torch.sigmoid):
         super().__init__(
             in_features_endogenous=in_features_endogenous,
-            in_features_latent=in_features_latent,
+            in_features=in_features,
             in_features_exogenous=in_features_exogenous,
             out_features=out_features,
         )

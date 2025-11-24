@@ -2,7 +2,7 @@ from typing import List, Tuple, Optional
 from torch.nn import Identity
 
 from .....annotations import Annotations
-from ..models.variable import Variable, LatentVariable, ExogenousVariable, EndogenousVariable
+from ..models.variable import Variable, InputVariable, ExogenousVariable, EndogenousVariable
 from .concept_graph import ConceptGraph
 from ..models.cpd import ParametricCPD
 from ..models.probabilistic_model import ProbabilisticModel
@@ -90,7 +90,7 @@ class GraphModel(BaseConstructor):
         ...     input_size=784,
         ...     annotations=annotations,
         ...     encoder=LazyConstructor(torch.nn.Linear),
-        ...     predictor=LazyConstructor(torch.nn.Linear),
+        ...     predictor=LazyConstructor(LinearCC),
         ... )
         >>>
         >>> # Inspect the graph structure
@@ -138,22 +138,22 @@ class GraphModel(BaseConstructor):
         self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
         # latent variable and CPDs
-        latent_var = LatentVariable('latent', parents=[], size=self.input_size)
-        latent_cpd = ParametricCPD('latent', parametrization=Identity())
+        input_var = InputVariable('input', parents=[], size=self.input_size)
+        latent_cpd = ParametricCPD('input', parametrization=Identity())
 
         # concepts init
         if source_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
-            source_exogenous_vars, source_exogenous_cpds = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=latent_var, cardinalities=cardinalities)
+            source_exogenous_vars, source_exogenous_cpds = self._init_exog(source_exogenous, label_names=self.root_nodes, parent_var=input_var, cardinalities=cardinalities)
             encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=source_exogenous_vars, cardinalities=cardinalities)
         else:
             source_exogenous_vars, source_exogenous_cpds = [], []
-            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[latent_var])
+            encoder_vars, encoder_cpds = self._init_encoder(encoder, label_names=self.root_nodes, parent_vars=[input_var])
 
         # tasks init
         if internal_exogenous is not None:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.internal_node_idx[idx]] for idx, c in enumerate(self.internal_nodes)]
-            internal_exogenous_vars, internal_exogenous_cpds = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=latent_var, cardinalities=cardinalities)
+            internal_exogenous_vars, internal_exogenous_cpds = self._init_exog(internal_exogenous, label_names=self.internal_nodes, parent_var=input_var, cardinalities=cardinalities)
             predictor_vars, predictor_cpds = self._init_predictors(predictor, label_names=self.internal_nodes, available_vars=encoder_vars, self_exog_vars=internal_exogenous_vars, cardinalities=cardinalities)
         elif use_source_exogenous:
             cardinalities = [self.annotations.get_axis_annotation(1).cardinalities[self.root_nodes_idx[idx]] for idx, c in enumerate(self.root_nodes)]
@@ -165,7 +165,7 @@ class GraphModel(BaseConstructor):
 
         # ProbabilisticModel Initialization
         self.probabilistic_model = ProbabilisticModel(
-            variables=[latent_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
+            variables=[input_var, *source_exogenous_vars, *encoder_vars, *internal_exogenous_vars, *predictor_vars],
             parametric_cpds=[latent_cpd, *source_exogenous_cpds, *encoder_cpds, *internal_exogenous_cpds, *predictor_cpds],
         )
 
@@ -189,7 +189,7 @@ class GraphModel(BaseConstructor):
                             size=layer._module_kwargs['exogenous_size'])
 
         lazy_constructor = layer.build(
-            in_features_latent=parent_var.size,
+            in_features=parent_var.size,
             in_features_endogenous=None,
             in_features_exogenous=None,
             out_features=1,
@@ -211,9 +211,9 @@ class GraphModel(BaseConstructor):
         Returns:
             Tuple of (encoder variables, encoder parametric_cpds).
         """
-        if parent_vars[0].concepts[0] == 'latent':
+        if parent_vars[0].concepts[0] == 'input':
             encoder_vars = EndogenousVariable(label_names,
-                                parents=['latent'],
+                                parents=['input'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
                                 size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
             # Ensure encoder_vars is always a list
@@ -221,7 +221,7 @@ class GraphModel(BaseConstructor):
                 encoder_vars = [encoder_vars]
 
             lazy_constructor = layer.build(
-                in_features_latent=parent_vars[0].size,
+                in_features=parent_vars[0].size,
                 in_features_endogenous=None,
                 in_features_exogenous=None,
                 out_features=encoder_vars[0].size,
@@ -242,7 +242,7 @@ class GraphModel(BaseConstructor):
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
                 lazy_constructor = layer.build(
-                    in_features_latent=None,
+                    in_features=None,
                     in_features_endogenous=None,
                     in_features_exogenous=exog_vars[0].size,
                     out_features=encoder_var.size,
@@ -305,7 +305,7 @@ class GraphModel(BaseConstructor):
             lazy_constructor = layer.build(
                 in_features_endogenous=in_features_endogenous,
                 in_features_exogenous=in_features_exogenous,
-                in_features_latent=None,
+                in_features=None,
                 out_features=predictor_var.size,
                 cardinalities=[predictor_var.size]
             )

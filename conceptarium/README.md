@@ -183,7 +183,7 @@ backbone:
   _target_: "path.to.your.backbone.ClassName"
   # ... (backbone arguments)
 
-precompute_embs: true  # precompute latent code to speed up training
+precompute_embs: true  # precompute input to speed up training
 
 default_task_names: [bird_species]
 

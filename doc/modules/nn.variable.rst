@@ -17,7 +17,7 @@ Summary
    Variable
    EndogenousVariable
    ExogenousVariable
-   LatentVariable
+   InputVariable
 
 
 Class Documentation
@@ -38,7 +38,7 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: LatentVariable
+.. autoclass:: InputVariable
    :members:
    :undoc-members:
    :show-inheritance:
