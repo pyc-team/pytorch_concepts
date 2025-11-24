@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
     # 3. Update config based on data
     # ----------------------------------
     logger.info("----------------------INIT DATA--------------------------------------")
-    datamodule = instantiate(cfg.dataset)
+    datamodule = instantiate(cfg.dataset, _convert_="all")
     datamodule.setup('fit', verbose=True)
     cfg = update_config_from_data(cfg, datamodule)
 
@@ -43,9 +43,9 @@ def main(cfg: DictConfig) -> None:
     # 2. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
-    loss = instantiate(cfg.loss, annotations=datamodule.annotations)
-    model = instantiate(cfg.model, annotations=datamodule.annotations, loss=loss)
-
+    loss = instantiate(cfg.loss, annotations=datamodule.annotations, _convert_="all")
+    model = instantiate(cfg.model, annotations=datamodule.annotations, loss=loss, _convert_="all")
+    
     logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:
         trainer = Trainer(cfg)
