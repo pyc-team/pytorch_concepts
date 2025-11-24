@@ -6,6 +6,9 @@ discrete:
     # f1: 
     #   path: "torchmetrics.classification.BinaryF1Score"
     #   kwargs: {}
+    # auc: 
+    #   path: "torchmetrics.classification.BinaryAUROC"
+    #   kwargs: {}
   categorical:
     accuracy: 
       path: "torchmetrics.classification.MulticlassAccuracy"

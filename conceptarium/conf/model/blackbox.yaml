@@ -1,6 +1,5 @@
 defaults:
   - _commons
-  - loss: _default
   - _self_
   
 _target_: "torch_concepts.nn.BlackBox"

@@ -1,6 +1,5 @@
 defaults:
   - _commons
-  - loss: weighted
   - _self_
   
 _target_: "torch_concepts.nn.ConceptBottleneckModel_Joint"

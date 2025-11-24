@@ -6,7 +6,7 @@ encoder setup, and provides hooks for data preprocessing.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional, Mapping, Dict
+from typing import Any, Optional, Mapping, Dict
 import torch
 import torch.nn as nn
 
@@ -23,45 +23,46 @@ class BaseModel(nn.Module, ABC):
     Args:
         input_size (int): Dimensionality of input features (after backbone, if used).
         backbone (BackboneType, optional): Feature extraction backbone (e.g., ResNet,
-            ViT). Can be a nn.Module or callable. If None, assumes embeddings
+            ViT). Can be a nn.Module or callable. If None, assumes latent representations
             are pre-computed. Defaults to None.
-        encoder_kwargs (Dict, optional): Arguments for MLP encoder
+        latent_encoder_kwargs (Dict, optional): Arguments for MLP latent encoder
             (e.g., {'hidden_size': 128, 'n_layers': 2}). If None, uses Identity.
             Defaults to None.
 
     Attributes:
         annotations (Annotations): Annotated concept variables with distribution info.
         backbone (BackboneType): Feature extraction module (None if precomputed).
-        encoder_out_features (int): Output dimensionality of encoder.
+        latent_encoder_out_features (int): Output dimensionality of latent encoder.
     """
 
     def __init__(
         self,
         input_size: int,
-        backbone: BackboneType = None,
-        encoder: nn.Module = None,
-        encoder_kwargs: Dict = None,
+        backbone: Optional[BackboneType] = None,
+        latent_encoder: Optional[nn.Module] = None,
+        latent_encoder_kwargs: Optional[Dict] = None,
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
 
         self._backbone = backbone
 
-        if encoder is not None:
-            self._encoder = encoder(input_size,
-                                    **(encoder_kwargs or {}))
-        elif encoder_kwargs is not None:
-            self._encoder = MLP(input_size=input_size,
-                                **encoder_kwargs)
+        if latent_encoder is not None:
+            self._latent_encoder = latent_encoder(input_size,
+                                    **(latent_encoder_kwargs or {}))
+        elif latent_encoder_kwargs is not None:
+            # assume an MLP encoder if latent_encoder_kwargs provided but no latent_encoder
+            self._latent_encoder = MLP(input_size=input_size,
+                                **latent_encoder_kwargs)
         else:
-            self._encoder = nn.Identity()
+            self._latent_encoder = nn.Identity()
 
-        self.encoder_out_features = encoder_kwargs.get('hidden_size') if encoder_kwargs else input_size
+        self.latent_size = latent_encoder_kwargs.get('hidden_size') if latent_encoder_kwargs else input_size
 
     def __repr__(self):
         backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
-        encoder_name = self.encoder.__class__.__name__ if self.encoder is not None else "None"
-        return f"{self.__class__.__name__}(backbone={backbone_name}, encoder={encoder_name})"
+        latent_encoder_name = self._latent_encoder.__class__.__name__ if self._latent_encoder is not None else "None"
+        return f"{self.__class__.__name__}(backbone={backbone_name}, latent_encoder={latent_encoder_name})"
 
     @property
     def backbone(self) -> BackboneType:
@@ -73,13 +74,13 @@ class BaseModel(nn.Module, ABC):
         return self._backbone
 
     @property
-    def encoder(self) -> nn.Module:
+    def latent_encoder(self) -> nn.Module:
         """The encoder mapping backbone output to latent code(s).
 
         Returns:
-            nn.Module: Encoder network.
+            nn.Module: Latent encoder network.
         """
-        return self._encoder
+        return self._latent_encoder
 
     # TODO: add decoder?
     # @property
@@ -130,7 +131,7 @@ class BaseModel(nn.Module, ABC):
         pass
 
     # ------------------------------------------------------------------
-    # Embeddings extraction helpers
+    # Features extraction helpers
     # ------------------------------------------------------------------
 
     def maybe_apply_backbone(

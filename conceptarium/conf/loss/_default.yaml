@@ -1,5 +1,5 @@
 _target_: "torch_concepts.nn.ConceptLoss"
-_partial_: true
+
 fn_collection:
   discrete:
     binary: 

@@ -3,15 +3,20 @@ defaults:
   - _self_
 
 
-encoder_kwargs:
+# =============================================================
+# Encoder (features -> latent space) settings
+# =============================================================
+latent_encoder: null # default is MLP
+latent_encoder_kwargs:
   hidden_size: 64
   n_layers: 1
   activation: leaky_relu
   dropout: 0.5
 
 
-# learner parameters
-
+# =============================================================
+# Concept distribution configs
+# =============================================================
 variable_distributions:
   discrete_card1: 
     path: "torch.distributions.RelaxedBernoulli"
@@ -28,6 +33,9 @@ variable_distributions:
     path: "torch_concepts.distributions.Delta"
 
 
+# =============================================================
+# Optimizer settings
+# =============================================================
 optim_class:
   _target_: "hydra.utils.get_class"
   path: "torch.optim.AdamW"
@@ -35,9 +43,21 @@ optim_kwargs:
   lr: 0.00075
 
 
+# =============================================================
+# Scheduler settings
+# =============================================================
+# scheduler_class: 
+#   _target_: "hydra.utils.get_class"
+#   path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
+# scheduler_kwargs:
+#   factor: 0.2
+
+
+# =============================================================
+# Metrics settings
+# =============================================================
 summary_metrics: true
 perconcept_metrics: ${dataset.default_task_names}
-
 
 # TODO: implement this
 # train_interv_prob: 0.1

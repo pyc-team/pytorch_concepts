@@ -9,32 +9,8 @@ from ..base.learner import BaseLearner
 
 
 class JointLearner(BaseLearner):
-    def __init__(self,
-                loss: nn.Module,
-                metrics: Mapping,
-                annotations: Annotations,
-                variable_distributions: Mapping,
-                optim_class: Type,
-                optim_kwargs: Mapping,
-                scheduler_class: Optional[Type] = None,
-                scheduler_kwargs: Optional[Mapping] = None,  
-                summary_metrics: Optional[bool] = True,
-                perconcept_metrics: Optional[Union[bool, list]] = False,
-                **kwargs
-    ):
-        super(JointLearner, self).__init__(
-            loss=loss,
-            metrics=metrics,
-            annotations=annotations,
-            variable_distributions=variable_distributions,
-            optim_class=optim_class,
-            optim_kwargs=optim_kwargs,
-            scheduler_class=scheduler_class,
-            scheduler_kwargs=scheduler_kwargs,
-            summary_metrics=summary_metrics,
-            perconcept_metrics=perconcept_metrics,
-            **kwargs
-        )
+    def __init__(self,**kwargs):
+        super(JointLearner, self).__init__(**kwargs)
 
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
@@ -59,7 +35,7 @@ class JointLearner(BaseLearner):
 
         # --- Model forward ---
         # joint training -> inference on all concepts
-        # TODO: implement train interventions using the context manager 'with ...'
+        # TODO: train interventions using the context manager 'with ...'
         # TODO: add option to semi-supervise a subset of concepts
         # TODO: handle backbone kwargs when present
         out = self.forward(x=inputs['x'], query=self.concept_names)
@@ -73,17 +49,18 @@ class JointLearner(BaseLearner):
         #     c_hat = batch.transform['c'].inverse_transform(c_hat)
 
         # --- Compute loss ---
-        # keys in in_loss_dict must match those expected by loss functions
-        in_loss_dict = self.filter_output_for_loss(out, c_loss)
-        loss = self.loss_fn(**in_loss_dict)
-        self.log_loss(step, loss, batch_size=batch_size)
+        if self.loss is not None:
+            in_loss_dict = self.filter_output_for_loss(out, c_loss)
+            loss = self.loss(**in_loss_dict)
+            self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---
         collection = getattr(self, f"{step}_metrics")
-        in_metric_dict = self.filter_output_for_metric(out, c)
-        self.update_metrics(in_metric_dict, collection)
-        self.log_metrics(collection, batch_size=batch_size)
-
+        if collection is not None:
+            in_metric_dict = self.filter_output_for_metric(out, c)
+            self.update_metrics(in_metric_dict, collection)
+            self.log_metrics(collection, batch_size=batch_size)
+            
         return loss
 
     def training_step(self, batch):

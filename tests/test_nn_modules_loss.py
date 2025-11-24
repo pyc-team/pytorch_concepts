@@ -9,7 +9,7 @@ import unittest
 import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss
-from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
 class TestConceptLoss(unittest.TestCase):
@@ -18,9 +18,9 @@ class TestConceptLoss(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create annotations with mixed concept types (binary and categorical only)
-        self.annotations_mixed = AxisAnnotation(
+        axis_mixed = AxisAnnotation(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
-            cardinalities=(1, 1, 3, 4),
+            cardinalities=[1, 1, 3, 4],
             metadata={
                 'binary1': {'type': 'discrete'},
                 'binary2': {'type': 'discrete'},
@@ -28,20 +28,22 @@ class TestConceptLoss(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
+        self.annotations_mixed = Annotations({1: axis_mixed})
         
         # All binary
-        self.annotations_binary = AxisAnnotation(
+        axis_binary = AxisAnnotation(
             labels=('b1', 'b2', 'b3'),
-            cardinalities=(1, 1, 1),
+            cardinalities=[1, 1, 1],
             metadata={
                 'b1': {'type': 'discrete'},
                 'b2': {'type': 'discrete'},
                 'b3': {'type': 'discrete'},
             }
         )
+        self.annotations_binary = Annotations({1: axis_binary})
         
         # All categorical
-        self.annotations_categorical = AxisAnnotation(
+        axis_categorical = AxisAnnotation(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
             metadata={
@@ -49,6 +51,7 @@ class TestConceptLoss(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
+        self.annotations_categorical = Annotations({1: axis_categorical})
         
         # All continuous - not currently tested as continuous concepts are not fully supported
         # self.annotations_continuous = AxisAnnotation(
@@ -195,6 +198,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
                 'task2': {'type': 'discrete'},
             }
         )
+        self.annotations = Annotations({1: self.annotations})
         
         self.task_names = ['task1', 'task2']
         
@@ -210,6 +214,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
                 't2': {'type': 'discrete'},
             }
         )
+        self.annotations_mixed = Annotations({1: self.annotations_mixed})
         
         self.task_names_mixed = ['t1', 't2']
 
@@ -420,7 +425,7 @@ class TestLossConfiguration(unittest.TestCase):
 
     def test_missing_required_loss_config(self):
         """Test that missing required loss config raises error."""
-        annotations = AxisAnnotation(
+        axis = AxisAnnotation(
             labels=('b1', 'b2'),
             cardinalities=(1, 1),
             metadata={
@@ -428,6 +433,7 @@ class TestLossConfiguration(unittest.TestCase):
                 'b2': {'type': 'discrete'},
             }
         )
+        annotations = Annotations({1: axis})
         
         # Missing binary loss config
         loss_config = {
@@ -446,7 +452,7 @@ class TestLossConfiguration(unittest.TestCase):
         """Test that unused loss configs produce warnings."""
         import warnings
         
-        annotations = AxisAnnotation(
+        axis = AxisAnnotation(
             labels=('b1', 'b2'),
             cardinalities=(1, 1),
             metadata={
@@ -454,6 +460,7 @@ class TestLossConfiguration(unittest.TestCase):
                 'b2': {'type': 'discrete'},
             }
         )
+        annotations = Annotations({1: axis})
         
         # Provides continuous loss but no continuous concepts
         loss_config = {

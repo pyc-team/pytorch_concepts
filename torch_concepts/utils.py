@@ -13,9 +13,9 @@ from copy import deepcopy
 from typing import Dict, Union, List, Mapping
 import torch, math
 import logging
-
-from .annotations import Annotations
 from pytorch_lightning import seed_everything as pl_seed_everything
+
+from .annotations import AxisAnnotation
 
 
 def seed_everything(seed: int, workers: bool = True) -> int:
@@ -257,8 +257,8 @@ def _check_tensors(tensors):
             raise ValueError("All tensors must have the same requires_grad setting.")
 
 
-def add_distribution_to_annotations(annotations: Annotations,
-                                    variable_distributions: Mapping) -> Annotations:
+def add_distribution_to_annotations(annotations: AxisAnnotation,
+                                    variable_distributions: Mapping) -> AxisAnnotation:
     """Add probability distribution classes to concept annotations metadata.
 
     Maps concept types and cardinalities to appropriate distribution classes
@@ -285,9 +285,8 @@ def add_distribution_to_annotations(annotations: Annotations,
         ...     annotations, distributions
         ... )
     """
-    concepts_annotations = deepcopy(annotations[1])
-    metadatas = concepts_annotations.metadata
-    cardinalities = concepts_annotations.cardinalities
+    metadatas = annotations.metadata
+    cardinalities = annotations.cardinalities
     for (concept_name, metadata), cardinality in zip(metadatas.items(), cardinalities):
         if 'distribution' in metadata:
             warnings.warn(
@@ -309,7 +308,7 @@ def add_distribution_to_annotations(annotations: Annotations,
 
         metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
 
-    annotations[1].metadata = metadatas
+    annotations.metadata = metadatas
     return annotations
 
 

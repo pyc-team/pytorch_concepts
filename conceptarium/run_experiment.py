@@ -39,15 +39,17 @@ def main(cfg: DictConfig) -> None:
 
     # ----------------------------------
     # Model
+    # 1. Instantiate the loss function
+    # 2. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
-    model = instantiate(cfg.model, annotations=datamodule.annotations, graph=datamodule.graph)
+    loss = instantiate(cfg.loss, annotations=datamodule.annotations)
+    model = instantiate(cfg.model, annotations=datamodule.annotations, loss=loss)
 
     logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:
         trainer = Trainer(cfg)
         trainer.logger.log_hyperparams(parse_hyperparams(cfg))
-        # maybe_set_summary_metrics(trainer.logger, engine)
         # ----------------------------------
         # Train
         trainer.fit(model, datamodule=datamodule)

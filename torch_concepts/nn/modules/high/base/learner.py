@@ -9,7 +9,7 @@ validation, and testing of concept-based models. It handles:
 - Concept interventions (experimental)
 """
 
-from typing import Optional, Mapping, Type, Callable, Union
+from typing import Optional, Mapping, Callable, Union
 from abc import abstractmethod
 
 import torch
@@ -17,21 +17,22 @@ from torch import nn
 from torchmetrics import MetricCollection
 from torchmetrics.collections import _remove_prefix
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
-from torch_concepts import Annotations
-from torch_concepts.nn.modules.utils import check_collection, get_concept_groups
-from torch_concepts.utils import add_distribution_to_annotations, instantiate_from_string
+from .....annotations import Annotations
+from .....nn.modules.utils import check_collection, get_concept_groups
+from .....utils import add_distribution_to_annotations, instantiate_from_string
 
 
 class BaseLearner(pl.LightningModule):
     def __init__(self,
-                loss: nn.Module,
-                metrics: Mapping,
                 annotations: Annotations,
-                variable_distributions: Mapping,
-                optim_class: Type,
-                optim_kwargs: Mapping,
-                scheduler_class: Optional[Type] = None,
+                loss: Optional[nn.Module] = None,
+                metrics: Optional[Mapping] = None,
+                variable_distributions: Optional[Mapping] = None,
+                optim_class: Optional[Optimizer] = None,
+                optim_kwargs: Optional[Mapping] = None,
+                scheduler_class: Optional[LRScheduler] = None,
                 scheduler_kwargs: Optional[Mapping] = None,  
                 summary_metrics: Optional[bool] = True,
                 perconcept_metrics: Optional[Union[bool, list]] = False,
@@ -39,13 +40,21 @@ class BaseLearner(pl.LightningModule):
     ):        
         super(BaseLearner, self).__init__(**kwargs)
 
+        annotations = annotations.get_axis_annotation(1)
+
         # Add distribution information to annotations metadata
-        annotations = add_distribution_to_annotations(
-            annotations, variable_distributions
-        )
+        if annotations.has_metadata('distribution'):
+            self.concept_annotations = annotations
+        else:
+            assert variable_distributions is not None, (
+                "variable_distributions must be provided if annotations "
+                "lack 'distribution' metadata."
+            )
+            self.concept_annotations = add_distribution_to_annotations(
+                annotations, variable_distributions
+            )
 
         # concept info
-        self.concept_annotations = annotations.get_axis_annotation(1)
         self.metadata = self.concept_annotations.metadata
         self.concept_names = self.concept_annotations.labels
         self.n_concepts = len(self.concept_names)
@@ -61,20 +70,27 @@ class BaseLearner(pl.LightningModule):
                 f"Please use only discrete (binary or categorical) concepts."
             )
 
-        self.loss_fn = loss(annotations=self.concept_annotations)
+        # loss function
+        self.loss = loss
 
         # optimizer and scheduler
         self.optim_class = optim_class
-        self.optim_kwargs = optim_kwargs or dict()
+        self.optim_kwargs = optim_kwargs
         self.scheduler_class = scheduler_class
-        self.scheduler_kwargs = scheduler_kwargs or dict()
+        self.scheduler_kwargs = scheduler_kwargs
 
         # metrics configuration
-        self.summary_metrics = summary_metrics
-        self.perconcept_metrics = perconcept_metrics
-
-        # Setup and instantiate metrics
-        self._setup_metrics(metrics)
+        if metrics is not None:
+            self.summary_metrics = summary_metrics
+            self.perconcept_metrics = perconcept_metrics
+            # Setup and instantiate metrics
+            self._setup_metrics(metrics)
+        else:
+            self.summary_metrics = False
+            self.perconcept_metrics = False
+            self.train_metrics = None
+            self.val_metrics = None
+            self.test_metrics = None
 
     def __repr__(self):
         scheduler_name = self.scheduler_class.__name__ if self.scheduler_class else None
@@ -513,12 +529,13 @@ class BaseLearner(pl.LightningModule):
         Called by PyTorch Lightning to setup optimization.
         
         Returns:
-            dict: Configuration with 'optimizer' and optionally 'lr_scheduler' 
-                and 'monitor' keys.
+            Union[Optimizer, dict, None]: Returns optimizer directly, or dict with 
+                'optimizer' and optionally 'lr_scheduler' and 'monitor' keys,
+                or None if no optimizer is configured.
                 
         Example:
             >>> # With scheduler monitoring validation loss
-            >>> predictor = Predictor(
+            >>> model = ConceptBottleneckModel(
             ...     ...,
             ...     optim_class=torch.optim.Adam,
             ...     optim_kwargs={'lr': 0.001},
@@ -526,14 +543,33 @@ class BaseLearner(pl.LightningModule):
             ...     scheduler_kwargs={'mode': 'min', 'patience': 5, 'monitor': 'val_loss'}
             ... )
         """
-        cfg = dict()
-        optimizer = self.optim_class(self.parameters(), **self.optim_kwargs)
-        cfg["optimizer"] = optimizer
-        if self.scheduler_class is not None:
-            metric = self.scheduler_kwargs.pop("monitor", None)
-            scheduler = self.scheduler_class(optimizer, **self.scheduler_kwargs)
-            cfg["lr_scheduler"] = scheduler
-            if metric is not None:
-                cfg["monitor"] = metric
+        # No optimizer configured
+        if self.optim_class is None:
+            return None
+        
+        # Initialize optimizer with proper kwargs handling
+        optim_kwargs = self.optim_kwargs if self.optim_kwargs is not None else {}
+        optimizer = self.optim_class(self.parameters(), **optim_kwargs)
+        
+        # No scheduler configured - return optimizer directly
+        if self.scheduler_class is None:
+            return {"optimizer": optimizer}
+        
+        # Scheduler configured - build configuration dict
+        # Make a copy to avoid modifying original kwargs
+        scheduler_kwargs = self.scheduler_kwargs.copy() if self.scheduler_kwargs is not None else {}
+        monitor_metric = scheduler_kwargs.pop("monitor", None)
+        
+        scheduler = self.scheduler_class(optimizer, **scheduler_kwargs)
+        
+        cfg = {
+            "optimizer": optimizer,
+            "lr_scheduler": scheduler
+        }
+        
+        # Add monitor metric if specified (required for ReduceLROnPlateau)
+        if monitor_metric is not None:
+            cfg["monitor"] = monitor_metric
+        
         return cfg
  

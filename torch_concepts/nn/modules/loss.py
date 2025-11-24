@@ -3,9 +3,9 @@ from typing import List, Mapping
 import torch
 from torch import nn
 
-from torch_concepts import AxisAnnotation
-from torch_concepts.utils import instantiate_from_string
-from torch_concepts.nn.modules.utils import check_collection, get_concept_groups
+from ...annotations import Annotations, AxisAnnotation
+from ...utils import instantiate_from_string
+from ...nn.modules.utils import check_collection, get_concept_groups
 
 def setup_losses(annotations: AxisAnnotation, loss_config: Mapping):
     """Setup and instantiate loss functions from configuration.
@@ -50,10 +50,11 @@ def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks
 
 class ConceptLoss(nn.Module):
     def __init__(self, 
-                 annotations: AxisAnnotation, 
+                 annotations: Annotations, 
                  fn_collection: Mapping
     ):
         super().__init__()
+        annotations = annotations.get_axis_annotation(axis=1)
         self.binary_fn, self.categorical_fn, self.continuous_fn = setup_losses(annotations, fn_collection)
         self.groups = get_concept_groups(annotations)
         self.cardinalities = annotations.cardinalities
@@ -114,16 +115,18 @@ class WeightedConceptLoss(nn.Module):
         task_names (List[str]): List of task concept names.
     """
     def __init__(self, 
-                 annotations: AxisAnnotation, 
+                 annotations: Annotations, 
                  fn_collection: Mapping,
                  weight: float,
                  task_names: List[str]
     ):
         super().__init__()
         self.weight = weight
+        annotations = annotations.get_axis_annotation(axis=1)
         concept_names = [name for name in annotations.labels if name not in task_names]
-        task_annotations = annotations.subset(task_names)
-        concept_annotations = annotations.subset(concept_names)
+        task_annotations = Annotations({1:annotations.subset(task_names)})
+        concept_annotations = Annotations({1:annotations.subset(concept_names)})
+
         self.concept_loss = ConceptLoss(concept_annotations, fn_collection)
         self.task_loss = ConceptLoss(task_annotations, fn_collection)
         self.target_c_idx, self.target_t_idx, self.input_c_idx, self.input_t_idx = get_concept_task_idx(

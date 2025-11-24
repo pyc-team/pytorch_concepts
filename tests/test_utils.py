@@ -305,8 +305,7 @@ class TestUtils(unittest.TestCase):
             'color': {'type': 'discrete'},
             'shape': {'type': 'discrete'}
         }
-        axis = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
-        annotations = Annotations({1: axis})
+        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
 
         variable_distributions = {
             'discrete_card1': {'path': 'torch.distributions.Bernoulli'},
@@ -316,7 +315,7 @@ class TestUtils(unittest.TestCase):
         }
 
         result = add_distribution_to_annotations(annotations, variable_distributions)
-        self.assertIsInstance(result, Annotations)
+        self.assertIsInstance(result, AxisAnnotation)
 
     def test_compute_temperature_edge_cases(self):
         """Test compute_temperature with edge cases."""

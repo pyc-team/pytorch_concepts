@@ -1,6 +1,5 @@
 defaults:
   - _commons
-  - loss: weighted
   - _self_
   
 # default is joint training
@@ -8,6 +7,6 @@ _target_: "torch_concepts.nn.ConceptBottleneckModel"
 
 task_names: ${dataset.default_task_names}
 
-inference: 
+inference:  
   _target_: "torch_concepts.nn.DeterministicInference"
   _partial_: true

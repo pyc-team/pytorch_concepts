@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Type, Union, Mapping
+from typing import Dict, List, Optional, Type, Union, Mapping, override
 from torch import nn
 import torch
 
@@ -10,69 +10,50 @@ from ....modules.low.encoders.linear import ProbEncoderFromEmb
 from ....modules.low.predictors.linear import ProbPredictor
 from ....modules.low.lazy import LazyConstructor
 from ....modules.low.base.inference import BaseInference
+from ....modules.mid.inference.forward import DeterministicInference
 
 from ..base.model import BaseModel
-from ..learners.joint import JointLearner
+from ..learners import JointLearner, IndependentLearner
 
 
 class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
     """High-level Concept Bottleneck Model using BipartiteModel.
 
     Implements a two-stage architecture:
-    1. Backbone + Encoder → Concept predictions
+    1. Backbone + Latent Encoder + Concept Encoder → Concept predictions
     2. Concept predictions → Task predictions
     """
     def __init__(
         self,
-        task_names: Union[List[str], str, List[int]],
-        inference: BaseInference,
         input_size: int,
-
-        loss: nn.Module,
-        metrics: Mapping,
         annotations: Annotations,
-        variable_distributions: Mapping,
-        optim_class: Type,
-        optim_kwargs: Mapping,
-
-        backbone: Optional[BackboneType] = None,
-        encoder: Optional[nn.Module] = None,
-        encoder_kwargs: Optional[Dict] = None,
-
-        scheduler_class: Optional[Type] = None,
-        scheduler_kwargs: Optional[Mapping] = None,
-        summary_metrics: Optional[bool] = True,
-        perconcept_metrics: Optional[Union[bool, list]] = False,
+        task_names: Union[List[str], str],
+        variable_distributions: Optional[Mapping] = None,
+        inference: Optional[BaseInference] = DeterministicInference,
+        loss: Optional[nn.Module] = None,
+        metrics: Optional[Mapping] = None,
         **kwargs
-    ) -> None:
-        # Initialize using super() to properly handle MRO
+    ):
         super().__init__(
-            #-- Learner args
-            loss=loss,
-            metrics=metrics,
+            input_size=input_size,
             annotations=annotations,
             variable_distributions=variable_distributions,
-            optim_class=optim_class,
-            optim_kwargs=optim_kwargs,
-            scheduler_class=scheduler_class,
-            scheduler_kwargs=scheduler_kwargs,
-            summary_metrics=summary_metrics,
-            perconcept_metrics=perconcept_metrics,
-            # -- BaseModel args
-            input_size=input_size,
-            backbone=backbone,
-            encoder=encoder,
-            encoder_kwargs=encoder_kwargs
+            loss=loss,
+            metrics=metrics,
+            **kwargs
         )
 
-        model = BipartiteModel(task_names=task_names,
-                               input_size=self.encoder_out_features,
-                               annotations=annotations,
-                               encoder=LazyConstructor(ProbEncoderFromEmb),
-                               predictor=LazyConstructor(ProbPredictor))
+        self.model = BipartiteModel(
+            task_names=task_names,
+            input_size=self.latent_size,
+            annotations=annotations,
+            encoder=LazyConstructor(ProbEncoderFromEmb),
+            predictor=LazyConstructor(ProbPredictor)
+        )
 
-        self.inference = inference(model.probabilistic_model)
+        self.inference = inference(self.model.probabilistic_model)
 
+    @override
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None
@@ -95,13 +76,14 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # (b, input_size) -> (b, backbone_out_features)
         features = self.maybe_apply_backbone(x)
 
-        # (b, backbone_out_features) -> (b, encoder_out_features)
-        features = self.encoder(features)
+        # (b, backbone_out_features) -> (b, latent_size)
+        latent = self.latent_encoder(features)
 
         # inference
         # get logits for the query concepts
-        # (b, encoder_out_features) -> (b, sum(concept_cardinalities))
-        logits = self.inference.query(query, evidence={'embedding': features})
+        # (b, latent_size) -> (b, sum(concept_cardinalities))
+        # FIXME: rename 'embedding' -> 'latent' ?
+        logits = self.inference.query(query, evidence={'embedding': latent})
         return logits
 
     def filter_output_for_loss(self, forward_out, target):
@@ -134,6 +116,61 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         return {'input': forward_out,
                 'target': target}
 
+
+class ConceptBottleneckModel_Independent(BaseModel, IndependentLearner):
+    """High-level Concept Bottleneck Model using BipartiteModel.
+
+    Implements a two-stage architecture:
+    1. Backbone + Encoder → Concept predictions
+    2. Concept predictions → Task predictions
+    """
+    def __init__(
+        self,
+        task_names: Union[List[str], str, List[int]],
+        inference: BaseInference,
+        input_size: int,
+
+        loss: nn.Module,
+        metrics: Mapping,
+        annotations: Annotations,
+        variable_distributions: Mapping,
+        optim_class: Type,
+        optim_kwargs: Mapping,
+
+        backbone: Optional[BackboneType] = None,
+        latent_encoder: Optional[nn.Module] = None,
+        latent_encoder_kwargs: Optional[Dict] = None,
+
+        scheduler_class: Optional[Type] = None,
+        scheduler_kwargs: Optional[Mapping] = None,
+        summary_metrics: Optional[bool] = True,
+        perconcept_metrics: Optional[Union[bool, list]] = False,
+        **kwargs
+    ) -> None:
+        # Initialize using super() to properly handle MRO
+        super().__init__(
+            #-- Learner args
+            loss=loss,
+            metrics=metrics,
+            annotations=annotations,
+            variable_distributions=variable_distributions,
+            optim_class=optim_class,
+            optim_kwargs=optim_kwargs,
+            scheduler_class=scheduler_class,
+            scheduler_kwargs=scheduler_kwargs,
+            summary_metrics=summary_metrics,
+            perconcept_metrics=perconcept_metrics,
+            # -- BaseModel args
+            input_size=input_size,
+            backbone=backbone,
+            latent_encoder=latent_encoder,
+            latent_encoder_kwargs=latent_encoder_kwargs
+        )
+        model = BipartiteModel(task_names=task_names,
+                               input_size=self.latent_size,
+                               annotations=annotations,
+                               encoder=LazyConstructor(ProbEncoderFromEmb),
+                               predictor=LazyConstructor(ProbPredictor))
 
 class ConceptBottleneckModel(ConceptBottleneckModel_Joint):
     """Alias for ConceptBottleneckModel_Joint for backward compatibility."""
