@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Type, Union, Mapping
+from typing import List, Optional, Union, Mapping
 from torch import nn
 import torch
 
@@ -13,7 +13,7 @@ from ....modules.low.base.inference import BaseInference
 from ....modules.mid.inference.forward import DeterministicInference
 
 from ..base.model import BaseModel
-from ..learners import JointLearner, IndependentLearner
+from ..learners import JointLearner
 
 
 class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
@@ -114,7 +114,7 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # return: logits
         return {'input': forward_out,
                 'target': target}
-    
+        
 
 class ConceptBottleneckModel(ConceptBottleneckModel_Joint):
     """Alias for ConceptBottleneckModel_Joint for backward compatibility."""
