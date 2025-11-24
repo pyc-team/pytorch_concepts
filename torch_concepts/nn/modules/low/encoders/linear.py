@@ -9,7 +9,7 @@ import torch
 from ..base.layer import BaseEncoder
 
 
-class ProbEncoderFromEmb(BaseEncoder):
+class LinearZC(BaseEncoder):
     """
     Encoder that predicts concept activations from latent.
 
@@ -30,10 +30,10 @@ class ProbEncoderFromEmb(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ProbEncoderFromEmb
+        >>> from torch_concepts.nn import LinearZC
         >>>
         >>> # Create encoder
-        >>> encoder = ProbEncoderFromEmb(
+        >>> encoder = LinearZC(
         ...     in_features_latent=128,
         ...     out_features=10
         ... )
@@ -99,7 +99,7 @@ class ProbEncoderFromEmb(BaseEncoder):
         return self.encoder(latent)
 
 
-class ProbEncoderFromExog(BaseEncoder):
+class LinearUC(BaseEncoder):
     """
     Encoder that extracts concepts from exogenous variables.
 
@@ -117,10 +117,10 @@ class ProbEncoderFromExog(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ProbEncoderFromExog
+        >>> from torch_concepts.nn import LinearUC
         >>>
         >>> # Create encoder with 2 exogenous vars per concept
-        >>> encoder = ProbEncoderFromExog(
+        >>> encoder = LinearUC(
         ...     in_features_exogenous=5,
         ...     n_exogenous_per_concept=2
         ... )

@@ -14,32 +14,32 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   ProbEncoderFromEmb
-   ProbEncoderFromExog
-   StochasticEncoderFromEmb
-   ExogEncoder
+   LinearZC
+   LinearUC
+   StochasticZC
+   LinearZU
    MemorySelector
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: ProbEncoderFromEmb
+.. autoclass:: LinearZC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: ProbEncoderFromExog
+.. autoclass:: LinearUC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: StochasticEncoderFromEmb
+.. autoclass:: StochasticZC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: ExogEncoder
+.. autoclass:: LinearZU
    :members:
    :undoc-members:
    :show-inheritance:

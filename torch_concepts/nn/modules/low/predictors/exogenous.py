@@ -5,7 +5,7 @@ from ....functional import grouped_concept_exogenous_mixture
 from typing import List, Callable
 
 
-class MixProbExogPredictor(BasePredictor):
+class MixCUC(BasePredictor):
     """
     Concept exogenous predictor with mixture of concept activations and exogenous features.
 
@@ -31,10 +31,10 @@ class MixProbExogPredictor(BasePredictor):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import MixProbExogPredictor
+        >>> from torch_concepts.nn import MixCUC
         >>>
         >>> # Create predictor with 10 concepts, 20 exogenous dims, 3 tasks
-        >>> predictor = MixProbExogPredictor(
+        >>> predictor = MixCUC(
         ...     in_features_endogenous=10,
         ...     in_features_exogenous=10,  # Must be half of exogenous latent size when no cardinalities are provided
         ...     out_features=3,
@@ -50,7 +50,7 @@ class MixProbExogPredictor(BasePredictor):
         >>> print(task_endogenous.shape)  # torch.Size([4, 3])
         >>>
         >>> # With concept groups (e.g., color has 3 values, shape has 4, etc.)
-        >>> predictor_grouped = MixProbExogPredictor(
+        >>> predictor_grouped = MixCUC(
         ...     in_features_endogenous=10,
         ...     in_features_exogenous=20, # Must be equal to exogenous latent size when cardinalities are provided
         ...     out_features=3,

@@ -86,11 +86,11 @@ Here's a minimal example using the low-Level API:
 
    # Create a concept bottleneck model
    model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.ProbEncoderFromEmb(
+       'encoder': pyc.nn.LinearZC(
            in_features_latent=64,
            out_features=10
        ),
-       'predictor': pyc.nn.ProbPredictor(
+       'predictor': pyc.nn.LinearCC(
            in_features_endogenous=10,
            out_features=5
        ),

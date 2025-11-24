@@ -48,7 +48,7 @@ At this API level, models are represented as Probabilistic Models where:
   .. code-block:: python
 
      concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
-                                        parametrization=pyc.nn.ProbEncoderFromEmb(in_features_latent=10, out_features=3))
+                                        parametrization=pyc.nn.LinearZC(in_features_latent=10, out_features=3))
 
 - **Probabilistic Model**: a collection of variables and CPDs. For instance we can define a ProbabilisticModel as:
 

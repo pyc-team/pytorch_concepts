@@ -4,7 +4,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, \
+from torch_concepts.nn import LinearZC, LinearCC, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor
 
 
@@ -38,8 +38,8 @@ def main():
     concept_model = BipartiteModel(task_names,
                                    latent_dims,
                                    annotations,
-                                   LazyConstructor(ProbEncoderFromEmb),
-                                   LazyConstructor(ProbPredictor))
+                                   LazyConstructor(LinearZC),
+                                   LazyConstructor(LinearCC))
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.probabilistic_model)

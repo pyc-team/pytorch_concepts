@@ -6,18 +6,18 @@ Tests all encoder modules (linear, exogenous, selector, stochastic).
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
-from torch_concepts.nn.modules.low.encoders.exogenous import ExogEncoder
+from torch_concepts.nn.modules.low.encoders.linear import LinearZC, LinearUC
+from torch_concepts.nn.modules.low.encoders.exogenous import LinearZU
 from torch_concepts.nn.modules.low.encoders.selector import MemorySelector
-from torch_concepts.nn.modules.low.encoders.stochastic import StochasticEncoderFromEmb
+from torch_concepts.nn.modules.low.encoders.stochastic import StochasticZC
 
 
-class TestProbEncoderFromEmb(unittest.TestCase):
-    """Test ProbEncoderFromEmb."""
+class TestLinearZC(unittest.TestCase):
+    """Test LinearZC."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = ProbEncoderFromEmb(
+        encoder = LinearZC(
             in_features_latent=128,
             out_features=10
         )
@@ -27,7 +27,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        encoder = ProbEncoderFromEmb(
+        encoder = LinearZC(
             in_features_latent=128,
             out_features=10
         )
@@ -37,7 +37,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
-        encoder = ProbEncoderFromEmb(
+        encoder = LinearZC(
             in_features_latent=64,
             out_features=5
         )
@@ -49,7 +49,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        encoder = ProbEncoderFromEmb(
+        encoder = LinearZC(
             in_features_latent=32,
             out_features=5
         )
@@ -60,7 +60,7 @@ class TestProbEncoderFromEmb(unittest.TestCase):
 
     def test_with_bias_false(self):
         """Test encoder without bias."""
-        encoder = ProbEncoderFromEmb(
+        encoder = LinearZC(
             in_features_latent=32,
             out_features=5,
             bias=False
@@ -70,12 +70,12 @@ class TestProbEncoderFromEmb(unittest.TestCase):
         self.assertEqual(output.shape, (2, 5))
 
 
-class TestProbEncoderFromExog(unittest.TestCase):
-    """Test ProbEncoderFromExog."""
+class TestLinearUC(unittest.TestCase):
+    """Test LinearUC."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = ProbEncoderFromExog(
+        encoder = LinearUC(
             in_features_exogenous=16,
             n_exogenous_per_concept=2
         )
@@ -83,7 +83,7 @@ class TestProbEncoderFromExog(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        encoder = ProbEncoderFromExog(
+        encoder = LinearUC(
             in_features_exogenous=8,
             n_exogenous_per_concept=2
         )
@@ -94,7 +94,7 @@ class TestProbEncoderFromExog(unittest.TestCase):
 
     def test_single_exogenous_per_concept(self):
         """Test with single exogenous per concept."""
-        encoder = ProbEncoderFromExog(
+        encoder = LinearUC(
             in_features_exogenous=10,
             n_exogenous_per_concept=1
         )
@@ -104,7 +104,7 @@ class TestProbEncoderFromExog(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow."""
-        encoder = ProbEncoderFromExog(
+        encoder = LinearUC(
             in_features_exogenous=8,
             n_exogenous_per_concept=2
         )
@@ -115,12 +115,12 @@ class TestProbEncoderFromExog(unittest.TestCase):
         self.assertIsNotNone(exog.grad)
 
 
-class TestExogEncoder(unittest.TestCase):
-    """Test ExogEncoder."""
+class TestLinearZU(unittest.TestCase):
+    """Test LinearZU."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = ExogEncoder(
+        encoder = LinearZU(
             in_features_latent=128,
             out_features=10,
             exogenous_size=16
@@ -131,7 +131,7 @@ class TestExogEncoder(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        encoder = ExogEncoder(
+        encoder = LinearZU(
             in_features_latent=64,
             out_features=5,
             exogenous_size=8
@@ -142,7 +142,7 @@ class TestExogEncoder(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
-        encoder = ExogEncoder(
+        encoder = LinearZU(
             in_features_latent=32,
             out_features=3,
             exogenous_size=4
@@ -156,7 +156,7 @@ class TestExogEncoder(unittest.TestCase):
     def test_different_embedding_sizes(self):
         """Test various embedding sizes."""
         for emb_size in [4, 8, 16, 32]:
-            encoder = ExogEncoder(
+            encoder = LinearZU(
                 in_features_latent=64,
                 out_features=5,
                 exogenous_size=emb_size
@@ -167,7 +167,7 @@ class TestExogEncoder(unittest.TestCase):
 
     def test_encoder_output_dimension(self):
         """Test output dimension calculation."""
-        encoder = ExogEncoder(
+        encoder = LinearZU(
             in_features_latent=128,
             out_features=10,
             exogenous_size=16
@@ -177,7 +177,7 @@ class TestExogEncoder(unittest.TestCase):
 
     def test_leaky_relu_activation(self):
         """Test that LeakyReLU is applied."""
-        encoder = ExogEncoder(
+        encoder = LinearZU(
             in_features_latent=32,
             out_features=3,
             exogenous_size=4
@@ -307,12 +307,12 @@ class TestMemorySelector(unittest.TestCase):
             self.assertEqual(output.shape, (batch_size, 3, 4))
 
 
-class TestStochasticEncoderFromEmb(unittest.TestCase):
-    """Test StochasticEncoderFromEmb."""
+class TestStochasticZC(unittest.TestCase):
+    """Test StochasticZC."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=128,
             out_features=5,
             num_monte_carlo=100
@@ -325,7 +325,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_forward_with_reduce(self):
         """Test forward pass with reduce=True."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=64,
             out_features=5,
             num_monte_carlo=50
@@ -336,7 +336,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_forward_without_reduce(self):
         """Test forward pass with reduce=False."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=32,
             out_features=3,
             num_monte_carlo=20
@@ -347,7 +347,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through stochastic encoder."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=4,
             num_monte_carlo=10
@@ -360,7 +360,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_predict_sigma(self):
         """Test internal _predict_sigma method."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=3,
             num_monte_carlo=10
@@ -376,7 +376,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_positive_diagonal_covariance(self):
         """Test that diagonal of covariance is positive."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=3,
             num_monte_carlo=10
@@ -390,7 +390,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_monte_carlo_samples_variability(self):
         """Test that MC samples show variability."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=2,
             num_monte_carlo=100
@@ -404,7 +404,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_different_monte_carlo_sizes(self):
         """Test various MC sample sizes."""
         for mc_size in [10, 50, 200]:
-            encoder = StochasticEncoderFromEmb(
+            encoder = StochasticZC(
                 in_features_latent=16,
                 out_features=3,
                 num_monte_carlo=mc_size
@@ -416,7 +416,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
     def test_mean_consistency(self):
         """Test that mean of samples approximates mu."""
         torch.manual_seed(42)
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=2,
             num_monte_carlo=1000
@@ -435,7 +435,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=32,
             out_features=4,
             num_monte_carlo=20
@@ -449,7 +449,7 @@ class TestStochasticEncoderFromEmb(unittest.TestCase):
 
     def test_sigma_weight_initialization(self):
         """Test that sigma weights are scaled down at init."""
-        encoder = StochasticEncoderFromEmb(
+        encoder = StochasticZC(
             in_features_latent=16,
             out_features=3,
             num_monte_carlo=10

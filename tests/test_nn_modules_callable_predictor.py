@@ -1,23 +1,23 @@
 """
 Comprehensive tests for torch_concepts.nn.modules.low.predictors.call
 
-Tests the CallablePredictor module with various callable functions.
+Tests the CallableCC module with various callable functions.
 """
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn import CallablePredictor
+from torch_concepts.nn import CallableCC
 
 
-class TestCallablePredictorInitialization(unittest.TestCase):
-    """Test CallablePredictor initialization."""
+class TestCallableCCInitialization(unittest.TestCase):
+    """Test CallableCC initialization."""
 
     def test_basic_initialization(self):
         """Test basic predictor initialization."""
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func
         )
         self.assertTrue(predictor.use_bias)
@@ -28,7 +28,7 @@ class TestCallablePredictorInitialization(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=False
         )
@@ -39,7 +39,7 @@ class TestCallablePredictorInitialization(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             init_bias_mean=1.0,
             init_bias_std=0.5,
@@ -53,22 +53,22 @@ class TestCallablePredictorInitialization(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             in_activation=torch.sigmoid
         )
         self.assertTrue(predictor.use_bias)
 
 
-class TestCallablePredictorForward(unittest.TestCase):
-    """Test CallablePredictor forward pass."""
+class TestCallableCCForward(unittest.TestCase):
+    """Test CallableCC forward pass."""
 
     def test_forward_simple_sum(self):
         """Test forward pass with simple sum function."""
         def sum_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=sum_func,
             use_bias=False
         )
@@ -83,7 +83,7 @@ class TestCallablePredictorForward(unittest.TestCase):
         def sum_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=sum_func,
             in_activation=torch.sigmoid,
             use_bias=False
@@ -104,7 +104,7 @@ class TestCallablePredictorForward(unittest.TestCase):
             output2 = 2.0*c0 - 1.0*c1**2 + 0.5*c2**3
             return torch.cat([output1, output2], dim=1)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=quadratic_predictor,
             use_bias=False
         )
@@ -120,7 +120,7 @@ class TestCallablePredictorForward(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True
         )
@@ -145,7 +145,7 @@ class TestCallablePredictorForward(unittest.TestCase):
             max_out = probs.max(dim=1, keepdim=True)[0]
             return torch.cat([sum_out, mean_out, max_out], dim=1)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=multi_output_func,
             use_bias=False
         )
@@ -162,7 +162,7 @@ class TestCallablePredictorForward(unittest.TestCase):
                 weights = torch.ones(probs.shape[1])
             return (probs * weights).sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=weighted_sum,
             use_bias=False
         )
@@ -178,7 +178,7 @@ class TestCallablePredictorForward(unittest.TestCase):
         def parameterized_func(probs, scale):
             return probs.sum(dim=1, keepdim=True) * scale
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=parameterized_func,
             use_bias=False
         )
@@ -190,15 +190,15 @@ class TestCallablePredictorForward(unittest.TestCase):
         self.assertEqual(output.shape, (4, 1))
 
 
-class TestCallablePredictorGradients(unittest.TestCase):
-    """Test gradient flow through CallablePredictor."""
+class TestCallableCCGradients(unittest.TestCase):
+    """Test gradient flow through CallableCC."""
 
     def test_gradient_flow(self):
         """Test gradient flow through predictor."""
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=False
         )
@@ -216,7 +216,7 @@ class TestCallablePredictorGradients(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True
         )
@@ -235,7 +235,7 @@ class TestCallablePredictorGradients(unittest.TestCase):
         def quadratic_func(probs):
             return (probs ** 2).sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=quadratic_func,
             use_bias=False
         )
@@ -248,7 +248,7 @@ class TestCallablePredictorGradients(unittest.TestCase):
         self.assertIsNotNone(endogenous.grad)
 
 
-class TestCallablePredictorBiasStd(unittest.TestCase):
+class TestCallableCCBiasStd(unittest.TestCase):
     """Test bias standard deviation computation."""
 
     def test_bias_std_positive(self):
@@ -256,7 +256,7 @@ class TestCallablePredictorBiasStd(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True
         )
@@ -270,7 +270,7 @@ class TestCallablePredictorBiasStd(unittest.TestCase):
             return probs.sum(dim=1, keepdim=True)
 
         min_std = 1e-4
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True,
             min_std=min_std
@@ -285,7 +285,7 @@ class TestCallablePredictorBiasStd(unittest.TestCase):
             return probs.sum(dim=1, keepdim=True)
 
         init_std = 0.1
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True,
             init_bias_std=init_std,
@@ -297,7 +297,7 @@ class TestCallablePredictorBiasStd(unittest.TestCase):
         self.assertAlmostEqual(std.item(), init_std, places=2)
 
 
-class TestCallablePredictorEdgeCases(unittest.TestCase):
+class TestCallableCCEdgeCases(unittest.TestCase):
     """Test edge cases and special scenarios."""
 
     def test_single_sample(self):
@@ -305,7 +305,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=False
         )
@@ -320,7 +320,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=False
         )
@@ -336,7 +336,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         def identity_func(probs):
             return probs
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=identity_func,
             use_bias=False
         )
@@ -356,7 +356,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
             squared = activated ** 2
             return squared
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=complex_func,
             use_bias=False
         )
@@ -371,7 +371,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=False
         )
@@ -385,7 +385,7 @@ class TestCallablePredictorEdgeCases(unittest.TestCase):
         torch.testing.assert_close(output1, output2)
 
 
-class TestCallablePredictorDeviceCompatibility(unittest.TestCase):
+class TestCallableCCDeviceCompatibility(unittest.TestCase):
     """Test device compatibility."""
 
     def test_cpu_device(self):
@@ -393,7 +393,7 @@ class TestCallablePredictorDeviceCompatibility(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True
         )
@@ -409,7 +409,7 @@ class TestCallablePredictorDeviceCompatibility(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallablePredictor(
+        predictor = CallableCC(
             func=simple_func,
             use_bias=True
         ).cuda()

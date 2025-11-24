@@ -2,7 +2,7 @@ import torch
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromExog, MixProbExogPredictor
+from torch_concepts.nn import LinearZU, LinearUC, MixCUC
 
 
 def main():
@@ -47,11 +47,11 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
+    exog_encoder = LinearZU(in_features_latent=latent_dims,
                                out_features=c_annotations.shape[1],
                                exogenous_size=latent_dims)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims)
-    y_predictor = MixProbExogPredictor(in_features_endogenous=c_annotations.shape[1],
+    c_encoder = LinearUC(in_features_exogenous=latent_dims)
+    y_predictor = MixCUC(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
                                        out_features=y_annotations.shape[1],
                                        cardinalities=c_annotations.get_axis_annotation(1).cardinalities)

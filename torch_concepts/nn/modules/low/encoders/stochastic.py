@@ -11,7 +11,7 @@ from ..base.layer import BaseEncoder
 from torch.distributions import MultivariateNormal
 
 
-class StochasticEncoderFromEmb(BaseEncoder):
+class StochasticZC(BaseEncoder):
     """
     Stochastic encoder that predicts concept distributions with uncertainty.
 
@@ -31,10 +31,10 @@ class StochasticEncoderFromEmb(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import StochasticEncoderFromEmb
+        >>> from torch_concepts.nn import StochasticZC
         >>>
         >>> # Create stochastic encoder
-        >>> encoder = StochasticEncoderFromEmb(
+        >>> encoder = StochasticZC(
         ...     in_features_latent=128,
         ...     out_features=5,
         ...     num_monte_carlo=100

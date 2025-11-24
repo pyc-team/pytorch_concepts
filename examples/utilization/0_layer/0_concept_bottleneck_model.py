@@ -4,7 +4,7 @@ from torch.nn import ModuleDict
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, RandomPolicy, DoIntervention, intervention
+from torch_concepts.nn import LinearZC, LinearCC, RandomPolicy, DoIntervention, intervention
 
 
 def main():
@@ -29,9 +29,9 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims,
+    encoder_layer = LinearZC(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_endogenous=c_annotations.shape[1],
+    y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
     model = ModuleDict(
         {"encoder": encoder,

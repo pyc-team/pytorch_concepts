@@ -11,7 +11,7 @@ from ..base.layer import BaseEncoder
 from typing import Tuple
 
 
-class ExogEncoder(BaseEncoder):
+class LinearZU(BaseEncoder):
     """
     Exogenous encoder that creates concept exogenous.
 
@@ -31,10 +31,10 @@ class ExogEncoder(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ExogEncoder
+        >>> from torch_concepts.nn import LinearZU
         >>>
         >>> # Create exogenous encoder
-        >>> encoder = ExogEncoder(
+        >>> encoder = LinearZU(
         ...     in_features_latent=128,
         ...     out_features=5,
         ...     exogenous_size=16

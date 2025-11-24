@@ -56,11 +56,11 @@ Use a ModuleDict to combine encoder and predictor:
 
    # Create model using ModuleDict
    model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.ProbEncoderFromEmb(
+       'encoder': pyc.nn.LinearZC(
            in_features_latent=latent_dim,
            out_features=n_concepts
        ),
-       'predictor': pyc.nn.ProbPredictor(
+       'predictor': pyc.nn.LinearCC(
            in_features_endogenous=n_concepts,
            out_features=n_tasks
        ),

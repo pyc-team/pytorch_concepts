@@ -68,7 +68,7 @@ ParametricCPDs are conditional probability distributions parameterized by PyC la
    # ParametricCPD for concepts (from latent code)
    concept_cpd = pyc.nn.ParametricCPD(
        concepts=["round", "smooth", "bright"],
-       parametrization=pyc.nn.ProbEncoderFromEmb(
+       parametrization=pyc.nn.LinearZC(
            in_features_latent=latent_dim,
            out_features=1
        )
@@ -77,7 +77,7 @@ ParametricCPDs are conditional probability distributions parameterized by PyC la
    # ParametricCPD for tasks (from concepts)
    task_cpd = pyc.nn.ParametricCPD(
        concepts=["class_A", "class_B"],
-       parametrization=pyc.nn.ProbPredictor(
+       parametrization=pyc.nn.LinearCC(
            in_features_endogenous=3,
            out_features=1
        )

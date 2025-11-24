@@ -14,31 +14,31 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   ProbPredictor
-   MixProbExogPredictor
-   HyperLinearPredictor
-   CallablePredictor
+   LinearCC
+   MixCUC
+   HyperLinearCUC
+   CallableCC
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: ProbPredictor
+.. autoclass:: LinearCC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: MixProbExogPredictor
+.. autoclass:: MixCUC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: HyperLinearPredictor
+.. autoclass:: HyperLinearCUC
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: CallablePredictor
+.. autoclass:: CallableCC
    :members:
    :undoc-members:
    :show-inheritance:

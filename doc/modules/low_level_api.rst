@@ -49,13 +49,13 @@ There are only three types of layers:
 
   .. code-block:: python
 
-     pyc.nn.ProbEncoderFromEmb(in_features_latent=10, out_features=3)
+     pyc.nn.LinearZC(in_features_latent=10, out_features=3)
 
 - **Predictors**: layers that map endogenous (plus optionally latent representations) to other endogenous.
 
   .. code-block:: python
 
-     pyc.nn.HyperLinearPredictor(in_features_endogenous=10, in_features_exogenous=7,
+     pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
                                  embedding_size=24, out_features=3)
 
 - **Special layers**: layers that perform special helpful operations such as memory selection:
@@ -79,8 +79,8 @@ A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.ProbEncoderFromEmb(in_features_latent=10, out_features=3),
-       'predictor': pyc.nn.ProbPredictor(in_features_endogenous=3, out_features=2),
+       'encoder': pyc.nn.LinearZC(in_features_latent=10, out_features=3),
+       'predictor': pyc.nn.LinearCC(in_features_endogenous=3, out_features=2),
    })
 
 Inference

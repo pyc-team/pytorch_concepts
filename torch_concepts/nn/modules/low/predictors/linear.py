@@ -12,7 +12,7 @@ from typing import Callable
 from ....functional import prune_linear_layer
 
 
-class ProbPredictor(BasePredictor):
+class LinearCC(BasePredictor):
     """
     Linear concept predictor.
 
@@ -32,10 +32,10 @@ class ProbPredictor(BasePredictor):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ProbPredictor
+        >>> from torch_concepts.nn import LinearCC
         >>>
         >>> # Create predictor
-        >>> predictor = ProbPredictor(
+        >>> predictor = LinearCC(
         ...     in_features_endogenous=10,
         ...     out_features=5
         ... )
@@ -107,9 +107,9 @@ class ProbPredictor(BasePredictor):
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn import ProbPredictor
+            >>> from torch_concepts.nn import LinearCC
             >>>
-            >>> predictor = ProbPredictor(in_features_endogenous=10, out_features=5)
+            >>> predictor = LinearCC(in_features_endogenous=10, out_features=5)
             >>>
             >>> # Prune first 3 features
             >>> mask = torch.tensor([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], dtype=torch.bool)

@@ -4,7 +4,7 @@ from ..base.layer import BasePredictor
 from typing import Callable
 
 
-class CallablePredictor(BasePredictor):
+class CallableCC(BasePredictor):
     """
     A predictor that applies a custom callable function to concept representations.
 
@@ -28,7 +28,7 @@ class CallablePredictor(BasePredictor):
 
     Examples:
         >>> import torch
-        >>> from torch_concepts.nn import CallablePredictor
+        >>> from torch_concepts.nn import CallableCC
         >>>
         >>> # Generate sample data
         >>> batch_size = 32
@@ -42,7 +42,7 @@ class CallablePredictor(BasePredictor):
         ...     output2 = 2.0*c0 - 1.0*c1**2 + 0.5*c2**3
         ...     return torch.cat([output1, output2], dim=1)
         >>>
-        >>> predictor = CallablePredictor(
+        >>> predictor = CallableCC(
         ...     func=quadratic_predictor,
         ...     use_bias=True
         ... )

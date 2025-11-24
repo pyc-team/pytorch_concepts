@@ -6,8 +6,8 @@ from .....annotations import Annotations
 from .....typing import BackboneType
 
 from ....modules.mid.constructors.bipartite import BipartiteModel
-from ....modules.low.encoders.linear import ProbEncoderFromEmb
-from ....modules.low.predictors.linear import ProbPredictor
+from ....modules.low.encoders.linear import LinearZC
+from ....modules.low.predictors.linear import LinearCC
 from ....modules.low.lazy import LazyConstructor
 from ....modules.low.base.inference import BaseInference
 from ....modules.mid.inference.forward import DeterministicInference
@@ -47,8 +47,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             task_names=task_names,
             input_size=self.latent_size,
             annotations=annotations,
-            encoder=LazyConstructor(ProbEncoderFromEmb),
-            predictor=LazyConstructor(ProbPredictor)
+            encoder=LazyConstructor(LinearZC),
+            predictor=LazyConstructor(LinearCC)
         )
 
         self.inference = inference(self.model.probabilistic_model)

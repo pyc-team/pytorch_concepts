@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog
+from torch_concepts.nn import MixCUC, LinearZU, LinearUC
 
 
 def main():
@@ -29,12 +29,12 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
+    exog_encoder = LinearZU(in_features_latent=latent_dims,
                                out_features=c_annotations.shape[1],
                                exogenous_size=exogenous_size*2)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=exogenous_size,
+    c_encoder = LinearUC(in_features_exogenous=exogenous_size,
                                     n_exogenous_per_concept=2)
-    y_predictor = MixProbExogPredictor(in_features_endogenous=c_annotations.shape[1],
+    y_predictor = MixCUC(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=exogenous_size,
                                        out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, exog_encoder, c_encoder, y_predictor)

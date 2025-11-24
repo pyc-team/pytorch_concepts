@@ -19,16 +19,16 @@ from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.exogenous import ExogEncoder
-from .modules.low.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
-from .modules.low.encoders.stochastic import StochasticEncoderFromEmb
+from .modules.low.encoders.exogenous import LinearZU
+from .modules.low.encoders.linear import LinearZC, LinearUC
+from .modules.low.encoders.stochastic import StochasticZC
 from .modules.low.encoders.selector import MemorySelector
 
 # Predictors
-from .modules.low.predictors.linear import ProbPredictor
-from .modules.low.predictors.exogenous import MixProbExogPredictor
-from .modules.low.predictors.hypernet import HyperLinearPredictor
-from .modules.low.predictors.call import CallablePredictor
+from .modules.low.predictors.linear import LinearCC
+from .modules.low.predictors.exogenous import MixCUC
+from .modules.low.predictors.hypernet import HyperLinearCUC
+from .modules.low.predictors.call import CallableCC
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
@@ -88,18 +88,18 @@ __all__ = [
     "LazyConstructor",
     
     # Exogenous encoder classes
-    "ExogEncoder",
+    "LinearZU",
 
     # Encoder classes
-    "ProbEncoderFromEmb",
-    "ProbEncoderFromExog",
-    "StochasticEncoderFromEmb",
+    "LinearZC",
+    "LinearUC",
+    "StochasticZC",
 
     # Predictor classes
-    "ProbPredictor",
-    "MixProbExogPredictor",
-    "HyperLinearPredictor",
-    "CallablePredictor",
+    "LinearCC",
+    "MixCUC",
+    "HyperLinearCUC",
+    "CallableCC",
 
     # Dense layers
     "Dense",

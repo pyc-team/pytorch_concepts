@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, GroundTruthIntervention, \
+from torch_concepts.nn import LinearZC, LinearCC, GroundTruthIntervention, \
     UncertaintyInterventionPolicy, intervention, DoIntervention, DistributionIntervention, UniformPolicy, RandomPolicy
 
 
@@ -32,8 +32,8 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims, out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_endogenous=c_annotations.shape[1], out_features=y_annotations.shape[1])
+    encoder_layer = LinearZC(in_features_latent=latent_dims, out_features=c_annotations.shape[1])
+    y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1], out_features=y_annotations.shape[1])
 
     # all models in a ModuleDict for easier intervention
     model = torch.nn.ModuleDict({

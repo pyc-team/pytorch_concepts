@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbPredictor, StochasticEncoderFromEmb
+from torch_concepts.nn import LinearCC, StochasticZC
 
 
 def main():
@@ -28,9 +28,9 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = StochasticEncoderFromEmb(in_features_latent=latent_dims,
+    encoder_layer = StochasticZC(in_features_latent=latent_dims,
                                              out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_endogenous=c_annotations.shape[1],
+    y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, encoder_layer, y_predictor)
 

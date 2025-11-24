@@ -80,8 +80,8 @@ class ProbabilisticModel(nn.Module):
         >>> from torch_concepts import LatentVariable, EndogenousVariable
         >>> from torch_concepts.nn import ProbabilisticModel
         >>> from torch_concepts.nn import ParametricCPD
-        >>> from torch_concepts.nn import ProbEncoderFromEmb
-        >>> from torch_concepts.nn import ProbPredictor
+        >>> from torch_concepts.nn import LinearZC
+        >>> from torch_concepts.nn import LinearCC
         >>> from torch_concepts.distributions import Delta
         >>>
         >>> # Define variables
@@ -91,8 +91,8 @@ class ProbabilisticModel(nn.Module):
         >>>
         >>> # Define CPDs (neural network modules)
         >>> backbone = torch.nn.Linear(in_features=128, out_features=32)
-        >>> encoder = ProbEncoderFromEmb(in_features_latent=32, out_features=1)
-        >>> predictor = ProbPredictor(in_features_endogenous=1, out_features=1)
+        >>> encoder = LinearZC(in_features_latent=32, out_features=1)
+        >>> predictor = LinearCC(in_features_endogenous=1, out_features=1)
         >>>
         >>> parametric_cpds = [
         ...     ParametricCPD(concepts='latent', parametrization=backbone),

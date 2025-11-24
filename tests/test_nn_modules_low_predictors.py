@@ -6,17 +6,17 @@ Tests all predictor modules (linear, embedding, hypernet).
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn import ProbPredictor
-from torch_concepts.nn import MixProbExogPredictor
-from torch_concepts.nn import HyperLinearPredictor
+from torch_concepts.nn import LinearCC
+from torch_concepts.nn import MixCUC
+from torch_concepts.nn import HyperLinearCUC
 
 
-class TestProbPredictor(unittest.TestCase):
-    """Test ProbPredictor."""
+class TestLinearCC(unittest.TestCase):
+    """Test LinearCC."""
 
     def test_initialization(self):
         """Test predictor initialization."""
-        predictor = ProbPredictor(
+        predictor = LinearCC(
             in_features_endogenous=10,
             out_features=5
         )
@@ -25,7 +25,7 @@ class TestProbPredictor(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        predictor = ProbPredictor(
+        predictor = LinearCC(
             in_features_endogenous=10,
             out_features=5
         )
@@ -35,7 +35,7 @@ class TestProbPredictor(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through predictor."""
-        predictor = ProbPredictor(
+        predictor = LinearCC(
             in_features_endogenous=8,
             out_features=3
         )
@@ -47,7 +47,7 @@ class TestProbPredictor(unittest.TestCase):
 
     def test_custom_activation(self):
         """Test with custom activation function."""
-        predictor = ProbPredictor(
+        predictor = LinearCC(
             in_features_endogenous=10,
             out_features=5,
             in_activation=torch.tanh
@@ -58,7 +58,7 @@ class TestProbPredictor(unittest.TestCase):
 
     def test_prune_functionality(self):
         """Test pruning of input features."""
-        predictor = ProbPredictor(
+        predictor = LinearCC(
             in_features_endogenous=10,
             out_features=5
         )
@@ -73,12 +73,12 @@ class TestProbPredictor(unittest.TestCase):
         self.assertEqual(output.shape, (2, 5))
 
 
-class TestMixProbExogPredictor(unittest.TestCase):
-    """Test MixProbExogPredictor."""
+class TestMixCUC(unittest.TestCase):
+    """Test MixCUC."""
 
     def test_initialization(self):
         """Test predictor initialization."""
-        predictor = MixProbExogPredictor(
+        predictor = MixCUC(
             in_features_endogenous=10,
             in_features_exogenous=20,
             out_features=3
@@ -89,7 +89,7 @@ class TestMixProbExogPredictor(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        predictor = MixProbExogPredictor(
+        predictor = MixCUC(
             in_features_endogenous=10,
             in_features_exogenous=10,
             out_features=3
@@ -101,7 +101,7 @@ class TestMixProbExogPredictor(unittest.TestCase):
 
     def test_with_cardinalities(self):
         """Test with concept cardinalities."""
-        predictor = MixProbExogPredictor(
+        predictor = MixCUC(
             in_features_endogenous=10,
             in_features_exogenous=20,
             out_features=3,
@@ -114,7 +114,7 @@ class TestMixProbExogPredictor(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow."""
-        predictor = MixProbExogPredictor(
+        predictor = MixCUC(
             in_features_endogenous=8,
             in_features_exogenous=16,
             out_features=2
@@ -132,19 +132,19 @@ class TestMixProbExogPredictor(unittest.TestCase):
     def test_even_exogenous_requirement(self):
         """Test that exogenous features must be even."""
         with self.assertRaises(AssertionError):
-            MixProbExogPredictor(
+            MixCUC(
                 in_features_endogenous=10,
                 in_features_exogenous=15,  # Odd number
                 out_features=3
             )
 
 
-class TestHyperLinearPredictor(unittest.TestCase):
-    """Test HyperLinearPredictor."""
+class TestHyperLinearCUC(unittest.TestCase):
+    """Test HyperLinearCUC."""
 
     def test_initialization(self):
         """Test hypernetwork predictor initialization."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=10,
             in_features_exogenous=128,
             embedding_size=64
@@ -155,7 +155,7 @@ class TestHyperLinearPredictor(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=10,
             in_features_exogenous=128,
             embedding_size=64
@@ -167,7 +167,7 @@ class TestHyperLinearPredictor(unittest.TestCase):
 
     def test_without_bias(self):
         """Test hypernetwork without bias."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=10,
             in_features_exogenous=128,
             embedding_size=64,
@@ -180,7 +180,7 @@ class TestHyperLinearPredictor(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through hypernetwork."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=8,
             in_features_exogenous=64,
             embedding_size=32
@@ -195,7 +195,7 @@ class TestHyperLinearPredictor(unittest.TestCase):
 
     def test_custom_activation(self):
         """Test with custom activation."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=10,
             in_features_exogenous=128,
             embedding_size=64,
@@ -208,7 +208,7 @@ class TestHyperLinearPredictor(unittest.TestCase):
 
     def test_sample_adaptive_weights(self):
         """Test that different samples get different weights."""
-        predictor = HyperLinearPredictor(
+        predictor = HyperLinearCUC(
             in_features_endogenous=5,
             in_features_exogenous=32,
             embedding_size=16

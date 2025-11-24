@@ -6,7 +6,7 @@ from typing import Callable
 from ....functional import prune_linear_layer
 
 
-class HyperLinearPredictor(BasePredictor):
+class HyperLinearCUC(BasePredictor):
     """
     Hypernetwork-based linear predictor for concept-based models.
 
@@ -34,10 +34,10 @@ class HyperLinearPredictor(BasePredictor):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import HyperLinearPredictor
+        >>> from torch_concepts.nn import HyperLinearCUC
         >>>
         >>> # Create hypernetwork predictor
-        >>> predictor = HyperLinearPredictor(
+        >>> predictor = HyperLinearCUC(
         ...     in_features_endogenous=10,      # 10 concepts
         ...     in_features_exogenous=128,   # 128-dim context features
         ...     embedding_size=64,           # Hidden dim of hypernet
@@ -56,7 +56,7 @@ class HyperLinearPredictor(BasePredictor):
         >>> # This enables sample-adaptive predictions
         >>>
         >>> # Example without bias
-        >>> predictor_no_bias = HyperLinearPredictor(
+        >>> predictor_no_bias = HyperLinearCUC(
         ...     in_features_endogenous=10,
         ...     in_features_exogenous=128,
         ...     embedding_size=64,

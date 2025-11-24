@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor
+from torch_concepts.nn import LinearZU, LinearZC, HyperLinearCUC
 
 
 def main():
@@ -31,12 +31,12 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_latent=latent_dims,
+    encoder_layer = LinearZC(in_features_latent=latent_dims,
                                        out_features=c_annotations.shape[1])
-    exog_encoder = ExogEncoder(in_features_latent=latent_dims,
+    exog_encoder = LinearZU(in_features_latent=latent_dims,
                                out_features=y_annotations.shape[1],
                                exogenous_size=11)
-    y_predictor = HyperLinearPredictor(in_features_endogenous=c_annotations.shape[1],
+    y_predictor = HyperLinearCUC(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=11,
                                        embedding_size=latent_dims)
     model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)

@@ -103,11 +103,11 @@ class LazyConstructor(torch.nn.Module):
     Example:
         >>> import torch
         >>> from torch_concepts.nn import LazyConstructor
-        >>> from torch_concepts.nn import ProbPredictor
+        >>> from torch_concepts.nn import LinearCC
         >>>
         >>> # Create a propagator for a predictor
         >>> lazy_constructorLazyConstructor(
-        ...     ProbPredictor,
+        ...     LinearCC,
         ...     activation=torch.sigmoid
         ... )
         >>>
@@ -177,9 +177,9 @@ class LazyConstructor(torch.nn.Module):
         Example:
             >>> import torch
             >>> from torch_concepts.nn import LazyConstructor
-            >>> from torch_concepts.nn import ProbPredictor
+            >>> from torch_concepts.nn import LinearCC
             >>>
-            >>> lazy_constructor = LazyConstructor(ProbPredictor)
+            >>> lazy_constructor = LazyConstructor(LinearCC)
             >>> module = lazy_constructor.build(
             ...     out_features=3,
             ...     in_features_endogenous=5,
@@ -187,7 +187,7 @@ class LazyConstructor(torch.nn.Module):
             ...     in_features_exogenous=None
             ... )
             >>> print(type(module).__name__)
-            ProbPredictor
+            LinearCC
         """
         in_features = in_features_endogenous if in_features_endogenous is not None else 0
         in_features += in_features_latent if in_features_latent is not None else 0
@@ -232,10 +232,10 @@ class LazyConstructor(torch.nn.Module):
         Example:
             >>> import torch
             >>> from torch_concepts.nn.modules.propagator import LazyConstructor
-            >>> from torch_concepts.nn.modules.predictors.linear import ProbPredictor
+            >>> from torch_concepts.nn.modules.predictors.linear import LinearCC
             >>>
             >>> # Create and build propagator
-            >>> lazy_constructorLazyConstructor(ProbPredictor)
+            >>> lazy_constructorLazyConstructor(LinearCC)
             >>> propagator.build(
             ...     out_features=3,
             ...     in_features_endogenous=5,
