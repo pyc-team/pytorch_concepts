@@ -1,5 +1,4 @@
 defaults:
-  - metrics: _default
   - _self_
 
 
@@ -53,16 +52,10 @@ optim_kwargs:
 #   factor: 0.2
 
 
-# =============================================================
-# Metrics settings
-# =============================================================
-# tracking of summary metrics for each concept type
-summary_metrics: true
-# tracking of metrics for each individual concept 
-# `true` for all concepts, list of concept names, or `false` for none
-perconcept_metrics: ${dataset.default_task_names}
-
 # TODO: implement this
+# =============================================================
+# Training settings
+# =============================================================
 # train_interv_prob: 0.1
 # test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
 # test_interv_noise: 0.

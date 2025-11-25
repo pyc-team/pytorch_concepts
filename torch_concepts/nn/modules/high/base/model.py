@@ -10,8 +10,10 @@ from typing import Any, Optional, Mapping, Dict
 import torch
 import torch.nn as nn
 
+from .....annotations import Annotations
 from ...low.dense_layers import MLP
 from .....typing import BackboneType
+from .....utils import add_distribution_to_annotations
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -38,12 +40,29 @@ class BaseModel(nn.Module, ABC):
     def __init__(
         self,
         input_size: int,
+        annotations: Annotations,
+        variable_distributions: Optional[Mapping] = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
         latent_encoder_kwargs: Optional[Dict] = None,
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
+
+        annotations = annotations.get_axis_annotation(1)
+
+        # Add distribution information to annotations metadata
+        if annotations.has_metadata('distribution'):
+            self.concept_annotations = annotations
+        else:
+            assert variable_distributions is not None, (
+                "variable_distributions must be provided if annotations "
+                "lack 'distribution' metadata."
+            )
+            self.concept_annotations = add_distribution_to_annotations(
+                annotations, variable_distributions
+            )
+        self.concept_names = self.concept_annotations.labels
 
         self._backbone = backbone
 

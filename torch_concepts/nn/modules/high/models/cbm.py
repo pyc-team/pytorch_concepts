@@ -3,7 +3,6 @@ from torch import nn
 import torch
 
 from .....annotations import Annotations
-from .....typing import BackboneType
 
 from ....modules.mid.constructors.bipartite import BipartiteModel
 from ....modules.low.encoders.linear import LinearZC
@@ -111,9 +110,9 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         """
         # forward_out: endogenous
         # return: endogenous
-        return {'input': forward_out,
+        return {'preds': forward_out,
                 'target': target}
-        
+    
 
 class ConceptBottleneckModel(ConceptBottleneckModel_Joint):
     """Alias for ConceptBottleneckModel_Joint for backward compatibility."""

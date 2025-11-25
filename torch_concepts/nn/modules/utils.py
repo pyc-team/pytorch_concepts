@@ -1,4 +1,4 @@
-from typing import Mapping, Optional, Tuple, Dict, Union, List
+from typing import Optional, Dict, Union, List, Any
 import warnings
 import logging
 import torch
@@ -7,9 +7,119 @@ from ...annotations import AxisAnnotation
 
 logger = logging.getLogger(__name__)
 
+class GroupConfig:
+    """Container for storing classes organized by concept type groups.
+    
+    This class acts as a convenient wrapper around a dictionary that maps
+    concept type names to their corresponding classes or configurations.
+    
+    Attributes:
+        _config (Dict[str, Any]): Internal dictionary storing the configuration.
+    
+    Args:
+        binary: Configuration for binary concepts. If provided alone, 
+                applies to all concept types.
+        categorical: Configuration for categorical concepts.
+        continuous: Configuration for continuous concepts.
+        **kwargs: Additional group configurations.
+    
+    Example:
+        >>> # Single configuration for all types
+        >>> loss_config = GroupConfig(binary=CrossEntropyLoss())
+        >>> # Equivalent to: {'binary': CrossEntropyLoss()}
+        >>>
+        >>> # Different configurations per type
+        >>> loss_config = GroupConfig(
+        ...     binary=BCEWithLogitsLoss(),
+        ...     categorical=CrossEntropyLoss(),
+        ...     continuous=MSELoss()
+        ... )
+        >>>
+        >>> # Access configurations
+        >>> binary_loss = loss_config['binary']
+        >>> loss_config.get('continuous', default_loss)
+        >>>
+        >>> # Check what's configured
+        >>> 'binary' in loss_config
+        >>> list(loss_config.keys())
+    """
+    
+    def __init__(
+        self,
+        binary: Optional[Any] = None,
+        categorical: Optional[Any] = None,
+        continuous: Optional[Any] = None,
+        **kwargs
+    ):
+        self._config: Dict[str, Any] = {}
+        
+        # Build config from all provided arguments
+        if binary is not None:
+            self._config['binary'] = binary
+        if categorical is not None:
+            self._config['categorical'] = categorical
+        if continuous is not None:
+            self._config['continuous'] = continuous
+        
+        # Add any additional groups
+        self._config.update(kwargs)
+    
+    def __getitem__(self, key: str) -> Any:
+        """Get configuration for a specific group."""
+        return self._config[key]
+    
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Set configuration for a specific group."""
+        self._config[key] = value
+    
+    def __contains__(self, key: str) -> bool:
+        """Check if a group is configured."""
+        return key in self._config
+    
+    def __len__(self) -> int:
+        """Return number of configured groups."""
+        return len(self._config)
+    
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"GroupConfig({self._config})"
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get configuration for a group with optional default."""
+        return self._config.get(key, default)
+    
+    def keys(self):
+        """Return configured group names."""
+        return self._config.keys()
+    
+    def values(self):
+        """Return configured values."""
+        return self._config.values()
+    
+    def items(self):
+        """Return (group, config) pairs."""
+        return self._config.items()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to plain dictionary."""
+        return self._config.copy()
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'GroupConfig':
+        """Create GroupConfig from dictionary.
+        
+        Args:
+            config_dict: Dictionary mapping group names to configurations.
+            
+        Returns:
+            GroupConfig instance.
+        """
+        return cls(**config_dict)
+    
+    
 def check_collection(annotations: AxisAnnotation, 
-                     collection: Mapping,
-                     collection_name: str):
+                     collection: GroupConfig,
+                     collection_name: str) -> GroupConfig:
     """Validate loss/metric configurations against concept annotations.
     
     Ensures that:
@@ -19,20 +129,23 @@ def check_collection(annotations: AxisAnnotation,
     
     Args:
         annotations (AxisAnnotation): Concept annotations with metadata.
-        collection (Mapping): Nested dict of losses or metrics.
+        collection (GroupConfig): Configuration object with losses or metrics.
         collection_name (str): Either 'loss' or 'metrics' for error messages.
         
     Returns:
-        Tuple[Optional[dict], Optional[dict], Optional[dict]]: 
-            (binary_config, categorical_config, continuous_config) 
-            Only returns configs needed for the actual concept types present.
+        GroupConfig: Filtered configuration containing only the needed concept types.
             
     Raises:
         ValueError: If validation fails (missing required configs, 
             incompatible annotation structure).
             
     Example:
-        >>> binary_loss, cat_loss, cont_loss = check_collection(
+        >>> from torch_concepts.nn.modules import GroupConfig
+        >>> loss_config = GroupConfig(
+        ...     binary=BCEWithLogitsLoss(),
+        ...     categorical=CrossEntropyLoss()
+        ... )
+        >>> filtered_config = check_collection(
         ...     self.concept_annotations, 
         ...     loss_config, 
         ...     'loss'
@@ -65,21 +178,11 @@ def check_collection(annotations: AxisAnnotation,
     needs_categorical = has_categorical
     needs_continuous = has_continuous
     
-    # Helper to get collection item or None
-    def get_item(path):
-        try:
-            result = collection
-            for key in path:
-                result = result[key]
-            return result
-        except (KeyError, TypeError):
-            return None
-    
     # Extract items from collection
-    binary = get_item(['discrete', 'binary'])
-    categorical = get_item(['discrete', 'categorical'])
-    continuous = get_item(['continuous'])
-
+    binary = collection.get('binary')
+    categorical = collection.get('categorical')
+    continuous = collection.get('continuous')
+    
     # Validation rules
     errors = []
     
@@ -106,9 +209,9 @@ def check_collection(annotations: AxisAnnotation,
     
     # Check required items are present
     if needs_binary and binary is None:
-        errors.append(f"{collection_name} missing 'discrete.binary' for binary concepts.")
+        errors.append(f"{collection_name} missing 'binary' for binary concepts.")
     if needs_categorical and categorical is None:
-        errors.append(f"{collection_name} missing 'discrete.categorical' for categorical concepts.")
+        errors.append(f"{collection_name} missing 'categorical' for categorical concepts.")
     if needs_continuous and continuous is None:
         errors.append(f"{collection_name} missing 'continuous' for continuous concepts.")
     
@@ -141,10 +244,16 @@ def check_collection(annotations: AxisAnnotation,
     # logger.info(f"  Categorical (card>1): {categorical if needs_categorical else 'unused'}")
     # logger.info(f"  continuous: {continuous if needs_continuous else 'unused'}")
     
-    # Return only needed items (others set to None)
-    return (binary if needs_binary else None,
-            categorical if needs_categorical else None,
-            continuous if needs_continuous else None)
+    # Build filtered GroupConfig with only needed items
+    filtered = GroupConfig()
+    if needs_binary:
+        filtered['binary'] = binary
+    if needs_categorical:
+        filtered['categorical'] = categorical
+    if needs_continuous:
+        filtered['continuous'] = continuous
+    
+    return filtered
 
 
 def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:

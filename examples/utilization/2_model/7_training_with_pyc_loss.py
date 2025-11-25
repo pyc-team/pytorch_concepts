@@ -18,9 +18,12 @@ from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.data.datasets import ToyDataset
 from torch.distributions import Bernoulli
 
+from torchmetrics.classification import BinaryAccuracy
+
 from pytorch_lightning import Trainer
 
 from torch_concepts.nn.modules.loss import ConceptLoss
+from torch_concepts.nn.modules.utils import GroupConfig
 
 class ConceptDataset(Dataset):
     """Custom dataset that returns batches in the format expected by ConceptBottleneckModel."""
@@ -100,27 +103,13 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations=concept_annotations,
-        fn_collection={
-            'discrete': {
-                'binary': {'path': "torch.nn.BCEWithLogitsLoss"}
-                # all concept are discrete and binary in this example,
-                # so we only need to define binary loss
-            }
-        }
+        annotations = concept_annotations,
+        fn_collection = GroupConfig(
+            binary = torch.nn.BCEWithLogitsLoss(),
+            categorical = torch.nn.CrossEntropyLoss(),
+            continuous = torch.nn.MSELoss()
+        )
     )
-
-    # Define metrics
-    metrics = {
-        'discrete': {
-            'binary': {
-                'accuracy': {'path': "torchmetrics.classification.BinaryAccuracy"},
-                'auc': {'path': "torchmetrics.classification.BinaryAUROC"}
-            }
-            # all concept are discrete and binary in this example,
-            # so we only need to define binary metrics
-        }
-    }
 
     # Initialize the CBM
     model = ConceptBottleneckModel(
@@ -129,7 +118,6 @@ def main():
         task_names=task_names,
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
         loss=loss_fn,
-        metrics=metrics,
         summary_metrics=True,
         perconcept_metrics=True,
         optim_class=torch.optim.AdamW,
@@ -180,31 +168,24 @@ def main():
 
     # Evaluate
     print("\n" + "=" * 60)
-    print("Step 5: Evaluation with Internal Metrics")
+    print("Step 5: Evaluation")
     print("=" * 60)
     
-    # The metrics are accumulated during training but reset at each epoch end by PyTorch Lightning
-    # To see the final metrics, we need to manually evaluate on the data
+    concept_acc_fn = BinaryAccuracy()
+    task_acc_fn = BinaryAccuracy()
+
     model.eval()
-    model.train_metrics.reset()
-    
     with torch.no_grad():
-        # Run forward pass and re-accumulate metrics
-        # these are automatically reset at each epoch end by PyTorch Lightning
-        out = model(x_train, query=query)
-        in_metric_dict = model.filter_output_for_metric(out, torch.cat([c_train, y_train], dim=1))
-        model.update_metrics(in_metric_dict, model.train_metrics)
+        endogenous = model(x_train, query=query)
+        c_pred = endogenous[:, :n_concepts]
+        y_pred = endogenous[:, n_concepts:]
         
-        # Compute accumulated metrics
-        train_metrics = model.train_metrics.compute()
+        # Compute accuracy using BinaryAccuracy
+        concept_acc = concept_acc_fn(c_pred, c_train.int()).item()
+        task_acc = task_acc_fn(y_pred, y_train.int()).item()
         
-        print("\nInternal Training Metrics:")
-        print("-" * 60)
-        for metric_name, metric_value in train_metrics.items():
-            if isinstance(metric_value, torch.Tensor):
-                print(f"{metric_name}: {metric_value.item():.4f}")
-            else:
-                print(f"{metric_name}: {metric_value:.4f}")
+        print(f"Concept accuracy: {concept_acc:.4f}")
+        print(f"Task accuracy: {task_acc:.4f}")
 
 if __name__ == "__main__":
     main()

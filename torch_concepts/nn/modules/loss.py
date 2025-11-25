@@ -3,32 +3,10 @@ from typing import List, Mapping
 import torch
 from torch import nn
 
+from ...nn.modules.utils import GroupConfig
 from ...annotations import Annotations, AxisAnnotation
 from ...utils import instantiate_from_string
 from ...nn.modules.utils import check_collection, get_concept_groups
-
-def setup_losses(annotations: AxisAnnotation, loss_config: Mapping):
-    """Setup and instantiate loss functions from configuration.
-    
-    Validates the loss config and creates loss function instances for each
-    concept type (binary, categorical, continuous) based on what's needed.
-    
-    Args:
-        loss_config (Mapping): Nested dict with structure:
-            {'discrete': {'binary': {...}, 'categorical': {...}}, 
-                'continuous': {...}}
-    """
-    # Validate and extract needed losses
-    binary_cfg, categorical_cfg, continuous_cfg = check_collection(
-        annotations, loss_config, 'loss'
-    )
-    
-    # Instantiate loss functions
-    binary_fn = instantiate_from_string(binary_cfg['path'], **binary_cfg.get('kwargs', {})) if binary_cfg else None
-    categorical_fn = instantiate_from_string(categorical_cfg['path'], **categorical_cfg.get('kwargs', {})) if categorical_cfg else None
-    continuous_fn = instantiate_from_string(continuous_cfg['path'], **continuous_cfg.get('kwargs', {})) if continuous_cfg else None
-    
-    return binary_fn, categorical_fn, continuous_fn
 
 
 def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks: List[str]):
@@ -49,22 +27,34 @@ def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks
     return concepts_idxs, tasks_idxs, concepts_endogenous, tasks_endogenous
 
 class ConceptLoss(nn.Module):
-    def __init__(self, 
-                 annotations: Annotations, 
-                 fn_collection: Mapping
-    ):
+    def __init__(self, annotations: Annotations, fn_collection: GroupConfig):
         super().__init__()
         annotations = annotations.get_axis_annotation(axis=1)
-        self.binary_fn, self.categorical_fn, self.continuous_fn = setup_losses(annotations, fn_collection)
+        self.fn_collection = check_collection(annotations, fn_collection, 'loss')
         self.groups = get_concept_groups(annotations)
         self.cardinalities = annotations.cardinalities
 
         # For categorical loss, precompute max cardinality for padding
-        if self.categorical_fn is not None:
+        if self.fn_collection.get('categorical'):
             self.max_card = max([self.cardinalities[i] for i in self.groups['categorical_idx']])
 
-        if self.continuous_fn is not None:
+        if self.fn_collection.get('continuous'):
             self.max_dim = max([self.cardinalities[i] for i in self.groups['continuous_idx']])
+
+    def __repr__(self) -> str:
+        types = ['binary', 'categorical', 'continuous']
+        parts = []
+        for t in types:
+            loss = self.fn_collection.get(t)
+            if loss:
+                if isinstance(loss, nn.Module):
+                    name = loss.__class__.__name__
+                elif isinstance(loss, (tuple, list)):
+                    name = loss[0].__name__
+                else:
+                    name = loss.__name__
+                parts.append(f"{t}={name}")
+        return f"{self.__class__.__name__}({', '.join(parts)})"
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute total loss across all concept types.
@@ -82,13 +72,13 @@ class ConceptLoss(nn.Module):
         total_loss = 0.0
         
         # Binary concepts
-        if self.binary_fn is not None:
+        if self.fn_collection.get('binary'):
             binary_endogenous = input[:, self.groups['binary_endogenous_idx']]
             binary_targets = target[:, self.groups['binary_idx']].float()
-            total_loss += self.binary_fn(binary_endogenous, binary_targets)
+            total_loss += self.fn_collection['binary'](binary_endogenous, binary_targets)
         
         # Categorical concepts
-        if self.categorical_fn is not None:
+        if self.fn_collection.get('categorical'):
             split_tuple = torch.split(
                 input[:, self.groups['categorical_endogenous_idx']], 
                 [self.cardinalities[i] for i in self.groups['categorical_idx']], 
@@ -104,10 +94,10 @@ class ConceptLoss(nn.Module):
             cat_endogenous = torch.cat(padded_endogenous, dim=0)
             cat_targets = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
             
-            total_loss += self.categorical_fn(cat_endogenous, cat_targets)
+            total_loss += self.fn_collection['categorical'](cat_endogenous, cat_targets)
         
         # Continuous concepts
-        if self.continuous_fn is not None:
+        if self.fn_collection.get('continuous'):
             raise NotImplementedError("Continuous concepts not yet implemented.")
         
         return total_loss
@@ -122,14 +112,16 @@ class WeightedConceptLoss(nn.Module):
         weight (float): Weight for concept loss; (1 - weight) is for task loss.
         task_names (List[str]): List of task concept names.
     """
-    def __init__(self, 
-                 annotations: Annotations, 
-                 fn_collection: Mapping,
-                 weight: float,
-                 task_names: List[str]
+    def __init__(
+        self, 
+        annotations: Annotations, 
+        fn_collection: GroupConfig,
+        weight: float,
+        task_names: List[str]
     ):
         super().__init__()
         self.weight = weight
+        self.fn_collection = fn_collection
         annotations = annotations.get_axis_annotation(axis=1)
         concept_names = [name for name in annotations.labels if name not in task_names]
         task_annotations = Annotations({1:annotations.subset(task_names)})
@@ -141,6 +133,9 @@ class WeightedConceptLoss(nn.Module):
             annotations, concept_names, task_names
         )
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(fn_collection={self.fn_collection})"
+    
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute weighted loss for concepts and tasks.
         

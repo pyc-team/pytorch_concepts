@@ -1,10 +1,7 @@
 # =============================================================
 # Loss settings
 # =============================================================
-_target_: "torch_concepts.nn.WeightedConceptLoss"
-
-weight: 0.8 # weight applied to concepts, (1-weight) applied to task
-task_names: ${dataset.default_task_names}
+_target_: "torch_concepts.nn.ConceptLoss"
 
 fn_collection:
   _target_: "torch_concepts.nn.modules.utils.GroupConfig"

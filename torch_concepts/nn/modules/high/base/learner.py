@@ -9,65 +9,29 @@ validation, and testing of concept-based models. It handles:
 - Concept interventions (experimental)
 """
 
-from typing import Optional, Mapping, Callable, Union
+from typing import Optional, Mapping, Union
 from abc import abstractmethod
 
-import torch
 from torch import nn
+import torch
 from torchmetrics import MetricCollection
-from torchmetrics.collections import _remove_prefix
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
-from .....annotations import Annotations
-from .....nn.modules.utils import check_collection, get_concept_groups
-from .....utils import add_distribution_to_annotations, instantiate_from_string
+from .....nn.modules.metrics import ConceptMetrics
 
 
 class BaseLearner(pl.LightningModule):
     def __init__(self,
-                annotations: Annotations,
                 loss: Optional[nn.Module] = None,
-                metrics: Optional[Mapping] = None,
-                variable_distributions: Optional[Mapping] = None,
+                metrics: Optional[Union[ConceptMetrics, Mapping[str, MetricCollection]]] = None,
                 optim_class: Optional[Optimizer] = None,
                 optim_kwargs: Optional[Mapping] = None,
                 scheduler_class: Optional[LRScheduler] = None,
-                scheduler_kwargs: Optional[Mapping] = None,  
-                summary_metrics: Optional[bool] = True,
-                perconcept_metrics: Optional[Union[bool, list]] = False,
+                scheduler_kwargs: Optional[Mapping] = None,
                 **kwargs
     ):        
         super(BaseLearner, self).__init__(**kwargs)
-
-        annotations = annotations.get_axis_annotation(1)
-
-        # Add distribution information to annotations metadata
-        if annotations.has_metadata('distribution'):
-            self.concept_annotations = annotations
-        else:
-            assert variable_distributions is not None, (
-                "variable_distributions must be provided if annotations "
-                "lack 'distribution' metadata."
-            )
-            self.concept_annotations = add_distribution_to_annotations(
-                annotations, variable_distributions
-            )
-
-        # concept info
-        self.metadata = self.concept_annotations.metadata
-        self.concept_names = self.concept_annotations.labels
-        self.n_concepts = len(self.concept_names)
-        self.types = [self.metadata[name]['type'] for name in self.concept_names]
-        self.groups = get_concept_groups(self.concept_annotations)
-        
-        # Validate that continuous concepts are not used
-        if self.groups['continuous_labels']:
-            raise NotImplementedError(
-                f"Continuous concepts are not yet supported in the high-level API. "
-                f"Found continuous concepts: {self.groups['continuous_labels']}. "
-                f"Please use only discrete (binary or categorical) concepts."
-            )
 
         # loss function
         self.loss = loss
@@ -78,15 +42,20 @@ class BaseLearner(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs
 
-        # metrics configuration
+        # metrics object
+        self.metrics = metrics
+        # Create pointers to individual collections for consistent interface
+        # Both dict.get() and ConceptMetrics.get() return None if key doesn't exist
         if metrics is not None:
-            self.summary_metrics = summary_metrics
-            self.perconcept_metrics = perconcept_metrics
-            # Setup and instantiate metrics
-            self._setup_metrics(metrics)
+            if isinstance(metrics, dict):
+                # Validate dict keys are correct
+                assert all(key in ['train_metrics', 'val_metrics', 'test_metrics'] for key in metrics), (
+                    "metrics dict keys must be 'train_metrics', 'val_metrics', and/or 'test_metrics'."
+                )
+            self.train_metrics = metrics.get('train_metrics')
+            self.val_metrics = metrics.get('val_metrics')
+            self.test_metrics = metrics.get('test_metrics')
         else:
-            self.summary_metrics = False
-            self.perconcept_metrics = False
             self.train_metrics = None
             self.val_metrics = None
             self.test_metrics = None
@@ -96,289 +65,47 @@ class BaseLearner(pl.LightningModule):
         return (f"{self.__class__.__name__}(n_concepts={self.n_concepts}, "
                 f"optimizer={self.optim_class.__name__}, scheduler={scheduler_name})")
 
-    @staticmethod
-    def _check_metric(metric):
-        """Clone and reset a metric for independent tracking across splits.
+    def update_metrics(self, preds: torch.Tensor, target: torch.Tensor, step: str):
+        """Update metrics with predictions and targets.
         
         Args:
-            metric: TorchMetrics metric instance.
+            preds (torch.Tensor): Model predictions.
+            target (torch.Tensor): Ground truth labels.
+            step (str): Which split to update ('train', 'val', or 'test').
+        """
+        if self.metrics is None:
+            return
             
-        Returns:
-            Cloned and reset metric ready for train/val/test collection.
-        """
-        metric = metric.clone()
-        metric.reset()
-        return metric
+        if isinstance(self.metrics, dict):
+            # Update the appropriate MetricCollection directly
+            collection = getattr(self, f"{step}_metrics", None)
+            if collection is not None:
+                collection.update(preds, target)
+        elif isinstance(self.metrics, ConceptMetrics):
+            # ConceptMetrics handles split internally
+            self.metrics.update(preds, target, step)
+        else:
+            raise ValueError("Metrics must be either a ConceptMetrics object \
+                             or a dict of MetricCollections.")
 
-    def _setup_metrics(self, metrics_config: Mapping):
-        """Setup and instantiate metrics with summary and/or per-concept tracking.
-        
-        Creates two types of metrics:
-        1. Summary metrics: Aggregated over all concepts of each type 
-           (keys: 'SUMMARY-binary_accuracy', etc.)
-        2. Per-concept metrics: Individual metrics for specified concepts 
-           (keys: 'age_accuracy', 'gender_accuracy', etc.)
+    def update_and_log_metrics(self, metrics_args: Mapping, step: str, batch_size: int):
+        """Update metrics and log them.
         
         Args:
-            metrics_config (Mapping): Nested dict with same structure as loss_config.
+            metrics_args (Mapping): Dict with 'preds' and 'target' for metrics.
+                This is the standard signature for torchmetrics Metrics.
+            step (str): Which split to update ('train', 'val', or 'test').
+            batch_size (int): Batch size for metric logging.
         """
-        if metrics_config is None:
-            metrics_config = {}
+        preds = metrics_args['preds']
+        target = metrics_args['target']
+        self.update_metrics(preds, target, step)
         
-        # Validate and extract needed metrics
-        binary_metrics_cfg, categorical_metrics_cfg, continuous_metrics_cfg = check_collection(
-            self.concept_annotations, metrics_config, 'metrics'
-        )
-        
-        # Initialize metric storage
-        summary_metrics = {}
-        perconcept_metrics = {}
-        
-        # Setup summary metrics (one per type group)
-        if self.summary_metrics:
-            if binary_metrics_cfg:
-                summary_metrics['binary'] = self._instantiate_metric_dict(binary_metrics_cfg)
-            
-            if categorical_metrics_cfg:
-                # For categorical, we'll average over individual concept metrics
-                self.max_card = max([self.concept_annotations.cardinalities[i] 
-                                     for i in self.groups['categorical_idx']])
-                summary_metrics['categorical'] = self._instantiate_metric_dict(
-                    categorical_metrics_cfg, 
-                    num_classes=self.max_card
-                )
-            
-            if continuous_metrics_cfg:
-                summary_metrics['continuous'] = self._instantiate_metric_dict(continuous_metrics_cfg)
-        
-        # Setup per-concept metrics (one per concept)
-        if self.perconcept_metrics:
-            if isinstance(self.perconcept_metrics, bool):
-                concepts_to_trace = self.concept_names
-            elif isinstance(self.perconcept_metrics, list):
-                concepts_to_trace = self.perconcept_metrics
-            else:
-                raise ValueError("perconcept_metrics must be either a bool or a list of concept names.")
-            for concept_name in concepts_to_trace:
-                c_id = self.concept_names.index(concept_name)
-                c_type = self.types[c_id]
-                card = self.concept_annotations.cardinalities[c_id]
-                
-                # Select the appropriate metrics config for this concept
-                if c_type == 'discrete' and card == 1:
-                    metrics_cfg = binary_metrics_cfg
-                elif c_type == 'discrete' and card > 1:
-                    metrics_cfg = categorical_metrics_cfg
-                elif c_type == 'continuous':
-                    metrics_cfg = continuous_metrics_cfg
-                else:
-                    metrics_cfg = None
-                
-                # Instantiate metrics for this concept
-                concept_metric_dict = {}
-                if metrics_cfg is not None:
-                    for metric_name, metric_dict in metrics_cfg.items():
-                        kwargs = metric_dict.get('kwargs', {})
-                        if c_type == 'discrete' and card > 1:
-                            kwargs['num_classes'] = card
-                        concept_metric_dict[metric_name] = instantiate_from_string(metric_dict['path'], **kwargs)
-                
-                perconcept_metrics[concept_name] = concept_metric_dict
-        
-        # Create metric collections for train/val/test
-        self._set_metrics(summary_metrics, perconcept_metrics)
-    
-    def _instantiate_metric_dict(self, metrics_cfg: Mapping, num_classes: int = None) -> dict:
-        """Instantiate a dictionary of metrics from configuration.
-        
-        Args:
-            metrics_cfg (Mapping): Dict of metric configs with 'path' and 'kwargs'.
-            num_classes (int, optional): Number of classes for categorical metrics. 
-                If provided, overrides kwargs['num_classes'].
-                
-        Returns:
-            dict: Instantiated metrics keyed by metric name.
-        """
-        if not isinstance(metrics_cfg, dict):
-            return {}
-        
-        metrics = {}
-        for metric_name, metric_path in metrics_cfg.items():
-            kwargs = metric_path.get('kwargs', {})
-            if num_classes is not None:
-                kwargs['num_classes'] = num_classes
-            metrics[metric_name] = instantiate_from_string(metric_path['path'], **kwargs)
-        return metrics
+        # Get the collection to log
+        collection = getattr(self, f"{step}_metrics", None)
+        if collection is not None:
+            self.log_metrics(collection, batch_size=batch_size)
 
-    def _set_metrics(self, summary_metrics: Mapping = None, perconcept_metrics: Mapping = None):
-        """Create MetricCollections for train/val/test splits.
-        
-        Combines summary and per-concept metrics into MetricCollections with 
-        appropriate prefixes ('train/', 'val/', 'test/').
-        
-        Args:
-            summary_metrics (Mapping, optional): Dict of summary metrics by type.
-            perconcept_metrics (Mapping, optional): Dict of per-concept metrics.
-        """
-        all_metrics = {}
-        
-        # Add summary metrics
-        if summary_metrics:
-            for group_name, metric_dict in summary_metrics.items():
-                for metric_name, metric in metric_dict.items():
-                    key = f"SUMMARY-{group_name}_{metric_name}"
-                    all_metrics[key] = metric
-        
-        # Add per-concept metrics
-        if perconcept_metrics:
-            for concept_name, metric_dict in perconcept_metrics.items():
-                for metric_name, metric in metric_dict.items():
-                    key = f"{concept_name}_{metric_name}"
-                    all_metrics[key] = metric
-        
-        # Create collections
-        self.train_metrics = MetricCollection(
-            metrics={k: self._check_metric(m) for k, m in all_metrics.items()},
-            prefix="train/"
-        ) if all_metrics else MetricCollection({})
-        
-        self.val_metrics = MetricCollection(
-            metrics={k: self._check_metric(m) for k, m in all_metrics.items()},
-            prefix="val/"
-        ) if all_metrics else MetricCollection({})
-        
-        self.test_metrics = MetricCollection(
-            metrics={k: self._check_metric(m) for k, m in all_metrics.items()},
-            prefix="test/"
-        ) if all_metrics else MetricCollection({})
-
-    def _apply_fn_by_type(self, 
-                         c_hat: torch.Tensor, 
-                         c_true: torch.Tensor,
-                         binary_fn: Optional[Callable],
-                         categorical_fn: Optional[Callable],
-                         continuous_fn: Optional[Callable]) -> Union[torch.Tensor, None]:
-        """Apply metric functions to concept groups by type.
-        
-        Slices predictions and targets by concept type and applies the 
-        appropriate function to each group. Handles padding for categorical
-        concepts with varying cardinalities.
-        
-        Args:
-            c_hat (torch.Tensor): Predicted concepts (endogenous or values).
-            c_true (torch.Tensor): Ground truth concepts.
-            binary_fn (Optional[Callable]): Function for binary concepts 
-                (metric.update).
-            categorical_fn (Optional[Callable]): Function for categorical concepts.
-            continuous_fn (Optional[Callable]): Function for continuous concepts.
-            
-        Returns:
-            Union[torch.Tensor, None]: Scalar loss tensor if is_loss=True, 
-                else None (metrics updated in-place).
-                
-        Note:
-            For categorical concepts, endogenous are padded to max_card and stacked
-            for batch processing. This is a known performance bottleneck (FIXME).
-        """
-
-        if binary_fn:
-            c_hat_binary = c_hat[:, self.groups['binary_endogenous_idx']]
-            c_true_binary = c_true[:, self.groups['binary_idx']].float()
-            binary_fn.update(c_hat_binary, c_true_binary)
-
-        if categorical_fn:
-            # Pad all tensors to max cardinality and stack
-            # FIXME: optimize this operation, could this for loop be avoided?
-            split_tuple = torch.split(c_hat[:, self.groups['categorical_endogenous_idx']], 
-                                      [self.concept_annotations.cardinalities[i] 
-                                       for i in self.groups['categorical_idx']], dim=1)
-            padded_endogenous = [
-                torch.nn.functional.pad(
-                    endogenous, 
-                    (0, self.max_card - endogenous.shape[1]), 
-                    value=float('-inf')
-                ) for endogenous in split_tuple
-            ]
-            c_hat_group = torch.cat(padded_endogenous, dim=0)
-            c_true_group = c_true[:, self.groups['categorical_idx']].T.reshape(-1).long()
-            
-            categorical_fn.update(c_hat_group, c_true_group)
-
-        if continuous_fn:
-            # TODO: implement continuous concepts
-            raise NotImplementedError("Continuous concepts not yet implemented.")
-
-    def update_metrics(self, in_metric_dict: Mapping, 
-                       metric_collection: MetricCollection):
-        """Update both summary and per-concept metrics.
-        
-        Iterates through the metric collection and updates each metric with
-        the appropriate slice of predictions and targets based on metric type
-        (summary vs per-concept) and concept type (binary/categorical/continuous).
-        
-        Args:
-            c_hat (torch.Tensor): Predicted concepts.
-            c_true (torch.Tensor): Ground truth concepts.
-            metric_collection (MetricCollection): Collection to update (train/val/test).
-        """
-        c_hat = in_metric_dict['input']
-        c_true = in_metric_dict['target']
-        
-        for key in metric_collection:
-
-            # Update summary metrics (compute metrics relative to each group)
-            if self.summary_metrics:
-                if 'SUMMARY-binary_' in key and self.groups['binary_labels']:
-                    self._apply_fn_by_type(
-                        c_hat, c_true,
-                        binary_fn=metric_collection[key],
-                        categorical_fn=None,
-                        continuous_fn=None
-                    )
-                    continue
-                
-                elif 'SUMMARY-categorical_' in key and self.groups['categorical_labels']:
-                    self._apply_fn_by_type(
-                        c_hat, c_true,
-                        binary_fn=None,
-                        categorical_fn=metric_collection[key],
-                        continuous_fn=None
-                    )
-                    continue
-                
-                elif 'SUMMARY-continuous_' in key and self.groups['continuous_labels']:
-                    self._apply_fn_by_type(
-                        c_hat, c_true,
-                        binary_fn=None,
-                        categorical_fn=None,
-                        continuous_fn=metric_collection[key]
-                    )
-                    continue
-
-            # Update per-concept metrics
-            if self.perconcept_metrics:
-                # Extract concept name from key
-                key_noprefix = _remove_prefix(key, prefix=metric_collection.prefix)
-                concept_name = '_'.join(key_noprefix.split('_')[:-1])  # Handle multi-word concept names
-                if concept_name not in self.concept_names:
-                    concept_name = key_noprefix.split('_')[0]  # Fallback to simple split
-                
-                endogenous_idx = self.concept_annotations.get_endogenous_idx([concept_name])
-                c_idx = self.concept_annotations.get_index(concept_name)
-                c_type = self.types[c_idx]
-                card = self.concept_annotations.cardinalities[c_idx]
-
-                if c_type == 'discrete' and card == 1:
-                    metric_collection[key].update(c_hat[:, endogenous_idx], 
-                                                  c_true[:, c_idx:c_idx+1].float())
-                elif c_type == 'discrete' and card > 1:
-                    # Extract endogenous for this categorical concept
-                    metric_collection[key].update(c_hat[:, endogenous_idx], 
-                                                  c_true[:, c_idx].long())
-                elif c_type == 'continuous':
-                    metric_collection[key].update(c_hat[:, endogenous_idx], 
-                                                  c_true[:, c_idx:c_idx+1])
- 
     def log_metrics(self, metrics, **kwargs):
         """Log metrics to logger (W&B) at epoch end.
         
@@ -570,4 +297,4 @@ class BaseLearner(pl.LightningModule):
             cfg["monitor"] = monitor_metric
         
         return cfg
-
+ 

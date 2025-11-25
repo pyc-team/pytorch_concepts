@@ -9,23 +9,22 @@ hydra:
     # standard grid search
     params:
       seed: 1
-      dataset: asia
+      dataset: asia, sachs, insurance
       model: cbm
-      # loss: weighted
-      # loss.weight: 0.99
+      #loss: standard, weighted
 
 model:
-  summary_metrics: true
-  perconcept_metrics: true # or ${dataset.default_task_names}
-  # train_interv_prob: 0.8
-  # test_interv_noise: 0.8   # for bndatasets only
   optim_kwargs:
-    lr: 0.001
+    lr: 0.01
+
+metrics:
+  summary_metrics: true
+  perconcept_metrics: true #${dataset.default_task_names}
 
 trainer:
   logger: null
   max_epochs: 200
-  patience: 30
+  patience: 20
 
 matmul_precision: medium
 

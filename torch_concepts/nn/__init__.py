@@ -39,9 +39,16 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss
 
+# Metrics
+from .modules.metrics import ConceptMetrics
+
+# Configuration
+from .modules.utils import GroupConfig
+
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox
-from .modules.high.models.cbm import ConceptBottleneckModel, ConceptBottleneckModel_Joint
+from .modules.high.models.cbm import ConceptBottleneckModel, \
+    ConceptBottleneckModel_Joint, ConceptBottleneckModel_Independent
 
 # Learners (high-level)
 from .modules.high.learners.joint import JointLearner
@@ -115,11 +122,18 @@ __all__ = [
     "ConceptLoss",
     "WeightedConceptLoss",
 
+    # Metrics
+    "ConceptMetrics",
+
+    # Configuration
+    "GroupConfig",
+
     # Models (high-level)
     "BlackBox",
     # "BlackBox_torch",
     "ConceptBottleneckModel",
     "ConceptBottleneckModel_Joint",
+    "ConceptBottleneckModel_Independent",
 
     # Learners (high-level)
     "JointLearner",

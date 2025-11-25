@@ -9,6 +9,7 @@ import unittest
 import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss
+from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -66,14 +67,9 @@ class TestConceptLoss(unittest.TestCase):
 
     def test_binary_only_loss(self):
         """Test ConceptLoss with only binary concepts."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = ConceptLoss(self.annotations_binary, loss_config)
         
@@ -89,14 +85,9 @@ class TestConceptLoss(unittest.TestCase):
 
     def test_categorical_only_loss(self):
         """Test ConceptLoss with only categorical concepts."""
-        loss_config = {
-            'discrete': {
-                'categorical': {
-                    'path': 'torch.nn.CrossEntropyLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            categorical=nn.CrossEntropyLoss()
+        )
         
         loss_fn = ConceptLoss(self.annotations_categorical, loss_config)
         
@@ -120,18 +111,10 @@ class TestConceptLoss(unittest.TestCase):
 
     def test_mixed_concepts_loss(self):
         """Test ConceptLoss with mixed concept types (binary and categorical only)."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                },
-                'categorical': {
-                    'path': 'torch.nn.CrossEntropyLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss(),
+            categorical=nn.CrossEntropyLoss()
+        )
         
         loss_fn = ConceptLoss(self.annotations_mixed, loss_config)
         
@@ -151,14 +134,9 @@ class TestConceptLoss(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test that gradients flow properly through ConceptLoss."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = ConceptLoss(self.annotations_binary, loss_config)
         
@@ -220,14 +198,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_basic_forward(self):
         """Test basic forward pass with balanced weighting."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = WeightedConceptLoss(
             self.annotations, 
@@ -248,14 +221,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_concept_only_weight(self):
         """Test with weight=1.0 (only concept loss)."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = WeightedConceptLoss(
             self.annotations,
@@ -272,14 +240,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_task_only_weight(self):
         """Test with weight=0.0 (only task loss)."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = WeightedConceptLoss(
             self.annotations,
@@ -296,14 +259,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_different_weights(self):
         """Test that different weights produce different losses."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         torch.manual_seed(42)
         endogenous = torch.randn(20, 5)
@@ -331,18 +289,10 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_mixed_concept_types(self):
         """Test with mixed concept types (binary and categorical)."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                },
-                'categorical': {
-                    'path': 'torch.nn.CrossEntropyLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss(),
+            categorical=nn.CrossEntropyLoss()
+        )
         
         loss_fn = WeightedConceptLoss(
             self.annotations_mixed,
@@ -369,14 +319,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test that gradients flow properly through WeightedConceptLoss."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         loss_fn = WeightedConceptLoss(
             self.annotations,
@@ -396,14 +341,9 @@ class TestWeightedConceptLoss(unittest.TestCase):
 
     def test_weight_range(self):
         """Test various weight values in valid range [0, 1]."""
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss()
+        )
         
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
@@ -435,15 +375,10 @@ class TestLossConfiguration(unittest.TestCase):
         )
         annotations = Annotations({1: axis})
         
-        # Missing binary loss config
-        loss_config = {
-            'discrete': {
-                'categorical': {
-                    'path': 'torch.nn.CrossEntropyLoss',
-                    'kwargs': {}
-                }
-            }
-        }
+        # Missing binary loss config (only provides categorical)
+        loss_config = GroupConfig(
+            categorical=nn.CrossEntropyLoss()
+        )
         
         with self.assertRaises(ValueError):
             ConceptLoss(annotations, loss_config)
@@ -463,18 +398,10 @@ class TestLossConfiguration(unittest.TestCase):
         annotations = Annotations({1: axis})
         
         # Provides continuous loss but no continuous concepts
-        loss_config = {
-            'discrete': {
-                'binary': {
-                    'path': 'torch.nn.BCEWithLogitsLoss',
-                    'kwargs': {}
-                }
-            },
-            'continuous': {
-                'path': 'torch.nn.MSELoss',
-                'kwargs': {}
-            }
-        }
+        loss_config = GroupConfig(
+            binary=nn.BCEWithLogitsLoss(),
+            continuous=nn.MSELoss()
+        )
         
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")

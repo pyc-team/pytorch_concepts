@@ -49,17 +49,13 @@ class JointLearner(BaseLearner):
 
         # --- Compute loss ---
         if self.loss is not None:
-            in_loss_dict = self.filter_output_for_loss(out, c_loss)
-            loss = self.loss(**in_loss_dict)
+            loss_args = self.filter_output_for_loss(out, c_loss)
+            loss = self.loss(**loss_args)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---
-        collection = getattr(self, f"{step}_metrics")
-        if collection is not None:
-            in_metric_dict = self.filter_output_for_metric(out, c)
-            self.update_metrics(in_metric_dict, collection)
-            self.log_metrics(collection, batch_size=batch_size)
-            
+        metrics_args = self.filter_output_for_metric(out, c)
+        self.update_and_log_metrics(metrics_args, step, batch_size)
         return loss
 
     def training_step(self, batch):
