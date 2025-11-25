@@ -79,7 +79,7 @@ def check_collection(annotations: AxisAnnotation,
     binary = get_item(['discrete', 'binary'])
     categorical = get_item(['discrete', 'categorical'])
     continuous = get_item(['continuous'])
-    
+
     # Validation rules
     errors = []
     

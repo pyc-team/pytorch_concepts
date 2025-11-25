@@ -231,12 +231,18 @@ class ProbabilisticModel(nn.Module):
 
         Args:
             concept: Concept name.
-            module: Neural network module.
+            module: Neural network module or ParametricCPD instance.
 
         Returns:
             ParametricCPD: Temporary parametric_cpd object.
         """
-        f = ParametricCPD(concepts=[concept], parametrization=module)
+        # module may be either an nn.Module (the parametrization) or a ParametricCPD
+        if isinstance(module, ParametricCPD):
+            parametrization = module.parametrization
+        else:
+            parametrization = module
+
+        f = ParametricCPD(concepts=[concept], parametrization=parametrization)
         target_var = self.concept_to_variable[concept]
         f.variable = target_var
         f.parents = target_var.parents

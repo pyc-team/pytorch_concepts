@@ -24,16 +24,26 @@ def _get_submodule(model: nn.Module, dotted: str) -> nn.Module:
 
 def _set_submodule(model: nn.Module, dotted: str, new: nn.Module) -> None:
     parts = dotted.split(".")
-    parent = model.get_submodule(".".join(parts[:-1])) if len(parts) > 1 else model
-    if len(parts) > 1:
-        setattr(parent, parts[-1], new)
-    elif len(parts) == 1:
-        if isinstance(new, ParametricCPD):
-            setattr(parent, parts[0], new)
-        else:
-            setattr(parent, parts[0], ParametricCPD(concepts=dotted, parametrization=new))
-    else:
+    # validate
+    if len(parts) == 0 or (len(parts) == 1 and parts[0] == ""):
         raise ValueError("Dotted path must not be empty")
+
+    parent = model.get_submodule(".".join(parts[:-1])) if len(parts) > 1 else model
+    name = parts[-1]
+
+    # If parent supports indexed assignment (e.g., nn.Sequential) and the name is an index, set by index
+    if name.isdigit() and hasattr(parent, "__setitem__"):
+        idx = int(name)
+        parent[idx] = new
+        return
+
+    # Otherwise set as attribute on parent.
+    # If the new module is already a ParametricCPD, keep it. If not and we're attaching
+    # it as a plain attribute on a Module, wrap it into a ParametricCPD so semantics are preserved.
+    if isinstance(new, ParametricCPD):
+        setattr(parent, name, new)
+    else:
+        setattr(parent, name, ParametricCPD(concepts=dotted, parametrization=new))
 
 def _as_list(x, n: int):
     # broadcast a singleton to length n; if already a list/tuple, validate length

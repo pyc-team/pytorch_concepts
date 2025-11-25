@@ -138,6 +138,8 @@ def get_backbone_embs(path: str,
         # save
         if verbose:
             logger.info(f"Saving embeddings to {path}")
+        # Create parent directories if they don't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(embs, path)
         if verbose:
             logger.info(f"✓ Saved embeddings with shape: {embs.shape}")
