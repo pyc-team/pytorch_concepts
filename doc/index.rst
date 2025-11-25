@@ -287,7 +287,7 @@ If you found this library useful for your research article, blog post, or produc
 
    @software{pycteam2025concept,
        author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
-       license = {MIT},
+       license = {Apache 2.0},
        month = {3},
        title = {{PyTorch Concepts}},
        url = {https://github.com/pyc-team/pytorch_concepts},
