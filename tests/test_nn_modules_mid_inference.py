@@ -4,11 +4,16 @@ Comprehensive tests for torch_concepts.nn.modules.mid.inference
 Tests for ForwardInference engine.
 """
 import unittest
+from copy import deepcopy
+
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch_concepts.data.datasets import ToyDataset
 
-from torch_concepts import InputVariable, EndogenousVariable
+from torch_concepts import InputVariable, EndogenousVariable, Annotations, AxisAnnotation, ConceptGraph
+from torch_concepts.nn import AncestralSamplingInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearZU, \
+    LinearUC, HyperLinearCUC
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
@@ -356,40 +361,79 @@ class TestForwardInference(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             inference.predict(external_inputs)
 
-    def test_complex_multi_level_hierarchy(self):
-        """Test complex multi-level hierarchy."""
-        # Level 0: latent
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
+    def test_unroll_pgm(self):
+        latent_dims = 20
+        n_epochs = 1000
+        n_samples = 1000
+        concept_reg = 0.5
 
-        # Level 1: A, B
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
-        var_b = Variable('B', parents=[input_var], distribution=Categorical, size=3)
+        dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+        x_train = dataset.input_data
+        concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+        task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+        c_train = dataset.concepts[:, concept_idx]
+        y_train = dataset.concepts[:, task_idx]
 
-        # Level 2: C (depends on A and B)
-        var_c = Variable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
+        c_train = torch.cat([c_train, y_train], dim=1)
+        y_train = deepcopy(c_train)
+        cy_train = torch.cat([c_train, y_train], dim=1)
+        c_train_one_hot = torch.cat(
+            [cy_train[:, :2], torch.nn.functional.one_hot(cy_train[:, 2].long(), num_classes=2).float()], dim=1)
+        cy_train_one_hot = torch.cat([c_train_one_hot, c_train_one_hot], dim=1)
 
-        # Level 3: D (depends on C)
-        var_d = Variable('D', parents=[var_c], distribution=Bernoulli, size=1)
+        concept_names = ['c1', 'c2', 'xor']
+        task_names = ['c1_copy', 'c2_copy', 'xor_copy']
+        cardinalities = [1, 1, 2, 1, 1, 2]
+        metadata = {
+            'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
+            'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
+            'xor': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task'},
+            'c1_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1 Copy'},
+            'c2_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2 Copy'},
+            'xor_copy': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical',
+                         'description': 'XOR Task Copy'},
+        }
+        annotations = Annotations(
+            {1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
-        latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 3))
-        cpd_c = ParametricCPD('C', parametrization=nn.Linear(4, 1))  # 1 + 3 inputs
-        cpd_d = ParametricCPD('D', parametrization=nn.Linear(1, 1))
+        model_graph = ConceptGraph(torch.tensor([[0, 0, 0, 0, 1, 1],
+                                                 [0, 0, 0, 1, 0, 1],
+                                                 [0, 0, 0, 1, 1, 0],
+                                                 [0, 0, 0, 0, 0, 0],
+                                                 [0, 0, 0, 0, 0, 0],
+                                                 [0, 0, 0, 0, 0, 0]]), list(annotations.get_axis_annotation(1).labels))
 
-        pgm = ProbabilisticModel(
-            variables=[input_var, var_a, var_b, var_c, var_d],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c, cpd_d]
-        )
+        # ProbabilisticModel Initialization
+        encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
+        concept_model = GraphModel(model_graph=model_graph,
+                                   input_size=latent_dims,
+                                   annotations=annotations,
+                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=11),
+                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=7),
+                                   encoder=LazyConstructor(LinearUC),
+                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20))
 
-        inference = SimpleForwardInference(pgm)
+        # graph learning init
+        graph_learner = WANDAGraphLearner(concept_names, task_names)
 
-        self.assertEqual(len(inference.levels), 4)
+        inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, graph_learner, temperature=0.1)
+        query_concepts = ["c1", "c2", "xor", "c1_copy", "c2_copy", "xor_copy"]
 
-        external_inputs = {'input': torch.randn(4, 10)}
-        results = inference.predict(external_inputs)
+        emb = encoder(x_train)
+        cy_pred_before_unrolling = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
 
-        self.assertEqual(len(results), 5)
+        concept_model_new = inference_engine.unrolled_probabilistic_model()
+
+        # identify available query concepts in the unrolled model
+        query_concepts = [c for c in query_concepts if c in inference_engine.available_query_vars]
+        concept_idx = {v: i for i, v in enumerate(concept_names)}
+        reverse_c2t_mapping = dict(zip(task_names, concept_names))
+        query_concepts = sorted(query_concepts, key=lambda x: concept_idx[x] if x in concept_idx else concept_idx[reverse_c2t_mapping[x]])
+
+        inference_engine = AncestralSamplingInference(concept_model_new, temperature=0.1)
+        cy_pred_after_unrolling = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
+
+        self.assertTrue(cy_pred_after_unrolling.shape == c_train_one_hot.shape)
 
 
 if __name__ == '__main__':
