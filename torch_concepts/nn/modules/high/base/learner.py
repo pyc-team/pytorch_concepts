@@ -328,7 +328,7 @@ class BaseLearner(pl.LightningModule):
 
             # Update summary metrics (compute metrics relative to each group)
             if self.summary_metrics:
-                if 'SUMMARY-binary_' in key and self.groups['binary_concepts']:
+                if 'SUMMARY-binary_' in key and self.groups['binary_labels']:
                     self._apply_fn_by_type(
                         c_hat, c_true,
                         binary_fn=metric_collection[key],
@@ -337,7 +337,7 @@ class BaseLearner(pl.LightningModule):
                     )
                     continue
                 
-                elif 'SUMMARY-categorical_' in key and self.groups['categorical_concepts']:
+                elif 'SUMMARY-categorical_' in key and self.groups['categorical_labels']:
                     self._apply_fn_by_type(
                         c_hat, c_true,
                         binary_fn=None,
@@ -346,7 +346,7 @@ class BaseLearner(pl.LightningModule):
                     )
                     continue
                 
-                elif 'SUMMARY-continuous_' in key and self.groups['continuous_concepts']:
+                elif 'SUMMARY-continuous_' in key and self.groups['continuous_labels']:
                     self._apply_fn_by_type(
                         c_hat, c_true,
                         binary_fn=None,
@@ -363,23 +363,21 @@ class BaseLearner(pl.LightningModule):
                 if concept_name not in self.concept_names:
                     concept_name = key_noprefix.split('_')[0]  # Fallback to simple split
                 
-                c_id = self.concept_names.index(concept_name)
-                c_type = self.types[c_id]
-                card = self.concept_annotations.cardinalities[c_id]
-
-                start_idx = self.groups['cumulative_indices'][c_id]
-                end_idx = self.groups['cumulative_indices'][c_id + 1]
+                endogenous_idx = self.concept_annotations.get_endogenous_idx([concept_name])
+                c_idx = self.concept_annotations.get_index(concept_name)
+                c_type = self.types[c_idx]
+                card = self.concept_annotations.cardinalities[c_idx]
 
                 if c_type == 'discrete' and card == 1:
-                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
-                                                  c_true[:, c_id:c_id+1].float())
+                    metric_collection[key].update(c_hat[:, endogenous_idx], 
+                                                  c_true[:, c_idx:c_idx+1].float())
                 elif c_type == 'discrete' and card > 1:
                     # Extract endogenous for this categorical concept
-                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
-                                                  c_true[:, c_id].long())
+                    metric_collection[key].update(c_hat[:, endogenous_idx], 
+                                                  c_true[:, c_idx].long())
                 elif c_type == 'continuous':
-                    metric_collection[key].update(c_hat[:, start_idx:end_idx], 
-                                                  c_true[:, c_id:c_id+1])
+                    metric_collection[key].update(c_hat[:, endogenous_idx], 
+                                                  c_true[:, c_idx:c_idx+1])
  
     def log_metrics(self, metrics, **kwargs):
         """Log metrics to logger (W&B) at epoch end.
