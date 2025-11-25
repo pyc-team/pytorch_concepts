@@ -35,7 +35,7 @@ Explore Based on Your Background
 |pyc_logo| PyC is designed to accommodate users with different backgrounds and expertise levels.
 Pick the best entry point based on your experience:
 
-.. grid:: 1 1 2 2
+.. grid:: 1 1 3 3
     :margin: 3 0 0 0
     :gutter: 2
     :padding: 0
@@ -49,12 +49,25 @@ Pick the best entry point based on your experience:
         Start from the Low-Level API to build models from basic interpretable layers.
 
     .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic modeling user?
-        :link: using_mid_level
+        :link: using_mid_level_proba
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
         Start from the Mid-Level API to build custom Probabilistic Models.
+
+    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
+        :link: using_mid_level_causal
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Start from the Mid-Level API to build Structural Equation Models for causal inference.
+
+.. grid:: 1 1 2 2
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
 
     .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Just want to use state-of-the-art models out-of-the-box?
         :link: using_high_level
@@ -122,5 +135,6 @@ Need Help?
    :hidden:
 
    using_low_level
-   using_mid_level
+   using_mid_level_proba
+   using_mid_level_causal
    using_high_level

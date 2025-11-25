@@ -170,6 +170,7 @@ Next Steps
 ----------
 
 - Explore the full :doc:`Low-Level API documentation </modules/low_level_api>`
-- Try the :doc:`Mid-Level API </guides/using_mid_level>` for probabilistic modeling
+- Try the :doc:`Mid-Level API </guides/using_mid_level_proba>` for probabilistic modeling
+- Try the :doc:`Mid-Level API </guides/using_mid_level_causal>` for causal modeling
 - Check out :doc:`example notebooks <https://github.com/pyc-team/pytorch_concepts/tree/master/examples>`
 
