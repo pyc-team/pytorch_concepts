@@ -48,7 +48,7 @@ from .modules.utils import GroupConfig
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox
 from .modules.high.models.cbm import ConceptBottleneckModel, \
-    ConceptBottleneckModel_Joint, ConceptBottleneckModel_Independent
+    ConceptBottleneckModel_Joint
 
 # Learners (high-level)
 from .modules.high.learners.joint import JointLearner
