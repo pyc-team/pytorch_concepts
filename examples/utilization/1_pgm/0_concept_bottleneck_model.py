@@ -25,12 +25,12 @@ def main():
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
     # Variable setup
-    input_var = InputVariable("emb", parents=[], size=latent_dims)
-    concepts = EndogenousVariable(concept_names, parents=["emb"], distribution=Bernoulli)
+    input_var = InputVariable("input", parents=[], size=latent_dims)
+    concepts = EndogenousVariable(concept_names, parents=["input"], distribution=Bernoulli)
     tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
-    backbone = ParametricCPD("emb", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
+    backbone = ParametricCPD("input", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
     c_encoder = ParametricCPD(["c1", "c2"], parametrization=LinearZC(in_features=latent_dims, out_features=concepts[0].size))
     y_predictor = ParametricCPD("xor", parametrization=LinearCC(in_features_endogenous=sum(c.size for c in concepts), out_features=tasks.size))
 
