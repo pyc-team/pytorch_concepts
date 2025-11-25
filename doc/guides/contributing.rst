@@ -1,4 +1,4 @@
-Contributor Guide
+Contributing Guide
 =================
 
 We welcome contributions to PyC! This guide will help you contribute effectively.
