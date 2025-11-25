@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://pytorch-concepts.readthedocs.io/en/factors/guides/installation.html">🚀 Getting Started</a> - 
+  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html">🚀 Getting Started</a> - 
   <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> - 
-  <a href="https://pytorch-concepts.readthedocs.io/en/factors/guides/using.html">💻 User guide</a>
+  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html">💻 User guide</a>
 </p>
 
 <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
@@ -38,7 +38,7 @@ After installation, you can import it in your Python scripts as:
 import torch_concepts as pyc
 ```
 
-Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/factors/guides/using.html) to get started with building interpretable models using PyC!
+Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) to get started with building interpretable models using PyC!
 
 ---
 
