@@ -199,7 +199,7 @@ The library also includes shared modules that provide additional functionalities
         Evaluation metrics for concept-based models.
 
     .. grid-item-card::  :octicon:`gear;1em;sd-text-primary` Functional
-        :link: modules/utilities
+        :link: modules/nn.functional
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -227,7 +227,7 @@ These modules have additional dependencies and can be installed separately.
         Access datasets, dataloaders, preprocessing, and data utilities.
 
     .. grid-item-card::  :octicon:`infinity;1em;sd-text-primary` Distributions API
-        :link: modules/distributions_api
+        :link: modules/distributions
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -271,8 +271,8 @@ Thanks to all contributors! 🧡
 External Contributors
 ^^^^^^^^^^^^^^^^^^^^^^
 
-- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
-- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
+- `Sonia Laguna <https://sonialagunac.github.io/>`_, ETH Zurich (CH).
+- `Moritz Vandenhirtz <https://mvandenhi.github.io/>`_, ETH Zurich (CH).
 
 
 

@@ -100,5 +100,5 @@ Thanks to all our contributors! 🧡
 External Contributors
 ^^^^^^^^^^^^^^^^^^^^^^
 
-- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
-- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
+- `Sonia Laguna <https://sonialagunac.github.io/>`_, ETH Zurich (CH).
+- `Moritz Vandenhirtz <https://mvandenhi.github.io/>`_, ETH Zurich (CH).
