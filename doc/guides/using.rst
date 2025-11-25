@@ -54,7 +54,7 @@ Pick the best entry point based on your experience:
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Mid-Level API to build custom Probabilistic Models.
+        Start from the Mid-Level API to build custom probabilistic models.
 
     .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
         :link: using_mid_level_causal
