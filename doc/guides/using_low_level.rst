@@ -1,36 +1,82 @@
 Interpretable Layers and Interventions
 ==================================================
 
-The Low-Level API provides three types of layers: **Encoders**, **Predictors**, and **Special layers**.
+The Low-Level API provides building blocks to create concept-based models using
+interpretable layers and perform interventions using a PyTorch-like interface.
 
-Key Principles
+.. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
+   :width: 20px
+   :align: middle
+
+.. |pytorch_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
+   :width: 20px
+   :align: middle
+
+Design Principles
 --------------
 
-**Three types of objects:**
+Overview of Data Representations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+In |pyc_logo| PyC, we distinguish between three types of data representations:
 
 - **Input**: High-dimensional representations where exogenous and endogenous information is entangled
 - **Exogenous**: Representations that are direct causes of endogenous variables
 - **Endogenous**: Representations of observable quantities of interest
 
-**Three types of layers:**
 
-- **Encoders**: Never take as input endogenous variables
-- **Predictors**: Must take as input a set of endogenous variables
-- **Special layers**: Perform operations like memory selection or graph learning
+Layer Types
+^^^^^^^^^^^
 
-**Layer naming convention:**
-In order to easily identify the type of layer, PyC uses a consistent naming convention using the format:
+In |pyc_logo| PyC you will find three types of layers whose interfaces reflect the distinction between data representations:
+
+- ``Encoder`` layers: Never take as input endogenous variables
+- ``Predictor`` layers: Must take as input a set of endogenous variables
+- Special layers: Perform operations like memory selection or graph learning
+
+
+Layer Naming Standard
+^^^^^^^^^^^^^^^^^^^^^
+
+In order to easily identify the type of layer, |pyc_logo| PyC uses a consistent standard to assign names to layers.
+Each layer name follows the format:
 
 ``<LayerType><InputType><OutputType>``
 
 where:
 
-- ``LayerType``: Type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
-- ``InputType`` and ``OutputType``: Types of objects the layer takes as input and produces as output:
+- ``LayerType``: describes the type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
+- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. |pyc_logo| PyC uses the following abbreviations:
 
   - ``Z``: Input
   - ``U``: Exogenous
   - ``C``: Endogenous
+
+
+For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
+``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
+as input any endogenous variables, it is an encoder layer.
+
+.. code-block:: python
+
+ pyc.nn.LinearZC(in_features=10, out_features=3)
+
+As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
+takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
+``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
+
+.. code-block:: python
+
+ pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
+                       embedding_size=24, out_features=3)
+
+As a final example, graph learners are a special layers that learn relationships between concepts.
+They do not follow the standard naming convention of encoders and predictors, but their purpose should be
+clear from their name.
+
+.. code-block:: python
+
+ wanda = pyc.nn.WANDAGraphLearner(['c1', 'c2', 'c3'], ['task A', 'task B', 'task C'])
+
 
 Step 1: Import Libraries
 -------------------------
@@ -165,6 +211,10 @@ Add a graph learner to discover concept relationships:
    )
 
    print(f"Learned graph shape: {graph_learner.weighted_adj}")
+
+
+The ``graph_learner.weighted_adj`` tensor contains a learnable adjacency matrix representing relationships
+between concepts.
 
 Next Steps
 ----------
