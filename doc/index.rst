@@ -28,7 +28,7 @@
    :align: middle
 
 |pyc_logo| PyC is a library built upon |pytorch_logo| PyTorch to easily implement **interpretable and causally transparent deep learning models**.
-The library provides primitives for layers (encoders, predictors, special layers), Probabilistic Models, and APIs for running experiments at scale.
+The library provides primitives for interpretable layers, probabilistic models, causal models, and APIs for running experiments at scale.
 
 The name of the library stands for both:
 
@@ -97,7 +97,7 @@ Pick the best entry point based on your experience:
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Mid-Level API to build custom Probabilistic Models.
+        Start from the Mid-Level API to build custom probabilistic models.
 
     .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
         :link: guides/using_mid_level_causal
@@ -136,7 +136,7 @@ Main Modules
 ^^^^^^^^^^^^^^^
 
 The main modules of the library are organized into three levels of abstraction: Low-Level API, Mid-Level API, and High-Level API.
-These modules allow users with different levels of abstraction to build interptrable models.
+These modules allow users with different levels of abstraction to build interpretable models.
 
 .. grid:: 1 1 2 3
     :margin: 3 0 0 0
@@ -157,7 +157,7 @@ These modules allow users with different levels of abstraction to build interptr
         :shadow: lg
         :class-card: sd-border-danger
 
-        Build custom interpretable and causally transparent Probabilistic Models.
+        Build custom interpretable and causally transparent probabilistic models.
 
         .. warning::
 
@@ -259,7 +259,7 @@ This framework is intended for benchmarking or researchers in other fields who w
 Contributing
 --------------
 We welcome contributions from the community to help improve |pyc_logo| PyC!
-Follow the instructions in the `Contributing Guide <guides/contributing>`_ to get started.
+Follow the instructions in the `Contributing Guide <guides/contributing.html>`_ to get started.
 
 Thanks to all contributors! 🧡
 
