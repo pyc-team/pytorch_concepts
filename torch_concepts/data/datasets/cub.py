@@ -1,381 +1,15 @@
-"""
-CUB-200 Dataset Loader
-** THIS DATASET NEEDS TO BE DOWNLOADED BEFORE BEING ABLE TO USE THE LOADER **
-
-################################################################################
-## DOWNLOAD INSTRUCTIONS
-################################################################################
-
-**** OPTION #1 *****
-The simplest way to get the CUB dataset, is to download the pre-processed CUB
-dataset by Koh et al. [CBM Paper]. This can be downloaded from their
-public colab notebook at: https://worksheets.codalab.org/worksheets/0x362911581fcd4e048ddfd84f47203fd2.
-You will need to download the original CUB dataset from that notebook (found
-here: https://worksheets.codalab.org/bundles/0xd013a7ba2e88481bbc07e787f73109f5)
-and the preprocessed "CUB_preprocessed" dataset (which can be directly accessed
-here: https://worksheets.codalab.org/bundles/0x5b9d528d2101418b87212db92fea6683)
-
-**** OPTION #2 *****
-Follow the download the preprocess instructions found in Koh et al.'s original
-repository here: https://github.com/yewsiang/ConceptBottleneck.
-Specifically, here: https://github.com/yewsiang/ConceptBottleneck/blob/master/CUB/
-
-################################################################################
-
-[IMPORTANT] After downloading the files, they need to follow the following
-structure:
-
-
-This loader has been adapted/inspired by that of found in Koh et al.'s
-repository (https://github.com/yewsiang/ConceptBottleneck/blob/master/CUB/cub_loader.py)
-as well as in Espinosa Zarlenga and Barbiero's et al.'s repository
-(https://github.com/mateoespinosa/cem).
-"""
-
-
-import numpy as np
 import os
-import pickle
+import tarfile
 import torch
-import torchvision.transforms as transforms
-
-from collections import defaultdict
+import pandas as pd
+import numpy as np
+from typing import List, Optional
 from PIL import Image
-from torch.utils.data import Dataset
-
-########################################################
-## GENERAL DATASET GLOBAL VARIABLES
-########################################################
-
-N_CLASSES = 200
-
-# CAN BE OVERWRITTEN WITH AN ENV VARIABLE CUB_DIR
-CUB_DIR = os.environ.get("CUB_DIR", './CUB200/')
-
-
-#########################################################
-## CONCEPT INFORMATION REGARDING CUB
-#########################################################
-
-# CUB Class names
-
-CLASS_NAMES = [
-    "Black_footed_Albatross",
-    "Laysan_Albatross",
-    "Sooty_Albatross",
-    "Groove_billed_Ani",
-    "Crested_Auklet",
-    "Least_Auklet",
-    "Parakeet_Auklet",
-    "Rhinoceros_Auklet",
-    "Brewer_Blackbird",
-    "Red_winged_Blackbird",
-    "Rusty_Blackbird",
-    "Yellow_headed_Blackbird",
-    "Bobolink",
-    "Indigo_Bunting",
-    "Lazuli_Bunting",
-    "Painted_Bunting",
-    "Cardinal",
-    "Spotted_Catbird",
-    "Gray_Catbird",
-    "Yellow_breasted_Chat",
-    "Eastern_Towhee",
-    "Chuck_will_Widow",
-    "Brandt_Cormorant",
-    "Red_faced_Cormorant",
-    "Pelagic_Cormorant",
-    "Bronzed_Cowbird",
-    "Shiny_Cowbird",
-    "Brown_Creeper",
-    "American_Crow",
-    "Fish_Crow",
-    "Black_billed_Cuckoo",
-    "Mangrove_Cuckoo",
-    "Yellow_billed_Cuckoo",
-    "Gray_crowned_Rosy_Finch",
-    "Purple_Finch",
-    "Northern_Flicker",
-    "Acadian_Flycatcher",
-    "Great_Crested_Flycatcher",
-    "Least_Flycatcher",
-    "Olive_sided_Flycatcher",
-    "Scissor_tailed_Flycatcher",
-    "Vermilion_Flycatcher",
-    "Yellow_bellied_Flycatcher",
-    "Frigatebird",
-    "Northern_Fulmar",
-    "Gadwall",
-    "American_Goldfinch",
-    "European_Goldfinch",
-    "Boat_tailed_Grackle",
-    "Eared_Grebe",
-    "Horned_Grebe",
-    "Pied_billed_Grebe",
-    "Western_Grebe",
-    "Blue_Grosbeak",
-    "Evening_Grosbeak",
-    "Pine_Grosbeak",
-    "Rose_breasted_Grosbeak",
-    "Pigeon_Guillemot",
-    "California_Gull",
-    "Glaucous_winged_Gull",
-    "Heermann_Gull",
-    "Herring_Gull",
-    "Ivory_Gull",
-    "Ring_billed_Gull",
-    "Slaty_backed_Gull",
-    "Western_Gull",
-    "Anna_Hummingbird",
-    "Ruby_throated_Hummingbird",
-    "Rufous_Hummingbird",
-    "Green_Violetear",
-    "Long_tailed_Jaeger",
-    "Pomarine_Jaeger",
-    "Blue_Jay",
-    "Florida_Jay",
-    "Green_Jay",
-    "Dark_eyed_Junco",
-    "Tropical_Kingbird",
-    "Gray_Kingbird",
-    "Belted_Kingfisher",
-    "Green_Kingfisher",
-    "Pied_Kingfisher",
-    "Ringed_Kingfisher",
-    "White_breasted_Kingfisher",
-    "Red_legged_Kittiwake",
-    "Horned_Lark",
-    "Pacific_Loon",
-    "Mallard",
-    "Western_Meadowlark",
-    "Hooded_Merganser",
-    "Red_breasted_Merganser",
-    "Mockingbird",
-    "Nighthawk",
-    "Clark_Nutcracker",
-    "White_breasted_Nuthatch",
-    "Baltimore_Oriole",
-    "Hooded_Oriole",
-    "Orchard_Oriole",
-    "Scott_Oriole",
-    "Ovenbird",
-    "Brown_Pelican",
-    "White_Pelican",
-    "Western_Wood_Pewee",
-    "Sayornis",
-    "American_Pipit",
-    "Whip_poor_Will",
-    "Horned_Puffin",
-    "Common_Raven",
-    "White_necked_Raven",
-    "American_Redstart",
-    "Geococcyx",
-    "Loggerhead_Shrike",
-    "Great_Grey_Shrike",
-    "Baird_Sparrow",
-    "Black_throated_Sparrow",
-    "Brewer_Sparrow",
-    "Chipping_Sparrow",
-    "Clay_colored_Sparrow",
-    "House_Sparrow",
-    "Field_Sparrow",
-    "Fox_Sparrow",
-    "Grasshopper_Sparrow",
-    "Harris_Sparrow",
-    "Henslow_Sparrow",
-    "Le_Conte_Sparrow",
-    "Lincoln_Sparrow",
-    "Nelson_Sharp_tailed_Sparrow",
-    "Savannah_Sparrow",
-    "Seaside_Sparrow",
-    "Song_Sparrow",
-    "Tree_Sparrow",
-    "Vesper_Sparrow",
-    "White_crowned_Sparrow",
-    "White_throated_Sparrow",
-    "Cape_Glossy_Starling",
-    "Bank_Swallow",
-    "Barn_Swallow",
-    "Cliff_Swallow",
-    "Tree_Swallow",
-    "Scarlet_Tanager",
-    "Summer_Tanager",
-    "Artic_Tern",
-    "Black_Tern",
-    "Caspian_Tern",
-    "Common_Tern",
-    "Elegant_Tern",
-    "Forsters_Tern",
-    "Least_Tern",
-    "Green_tailed_Towhee",
-    "Brown_Thrasher",
-    "Sage_Thrasher",
-    "Black_capped_Vireo",
-    "Blue_headed_Vireo",
-    "Philadelphia_Vireo",
-    "Red_eyed_Vireo",
-    "Warbling_Vireo",
-    "White_eyed_Vireo",
-    "Yellow_throated_Vireo",
-    "Bay_breasted_Warbler",
-    "Black_and_white_Warbler",
-    "Black_throated_Blue_Warbler",
-    "Blue_winged_Warbler",
-    "Canada_Warbler",
-    "Cape_May_Warbler",
-    "Cerulean_Warbler",
-    "Chestnut_sided_Warbler",
-    "Golden_winged_Warbler",
-    "Hooded_Warbler",
-    "Kentucky_Warbler",
-    "Magnolia_Warbler",
-    "Mourning_Warbler",
-    "Myrtle_Warbler",
-    "Nashville_Warbler",
-    "Orange_crowned_Warbler",
-    "Palm_Warbler",
-    "Pine_Warbler",
-    "Prairie_Warbler",
-    "Prothonotary_Warbler",
-    "Swainson_Warbler",
-    "Tennessee_Warbler",
-    "Wilson_Warbler",
-    "Worm_eating_Warbler",
-    "Yellow_Warbler",
-    "Northern_Waterthrush",
-    "Louisiana_Waterthrush",
-    "Bohemian_Waxwing",
-    "Cedar_Waxwing",
-    "American_Three_toed_Woodpecker",
-    "Pileated_Woodpecker",
-    "Red_bellied_Woodpecker",
-    "Red_cockaded_Woodpecker",
-    "Red_headed_Woodpecker",
-    "Downy_Woodpecker",
-    "Bewick_Wren",
-    "Cactus_Wren",
-    "Carolina_Wren",
-    "House_Wren",
-    "Marsh_Wren",
-    "Rock_Wren",
-    "Winter_Wren",
-    "Common_Yellowthroat",
-]
-# Set of CUB attributes selected by Koh et al. [CBM Paper]
-SELECTED_CONCEPTS = [
-    1,
-    4,
-    6,
-    7,
-    10,
-    14,
-    15,
-    20,
-    21,
-    23,
-    25,
-    29,
-    30,
-    35,
-    36,
-    38,
-    40,
-    44,
-    45,
-    50,
-    51,
-    53,
-    54,
-    56,
-    57,
-    59,
-    63,
-    64,
-    69,
-    70,
-    72,
-    75,
-    80,
-    84,
-    90,
-    91,
-    93,
-    99,
-    101,
-    106,
-    110,
-    111,
-    116,
-    117,
-    119,
-    125,
-    126,
-    131,
-    132,
-    134,
-    145,
-    149,
-    151,
-    152,
-    153,
-    157,
-    158,
-    163,
-    164,
-    168,
-    172,
-    178,
-    179,
-    181,
-    183,
-    187,
-    188,
-    193,
-    194,
-    196,
-    198,
-    202,
-    203,
-    208,
-    209,
-    211,
-    212,
-    213,
-    218,
-    220,
-    221,
-    225,
-    235,
-    236,
-    238,
-    239,
-    240,
-    242,
-    243,
-    244,
-    249,
-    253,
-    254,
-    259,
-    260,
-    262,
-    268,
-    274,
-    277,
-    283,
-    289,
-    292,
-    293,
-    294,
-    298,
-    299,
-    304,
-    305,
-    308,
-    309,
-    310,
-    311,
-]
+import torchvision.transforms as T
+from torch_concepts import Annotations
+from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.data.base import ConceptDataset
+from torch_concepts.data.io import download_url
 
 # Names of all CUB attributes
 CONCEPT_SEMANTICS = [
@@ -693,196 +327,156 @@ CONCEPT_SEMANTICS = [
     "has_wing_pattern::multi-colored",
 ]
 
-# Generate a mapping containing all concept groups in CUB generated
-# using a simple prefix tree
-CONCEPT_GROUP_MAP = defaultdict(list)
-for i, concept_name in enumerate(list(
-    np.array(CONCEPT_SEMANTICS)[SELECTED_CONCEPTS]
-)):
-    group = concept_name[:concept_name.find("::")]
-    CONCEPT_GROUP_MAP[group].append(i)
+CUB_DIR = os.environ.get("CUB_DIR", './CUB200/')
 
-
-
-# Definitions from CUB (certainties.txt)
-#    1 not visible
-#    2 guessing
-#    3 probably
-#    4 definitely
-# Unc map represents a mapping from the discrete score to a "mental probability"
-DEFAULT_UNC_MAP = [
-    {0: 0.5, 1: 0.5, 2: 0.5, 3:0.75, 4:1.0},
-    {0: 0.5, 1: 0.5, 2: 0.5, 3:0.75, 4:1.0},
-]
-
-##########################################################
-## Helper Functions
-##########################################################
-
-
-def discrete_to_continuous_unc(unc_val, attr_label, unc_map):
-    '''
-    Yield a continuous prob representing discrete conf val
-    Inspired by CBM data processing
-
-    The selected probability should account for whether the concept is on or off
-        E.g., if a human is "probably" sure the concept is off
-            flip the prob in unc_map
-    '''
-    unc_val = unc_val.item()
-    attr_label = attr_label.item()
-    return float(unc_map[int(attr_label)][unc_val])
-
-
-##########################################################
-## Data Loaders
-##########################################################
-
-class CUBDataset(Dataset):
+class CUB(ConceptDataset):
     """
-    TODO
+    The CUB dataset is a dataset of bird images with annotated attributes.
+    Each image is associated with a set of concept labels (attributes) and
+    task labels (bird species).
+
+    Attributes:
+        concept_attr_names: The names of the concept labels (attributes).
+        task_attr_names: The names of the task labels (bird species).
+        root: The root directory where the dataset is stored.
+        split: The dataset split to use ('train' or 'test').
+        uncertain_concept_labels: Whether to treat uncertain concept labels as
+            positive.
+        path_transform: A function to transform the image paths.
     """
+    name = "cub"
+    n_concepts = 312
+    n_tasks = 200
+
+    concept_attr_names: List[str] = []
+    task_attr_names: List[str] = []
 
     def __init__(
         self,
-        split='train',
-        uncertain_concept_labels=False,
-        root=CUB_DIR,
-        path_transform=None,
-        sample_transform=None,
-        concept_transform=None,
-        label_transform=None,
-        uncertainty_based_random_labels=False,
-        unc_map=DEFAULT_UNC_MAP,
-        selected_concepts=None,
-        training_augment=True,
-    ):
-        """
-        TODO: Define different arguments
-        """
-        if not (os.path.exists(root) and os.path.isdir(root)):
-            raise ValueError(
-                f'Provided CUB data directory "{root}" is not a valid or '
-                f'an existing directory.'
-            )
-        assert split in ['train', 'val', 'test'], (
-            f"CUB split must be in ['train', 'val', 'test'] but got '{split}'"
-        )
-        self.split = split
-        base_dir = os.path.join(root, 'class_attr_data_10')
-        self.pkl_file_path = os.path.join(base_dir, f'{split}.pkl')
-        self.name = 'CUB'
-
-        self.data = []
-        with open(self.pkl_file_path, 'rb') as f:
-            self.data.extend(pickle.load(f))
-        image_size = 299
-        if (split == 'train') and training_augment:
-            self.sample_transform  = transforms.Compose([
-                transforms.ColorJitter(brightness=32/255, saturation=(0.5, 1.5)),
-                transforms.RandomResizedCrop(image_size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(), #implicitly divides by 255
-                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
-                sample_transform or (lambda x: x),
-            ])
-        else:
-            self.sample_transform = transforms.Compose([
-                transforms.CenterCrop(image_size),
-                transforms.ToTensor(), #implicitly divides by 255
-                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
-                sample_transform or (lambda x: x),
-            ])
-        self.concept_transform = concept_transform or (lambda x: x)
-        self.label_transform = label_transform or (lambda x: x)
-        self.uncertain_concept_labels = uncertain_concept_labels
+        name : str = "cub",
+        precision : int = 32,
+        input_data : np.ndarray | pd.DataFrame | torch.Tensor = None,
+        concepts : np.ndarray | pd.DataFrame | torch.Tensor = None,
+        annotations : Annotations | None = None,
+        graph : pd.DataFrame | None = None,
+        concept_names_subset : List[str] | None = None,
+        root : str = CUB_DIR,
+        image_transform: Optional[object] = None,
+    ) -> None:
         self.root = root
-        self.path_transform = path_transform
-        self.uncertainty_based_random_labels = uncertainty_based_random_labels
-        self.unc_map = unc_map
-        if selected_concepts is None:
-            selected_concepts = list(range(len(SELECTED_CONCEPTS)))
-        self.selected_concepts = selected_concepts
-        self.concept_names = self.concept_attr_names = list(
-            np.array(
-                CONCEPT_SEMANTICS
-            )[CONCEPT_SEMANTICS][selected_concepts]
-        )
-        self.task_names = self.task_attr_names = CLASS_NAMES
+        self.image_transform = image_transform or T.ToTensor()
 
-    def __len__(self):
-        return len(self.data)
+        input_data, concepts, annotations, graph, image_paths = self.load()
+
+        super().__init__(
+            name=name,
+            precision=precision,
+            input_data=input_data,
+            concepts=concepts,
+            annotations=annotations,
+            graph=graph,
+            concept_names_subset=concept_names_subset,
+        )
+        self.image_paths = image_paths
+    
+    @property
+    def raw_filenames(self) -> List[str]:
+        """List of raw filenames that need to be present in the raw directory
+        for the dataset to be considered present."""
+        return [
+            "CUB_200_2011/images.txt",
+            "CUB_200_2011/image_class_labels.txt",
+            "CUB_200_2011/train_test_split.txt",
+            "CUB_200_2011/bounding_boxes.txt",
+            "CUB_200_2011/classes.txt",
+            "CUB_200_2011/attributes/image_attribute_labels.txt",
+            "CUB_200_2011/attributes/class_attribute_labels_continuous.txt",
+            "CUB_200_2011/attributes/certainties.txt",
+        ]
+        
+    @property
+    def processed_filenames(self) -> List[str]:
+        """List of processed filenames that will be created during build step."""
+        return [
+            "cub_inputs.pt",
+            "cub_concepts.pt",
+            "cub_annotations.pt",
+            "cub_graph.h5",
+        ]
+    
+    def download(self) -> None:
+        """Downloads the CUB dataset if it is not already present."""
+        if not os.path.exists(self.root):
+            os.makedirs(self.root)
+            
+        url = "https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz?download=1"
+        tgz_path = download_url(url, self.root)
+        
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            tar.extractall(path=self.root)
+        os.unlink(tgz_path)
+        
+    def build(self):
+        self.maybe_download()
+
+        images = pd.read_csv(self.raw_paths[0], sep=r"\s+", header=None, names=['image_id', 'path'])
+        image_paths = images.set_index('image_id')['path']
+        image_paths = image_paths.apply(lambda p: os.path.join(self.root, "CUB_200_2011", "images", p))
+
+        # attribute names: use canonical order from CONCEPT_SEMANTICS (matches attr_id 1..312)
+        concept_names = CONCEPT_SEMANTICS
+
+        # image_attribute_labels.txt has 6 columns; we only need is_present (col 3)
+        attr_labels = pd.read_csv(
+            self.raw_paths[5],
+            header=None,
+            names=['image_id', 'attr_id', 'is_present', 'certainty', 'time_ms', 'extra'],
+            usecols=[0, 1, 2],
+            delim_whitespace=True,
+            engine="python",
+        )
+        concepts_df = attr_labels.pivot(index='image_id', columns='attr_id', values='is_present').fillna(0)
+        concepts_df = concepts_df.loc[image_paths.index]
+        concepts_tensor = torch.tensor(concepts_df.values, dtype=torch.float32)
+
+        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        cardinalities = tuple(1 for _ in concept_names)  # binary concepts
+        annotations = Annotations({
+            1: AxisAnnotation(labels=concept_names,
+                              cardinalities=cardinalities,
+                              metadata=concept_metadata)
+        })
+
+        torch.save(list(image_paths.values), self.processed_paths[0])
+        torch.save(concepts_tensor, self.processed_paths[1])
+        torch.save(annotations, self.processed_paths[2])
+
+    def load_raw(self):
+        self.maybe_build()
+        # PyTorch 2.6 switches torch.load default to weights_only=True; set False to load metadata objects
+        image_paths = torch.load(self.processed_paths[0], weights_only=False)
+        concepts = torch.load(self.processed_paths[1], weights_only=False)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
+        return image_paths, concepts, annotations, None
+
+    def load(self):
+        image_paths, concepts, annotations, graph = self.load_raw()
+        input_indices = torch.arange(len(image_paths), dtype=torch.long)
+        return input_indices, concepts, annotations, graph, image_paths
 
     def __getitem__(self, idx):
-        img_data = self.data[idx]
-        img_path = img_data['img_path']
-        if self.path_transform is None:
-            # This is needed if the dataset is downloaded from the original
-            # CBM paper's repository/experiment code
-            img_path = img_path.replace(
-                '/juice/scr/scr102/scr/thaonguyen/CUB_supervision/datasets/',
-                self.root
-            )
-            try:
-                img = Image.open(img_path).convert('RGB')
-            except:
-                img_path_split = img_path.split('/')
-                img_path = '/'.join(
-                    img_path_split[:2] + [self.split] + img_path_split[2:]
-                )
-                img = Image.open(img_path).convert('RGB')
-        else:
-            img = Image.open(self.path_transform(img_path)).convert('RGB')
+        img_path = self.image_paths[idx]
+        image = Image.open(img_path).convert("RGB")
+        if self.image_transform is not None:
+            image = self.image_transform(image)
 
-        class_label = self.label_transform(img_data['class_label'])
-        img = self.sample_transform(img)
+        concepts = self.concepts[idx]
+        sample = {
+            'inputs': {'x': image},
+            'concepts': {'c': concepts},
+        }
+        return sample
 
-        if self.uncertain_concept_labels:
-            attr_label = img_data['uncertain_attribute_label']
-        else:
-            attr_label = img_data['attribute_label']
-        attr_label = self.concept_transform(
-            np.array(attr_label)[self.selected_concepts]
-        )
 
-        # We may want to randomly sample concept labels based on their provided
-        # annotator uncertainty
-        if self.uncertainty_based_random_labels:
-            discrete_unc_label = np.array(
-                img_data['attribute_certainty']
-            )[self.selected_concepts]
-            instance_attr_label = np.array(img_data['attribute_label'])
-            competencies = []
-            for (discrete_unc_val, hard_concept_val) in zip(
-                discrete_unc_label,
-                instance_attr_label,
-            ):
-                competencies.append(
-                    discrete_to_continuous_unc(
-                        discrete_unc_val,
-                        hard_concept_val,
-                        self.unc_map,
-                    )
-                )
-            attr_label = np.random.binomial(1, competencies)
-
-        return img, torch.FloatTensor(attr_label), class_label
-
-    def concept_weights(self):
-        """
-        Calculate class imbalance ratio for binary attribute labels
-        """
-        imbalance_ratio = []
-        with open(self.pkl_file_path, 'rb') as f:
-            data = pickle.load(f)
-        n = len(data)
-        n_attr = len(data[0]['attribute_label'])
-        n_ones = [0] * n_attr
-        total = [n] * n_attr
-        for d in data:
-            labels = d['attribute_label']
-            for i in range(n_attr):
-                n_ones[i] += labels[i]
-        for j in range(len(n_ones)):
-            imbalance_ratio.append(total[j]/n_ones[j] - 1)
-        return np.array(imbalance_ratio)[self.selected_concepts]
+# test
+cub = CUB()
