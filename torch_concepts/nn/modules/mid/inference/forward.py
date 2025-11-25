@@ -851,9 +851,14 @@ class AncestralSamplingInference(ForwardInference):
         >>> relaxed_samples = inference_relaxed.query(['A'], evidence={'embedding': x})
         >>> # relaxed_samples will be continuous, not binary
     """
-    def __init__(self, probabilistic_model: ProbabilisticModel, graph_learner: BaseGraphLearner = None, **dist_kwargs):
+    def __init__(self,
+                 probabilistic_model: ProbabilisticModel,
+                 graph_learner: BaseGraphLearner = None,
+                 log_probs: bool = True,
+                 **dist_kwargs):
         super().__init__(probabilistic_model, graph_learner)
         self.dist_kwargs = dist_kwargs
+        self.log_probs = log_probs
 
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
         """
@@ -881,8 +886,15 @@ class AncestralSamplingInference(ForwardInference):
         # retain only allowed dist kwargs
         dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
 
-        if parent_variable.distribution in [Bernoulli]:
-            return parent_variable.distribution(logits=results, **dist_kwargs).sample()
-        elif parent_variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
-            return parent_variable.distribution(logits=results, **dist_kwargs).rsample()
+        if parent_variable.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
+            if self.log_probs:
+                dist_kwargs['logits'] = results
+            else:
+                dist_kwargs['probs'] = results
+
+            if parent_variable.distribution in [Bernoulli]:
+                return parent_variable.distribution(**dist_kwargs).sample()
+            elif parent_variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
+                return parent_variable.distribution(**dist_kwargs).rsample()
+
         return parent_variable.distribution(results, **dist_kwargs).rsample()
