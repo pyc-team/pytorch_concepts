@@ -160,54 +160,70 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
         annotations: Concept annotations with type and cardinality metadata
         
     Returns:
-        Dict with 6 keys:
-            - 'binary_concepts': Indices of binary concepts in concept list
-            - 'categorical_concepts': Indices of categorical concepts in concept list  
-            - 'continuous_concepts': Indices of continuous concepts in concept list
-            - 'binary_endogenous': Indices in flattened endogenous tensor for binary concepts
-            - 'categorical_endogenous': Indices in flattened endogenous tensor for categorical concepts
-            - 'continuous_endogenous': Indices in flattened endogenous tensor for continuous concepts
+        Dict[str, list]: Dictionary with the following keys:
+            - 'binary_labels': List of binary concept names
+            - 'categorical_labels': List of categorical concept names
+            - 'continuous_labels': List of continuous concept names
+            - 'binary_idx': List of concept-level indices for binary concepts
+            - 'categorical_idx': List of concept-level indices for categorical concepts
+            - 'continuous_idx': List of concept-level indices for continuous concepts
+            - 'binary_endogenous_idx': List of logit-level indices for binary concepts
+            - 'categorical_endogenous_idx': List of logit-level indices for categorical concepts
+            - 'continuous_endogenous_idx': List of logit-level indices for continuous concepts
             
     Example:
         >>> groups = get_concept_groups(annotations)
-        >>> binary_endogenous = endogenous[:, groups['binary_endogenous']]  # Extract endogenous of binary concepts
-        >>> binary_labels = concept_labels[:, groups['binary_concepts']]  # Extract labels of binary concepts
+        >>> binary_endogenous = endogenous[:, groups['binary_endogenous_idx']]  # Extract endogenous of binary concepts
+        >>> binary_labels = concept_labels[:, groups['binary_idx']]  # Extract labels of binary concepts
     """
     cardinalities = annotations.cardinalities
     
     # Group concepts by type
-    type_groups = annotations.groupby_metadata('type', layout='indices')
+    type_groups = annotations.groupby_metadata('type', layout='labels')
+
+    # Concept-level labels: label names
+    discrete_labels = type_groups.get('discrete', [])
+    continuous_labels = type_groups.get('continuous', [])
+    
+    # Further split discrete into binary and categorical
+    binary_labels = [label for label in discrete_labels if cardinalities[annotations.get_index(label)] == 1]
+    categorical_labels = [label for label in discrete_labels if cardinalities[annotations.get_index(label)] > 1]
 
     # Concept-level indices: position in concept list
-    discrete_concepts = type_groups.get('discrete', [])
-    binary_concepts = [idx for idx in discrete_concepts if cardinalities[idx] == 1]
-    categorical_concepts = [idx for idx in discrete_concepts if cardinalities[idx] > 1]
-    continuous_concepts = type_groups.get('continuous', [])
+    discrete_idx = [annotations.get_index(label) for label in discrete_labels]
+    continuous_idx = [annotations.get_index(label) for label in continuous_labels]
+    binary_idx = [annotations.get_index(label) for label in binary_labels]
+    categorical_idx = [annotations.get_index(label) for label in categorical_labels]
 
-    # Pre-compute cumulative indices for logit-level slicing
-    cumulative_indices = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
+    # Pre-compute cumulative indices for endogenous-level(e.g., logits-level (endogenous) slicing
+    # cumulative_indices[i] gives the starting position of concept i in the flattened tensor
+    # cumulative_indices[i+1] gives the ending position (exclusive)
+    cum_idx = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
 
-    # Logit-level indices: position in flattened tensor (accounting for cardinality)
-    binary_endogenous = []
-    for concept_idx in binary_concepts:
-        binary_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+    # Endogenous (logit-level) indices: position in flattened tensor (accounting for cardinality)
+    # These are the actual indices in the output tensor where each concept's logits appear
+    binary_endogenous_idx = []
+    for concept_idx in binary_idx:
+        binary_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
-    categorical_endogenous = []
-    for concept_idx in categorical_concepts:
-        categorical_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+    categorical_endogenous_idx = []
+    for concept_idx in categorical_idx:
+        categorical_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
-    continuous_endogenous = []
-    for concept_idx in continuous_concepts:
-        continuous_endogenous.extend(range(cumulative_indices[concept_idx], cumulative_indices[concept_idx + 1]))
+    continuous_endogenous_idx = []
+    for concept_idx in continuous_idx:
+        continuous_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
     return {
-        'cumulative_indices': cumulative_indices,
-        'binary_concepts': binary_concepts,
-        'categorical_concepts': categorical_concepts,
-        'continuous_concepts': continuous_concepts,
-        'binary_endogenous': binary_endogenous,
-        'categorical_endogenous': categorical_endogenous,
-        'continuous_endogenous': continuous_endogenous,
+        'binary_labels': binary_labels,
+        'categorical_labels': categorical_labels,
+        'continuous_labels': continuous_labels,
+        'binary_idx': binary_idx,
+        'categorical_idx': categorical_idx,
+        'continuous_idx': continuous_idx,
+        'binary_endogenous_idx': binary_endogenous_idx,
+        'categorical_endogenous_idx': categorical_endogenous_idx,
+        'continuous_endogenous_idx': continuous_endogenous_idx,
     }
 
 

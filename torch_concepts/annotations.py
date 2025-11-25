@@ -7,6 +7,7 @@ simple (flat) and nested (hierarchical) concept structures.
 """
 
 import warnings
+import torch
 
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -217,6 +218,49 @@ class AxisAnnotation:
                 raise ValueError("Cardinalities are not defined for this nested axis")
         else:
             return len(self.labels)
+
+    def get_endogenous_idx(self, labels: List[str]) -> List[int]:
+        """Get endogenous (logit-level) indices for a list of concept labels.
+        
+        This method returns the flattened tensor indices where the logits/values
+        for the specified concepts appear, accounting for each concept's cardinality.
+        
+        Args:
+            labels: List of concept label names to get indices for.
+            
+        Returns:
+            List of endogenous indices in the flattened tensor, in the order 
+            corresponding to the input labels.
+            
+        Raises:
+            ValueError: If any label is not found in the axis labels.
+            
+        Example:
+            >>> # Concepts: ['color', 'shape', 'size'] with cardinalities [3, 2, 1]
+            >>> # Flattened tensor has 6 positions: [c0, c1, c2, s0, s1, sz]
+            >>> axis = AxisAnnotation(
+            ...     labels=['color', 'shape', 'size'],
+            ...     cardinalities=[3, 2, 1]
+            ... )
+            >>> axis.get_endogenous_idx(['color', 'size'])
+            [0, 1, 2, 5]  # color takes positions 0-2, size takes position 5
+        """
+        endogenous_indices = []
+        cum_idx = [0] + list(torch.cumsum(torch.tensor(self.cardinalities), dim=0).tolist())
+        
+        for label in labels:
+            # Validate label exists
+            try:
+                concept_idx = self.get_index(label)
+            except ValueError:
+                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
+            
+            # Get the range of endogenous indices for this concept
+            start_idx = cum_idx[concept_idx]
+            end_idx = cum_idx[concept_idx + 1]
+            endogenous_indices.extend(range(start_idx, end_idx))
+        
+        return endogenous_indices
 
     def to_dict(self) -> Dict[str, Any]:
         """

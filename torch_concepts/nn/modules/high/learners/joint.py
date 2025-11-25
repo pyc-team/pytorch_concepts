@@ -1,10 +1,4 @@
 from abc import abstractmethod
-from typing import Mapping, Type, Union, Optional
-import torch
-from torch import nn
-
-from torch_concepts.annotations import Annotations
-
 from ..base.learner import BaseLearner 
 
 
@@ -12,6 +6,12 @@ class JointLearner(BaseLearner):
     def __init__(self,**kwargs):
         super(JointLearner, self).__init__(**kwargs)
 
+    @abstractmethod
+    def forward(self, x, query, *args, **kwargs):
+        """Model forward method to be implemented by subclasses.
+        """
+        pass
+    
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
         
@@ -35,7 +35,6 @@ class JointLearner(BaseLearner):
 
         # --- Model forward ---
         # joint training -> inference on all concepts
-        # TODO: train interventions using the context manager 'with ...'
         # TODO: add option to semi-supervise a subset of concepts
         # TODO: handle backbone kwargs when present
         out = self.forward(x=inputs['x'], query=self.concept_names)
@@ -72,6 +71,7 @@ class JointLearner(BaseLearner):
         Returns:
             torch.Tensor: Training loss.
         """
+        # TODO: train interventions using the context manager 'with ...'
         loss = self.shared_step(batch, step='train')
         return loss
 

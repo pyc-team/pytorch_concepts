@@ -62,11 +62,10 @@ class BaseLearner(pl.LightningModule):
         self.groups = get_concept_groups(self.concept_annotations)
         
         # Validate that continuous concepts are not used
-        if self.groups['continuous_concepts']:
-            continuous_names = [self.concept_names[i] for i in self.groups['continuous_concepts']]
+        if self.groups['continuous_labels']:
             raise NotImplementedError(
                 f"Continuous concepts are not yet supported in the high-level API. "
-                f"Found continuous concepts: {continuous_names}. "
+                f"Found continuous concepts: {self.groups['continuous_labels']}. "
                 f"Please use only discrete (binary or categorical) concepts."
             )
 
@@ -143,7 +142,7 @@ class BaseLearner(pl.LightningModule):
             if categorical_metrics_cfg:
                 # For categorical, we'll average over individual concept metrics
                 self.max_card = max([self.concept_annotations.cardinalities[i] 
-                                     for i in self.groups['categorical_concepts']])
+                                     for i in self.groups['categorical_idx']])
                 summary_metrics['categorical'] = self._instantiate_metric_dict(
                     categorical_metrics_cfg, 
                     num_classes=self.max_card
@@ -283,30 +282,31 @@ class BaseLearner(pl.LightningModule):
         """
 
         if binary_fn:
-            c_hat_binary = c_hat[:, self.groups['binary_endogenous']]
-            c_true_binary = c_true[:, self.groups['binary_concepts']].float()
+            c_hat_binary = c_hat[:, self.groups['binary_endogenous_idx']]
+            c_true_binary = c_true[:, self.groups['binary_idx']].float()
             binary_fn.update(c_hat_binary, c_true_binary)
 
         if categorical_fn:
             # Pad all tensors to max cardinality and stack
             # FIXME: optimize this operation, could this for loop be avoided?
-            split_tuple = torch.split(c_hat[:, self.groups['categorical_endogenous']], 
+            split_tuple = torch.split(c_hat[:, self.groups['categorical_endogenous_idx']], 
                                       [self.concept_annotations.cardinalities[i] 
-                                       for i in self.groups['categorical_concepts']], dim=1)
+                                       for i in self.groups['categorical_idx']], dim=1)
             padded_endogenous = [
-                torch.nn.functional.pad(endogenous, (0, self.max_card - endogenous.shape[1]), value=float('-inf'))
-                for endogenous in split_tuple
+                torch.nn.functional.pad(
+                    endogenous, 
+                    (0, self.max_card - endogenous.shape[1]), 
+                    value=float('-inf')
+                ) for endogenous in split_tuple
             ]
             c_hat_group = torch.cat(padded_endogenous, dim=0)
-            c_true_group = c_true[:, self.groups['categorical_concepts']].T.reshape(-1).long()
+            c_true_group = c_true[:, self.groups['categorical_idx']].T.reshape(-1).long()
             
             categorical_fn.update(c_hat_group, c_true_group)
 
         if continuous_fn:
-            # TODO: verify correctness
-            c_hat_continuous = c_hat[:, self.groups['continuous_endogenous']]
-            c_true_continuous = c_true[:, self.groups['continuous_concepts']]
-            continuous_fn.update(c_hat_continuous, c_true_continuous)
+            # TODO: implement continuous concepts
+            raise NotImplementedError("Continuous concepts not yet implemented.")
 
     def update_metrics(self, in_metric_dict: Mapping, 
                        metric_collection: MetricCollection):

@@ -61,10 +61,10 @@ class ConceptLoss(nn.Module):
 
         # For categorical loss, precompute max cardinality for padding
         if self.categorical_fn is not None:
-            self.max_card = max([self.cardinalities[i] for i in self.groups['categorical_concepts']])
+            self.max_card = max([self.cardinalities[i] for i in self.groups['categorical_idx']])
 
         if self.continuous_fn is not None:
-            self.max_dim = max([self.cardinalities[i] for i in self.groups['continuous_concepts']])
+            self.max_dim = max([self.cardinalities[i] for i in self.groups['continuous_idx']])
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute total loss across all concept types.
@@ -83,18 +83,26 @@ class ConceptLoss(nn.Module):
         
         # Binary concepts
         if self.binary_fn is not None:
-            binary_endogenous = input[:, self.groups['binary_endogenous']]
-            binary_targets = target[:, self.groups['binary_concepts']].float()
+            binary_endogenous = input[:, self.groups['binary_endogenous_idx']]
+            binary_targets = target[:, self.groups['binary_idx']].float()
             total_loss += self.binary_fn(binary_endogenous, binary_targets)
         
         # Categorical concepts
         if self.categorical_fn is not None:
-            split_tuple = torch.split(input[:, self.groups['categorical_endogenous']], 
-                                      [self.cardinalities[i] for i in self.groups['categorical_concepts']], dim=1)
-            padded_endogenous = [nn.functional.pad(endogenous, (0, self.max_card - endogenous.shape[1]), value=float('-inf'))
-                             for endogenous in split_tuple]
+            split_tuple = torch.split(
+                input[:, self.groups['categorical_endogenous_idx']], 
+                [self.cardinalities[i] for i in self.groups['categorical_idx']], 
+                dim=1
+            )
+            padded_endogenous = [
+                nn.functional.pad(
+                    endogenous, 
+                    (0, self.max_card - endogenous.shape[1]), 
+                    value=float('-inf')
+                ) for endogenous in split_tuple
+            ]
             cat_endogenous = torch.cat(padded_endogenous, dim=0)
-            cat_targets = target[:, self.groups['categorical_concepts']].T.reshape(-1).long()
+            cat_targets = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
             
             total_loss += self.categorical_fn(cat_endogenous, cat_targets)
         

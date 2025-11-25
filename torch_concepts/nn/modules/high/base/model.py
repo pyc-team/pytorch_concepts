@@ -93,12 +93,6 @@ class BaseModel(nn.Module, ABC):
     #     return self._encoder
 
     @abstractmethod
-    def forward(self, x, query, *args, **kwargs):
-        """Model forward method to be implemented by subclasses.
-        """
-        pass
-
-    @abstractmethod
     def filter_output_for_loss(self, forward_out, target):
         """Filter model outputs before passing to loss function.
 
