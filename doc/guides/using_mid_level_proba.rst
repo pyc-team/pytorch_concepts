@@ -1,11 +1,66 @@
 Interpretable Probabilistic Models
 =====================================
 
-The Mid-Level API uses **Variables**, **ParametricCPDs**, and **Probabilistic Models** to build interpretable and causally-transparent concept-based models.
+
+.. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
+   :width: 20px
+   :align: middle
+
+.. |pytorch_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
+   :width: 20px
+   :align: middle
+
+
+|pyc_logo| PyC can be used to build interpretable concept-based probabilisitc models.
 
 .. warning::
 
    This API is still under development and interfaces might change in future releases.
+
+
+
+Design principles
+-----------------
+
+Probabilistic Models
+^^^^^^^^^^^^^^^^^^^^
+
+At this API level, models are represented as probabilistic models where:
+
+- ``Variable`` objects represent random variables in the probabilistic model. Variables are defined by their name, parents, and distribution type. For instance we can define a list of three concepts as:
+
+  .. code-block:: python
+
+     concepts = pyc.EndogenousVariable(concepts=["c1", "c2", "c3"], parents=[],
+                                       distribution=torch.distributions.RelaxedBernoulli)
+
+- ``ParametricCPD`` objects represent conditional probability distributions (CPDs) between variables in the probabilistic model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
+
+  .. code-block:: python
+
+     concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
+                                        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3))
+
+- ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
+
+  .. code-block:: python
+
+     probabilistic_model = pyc.nn.ProbabilisticModel(variables=concepts,
+                                                     parametric_cpds=concept_cpd)
+
+Inference
+^^^^^^^^^
+
+Inference is performed using efficient tensorial probabilistic inference algorithms. For instance, we can perform ancestral sampling as:
+
+.. code-block:: python
+
+   inference_engine = pyc.nn.AncestralSamplingInference(probabilistic_model=probabilistic_model,
+                                                        graph_learner=wanda, temperature=1.)
+   predictions = inference_engine.query(["c1"], evidence={'input': x})
+
+
+
 
 Step 1: Import Libraries
 -------------------------

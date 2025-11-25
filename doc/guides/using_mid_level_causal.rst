@@ -1,12 +1,96 @@
 Structural Equation Models
 =====================================
 
-The Mid-Level API supports **Structural Equation Models (SEMs)** for causal modeling and inference
-with concept-based neural networks.
+.. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
+   :width: 20px
+   :align: middle
+
+.. |pytorch_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg
+   :width: 20px
+   :align: middle
+
+|pyc_logo| PyC can be used to build interpretable concept-based causal models and perform causal inference.
 
 .. warning::
 
    This API is still under development and interfaces might change in future releases.
+
+
+Design principles
+-----------------
+
+Structural Equation Models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+|pyc_logo| PyC can be used to design Structural Equation Models (SEMs), where:
+
+- ``ExogenousVariable`` and ``EndogenousVariable`` objects represent random variables in the SEM. Variables are defined by their name, parents, and distribution type. For example, in this guide we define variables as:
+
+  .. code-block:: python
+
+     exogenous_var = ExogenousVariable(
+         "exogenous",
+         parents=[],
+         distribution=RelaxedBernoulli
+     )
+     genotype_var = EndogenousVariable(
+         "genotype",
+         parents=["exogenous"],
+         distribution=RelaxedBernoulli
+     )
+
+- ``ParametricCPD`` objects represent the structural equations (causal mechanisms) between variables in the SEM and are parameterized by |pyc_logo| PyC or |pytorch_logo| PyTorch modules. For example:
+
+  .. code-block:: python
+
+     genotype_cpd = ParametricCPD(
+         "genotype",
+         parametrization=torch.nn.Sequential(
+             torch.nn.Linear(1, 1),
+             torch.nn.Sigmoid()
+         )
+     )
+
+- ``ProbabilisticModel`` objects collect all variables and CPDs to define the full SEM. For example:
+
+  .. code-block:: python
+
+     sem_model = ProbabilisticModel(
+         variables=[exogenous_var, genotype_var, ...],
+         parametric_cpds=[exogenous_cpd, genotype_cpd, ...]
+     )
+
+Interventions
+^^^^^^^^^^^^^
+
+Interventions allow us to estimate causal effects. For instance, do-interventions allow us to set specific variables
+to fixed values and observe the effect on downstream variables simulating a randomized controlled trial.
+
+To perform a do-intervention, use the ``DoIntervention`` strategy and the ``intervention`` context manager.
+For example, to set ``smoking`` to 0 (prevent smoking) and query the effect on downstream variables:
+
+.. code-block:: python
+
+   # Intervention: Force smoking to 0 (prevent smoking)
+   smoking_strategy_0 = DoIntervention(
+       model=sem_model.parametric_cpds,
+       constants=0.0
+   )
+
+   with intervention(
+           policies=UniformPolicy(out_features=1),
+           strategies=smoking_strategy_0,
+           target_concepts=["smoking"]
+   ):
+       intervened_results_0 = inference_engine.query(
+           query_concepts=["genotype", "smoking", "tar", "cancer"],
+           evidence=initial_input
+       )
+       # Results reflect the effect of setting smoking=0
+
+You can use these interventional results to estimate causal effects, such as the Average Causal Effect (ACE),
+as shown in later steps of this guide.
+
 
 Step 1: Import Libraries
 -------------------------
@@ -160,10 +244,10 @@ Query the model to make observational predictions:
    print("Cancer Predictions (first 5 samples):")
    print(results[:, 3][:5])
 
-Step 7: Causal Interventions
+Step 7: Do-Interventions
 -----------------------------
 
-Perform do-calculus interventions to estimate causal effects:
+Perform do-interventions to estimate causal effects:
 
 .. code-block:: python
 
