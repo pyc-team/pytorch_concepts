@@ -484,9 +484,10 @@ def compute_exact_marginals_bruteforce(
 
 class BPInference(BaseInference):
 
-    def __init__(self, model):
+    def __init__(self, model, iters = 5):
         super().__init__()
         self.model : ProbabilisticModel = model
+        self.iters = iters
 
 
         variables = {}
@@ -565,7 +566,7 @@ class BPInference(BaseInference):
                 factor_eval_list.append(factor_eval)
                 continue
             else:
-                for i, p in enumerate(cpd.parents):
+                for i, p in enumerate(cpd.variable.parents):
 
                     if p.distribution is Delta:
                         emb = embeddings_dict[p.concepts[0]] # [B, emb_dim]
@@ -595,7 +596,7 @@ class BPInference(BaseInference):
 
                 # turn into bidimentional tensor: [B * num_assignments, input_dim]
                 input = input.view(batch_size * num_assignments, -1)
-                evaluation = cpd.parameterization(input)
+                evaluation = cpd.parametrization(input)
 
                 # reshape back to [B, num_assignments, output_dim]
                 evaluation = evaluation.view(batch_size, num_assignments, -1)
@@ -604,40 +605,45 @@ class BPInference(BaseInference):
                 # TODO: We need to turn them into factor evaluations. In each factor, the target variable of the CPD is the first variable in the scope so we can do a simple reshape
                 # TODO: check that this is the case
 
-                if cpd.distribution is RelaxedOneHotCategorical:
+                if cpd.variable.distribution is RelaxedOneHotCategorical:
                     #TODO: Check that it is concatenating the third dimension into the num_assignments dimension
-                    factor_eval = evaluation.view(batch_size, -1)
 
-                elif cpd.distribution is RelaxedBernoulli:
+                    # this is the tensorial equivalent to torch.cat([evaluation[:, :, i] for i in range(evaluation.shape[2])], dim=1)
+                    factor_eval = evaluation.permute(0, 2, 1).reshape(batch_size, -1)
+
+                elif cpd.variable.distribution is RelaxedBernoulli:
                     # Bernoulli output: need to create a factor eval of size 2
                     prob_1 = evaluation.view(batch_size, -1)
                     prob_0 = 1.0 - prob_1
                     factor_eval = torch.cat([prob_0, prob_1], dim=1)
-                elif cpd.distribution is Delta:
+                elif cpd.variable.distribution is Delta:
                     factor_eval = torch.ones([batch_size,1], device=evaluation.device)
                 else:
                     raise NotImplementedError("Unknown CPD distribution in CPD2FactorWrapper.")
 
                 factor_eval_list.append(factor_eval)
 
+        B = batch_size
+        S = self.metadata["total_edge_states"]
+        E = self.metadata["E"]
         messages_f2v_init = torch.rand(B, S)
 
-        edge_id = md["edge_id_per_state"]  # [S]
+        edge_id = self.metadata["edge_id_per_state"]  # [S]
         edge_id_b = edge_id.unsqueeze(0).expand(B, -1)  # [B, S]
         sum_per_edge = torch.zeros(B, E)
         sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v_init)
         messages_f2v_init = messages_f2v_init / (sum_per_edge.gather(1, edge_id_b) + 1e-20)
 
         messages_f2v_uncond = messages_f2v_init.clone()
-        for it in range(num_iters):
+        for it in range(self.iters):
             messages_v2f_uncond = update_var_to_factor(
-                messages_f2v_uncond, md, evidence_logmask_vs=None
+                messages_f2v_uncond, self.metadata, evidence_logmask_vs=None
             )
             messages_f2v_uncond = update_factor_to_var(
-                messages_v2f_uncond, factor_eval_list, md
+                messages_v2f_uncond, factor_eval_list, self.metadata
             )
         bp_marginals_uncond = compute_var_marginals(
-            messages_f2v_uncond, md, evidence_logmask_vs=None
+            messages_f2v_uncond, self.metadata, evidence_logmask_vs=None
         )
 
         return bp_marginals_uncond

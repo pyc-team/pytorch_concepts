@@ -27,7 +27,7 @@ def main():
                                                                      torch.nn.Sigmoid()))
     b_cpd = ParametricCPD("b",
                                 parametrization=torch.nn.Sequential(torch.nn.Linear(emb_size, b.size),
-                                                                     torch.nn.Sigmoid()))
+                                                                     torch.nn.Softmax(dim=-1)))
     c_cpd = ParametricCPD("c",
                             parametrization=torch.nn.Sequential(torch.nn.Linear(a.size + b.size, c.size),
                                                                 torch.nn.Sigmoid()))
@@ -47,59 +47,6 @@ def main():
 
     print(results)
     exit()
-
-    print("Genotype Predictions (first 5 samples):")
-    print(results[:, 0][:5])
-    print("Smoking Predictions (first 5 samples):")
-    print(results[:, 1][:5])
-    print("Tar Predictions (first 5 samples):")
-    print(results[:, 2][:5])
-    print("Cancer Predictions (first 5 samples):")
-    print(results[:, 3][:5])
-
-    # Original predictions (observational)
-    original_results = inference_engine.query(
-        query_concepts=["genotype", "smoking", "tar", "cancer"],
-        evidence=initial_input
-    )
-
-    # Intervention: Force smoking to 0 (prevent smoking)
-    smoking_strategy_0 = DoIntervention(
-        model=concept_model.parametric_cpds,
-        constants=0.0
-    )
-    with intervention(
-            policies=UniformPolicy(out_features=1),
-            strategies=smoking_strategy_0,
-            target_concepts=["smoking"]
-    ):
-        intervened_results = inference_engine.query(
-            query_concepts=["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input
-        )
-        cancer_do_smoking_0 = intervened_results[:, 3]
-
-    # Intervention: Force smoking to 1 (promote smoking)
-    smoking_strategy_1 = DoIntervention(
-        model=concept_model.parametric_cpds,
-        constants=1.0
-    )
-    with intervention(
-            policies=UniformPolicy(out_features=1),
-            strategies=smoking_strategy_1,
-            target_concepts=["smoking"]
-    ):
-        intervened_results = inference_engine.query(
-            query_concepts=["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input
-        )
-        cancer_do_smoking_1 = intervened_results[:, 3]
-
-    ace_cancer_do_smoking = cace_score(cancer_do_smoking_0, cancer_do_smoking_1)
-    print(f"ACE of smoking on cancer: {ace_cancer_do_smoking:.3f}")
-
-    return
-
 
 if __name__ == "__main__":
     main()
