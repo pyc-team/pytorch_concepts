@@ -152,9 +152,9 @@ class BnLearnDataset(ConceptDataset):
     def load_raw(self):
         self.maybe_build()
         logger.info(f"Loading dataset from {self.root_dir}")
-        embeddings = torch.load(self.processed_paths[0])
+        embeddings = torch.load(self.processed_paths[0], weights_only=False)
         concepts = pd.read_hdf(self.processed_paths[1], "concepts")
-        annotations = torch.load(self.processed_paths[2])
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
         graph = pd.read_hdf(self.processed_paths[3], "graph")
         return embeddings, concepts, annotations, graph
 
