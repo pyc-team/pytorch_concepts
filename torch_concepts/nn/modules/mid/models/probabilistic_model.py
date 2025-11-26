@@ -9,7 +9,7 @@ from torch import nn
 from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type
 
-from .variable import Variable
+from .variable import Variable, ExogenousVariable
 from .cpd import ParametricCPD
 
 
@@ -49,7 +49,10 @@ def _reinitialize_with_new_param(instance, key, new_value):
         if k == key:
             new_dict[k] = new_value
         else:
-            new_dict[k] = getattr(instance, k, None)
+            if k == 'bias':
+                new_dict[k] = False if instance.bias is None else True
+            else:
+                new_dict[k] = getattr(instance, k, None)
 
     new_instance = cls(**new_dict)
 
@@ -156,11 +159,14 @@ class ProbabilisticModel(nn.Module):
                 if concept in self.concept_to_variable:
                     parametric_cpd.variable = self.concept_to_variable[concept]
                     parametric_cpd.parents = self.concept_to_variable[concept].parents
-                new_parametrization = _reinitialize_with_new_param(parametric_cpd.parametrization,
-                                                                   'out_features',
-                                                                   self.concept_to_variable[concept].size)
-                new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=new_parametrization)
-                self.parametric_cpds[concept] = new_parametric_cpd
+                if not isinstance(parametric_cpd.variable, ExogenousVariable):
+                    new_parametrization = _reinitialize_with_new_param(parametric_cpd.parametrization,
+                                                                       'out_features',
+                                                                       self.concept_to_variable[concept].size)
+                    new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=new_parametrization)
+                    self.parametric_cpds[concept] = new_parametric_cpd
+                else:
+                    self.parametric_cpds[concept] = parametric_cpd
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:
