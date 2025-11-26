@@ -29,8 +29,8 @@ def main():
     tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
-    backbone = ParametricCPD("input", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LinearZC(in_features=latent_dims, out_features=concepts[0].size))
+    backbone = ParametricCPD("input", parametrization=torch.nn.Identity())
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LinearZC(in_features=x_train.shape[1], out_features=concepts[0].size))
     y_predictor = ParametricCPD("xor", parametrization=LinearCC(in_features_endogenous=sum(c.size for c in concepts), out_features=tasks.size))
 
     # ProbabilisticModel Initialization
@@ -38,7 +38,7 @@ def main():
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
-    initial_input = {'emb': x_train}
+    initial_input = {'input': x_train}
     query_concepts = ["c1", "c2", "xor"]
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
