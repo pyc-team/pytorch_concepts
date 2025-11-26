@@ -1,81 +1,102 @@
 import torch
-from sklearn.metrics import accuracy_score
-from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
+from torch.distributions import RelaxedBernoulli, Normal, RelaxedOneHotCategorical
 
-from torch_concepts import Annotations, AxisAnnotation, Variable
-from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
-    RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
-
+from torch_concepts import EndogenousVariable, ExogenousVariable
+from torch_concepts.distributions import Delta
+from torch_concepts.nn import ParametricCPD, ProbabilisticModel, AncestralSamplingInference, \
+    CallableCC, UniformPolicy, DoIntervention, intervention
+from torch_concepts.nn.functional import cace_score
 from bp_with_conditional import BPInference
 
-def main():
-    latent_dims = 10
-    n_epochs = 1000
-    n_samples = 1000
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
-    y_train = torch.cat([y_train, 1-y_train], dim=1)
 
-    concept_names = ['c1', 'c2']
-    task_names = ['xor']
+def main():
+
+    batch_size = 3
+    emb_size = 2
 
     # Variable setup
-    latent_var = Variable("emb", parents=[], size=latent_dims)
-    concepts = Variable(concept_names, parents=["emb"], distribution=RelaxedBernoulli)
-    tasks = Variable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    emb = ExogenousVariable("emb", parents=[], distribution=Delta)
+    a = EndogenousVariable("a", parents=["emb"], distribution=RelaxedBernoulli)
+    b = EndogenousVariable("b", parents=["emb"], size=3, distribution=RelaxedOneHotCategorical)
+    c = EndogenousVariable("c", parents=["a", "b"], distribution=RelaxedBernoulli)
 
-    # Factor setup
-    backbone = Factor("emb", module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
-    y_predictor = Factor("xor", module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+    # ParametricCPD setup
+    emb_cpd = ParametricCPD("emb", parametrization=torch.nn.Identity())
+    a_cpd = ParametricCPD("a",
+                                 parametrization=torch.nn.Sequential(torch.nn.Linear(emb_size, a.size),
+                                                                     torch.nn.Sigmoid()))
+    b_cpd = ParametricCPD("b",
+                                parametrization=torch.nn.Sequential(torch.nn.Linear(emb_size, b.size),
+                                                                     torch.nn.Sigmoid()))
+    c_cpd = ParametricCPD("c",
+                            parametrization=torch.nn.Sequential(torch.nn.Linear(a.size + b.size, c.size),
+                                                                torch.nn.Sigmoid()))
 
-    # ProbabilisticModel Initialization
-    concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
+    concept_model = ProbabilisticModel(variables=[emb, a, b, c],
+                                        parametric_cpds=[emb_cpd, a_cpd, b_cpd, c_cpd])
 
-
-
-    inference_engine = BPInference(concept_model)
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
-    initial_input = {'emb': x_train}
-    query_concepts = ["c1", "c2", "xor"]
+    inference_engine = BPInference(concept_model)
 
-    optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
-    concept_model.train()
-    for epoch in range(n_epochs):
-        optimizer.zero_grad()
 
-        # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, observed=initial_input)
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+    initial_input = {'emb': torch.randn((batch_size, emb_size))}
+    query_concepts = ["a", "b", "c"]
 
-        # compute loss
-        concept_loss = loss_fn(c_pred, c_train)
-        task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + 0 * task_loss
+    results = inference_engine.query(query_concepts, evidence=initial_input)
 
-        loss.backward()
-        optimizer.step()
+    print(results)
+    exit()
 
-        if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+    print("Genotype Predictions (first 5 samples):")
+    print(results[:, 0][:5])
+    print("Smoking Predictions (first 5 samples):")
+    print(results[:, 1][:5])
+    print("Tar Predictions (first 5 samples):")
+    print(results[:, 2][:5])
+    print("Cancer Predictions (first 5 samples):")
+    print(results[:, 3][:5])
 
-    print("=== Interventions ===")
-    print(cy_pred[:5])
+    # Original predictions (observational)
+    original_results = inference_engine.query(
+        query_concepts=["genotype", "smoking", "tar", "cancer"],
+        evidence=initial_input
+    )
 
-    int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.factors, constants=-10)
-    with intervention(policies=int_policy_c,
-                      strategies=int_strategy_c,
-                      target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
-        print(cy_pred[:5])
+    # Intervention: Force smoking to 0 (prevent smoking)
+    smoking_strategy_0 = DoIntervention(
+        model=concept_model.parametric_cpds,
+        constants=0.0
+    )
+    with intervention(
+            policies=UniformPolicy(out_features=1),
+            strategies=smoking_strategy_0,
+            target_concepts=["smoking"]
+    ):
+        intervened_results = inference_engine.query(
+            query_concepts=["genotype", "smoking", "tar", "cancer"],
+            evidence=initial_input
+        )
+        cancer_do_smoking_0 = intervened_results[:, 3]
+
+    # Intervention: Force smoking to 1 (promote smoking)
+    smoking_strategy_1 = DoIntervention(
+        model=concept_model.parametric_cpds,
+        constants=1.0
+    )
+    with intervention(
+            policies=UniformPolicy(out_features=1),
+            strategies=smoking_strategy_1,
+            target_concepts=["smoking"]
+    ):
+        intervened_results = inference_engine.query(
+            query_concepts=["genotype", "smoking", "tar", "cancer"],
+            evidence=initial_input
+        )
+        cancer_do_smoking_1 = intervened_results[:, 3]
+
+    ace_cancer_do_smoking = cace_score(cancer_do_smoking_0, cancer_do_smoking_1)
+    print(f"ACE of smoking on cancer: {ace_cancer_do_smoking:.3f}")
 
     return
 

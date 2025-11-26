@@ -1,6 +1,7 @@
 import torch
 import itertools
 
+from statsmodels.tsa.vector_ar.util import varsim
 from torch.distributions import RelaxedBernoulli, RelaxedOneHotCategorical
 
 from torch_concepts.distributions import Delta
@@ -479,19 +480,15 @@ def compute_exact_marginals_bruteforce(
     return exact_marginals
 
 
+
+
 class BPInference(BaseInference):
 
     def __init__(self, model):
         super().__init__()
         self.model : ProbabilisticModel = model
 
-        # variables = {"v1": 3, "v2": 2, "v3": 2, "v4": 4, "v5": 2}
-        # factors = {
-        #     "f12": ["v1", "v2"],
-        #     "f13": ["v1", "v3"],
-        #     "f14": ["v1", "v4"],
-        #     "f15": ["v1", "v5"],
-        # }
+
         variables = {}
         factors = {}
         for var in self.model.variables:
@@ -503,22 +500,147 @@ class BPInference(BaseInference):
                 variables[var.concepts[0]] = 1
             else:
                 raise NotImplementedError("Distribution for variable unknown.")
-            factors["f_"+var.concepts[0]] = [var.concepts[0]] + [c.concepts[0] for c in var.parents]
+            factors[var.concepts[0]] = [var.concepts[0]] + [c.concepts[0] for c in var.parents] #TODO: check this ordering is correct
+
+        self.metadata = build_graph_metadata(variables, factors)
+        self.assignments_factors = self.build_assignments(self.metadata, variables, factors)
+
+
+    def build_assignments(self, md, variables, factors):
+        """
+        Build factor evaluations by calling your factor functions.
+
+        variables: dict {var_name: arity}
+        factors:   dict {factor_name: [var_name1, var_name2, ...]}  (ordered scope)
+        md: metadata from build_graph_metadata
+        Returns:
+            factor_eval_list: list length F
+                factor_eval_list[fi]: [B, num_assign_fi], in SAME assignment ordering
+                as build_graph_metadata (lexicographic over factor scope).
+        """
+        assignments_factors = {}
+
+        for fname in md["factor_names"]:
+
+            vars_in_factor = factors[fname]  # e.g. ["v1", "v2", "v4"]
+            arities = [variables[v] for v in vars_in_factor]  # e.g. [2, 2, 2]
+
+
+            #We filter the variable representing the factor output
+            arities = arities[1:]  # Exclude the first variable which is the target variable
+
+            # --- 1. Enumerate all local assignments in the SAME order as build_graph_metadata ---
+            # This is crucial so that factor_eval_list aligns with metadata.
+            # Order is lexicographic over scope: product(range(a1), range(a2), ...)
+            all_local_assign = list(itertools.product(*[range(a) for a in arities]))
+            # shape: [num_assign, degree_of_factor]
+            assign_tensor = torch.tensor(all_local_assign)
+            assignments_factors[fname] = assign_tensor  # [num_assign, num_vars]
+        return assignments_factors
 
 
 
 
 
 
+    def query(self, query, evidence):
 
-    def query(self, query, observed):
+        # TODO assumption is that cpts are unary (they are parameterizing a single variable per time.
+        # TODO we do not consider the optimization where multiple cpts with the same parents are batched together into a single factor)
+
+        embeddings_dict = evidence
+
+        batch_size = list(evidence.values())[0].shape[0]
+        factor_eval_list = []
+
+        assert all([v.concepts[0] in embeddings_dict.keys() for v in self.model.variables if v.distribution is Delta]), "All delta variables must have embeddings provided in evidence."
+
+        for name_cpd, cpd in self.model.parametric_cpds.items(): # Iterate over factors. TODO: check that this is the right way to get factors
+            input = []
+            num_assignments = self.assignments_factors[name_cpd].shape[0]
+
+            if cpd.variable.distribution is Delta:
+                # Delta distribution: no need to evaluate the parameterization, just create a factor eval of ones
+                factor_eval = torch.ones([batch_size,1], device=list(embeddings_dict.values())[0].device)
+                factor_eval_list.append(factor_eval)
+                continue
+            else:
+                for i, p in enumerate(cpd.parents):
+
+                    if p.distribution is Delta:
+                        emb = embeddings_dict[p.concepts[0]] # [B, emb_dim]
+                        #repeat for each assignment in the factor
+                        emb_exp = emb.unsqueeze(1).expand(-1, num_assignments, -1)  # [B, num_assignments, emb_dim]
+                        input.append(emb_exp)
+                    elif p.distribution is RelaxedBernoulli:
+                        assign = self.assignments_factors[name_cpd][:, i]
+                        #repeat for batch size
+                        assign = assign.unsqueeze(0).expand(batch_size, -1)  # [B, num_assignments]
+                        assign = assign.unsqueeze(2)  # [B, num_assignments, 1]
+                        input.append(assign)
+                    elif p.distribution is RelaxedOneHotCategorical:
+                        arity = p.size
+                        one_hot = torch.nn.functional.one_hot(self.assignments_factors[name_cpd][:, i].long(), num_classes=arity).float()
+                        one_hot = one_hot.unsqueeze(0).expand(batch_size, -1, -1)  # [B, num_assignments, arity]
+                        input.append(one_hot)
+                    else:
+                        raise NotImplementedError("Unknown parent distribution in CPD2FactorWrapper.")
 
 
-        observed[]
 
+                input = torch.cat(input, dim=-1)
 
+                #save shape
+                input_shape = input.shape  # [B, num_assignments, input_dim]
 
+                # turn into bidimentional tensor: [B * num_assignments, input_dim]
+                input = input.view(batch_size * num_assignments, -1)
+                evaluation = cpd.parameterization(input)
 
+                # reshape back to [B, num_assignments, output_dim]
+                evaluation = evaluation.view(batch_size, num_assignments, -1)
+
+                # TODO: assumption is that embeddings are only input so now the output can be either a categorical (output size = arity) or a Bernoulli (output size = 1).
+                # TODO: We need to turn them into factor evaluations. In each factor, the target variable of the CPD is the first variable in the scope so we can do a simple reshape
+                # TODO: check that this is the case
+
+                if cpd.distribution is RelaxedOneHotCategorical:
+                    #TODO: Check that it is concatenating the third dimension into the num_assignments dimension
+                    factor_eval = evaluation.view(batch_size, -1)
+
+                elif cpd.distribution is RelaxedBernoulli:
+                    # Bernoulli output: need to create a factor eval of size 2
+                    prob_1 = evaluation.view(batch_size, -1)
+                    prob_0 = 1.0 - prob_1
+                    factor_eval = torch.cat([prob_0, prob_1], dim=1)
+                elif cpd.distribution is Delta:
+                    factor_eval = torch.ones([batch_size,1], device=evaluation.device)
+                else:
+                    raise NotImplementedError("Unknown CPD distribution in CPD2FactorWrapper.")
+
+                factor_eval_list.append(factor_eval)
+
+        messages_f2v_init = torch.rand(B, S)
+
+        edge_id = md["edge_id_per_state"]  # [S]
+        edge_id_b = edge_id.unsqueeze(0).expand(B, -1)  # [B, S]
+        sum_per_edge = torch.zeros(B, E)
+        sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v_init)
+        messages_f2v_init = messages_f2v_init / (sum_per_edge.gather(1, edge_id_b) + 1e-20)
+
+        messages_f2v_uncond = messages_f2v_init.clone()
+        for it in range(num_iters):
+            messages_v2f_uncond = update_var_to_factor(
+                messages_f2v_uncond, md, evidence_logmask_vs=None
+            )
+            messages_f2v_uncond = update_factor_to_var(
+                messages_v2f_uncond, factor_eval_list, md
+            )
+        bp_marginals_uncond = compute_var_marginals(
+            messages_f2v_uncond, md, evidence_logmask_vs=None
+        )
+
+        return bp_marginals_uncond
 
 
 
