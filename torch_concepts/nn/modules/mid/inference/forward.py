@@ -712,7 +712,7 @@ class DeterministicInference(ForwardInference):
         >>> from torch.distributions import Bernoulli
         >>> from torch_concepts import InputVariable, EndogenousVariable
         >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel
+        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel, LinearCC
         >>>
         >>> # Create a simple PGM: latent -> A -> B
         >>> input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
@@ -723,7 +723,7 @@ class DeterministicInference(ForwardInference):
         >>> from torch.nn import Identity, Linear
         >>> cpd_emb = ParametricCPD('input', parametrization=Identity())
         >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=Linear(1, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=LinearCC(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
@@ -743,7 +743,7 @@ class DeterministicInference(ForwardInference):
         >>> print(results['B'].shape)  # torch.Size([4, 1]) - endogenous, not {0,1}
         >>>
         >>> # Query specific concepts - returns concatenated endogenous
-        >>> output = inference.query(['B', 'A'], evidence={'embedding': x})
+        >>> output = inference.query(['B', 'A'], evidence={'input': x})
         >>> print(output.shape)  # torch.Size([4, 2])
         >>> # output contains [logit_B, logit_A] for each sample
         >>>
@@ -794,6 +794,8 @@ class AncestralSamplingInference(ForwardInference):
         >>> from torch_concepts import InputVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import AncestralSamplingInference, ParametricCPD, ProbabilisticModel
+        >>> from torch_concepts import EndogenousVariable
+        >>> from torch_concepts.nn import LinearCC
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
         >>> embedding_var = InputVariable('embedding', parents=[], distribution=Delta, size=10)
@@ -804,7 +806,7 @@ class AncestralSamplingInference(ForwardInference):
         >>> from torch.nn import Identity, Linear
         >>> cpd_emb = ParametricCPD('embedding', parametrization=Identity())
         >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=Linear(1, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=LinearCC(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
@@ -838,8 +840,8 @@ class AncestralSamplingInference(ForwardInference):
         >>>
         >>> # With relaxed distributions (requires temperature)
         >>> from torch.distributions import RelaxedBernoulli
-        >>> var_A_relaxed = Variable('A', parents=['embedding'],
-        ...                          distribution=RelaxedBernoulli, size=1)
+        >>> var_A_relaxed = InputVariable('A', parents=['embedding'],
+        ...                               distribution=RelaxedBernoulli, size=1)
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A_relaxed, var_B],
         ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]

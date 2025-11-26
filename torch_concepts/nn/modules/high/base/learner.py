@@ -257,16 +257,6 @@ class BaseLearner(pl.LightningModule):
             Union[Optimizer, dict, None]: Returns optimizer directly, or dict with 
                 'optimizer' and optionally 'lr_scheduler' and 'monitor' keys,
                 or None if no optimizer is configured.
-                
-        Example:
-            >>> # With scheduler monitoring validation loss
-            >>> model = ConceptBottleneckModel(
-            ...     ...,
-            ...     optim_class=torch.optim.Adam,
-            ...     optim_kwargs={'lr': 0.001},
-            ...     scheduler_class=torch.optim.lr_scheduler.ReduceLROnPlateau,
-            ...     scheduler_kwargs={'mode': 'min', 'patience': 5, 'monitor': 'val_loss'}
-            ... )
         """
         # No optimizer configured
         if self.optim_class is None:

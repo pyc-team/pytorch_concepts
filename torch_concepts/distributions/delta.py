@@ -33,6 +33,8 @@ class Delta(Distribution):
         mean: Returns the deterministic value.
 
     Examples:
+        >>> import torch
+        >>> from torch_concepts.distributions import Delta
         >>> dist = Delta(torch.tensor([1.0, 2.0, 3.0]))
         >>> sample = dist.sample()
         >>> print(sample)  # tensor([1., 2., 3.])

@@ -45,6 +45,7 @@ def get_layer_activation(activation):
         ValueError: If activation name is not recognized.
         
     Example:
+        >>> from torch_concepts.nn.modules.low.dense_layers import get_layer_activation
         >>> act_class = get_layer_activation('relu')
         >>> activation = act_class()  # ReLU()
         >>> act_class = get_layer_activation(None)

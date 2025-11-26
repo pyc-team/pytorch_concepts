@@ -158,6 +158,8 @@ class ConceptGraph:
             ConceptGraph instance
             
         Example:
+            >>> import torch
+            >>> from torch_concepts import ConceptGraph
             >>> edge_index = torch.tensor([[0, 0, 1], [1, 2, 2]])
             >>> edge_weight = torch.tensor([1.0, 1.0, 1.0])
             >>> graph = ConceptGraph.from_sparse(edge_index, edge_weight, n_nodes=3)
@@ -310,11 +312,6 @@ class ConceptGraph:
 
         Returns:
             nx.DiGraph: NetworkX directed graph
-
-        Example:
-            >>> G = graph.to_networkx()
-            >>> list(G.nodes())
-            ['A', 'B', 'C']
         """
         # If threshold is 0.0 and we have a cache, return it
         if threshold == 0.0 and self._nx_graph_cache is not None:
@@ -357,11 +354,6 @@ class ConceptGraph:
         Returns:
             edge_index: Tensor of shape (2, num_edges) with source and target indices
             edge_weight: Tensor of shape (num_edges,) with edge weights
-
-        Example:
-            >>> edge_index, edge_weight = graph.dense_to_sparse()
-            >>> edge_index.shape
-            torch.Size([2, num_edges])
         """
         if threshold > 0.0:
             # Filter edges by threshold
@@ -500,6 +492,8 @@ def dense_to_sparse(
         edge_weight: Tensor of shape (num_edges,) with edge weights
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import dense_to_sparse
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -539,6 +533,8 @@ def to_networkx_graph(
         nx.DiGraph: NetworkX directed graph
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import to_networkx_graph
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -590,6 +586,8 @@ def get_root_nodes(
         List of root node names
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_root_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -621,6 +619,8 @@ def get_leaf_nodes(
         List of leaf node names
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_leaf_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -657,6 +657,8 @@ def topological_sort(
         nx.NetworkXError: If graph contains cycles
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import topological_sort
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -692,6 +694,8 @@ def get_predecessors(
         List of predecessor node names
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_predecessors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -731,6 +735,8 @@ def get_successors(
         List of successor node names
 
     Example:
+        >>> import torch
+        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_successors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])

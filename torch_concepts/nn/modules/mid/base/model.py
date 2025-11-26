@@ -4,7 +4,10 @@ Base model class for concept-based architectures.
 This module provides the abstract base class for all concept-based models,
 defining the structure for models that use concept representations.
 """
+from typing import Union
+
 import torch
+from torch.nn import Module
 
 from .....annotations import Annotations
 from ...low.lazy import LazyConstructor
@@ -33,16 +36,26 @@ class BaseConstructor(torch.nn.Module):
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BaseModel, LazyConstructor
+        >>> from torch_concepts.nn import LazyConstructor
+        >>> from torch_concepts.nn.modules.mid.base.model import BaseConstructor
+        >>> from torch.distributions import RelaxedBernoulli
         >>>
         >>> # Create annotations for concepts
         >>> concept_labels = ('color', 'shape', 'size')
-        >>> annotations = Annotations({
-        ...     1: AxisAnnotation(labels=concept_labels)
-        ... })
+        >>> cardinalities = [1, 1, 1]
+        >>> metadata = {
+        ...     'color': {'distribution': RelaxedBernoulli},
+        ...     'shape': {'distribution': RelaxedBernoulli},
+        ...     'size': {'distribution': RelaxedBernoulli}
+        ... }
+        >>> annotations = Annotations({1: AxisAnnotation(
+        ...     labels=concept_labels,
+        ...     cardinalities=cardinalities,
+        ...     metadata=metadata
+        ... )})
         >>>
         >>> # Create a concrete model class
-        >>> class MyConceptModel(BaseModel):
+        >>> class MyConceptModel(BaseConstructor):
         ...     def __init__(self, input_size, annotations, encoder, predictor):
         ...         super().__init__(input_size, annotations, encoder, predictor)
         ...         # Build encoder and predictor
@@ -84,8 +97,8 @@ class BaseConstructor(torch.nn.Module):
     def __init__(self,
                  input_size: int,
                  annotations: Annotations,
-                 encoder: LazyConstructor,  # layer for root concepts
-                 predictor: LazyConstructor,
+                 encoder: Union[LazyConstructor, Module],  # layer for root concepts
+                 predictor: Union[LazyConstructor, Module],
                  *args,
                  **kwargs
     ):
