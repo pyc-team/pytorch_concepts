@@ -38,8 +38,8 @@ def main():
     concept_model = BipartiteModel(task_names,
                                    latent_dims,
                                    annotations,
-                                   LazyConstructor(LinearZC),
-                                   LazyConstructor(LinearCC))
+                                   LinearZC(10, 1),
+                                   LinearCC(2, 2))
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.probabilistic_model)

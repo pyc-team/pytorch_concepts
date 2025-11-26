@@ -32,7 +32,7 @@ def main():
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
     c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearZC))
-    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearCC))
+    y_predictor = ParametricCPD("xor", parametrization=LinearCC(in_features_endogenous=2, out_features=2))
 
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
