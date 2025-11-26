@@ -82,8 +82,12 @@ takes as input both ``Endogenous`` and ``Exogenous`` representations and produce
 
 .. code-block:: python
 
- pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
-                       embedding_size=24, out_features=3)
+ pyc.nn.HyperLinearCUC(
+    in_features_endogenous=10,
+    in_features_exogenous=7,
+    embedding_size=24,
+    out_features=3
+ )
 
 As a final example, graph learners are a special layers that learn relationships between concepts.
 They do not follow the standard naming convention of encoders and predictors, but their purpose should be
@@ -91,7 +95,11 @@ clear from their name.
 
 .. code-block:: python
 
- wanda = pyc.nn.WANDAGraphLearner(['c1', 'c2', 'c3'], ['task A', 'task B', 'task C'])
+ wanda = pyc.nn.WANDAGraphLearner(
+    ['c1', 'c2', 'c3'],
+    ['task A', 'task B', 'task C']
+ )
+
 
 Models
 ^^^^^^^^^^^
@@ -123,8 +131,10 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     int_strategy = pyc.nn.DoIntervention(model=concept_bottleneck_model["encoder"],
-                                          constants=-10)
+     int_strategy = pyc.nn.DoIntervention(
+        model=concept_bottleneck_model["encoder"],
+        constants=-10
+     )
 
   **Intervention Policies**: define the order/set of concepts to intervene on e.g., we can intervene on all concepts uniformly:
 
@@ -136,10 +146,13 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     with pyc.nn.intervention(policies=int_policy,
-                              strategies=int_strategy,
-                              target_concepts=[0, 2]) as new_encoder_layer:
-
+     with pyc.nn.intervention(
+        policies=int_policy,
+        strategies=int_strategy,
+        target_concepts=[0, 2]
+     ) as new_encoder_layer:
          endogenous_concepts = new_encoder_layer(input=x)
-         endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
+         endogenous_tasks = concept_bottleneck_model['predictor'](
+            endogenous=endogenous_concepts
+         )
 

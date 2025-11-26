@@ -59,7 +59,7 @@ class Variable:
         ...     distribution=Categorical,
         ...     size=3  # red, green, blue
         ... )
-        >>> print(var_color[0].out_features)  # 3
+        >>> print(var_color.out_features)  # 3
         >>>
         >>> # Create a deterministic (Delta) variable
         >>> var_delta = Variable(
@@ -89,12 +89,12 @@ class Variable:
         ... )
         >>> child_var = Variable(
         ...     concepts=['child_concept'],
-        ...     parents=parent_var,
+        ...     parents=[parent_var],
         ...     distribution=Bernoulli,
         ...     size=1
         ... )
-        >>> print(child_var[0].in_features)  # 1 (from parent)
-        >>> print(child_var[0].out_features)  # 1
+        >>> print(child_var.in_features)  # 1 (from parent)
+        >>> print(child_var.out_features)  # 1
     """
 
     def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
@@ -339,6 +339,7 @@ class EndogenousVariable(Variable):
         
     Example:
         >>> from torch.distributions import Bernoulli, Categorical
+        >>> from torch_concepts import EndogenousVariable
         >>> # Observable binary concept
         >>> has_wings = EndogenousVariable(
         ...     concepts='has_wings',
@@ -395,8 +396,9 @@ class ExogenousVariable(Variable):
         metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'exogenous'.
         
     Example:
-        >>> from torch.distributions import Normal
+        >>> from torch.distributions import Normal, Bernoulli
         >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts import EndogenousVariable, ExogenousVariable
         >>> # Endogenous concept
         >>> has_wings = EndogenousVariable(
         ...     concepts='has_wings',
@@ -411,7 +413,6 @@ class ExogenousVariable(Variable):
         ...     parents=[],
         ...     distribution=Delta,
         ...     size=128,  # 128-dimensional exogenous
-        ...     endogenous_var=has_wings
         ... )
     """
     
@@ -466,6 +467,7 @@ class InputVariable(Variable):
         
     Example:
         >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts import InputVariable
         >>> # Global latent representation from input image
         >>> image_latent = InputVariable(
         ...     concepts='global_image_features',

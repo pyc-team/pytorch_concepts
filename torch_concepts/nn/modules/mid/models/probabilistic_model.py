@@ -3,14 +3,14 @@ Probabilistic Model implementation for concept-based architectures.
 
 This module provides a framework for building and managing probabilistic models over concepts.
 """
-import copy
 import inspect
 
 from torch import nn
 from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type
 
-from .variable import Variable
+from torch_concepts.nn import LazyConstructor
+from .variable import Variable, ExogenousVariable, EndogenousVariable, InputVariable
 from .cpd import ParametricCPD
 
 
@@ -50,7 +50,10 @@ def _reinitialize_with_new_param(instance, key, new_value):
         if k == key:
             new_dict[k] = new_value
         else:
-            new_dict[k] = getattr(instance, k, None)
+            if k == 'bias':
+                new_dict[k] = False if instance.bias is None else True
+            else:
+                new_dict[k] = getattr(instance, k, None)
 
     new_instance = cls(**new_dict)
 
@@ -152,23 +155,39 @@ class ProbabilisticModel(nn.Module):
 
         # ---- ParametricCPD modules: fill only self.parametric_cpds (ModuleDict) ----
         for parametric_cpd in input_parametric_cpds:
-            if len(parametric_cpd.concepts) > 1:
-                # Multi-concept parametric_cpd: split into individual CPDs
-                for concept in parametric_cpd.concepts:
-                    new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=copy.deepcopy(parametric_cpd.parametrization))
-                    # Link the parametric_cpd to its variable
-                    if concept in self.concept_to_variable:
-                        new_parametric_cpd.variable = self.concept_to_variable[concept]
-                        new_parametric_cpd.parents = self.concept_to_variable[concept].parents
-                    self.parametric_cpds[concept] = new_parametric_cpd
-            else:
-                # Single concept parametric_cpd
-                concept = parametric_cpd.concepts[0]
+            for concept in parametric_cpd.concepts:
                 # Link the parametric_cpd to its variable
                 if concept in self.concept_to_variable:
                     parametric_cpd.variable = self.concept_to_variable[concept]
                     parametric_cpd.parents = self.concept_to_variable[concept].parents
-                self.parametric_cpds[concept] = parametric_cpd
+
+                if isinstance(parametric_cpd.parametrization, LazyConstructor):
+                    parent_vars = [self.concept_to_variable[parent_ref] for parent_ref in parametric_cpd.variable.parents]
+                    in_features_endogenous = in_features_exogenous = in_features = 0
+                    for pv in parent_vars:
+                        if isinstance(pv, ExogenousVariable):
+                            in_features_exogenous = pv.size
+                        elif isinstance(pv, EndogenousVariable):
+                            in_features_endogenous += pv.size
+                        else:
+                            in_features += pv.size
+
+                    if isinstance(parametric_cpd.variable, ExogenousVariable):
+                        out_features = 1
+                    else:
+                        out_features = self.concept_to_variable[concept].size
+
+                    initialized_layer = parametric_cpd.parametrization.build(
+                        in_features=in_features,
+                        in_features_endogenous=in_features_endogenous,
+                        in_features_exogenous=in_features_exogenous,
+                        out_features=out_features,
+                    )
+                    new_parametrization = ParametricCPD(concepts=[concept], parametrization=initialized_layer)
+                else:
+                    new_parametrization = parametric_cpd
+
+                self.parametric_cpds[concept] = new_parametrization
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:

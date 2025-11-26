@@ -89,7 +89,9 @@ class HyperLinearCUC(BasePredictor):
         )
         self.embedding_size = embedding_size
         self.use_bias = use_bias
-        self.min_std = float(min_std)
+        self.min_std = min_std
+        self.init_bias_mean = init_bias_mean
+        self.init_bias_std = init_bias_std
 
         self.hypernet = torch.nn.Sequential(
             torch.nn.Linear(in_features_exogenous, embedding_size),

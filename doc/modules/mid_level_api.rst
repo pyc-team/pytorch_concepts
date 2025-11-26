@@ -40,22 +40,29 @@ At this API level, models are represented as probabilistic models where:
 
   .. code-block:: python
 
-     concepts = pyc.EndogenousVariable(concepts=["c1", "c2", "c3"], parents=[],
-                                       distribution=torch.distributions.RelaxedBernoulli)
+     concepts = pyc.EndogenousVariable(
+        concepts=["c1", "c2", "c3"],
+        parents=[],
+        distribution=torch.distributions.RelaxedBernoulli
+     )
 
 - ``ParametricCPD`` objects represent conditional probability distributions (CPDs) between variables in the probabilistic model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
 
   .. code-block:: python
 
-     concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
-                                        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3))
+     concept_cpd = pyc.nn.ParametricCPD(
+        concepts=["c1", "c2", "c3"],
+        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3)
+     )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
 
   .. code-block:: python
 
-     probabilistic_model = pyc.nn.ProbabilisticModel(variables=concepts,
-                                                     parametric_cpds=concept_cpd)
+     probabilistic_model = pyc.nn.ProbabilisticModel(
+        variables=concepts,
+        parametric_cpds=concept_cpd
+     )
 
 Inference
 ^^^^^^^^^
@@ -64,8 +71,11 @@ Inference is performed using efficient tensorial probabilistic inference algorit
 
 .. code-block:: python
 
-   inference_engine = pyc.nn.AncestralSamplingInference(probabilistic_model=probabilistic_model,
-                                                        graph_learner=wanda, temperature=1.)
+   inference_engine = pyc.nn.AncestralSamplingInference(
+       probabilistic_model=probabilistic_model,
+       graph_learner=wanda,
+       temperature=1.
+   )
    predictions = inference_engine.query(["c1"], evidence={'input': x})
 
 
@@ -106,8 +116,8 @@ Structural Equation Models
   .. code-block:: python
 
      sem_model = ProbabilisticModel(
-         variables=[exogenous_var, genotype_var, ...],
-         parametric_cpds=[exogenous_cpd, genotype_cpd, ...]
+         variables=[exogenous_var, genotype_var],
+         parametric_cpds=[exogenous_cpd, genotype_cpd]
      )
 
 Interventions
@@ -128,9 +138,9 @@ For example, to set ``smoking`` to 0 (prevent smoking) and query the effect on d
    )
 
    with intervention(
-           policies=UniformPolicy(out_features=1),
-           strategies=smoking_strategy_0,
-           target_concepts=["smoking"]
+      policies=UniformPolicy(out_features=1),
+      strategies=smoking_strategy_0,
+      target_concepts=["smoking"]
    ):
        intervened_results_0 = inference_engine.query(
            query_concepts=["genotype", "smoking", "tar", "cancer"],

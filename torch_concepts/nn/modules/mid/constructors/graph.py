@@ -1,5 +1,5 @@
-from typing import List, Tuple, Optional
-from torch.nn import Identity
+from typing import List, Tuple, Optional, Union
+from torch.nn import Identity, Module
 
 from .....annotations import Annotations
 from ..models.variable import Variable, InputVariable, ExogenousVariable, EndogenousVariable
@@ -50,7 +50,7 @@ class GraphModel(BaseConstructor):
         >>> import torch
         >>> import pandas as pd
         >>> from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
-        >>> from torch_concepts.nn import GraphModel, LazyConstructor
+        >>> from torch_concepts.nn import GraphModel, LazyConstructor, LinearCC
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and their structure
@@ -111,11 +111,11 @@ class GraphModel(BaseConstructor):
                  model_graph: ConceptGraph,
                  input_size: int,
                  annotations: Annotations,
-                 encoder: LazyConstructor,
-                 predictor: LazyConstructor,
+                 encoder: Union[LazyConstructor, Module],
+                 predictor: Union[LazyConstructor, Module],
                  use_source_exogenous: bool = None,
-                 source_exogenous: Optional[LazyConstructor] = None,
-                 internal_exogenous: Optional[LazyConstructor] = None
+                 source_exogenous: Optional[Union[LazyConstructor, Module]] = None,
+                 internal_exogenous: Optional[Union[LazyConstructor, Module]] = None
     ):
         super(GraphModel, self).__init__(
             input_size=input_size,
@@ -188,14 +188,7 @@ class GraphModel(BaseConstructor):
                             distribution=Delta,
                             size=layer._module_kwargs['exogenous_size'])
 
-        lazy_constructor = layer.build(
-            in_features=parent_var.size,
-            in_features_endogenous=None,
-            in_features_exogenous=None,
-            out_features=1,
-        )
-
-        exog_cpds = ParametricCPD(exog_names, parametrization=lazy_constructor)
+        exog_cpds = ParametricCPD(exog_names, parametrization=layer)
         return exog_vars, exog_cpds
 
     def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, ParametricCPD]:
@@ -220,13 +213,7 @@ class GraphModel(BaseConstructor):
             if not isinstance(encoder_vars, list):
                 encoder_vars = [encoder_vars]
 
-            lazy_constructor = layer.build(
-                in_features=parent_vars[0].size,
-                in_features_endogenous=None,
-                in_features_exogenous=None,
-                out_features=encoder_vars[0].size,
-            )
-            encoder_cpds = ParametricCPD(label_names, parametrization=lazy_constructor)
+            encoder_cpds = ParametricCPD(label_names, parametrization=layer)
             # Ensure encoder_cpds is always a list
             if not isinstance(encoder_cpds, list):
                 encoder_cpds = [encoder_cpds]
@@ -241,13 +228,7 @@ class GraphModel(BaseConstructor):
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
-                lazy_constructor = layer.build(
-                    in_features=None,
-                    in_features_endogenous=None,
-                    in_features_exogenous=exog_vars[0].size,
-                    out_features=encoder_var.size,
-                )
-                encoder_cpd = ParametricCPD(label_name, parametrization=lazy_constructor)
+                encoder_cpd = ParametricCPD(label_name, parametrization=layer)
                 encoder_vars.append(encoder_var)
                 encoder_cpds.append(encoder_cpd)
         return encoder_vars, encoder_cpds
@@ -300,17 +281,7 @@ class GraphModel(BaseConstructor):
                                      parents=endogenous_parents_names+exog_vars_names,
                                     distribution=self.annotations[1].metadata[c_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])
-
-            # TODO: we currently assume predictors can use exogenous vars if any, but not latent
-            lazy_constructor = layer.build(
-                in_features_endogenous=in_features_endogenous,
-                in_features_exogenous=in_features_exogenous,
-                in_features=None,
-                out_features=predictor_var.size,
-                cardinalities=[predictor_var.size]
-            )
-
-            predictor_cpd = ParametricCPD(c_name, parametrization=lazy_constructor)
+            predictor_cpd = ParametricCPD(c_name, parametrization=layer)
 
             predictor_vars.append(predictor_var)
             predictor_cpds.append(predictor_cpd)

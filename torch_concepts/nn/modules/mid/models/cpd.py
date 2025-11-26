@@ -60,9 +60,9 @@ class ParametricCPD(nn.Module):
     ...     parametrization=[module_a, module_b]
     ... )
     >>>
-    >>> print(cpd[0].module)
+    >>> print(cpd[0].parametrization)
     Linear(in_features=10, out_features=1, bias=True)
-    >>> print(cpd[1].module)
+    >>> print(cpd[1].parametrization)
     Sequential(...)
 
     Notes

@@ -31,22 +31,29 @@ At this API level, models are represented as probabilistic models where:
 
   .. code-block:: python
 
-     concepts = pyc.EndogenousVariable(concepts=["c1", "c2", "c3"], parents=[],
-                                       distribution=torch.distributions.RelaxedBernoulli)
+     concepts = pyc.EndogenousVariable(
+        concepts=["c1", "c2", "c3"],
+        parents=[],
+        distribution=torch.distributions.RelaxedBernoulli
+     )
 
 - ``ParametricCPD`` objects represent conditional probability distributions (CPDs) between variables in the probabilistic model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
 
   .. code-block:: python
 
-     concept_cpd = pyc.nn.ParametricCPD(concepts=["c1", "c2", "c3"],
-                                        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3))
+     concept_cpd = pyc.nn.ParametricCPD(
+        concepts=["c1", "c2", "c3"],
+        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3)
+     )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
 
   .. code-block:: python
 
-     probabilistic_model = pyc.nn.ProbabilisticModel(variables=concepts,
-                                                     parametric_cpds=concept_cpd)
+     probabilistic_model = pyc.nn.ProbabilisticModel(
+        variables=concepts,
+        parametric_cpds=concept_cpd
+     )
 
 Inference
 ^^^^^^^^^
@@ -55,8 +62,11 @@ Inference is performed using efficient tensorial probabilistic inference algorit
 
 .. code-block:: python
 
-   inference_engine = pyc.nn.AncestralSamplingInference(probabilistic_model=probabilistic_model,
-                                                        graph_learner=wanda, temperature=1.)
+   inference_engine = pyc.nn.AncestralSamplingInference(
+       probabilistic_model=probabilistic_model,
+       graph_learner=wanda,
+       temperature=1.
+   )
    predictions = inference_engine.query(["c1"], evidence={'input': x})
 
 
@@ -203,9 +213,11 @@ Perform do-calculus interventions:
    )
 
    # Apply intervention to encoder
-   with intervention(policies=policy,
-                     strategies=strategy,
-                     target_concepts=["round", "smooth"]):
+   with intervention(
+       policies=policy,
+       strategies=strategy,
+       target_concepts=["round", "smooth"]
+   ):
        intervened_predictions = inference_engine.query(
            query_concepts=["round", "smooth", "bright", "class_A", "class_B"],
            evidence={'input': x}

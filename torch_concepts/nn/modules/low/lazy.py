@@ -27,7 +27,7 @@ def _filter_kwargs_for_ctor(cls, **kwargs):
 
     Example:
         >>> import torch.nn as nn
-        >>> from torch_concepts.nn.modules.propagator import _filter_kwargs_for_ctor
+        >>> from torch_concepts.nn.modules.low.lazy import _filter_kwargs_for_ctor
         >>>
         >>> # Filter kwargs for Linear layer
         >>> kwargs = {'in_features': 10, 'out_features': 5, 'unknown_param': 42}
@@ -69,7 +69,7 @@ def instantiate_adaptive(module_cls, *args, drop_none=True, **kwargs):
 
     Example:
         >>> import torch.nn as nn
-        >>> from torch_concepts.nn.modules.propagator import instantiate_adaptive
+        >>> from torch_concepts.nn.modules.low.lazy import instantiate_adaptive
         >>>
         >>> # Instantiate a Linear layer with extra kwargs
         >>> kwargs = {'in_features': 10, 'out_features': 5, 'extra': None}
@@ -106,13 +106,13 @@ class LazyConstructor(torch.nn.Module):
         >>> from torch_concepts.nn import LinearCC
         >>>
         >>> # Create a propagator for a predictor
-        >>> lazy_constructorLazyConstructor(
+        >>> lazy_constructor = LazyConstructor(
         ...     LinearCC,
         ...     activation=torch.sigmoid
         ... )
         >>>
         >>> # Build the module when dimensions are known
-        >>> module = propagator.build(
+        >>> module = lazy_constructor.build(
         ...     out_features=3,
         ...     in_features_endogenous=5,
         ...     in_features=None,
@@ -121,7 +121,7 @@ class LazyConstructor(torch.nn.Module):
         >>>
         >>> # Use the module
         >>> x = torch.randn(2, 5)
-        >>> output = propagator(x)
+        >>> output = lazy_constructor(x)
         >>> print(output.shape)
         torch.Size([2, 3])
     """
@@ -227,12 +227,12 @@ class LazyConstructor(torch.nn.Module):
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.propagator import LazyConstructor
-            >>> from torch_concepts.nn.modules.predictors.linear import LinearCC
+            >>> from torch_concepts.nn import LazyConstructor
+            >>> from torch_concepts.nn import LinearCC
             >>>
             >>> # Create and build propagator
-            >>> lazy_constructorLazyConstructor(LinearCC)
-            >>> propagator.build(
+            >>> lazy_constructor = LazyConstructor(LinearCC)
+            >>> lazy_constructor.build(
             ...     out_features=3,
             ...     in_features_endogenous=5,
             ...     in_features=None,
@@ -241,7 +241,7 @@ class LazyConstructor(torch.nn.Module):
             >>>
             >>> # Forward pass
             >>> x = torch.randn(2, 5)
-            >>> output = propagator(x)
+            >>> output = lazy_constructor(x)
             >>> print(output.shape)
             torch.Size([2, 3])
         """

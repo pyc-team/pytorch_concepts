@@ -36,10 +36,19 @@ class ConceptMetrics(nn.Module):
             specified concept names. Default: False.
             
     Example:
-        >>> from torch_concepts.nn.modules import ConceptMetrics, GroupConfig
+        >>> from torch_concepts.nn.modules.metrics import ConceptMetrics, GroupConfig
         >>> import torchmetrics
+        >>> import torch
+        >>> from torch_concepts import Annotations, AxisAnnotation
         >>> 
         >>> # Three ways to specify metrics:
+        >>> concept_annotations = Annotations({1: AxisAnnotation(
+        ...     labels=['concept1', 'concept2'],
+        ...     metadata={
+        ...         'concept1': {'type': 'discrete'},
+        ...         'concept2': {'type': 'discrete'}
+        ...     },
+        ... )})
         >>> metrics = ConceptMetrics(
         ...     annotations=concept_annotations,
         ...     fn_collection=GroupConfig(
@@ -47,7 +56,7 @@ class ConceptMetrics(nn.Module):
         ...             # 1. Pre-instantiated
         ...             'accuracy': torchmetrics.classification.BinaryAccuracy(),
         ...             # 2. Class + user kwargs (average='macro')
-        ...             'f1': (torchmetrics.classification.BinaryF1Score, {'average': 'macro'})
+        ...             'f1': (torchmetrics.classification.BinaryF1Score, {'multidim_average': 'global'})
         ...         },
         ...         categorical={
         ...             # 3. Class only (num_classes will be added automatically)
@@ -57,7 +66,11 @@ class ConceptMetrics(nn.Module):
         ...     summary_metrics=True,
         ...     perconcept_metrics=['concept1', 'concept2']
         ... )
-        >>> 
+        >>>
+        >>> # Simulated predictions and targets
+        >>> predictions = torch.tensor([[0.8, 0.2], [0.4, 0.6]])
+        >>> targets = torch.tensor([[1, 0], [0, 1]])
+        >>>
         >>> # Update metrics during training
         >>> metrics.update(predictions, targets, split='train')
         >>> 

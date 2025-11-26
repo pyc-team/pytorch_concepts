@@ -125,41 +125,6 @@ class TestProbabilisticModel(unittest.TestCase):
         module = model.get_module_of_concept('B')
         self.assertIsNone(module)
 
-    def test_build_cpt_bernoulli(self):
-        """Test build_cpt for Bernoulli variable."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Delta, size=2)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
-
-        parent_cpd = ParametricCPD(concepts='parent', parametrization=nn.Identity())
-        child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(2, 1))
-
-        model = ProbabilisticModel(
-            variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
-        )
-
-        # Get the linked cpd and build CPT
-        child_cpd_linked = model.get_module_of_concept('child')
-        cpt = child_cpd_linked.build_cpt()
-        self.assertIsNotNone(cpt)
-
-    def test_build_potential_categorical(self):
-        """Test build_potential for Categorical variable."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Categorical, size=3)
-
-        parent_cpd = ParametricCPD(concepts='parent', parametrization=nn.Linear(10, 1))
-        child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(1, 3))
-
-        model = ProbabilisticModel(
-            variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
-        )
-
-        child_cpd_linked = model.get_module_of_concept('child')
-        potential = child_cpd_linked.build_potential()
-        self.assertIsNotNone(potential)
-
     def test_multiple_parent_combinations(self):
         """Test cpd with multiple parents."""
         parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)

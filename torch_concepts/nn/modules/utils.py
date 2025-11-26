@@ -24,7 +24,8 @@ class GroupConfig:
         **kwargs: Additional group configurations.
     
     Example:
-        >>> # Single configuration for all types
+        >>> from torch_concepts.nn.modules.utils import GroupConfig
+        >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
         >>> loss_config = GroupConfig(binary=CrossEntropyLoss())
         >>> # Equivalent to: {'binary': CrossEntropyLoss()}
         >>>
@@ -36,6 +37,7 @@ class GroupConfig:
         ... )
         >>>
         >>> # Access configurations
+        >>> default_loss = MSELoss()
         >>> binary_loss = loss_config['binary']
         >>> loss_config.get('continuous', default_loss)
         >>>
@@ -140,13 +142,24 @@ def check_collection(annotations: AxisAnnotation,
             incompatible annotation structure).
             
     Example:
-        >>> from torch_concepts.nn.modules import GroupConfig
+        >>> from torch_concepts.nn.modules.utils import GroupConfig, check_collection
+        >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
+        >>> from torch_concepts import AxisAnnotation
         >>> loss_config = GroupConfig(
         ...     binary=BCEWithLogitsLoss(),
         ...     categorical=CrossEntropyLoss()
         ... )
+        >>> concept_annotations = AxisAnnotation(
+        ...     labels=['c1', 'c2', 'c3'],
+        ...     metadata={
+        ...         'c1': {'type': 'discrete'},
+        ...         'c2': {'type': 'discrete'},
+        ...         'c3': {'type': 'discrete'}
+        ...     },
+        ...     cardinalities=[1, 3, 2],
+        ... )
         >>> filtered_config = check_collection(
-        ...     self.concept_annotations, 
+        ...     concept_annotations,
         ...     loss_config, 
         ...     'loss'
         ... )
@@ -279,11 +292,22 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
             - 'binary_endogenous_idx': List of logit-level indices for binary concepts
             - 'categorical_endogenous_idx': List of logit-level indices for categorical concepts
             - 'continuous_endogenous_idx': List of logit-level indices for continuous concepts
-            
+
     Example:
-        >>> groups = get_concept_groups(annotations)
-        >>> binary_endogenous = endogenous[:, groups['binary_endogenous_idx']]  # Extract endogenous of binary concepts
-        >>> binary_labels = concept_labels[:, groups['binary_idx']]  # Extract labels of binary concepts
+        >>> from torch_concepts import Annotations, AxisAnnotation
+        >>> from torch_concepts.nn.modules.utils import get_concept_groups
+        >>> annotations = Annotations({1: AxisAnnotation(
+        ...     labels=['c1', 'c2', 'c3', 'c4'],
+        ...     metadata={
+        ...         'c1': {'type': 'discrete'},
+        ...         'c2': {'type': 'discrete'},
+        ...         'c3': {'type': 'continuous'},
+        ...         'c4': {'type': 'discrete'}
+        ...     },
+        ... )})
+        >>> groups = get_concept_groups(annotations.get_axis_annotation(1))
+        >>> groups['binary_endogenous_idx']  # Extract endogenous of binary concepts
+        >>> groups['binary_idx']  # Extract labels of binary concepts
     """
     cardinalities = annotations.cardinalities
     
@@ -367,7 +391,7 @@ def indices_to_mask(
               Non-intervened positions are set to 0.0 (arbitrary, as they're masked out).
 
     Example:
-        >>> from torch_concepts.nn import indices_to_mask
+        >>> from torch_concepts.nn.modules.utils import indices_to_mask
         >>> # Intervene on concepts 0 and 2, setting them to 1.0 and 0.5
         >>> mask, target = indices_to_mask(
         ...     c_idxs=[0, 2],

@@ -2,6 +2,7 @@ from typing import List, Optional, Union
 
 import pandas as pd
 import torch
+from torch.nn import Module
 
 from .....annotations import Annotations
 from .concept_graph import ConceptGraph
@@ -35,7 +36,7 @@ class BipartiteModel(GraphModel):
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor
+        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor, LinearCC
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and tasks
@@ -78,11 +79,11 @@ class BipartiteModel(GraphModel):
             task_names: Union[List[str], str],
             input_size: int,
             annotations: Annotations,
-            encoder: LazyConstructor,
-            predictor: LazyConstructor,
+            encoder: Union[LazyConstructor, Module],
+            predictor: Union[LazyConstructor, Module],
             use_source_exogenous: bool = None,
-            source_exogenous: Optional[LazyConstructor] = None,
-            internal_exogenous: Optional[LazyConstructor] = None,
+            source_exogenous: Optional[Union[LazyConstructor, Module]] = None,
+            internal_exogenous: Optional[Union[LazyConstructor, Module]] = None,
     ):
         task_names = ensure_list(task_names)
         # get label names
