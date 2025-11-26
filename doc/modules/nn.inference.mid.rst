@@ -1,4 +1,4 @@
-Inference
+Probabilistic Inference
 ======================
 
 This module provides inference mechanisms for probabilistic models.

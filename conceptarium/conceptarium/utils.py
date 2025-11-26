@@ -1,48 +1,27 @@
 """Utility functions for configuration, seeding, and class instantiation.
 
 This module provides helper functions for:
-- Setting random seeds across all libraries
+- Setting random seeds across all libraries (re-exported from torch_concepts)
 - Configuring runtime environment from Hydra configs
 - Dynamic class loading and instantiation
 - Managing concept annotations and distributions
 """
-
-import torch
-import numpy as np
-import random
 import os
 import torch
+import logging
+import torch
 from omegaconf import DictConfig, open_dict
+from torch_concepts import seed_everything
+
+logger = logging.getLogger(__name__)
 
 from env import DATA_ROOT
 
 
-def seed_everything(seed: int):
-    """Set random seeds for reproducibility across all libraries.
-    
-    Sets seeds for Python's random, NumPy, PyTorch CPU and CUDA to ensure
-    reproducible results across runs.
-    
-    Args:
-        seed: Integer seed value for random number generators.
-        
-    Example:
-        >>> seed_everything(42)
-        Seed set to 42
-    """
-    print(f"Seed set to {seed}")
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
 def setup_run_env(cfg: DictConfig):
     """Configure runtime environment from Hydra configuration.
     
-    Sets up threading, random seeds, matrix multiplication precision, and
-    device selection (CUDA/CPU) based on configuration and availability.
+    Sets up threading, random seeds and matrix multiplication precision.
     
     Args:
         cfg: Hydra DictConfig containing runtime parameters:
@@ -51,24 +30,20 @@ def setup_run_env(cfg: DictConfig):
             - matmul_precision: Float32 matmul precision ('highest', 'high', 'medium')
             
     Returns:
-        Updated cfg with 'device' field set to 'cuda' or 'cpu'.
-        
-    Example:
-        >>> from omegaconf import DictConfig
-        >>> cfg = DictConfig({'seed': 42, 'num_threads': 4})
-        >>> cfg = setup_run_env(cfg)
-        >>> print(cfg.device)  # 'cuda' or 'cpu'
+        Updated cfg
     """
     torch.set_num_threads(cfg.get("num_threads", 1))
     seed_everything(cfg.get("seed"))
     if cfg.get("matmul_precision", None) is not None:
         torch.set_float32_matmul_precision(cfg.matmul_precision)
-    with open_dict(cfg): 
-        cfg.update(device="cuda" if torch.cuda.is_available() else "cpu")
-    # set DATA_ROOT
-    if not cfg.get("DATA_ROOT"):
+    # set data root
+    if not cfg.dataset.get("root"):
+        if "name" not in cfg.dataset:
+            raise ValueError("If data root is not set, dataset name must be " 
+            "specified in cfg.dataset.name to set data root.")
+        data_root = os.path.join(DATA_ROOT, cfg.dataset.get("name"))
         with open_dict(cfg):
-            cfg.dataset.update(DATA_ROOT=DATA_ROOT)
+            cfg.dataset.update(root = data_root)
     return cfg
 
 def clean_empty_configs(cfg: DictConfig) -> DictConfig:
@@ -109,19 +84,9 @@ def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
     """
     with open_dict(cfg):
         cfg.model.update(
-            input_size = dm.backbone.output_size if dm.backbone else dm.n_features[-1], # FIXME: backbone.output_size might not exist
+            # FIXME: backbone.output_size might not exist
+            input_size = dm.backbone.output_size if dm.backbone else dm.n_features[-1],
             # output_size = sum(dm.concept_metadata.values()),   # check if this is needed
-            backbone = dm.backbone,
-            embs_precomputed = dm.embs_precomputed
+            backbone = dm.backbone if not dm.embs_precomputed else None,
         )
-        # if cfg.engine.metrics.get('accuracy'):
-        #     if cfg.engine.metrics.accuracy.get('_target_') == 'conceptarium.metrics.PerConceptClassificationAccuracy':
-        #         cfg.engine.metrics.accuracy.update(
-        #             n_concepts = dm.n_concepts,
-        #             concept_names = dm.concept_names
-        #         )
-        # cfg.engine.update(
-        #    concept_names = dm.concept_names,
-        #    concept_metadata = dm.concept_metadata
-        # )
     return cfg

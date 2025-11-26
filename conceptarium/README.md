@@ -1,10 +1,16 @@
 <p align="center">
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/conceptarium.png" style="width: 30cm">
+<img src="../doc/_static/img/conceptarium.png" style="width: 30cm">
 <br>
 
 # Conceptarium
 
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> <em>Conceptarium</em> is a high-level experimentation framework for running large-scale experiments on concept-based deep learning models. Conceptarium is built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pytorch.svg" width="25px" align="center"/> [PyTorch](https://pytorch.org/) and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) for model implementation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/lightning.svg" width="25px" align="center"/> [PyTorch Lightning](https://lightning.ai/pytorch-lightning) for training automation, <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="25px" align="center"/> [Hydra](https://hydra.cc/) for configuration management and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/wandb.svg" width="25px" align="center"/> [Weights & Biases](https://wandb.ai/) for logging.
+<img src="../doc/_static/img/logos/conceptarium.svg" width="20px" align="center"/> Conceptarium is a no-code framework for running large-scale experiments on concept-based models. This framework is intended for benchmarking or researchers in other fields who want to use concept-based models without programming knowledge. Conceptarium provides:
+
+- **Configuration-driven experiments**: Use <img src="../doc/_static/img/logos/hydra-head.svg" width="20px" align="center"/> [Hydra](https://hydra.cc/) for flexible YAML-based configuration management and run sequential experiments on multiple <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC datasets and <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC models with a single command.
+
+- **Automated training**: Leverage <img src="../doc/_static/img/logos/lightning.svg" width="20px" align="center"/> [PyTorch Lightning](https://lightning.ai/pytorch-lightning) for streamlined training loops
+
+- **Experiment tracking**: Integrated <img src="../doc/_static/img/logos/wandb.svg" width="20px" align="center"/> [Weights & Biases](https://wandb.ai/) logging for monitoring and reproducibility
 
 - [Quick Start](#quick-start)
   - [Installation](#installation)
@@ -16,7 +22,6 @@
   - [Configuration Structure](#configuration-structure)
   - [Dataset Configuration](#dataset-configuration-datasetyaml)
   - [Model Configuration](#model-configuration-modelyaml)
-  - [Engine Configuration](#engine-configuration-engineengineyaml)
 - [Implementation](#implementation)
   - [Implementing Your Own Model](#implementing-your-own-model)
   - [Implementing Your Own Dataset](#implementing-your-own-dataset)
@@ -29,7 +34,7 @@
 
 ## Installation
 
-Clone the <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) repository and navigate to the Conceptarium directory:
+Clone the <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> [PyC](https://github.com/pyc-team/pytorch_concepts) repository and navigate to the Conceptarium directory:
 
 ```bash
 git clone https://github.com/pyc-team/pytorch_concepts.git
@@ -62,14 +67,16 @@ hydra:
       dataset: celeba, cub  # One or more datasets (celeba, cub, MNIST, alarm, etc.)
       seed: 1,2,3,4,5       # sweep over multiple seeds for robustness
 
-engine:
+model:
   optim_kwargs:
-    lr: 0.00075
+    lr: 0.001
+  summary_metrics: true
+  perconcept_metrics: false
 
 trainer:
-  devices: [0]
   max_epochs: 500
   patience: 30
+  monitor: "val_loss"
 ```
 
 ## Running Experiments
@@ -87,16 +94,16 @@ You can create as many configuration sweeps as you like. Assign a different name
 python run_experiment.py --config-name your_sweep.yaml
 ```
 
-On top of this, you can also override configuration from command line:
+On top of this, you can also override configurations from command line:
 ```bash
 # Change dataset
 python run_experiment.py dataset=alarm
 
 # Change learning rate
-python run_experiment.py engine.optim_kwargs.lr=0.001
+python run_experiment.py model.optim_kwargs.lr=0.001
 
 # Change multiple configurations
-python run_experiment.py model=cbm,blackbox dataset=asia,alarm seed=1,2,3
+python run_experiment.py model=cbm dataset=asia,alarm seed=1,2,3
 ```
 
 ## Output Structure
@@ -117,7 +124,7 @@ outputs/
 
 # Configuration Details
 
-Conceptarium provides a flexible configuration system based on <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/hydra-head.svg" width="25px" align="center"/> [Hydra](https://hydra.cc/), enabling easy experimentation across models, datasets, and hyperparameters. All configurations are stored in `conceptarium/conf/` and can be composed, overridden, and swept over from the command line or sweep files.
+Conceptarium provides a flexible configuration system based on <img src="../doc/_static/img/logos/hydra-head.svg" width="20px" align="center"/> [Hydra](https://hydra.cc/), enabling easy experimentation across models, datasets, and hyperparameters. All configurations consist of `.yaml` files stored in `conceptarium/conf/`. These can be composed, overridden, and swept over from the command line or other sweep files.
 
 
 ## Configuration Structure
@@ -130,58 +137,67 @@ conf/
 ├── sweep.yaml         # Experiment sweep configuration
 ├── dataset/           # Dataset configurations
 │   ├── _commons.yaml      # Common dataset parameters
-│   ├── celeba.yaml        # Bayesian network datasets
+│   ├── celeba.yaml
 │   ├── cub.yaml
 │   ├── sachs.yaml
 │   └── ...
-├── model/             # Model architectures
-│   ├── _commons.yaml      # Common model parameters
-│   ├── blackbox.yaml      # Black-box baseline
-│   ├── cbm.yaml           # Concept Bottleneck Model
-│   ├── cem.yaml           # Concept Embedding Model
-│   ├── cgm.yaml           # Concept Graph Model
-│   └── c2bm.yaml          # Causally Reliable CBM
-└── engine/            # Training engine configurations
-    ├── engine.yaml        # Main engine config
+└── model/             # Model architectures
     ├── loss/              # Loss function configurations
-    │   └── default.yaml   # Type-aware losses (BCE, CE, MSE)
-    └── metrics/           # Metric configurations
-        └── default.yaml   # Type-aware metrics (Accuracy, MAE, MSE)
+    │   ├── _default.yaml  # Type-aware losses (BCE, CE, MSE)
+    │   └── weighted.yaml  # Weighted type-aware losses
+    ├── metrics/           # Metric configurations
+    │   ├── _default.yaml  # Type-aware metrics (Accuracy, MAE, MSE)
+    │   └── ...
+    ├── _commons.yaml      # Common model parameters
+    ├── blackbox.yaml      # Black-box baseline
+    ├── cbm_joint.yaml     # Concept Bottleneck Model (Joint)
+    ├── cem.yaml           # Concept Embedding Model
+    ├── cgm.yaml           # Concept Graph Model
+    └── c2bm.yaml          # Causally Reliable CBM
+```
+    │   ├── default.yaml   # Type-aware metrics (Accuracy, MAE, MSE)
+    │   └── ...
+    ├── _commons.yaml      # Common model parameters
+    ├── blackbox.yaml      # Black-box baseline
+    ├── cbm.yaml           # Concept Bottleneck Model
+    ├── cem.yaml           # Concept Embedding Model
+    ├── cgm.yaml           # Concept Graph Model
+    └── c2bm.yaml          # Causally Reliable CBM
 ```
 
 
 ## Dataset Configuration (`dataset/*.yaml`)
 
-Dataset configurations specify the dataset class to instantiate and all necessary preprocessing parameters:
+Dataset configurations specify the dataset class to instantiate, all data-specific parameters, and all necessary preprocessing parameters. An example configuration for the CUB dataset is provided below:
 
 ```yaml
 defaults:
   - _commons
   - _self_
 
-_target_: torch_concepts.data.datamodules.BnLearnDataModule   # the path to your datamodule class  
+_target_: torch_concepts.data.datamodules.CUBDataModule   # the path to your datamodule class  
 
-name: asia
+name: cub
 
-backbone: null # input data is not high-dimensional, so does not require backbone
-precompute_embs: false
+backbone: 
+  _target_: "path.to.your.backbone.ClassName"
+  # ... (backbone arguments)
 
-default_task_names: [dysp]
+precompute_embs: true  # precompute input to speed up training
+
+default_task_names: [bird_species]
 
 label_descriptions:
-  asia: "Recent trip to Asia"
-  tub: "Has tuberculosis"
-  smoke: "Is a smoker"
-  lung: "Has lung cancer"
-  bronc: "Has bronchitis"
-  either: "Has tuberculosis or lung cancer"
-  xray: "Positive X-ray"
-  dysp: "Has dyspnoea (shortness of breath)"
+  - has_wing_color::blue: Wing color is blue or not
+  - has_upperparts_color::blue: Upperparts color is blue or not
+  - has_breast_pattern::solid: Breast pattern is solid or not
+  - has_back_color::brown: Back color is brown or not
+  # ... (other visual attributes)
 ```
 
 ### Common Parameters
 
-From `_commons.yaml`:
+Default parameters, common to all dataset, are in `_commons.yaml`:
 - **`batch_size`**: Training batch size (default: 256)
 - **`val_size`**: Validation set fraction (default: 0.15)
 - **`test_size`**: Test set fraction (default: 0.15)
@@ -191,78 +207,64 @@ From `_commons.yaml`:
 
 ## Model Configuration (`model/*.yaml`)
 
-Model configurations specify the architecture and inference strategy:
+Model configurations specify the architecture, loss, metrics, optimizer, and inference strategy:
 
 ```yaml
 defaults:
   - _commons
+  - loss: _default
+  - metrics: _default
   - _self_
   
-_target_: "torch_concepts.nn.CBM"         # the path to your model class
+_target_: "torch_concepts.nn.ConceptBottleneckModel_Joint"
 
 task_names: ${dataset.default_task_names}
 
 inference: 
   _target_: "torch_concepts.nn.DeterministicInference"
   _partial_: true
+
+summary_metrics: true       # enable/disable summary metrics over concepts
+perconcept_metrics: false   # enable/disable per-concept metrics
 ```
 
 ### Common Parameters
 
 From `_commons.yaml`:
-- **`encoder_kwargs.hidden_size`**: Hidden layer dimension in encoder
-- **`encoder_kwargs.n_layers`**: Number of hidden layers in encoder
-- **`encoder_kwargs.activation`**: Activation function (relu, tanh, etc.) in encoder
-- **`encoder_kwargs.dropout`**: Dropout probability in encoder
+- **`encoder_kwargs`**: Encoder architecture parameters
+  - **`hidden_size`**: Hidden layer dimension in encoder
+  - **`n_layers`**: Number of hidden layers in encoder
+  - **`activation`**: Activation function (relu, tanh, etc.) in encoder
+  - **`dropout`**: Dropout probability in encoder
 - **`variable_distributions`**: Probability distributions with which concepts are modeled:
-  - `binary`: Relaxed Bernoulli
-  - `categorical`: Relaxed OneHot Categorical
-  - `continuous`: Normal distribution
+- **`optim_class`**: Optimizer class
+- **`optim_kwargs`**:
+  - **`lr`**: 0.00075
 
----
+and more...
 
-## Engine Configuration (`engine/engine.yaml`)
-
-Engine configurations specify training behavior, losses, and metrics:
-
-```yaml
-defaults:
-  - metrics: default
-  - loss: default
-  - _self_
-  
-_target_: "conceptarium.Predictor"
-
-optim_class:
-  _target_: "hydra.utils.get_class"
-  path: "torch.optim.AdamW"
-  
-optim_kwargs:
-  lr: 0.00075
-  
-enable_summary_metrics: true       # enable/disable summary metrics over concepts
-enable_perconcept_metrics: false   # enable/disable per-concept metrics
-```
-
-### Loss Configuration (`engine/loss/default.yaml`)
+### Loss Configuration (`model/loss/_default.yaml`)
 
 Type-aware losses automatically select appropriate loss functions based on variable types:
 
 ```yaml
-discrete:
-  binary: 
-    path: "torch.nn.BCEWithLogitsLoss"
-    kwargs: {}
-  categorical: 
-    path: "torch.nn.CrossEntropyLoss"
-    kwargs: {}
-    
-continuous: 
-  path: "torch.nn.MSELoss"
-  kwargs: {}
+_target_: "torch_concepts.nn.ConceptLoss"
+_partial_: true
+
+fn_collection:
+  discrete:
+    binary: 
+      path: "torch.nn.BCEWithLogitsLoss"
+      kwargs: {}
+    categorical: 
+      path: "torch.nn.CrossEntropyLoss"
+      kwargs: {}
+      
+  # continuous: 
+  # ... not supported yet
 ```
 
-### Metrics Configuration (`engine/metrics/default.yaml`)
+### Metrics Configuration (`model/metrics/_default.yaml`)
 
 Type-aware metrics automatically select appropriate metrics based on variable types:
 
@@ -296,14 +298,14 @@ Conceptarium is designed to be extensible and accomodate your own experimental s
 
 ## Implementing Your Own Model
 
-Create your model in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC by following the guidelines given in [torch_concepts/examples/contributing/model.md](../examples/contributing/model.md).
+Create your model in <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC by following the guidelines given in [torch_concepts/examples/contributing/model.md](../examples/contributing/model.md).
 
 This involves the following steps:
 - Create your model (`your_model.py`).
 - Create configuration file in `conceptarium/conf/model/your_model.yaml`, targeting the model class.
 - Run experiments using your model. 
 
-If your model is compatible with the defualt configuration structure, you can run experiments directly as follows:
+If your model is compatible with the default configuration structure, you can run experiments directly as follows:
 ```bash
 python run_experiment.py model=your_model dataset=...
 ```
@@ -333,37 +335,3 @@ python run_experiment.py --config-name your_sweep.yaml
 ```
 
 ---
-
-# Contributing
-
-- Use the `dev` branch to write and test your contributions locally.
-- Make small commits and use ["Gitmoji"](https://gitmoji.dev/) to add emojis to your commit messages.
-- Make sure to write documentation and tests for your contributions.
-- Make sure all tests pass before submitting the pull request.
-- Submit a pull request to the `main` branch.
-
-Thanks to all contributors! 🧡
-
-<a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" />
-</a>
-
----
-
-
-
-# Cite this library
-
-If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
-
-```
-@software{pycteam2025concept,
-    author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
-    license = {MIT},
-    month = {3},
-    title = {{PyTorch Concepts}},
-    url = {https://github.com/pyc-team/pytorch_concepts},
-    year = {2025}
-}
-```
-Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/) and [Giovanni De Felice](https://gdefe.github.io/).

@@ -11,11 +11,11 @@ from ..base.layer import BaseEncoder
 from torch.distributions import MultivariateNormal
 
 
-class StochasticEncoderFromEmb(BaseEncoder):
+class StochasticZC(BaseEncoder):
     """
     Stochastic encoder that predicts concept distributions with uncertainty.
 
-    Encodes input embeddings into concept distributions by predicting both mean
+    Encodes input latent into concept distributions by predicting both mean
     and covariance matrices. Uses Monte Carlo sampling from the predicted
     multivariate normal distribution to generate concept representations.
 
@@ -25,29 +25,29 @@ class StochasticEncoderFromEmb(BaseEncoder):
         sigma (nn.Linear): Network for predicting covariance lower triangle.
 
     Args:
-        in_features_embedding: Number of input embedding features.
+        in_features: Number of input latent features.
         out_features: Number of output concepts.
         num_monte_carlo: Number of Monte Carlo samples for uncertainty (default: 200).
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import StochasticEncoderFromEmb
+        >>> from torch_concepts.nn import StochasticZC
         >>>
         >>> # Create stochastic encoder
-        >>> encoder = StochasticEncoderFromEmb(
-        ...     in_features_embedding=128,
+        >>> encoder = StochasticZC(
+        ...     in_features=128,
         ...     out_features=5,
         ...     num_monte_carlo=100
         ... )
         >>>
         >>> # Forward pass with mean reduction
-        >>> embeddings = torch.randn(4, 128)
-        >>> concept_logits = encoder(embeddings, reduce=True)
-        >>> print(concept_logits.shape)
+        >>> latent = torch.randn(4, 128)
+        >>> concept_endogenous = encoder(latent, reduce=True)
+        >>> print(concept_endogenous.shape)
         torch.Size([4, 5])
         >>>
         >>> # Forward pass keeping all MC samples
-        >>> concept_samples = encoder(embeddings, reduce=False)
+        >>> concept_samples = encoder(latent, reduce=False)
         >>> print(concept_samples.shape)
         torch.Size([4, 5, 100])
 
@@ -58,36 +58,38 @@ class StochasticEncoderFromEmb(BaseEncoder):
 
     def __init__(
         self,
-        in_features_embedding: int,
+        in_features: int,
         out_features: int,
         num_monte_carlo: int = 200,
+        eps: float = 1e-6,
     ):
         """
         Initialize the stochastic encoder.
 
         Args:
-            in_features_embedding: Number of input embedding features.
+            in_features: Number of input latent features.
             out_features: Number of output concepts.
             num_monte_carlo: Number of Monte Carlo samples (default: 200).
         """
         super().__init__(
-            in_features_embedding=in_features_embedding,
+            in_features=in_features,
             out_features=out_features,
         )
         self.num_monte_carlo = num_monte_carlo
         self.mu = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_embedding,
+                in_features,
                 out_features,
             ),
             torch.nn.Unflatten(-1, (out_features,)),
         )
         self.sigma = torch.nn.Linear(
-            in_features_embedding,
+            in_features,
             int(out_features * (out_features + 1) / 2),
         )
         # Prevent exploding precision matrix at initialization
         self.sigma.weight.data *= (0.01)
+        self.eps = eps
 
     def _predict_sigma(self, x):
         """
@@ -105,11 +107,12 @@ class StochasticEncoderFromEmb(BaseEncoder):
         rows, cols = torch.tril_indices(row=self.out_features, col=self.out_features, offset=0)
         diag_idx = rows == cols
         c_triang_cov[:, rows, cols] = c_sigma
-        c_triang_cov[:, range(self.out_features), range(self.out_features)] = (F.softplus(c_sigma[:, diag_idx]) + 1e-6)
+        c_sigma_activated = F.softplus(c_sigma[:, diag_idx])
+        c_triang_cov[:, range(self.out_features), range(self.out_features)] = (c_sigma_activated + self.eps)
         return c_triang_cov
 
     def forward(self,
-        embedding: torch.Tensor,
+        input: torch.Tensor,
         reduce: bool = True,
     ) -> torch.Tensor:
         """
@@ -119,16 +122,16 @@ class StochasticEncoderFromEmb(BaseEncoder):
         from it using the reparameterization trick.
 
         Args:
-            embedding: Input embeddings of shape (batch_size, in_features_embedding).
+            input: Input input of shape (batch_size, in_features).
             reduce: If True, return mean over MC samples; if False, return all samples
                    (default: True).
 
         Returns:
-            torch.Tensor: Concept logits of shape (batch_size, out_features) if reduce=True,
+            torch.Tensor: Concept endogenous of shape (batch_size, out_features) if reduce=True,
                          or (batch_size, out_features, num_monte_carlo) if reduce=False.
         """
-        c_mu = self.mu(embedding)
-        c_triang_cov = self._predict_sigma(embedding)
+        c_mu = self.mu(input)
+        c_triang_cov = self._predict_sigma(input)
         # Sample from predicted normal distribution
         c_dist = MultivariateNormal(c_mu, scale_tril=c_triang_cov)
         c_mcmc_logit = c_dist.rsample([self.num_monte_carlo]).movedim(0, -1)  # [batch_size,num_concepts,mcmc_size]

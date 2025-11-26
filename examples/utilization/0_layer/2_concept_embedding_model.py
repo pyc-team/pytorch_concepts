@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog
+from torch_concepts.nn import MixCUC, LinearZU, LinearUC
 
 
 def main():
@@ -11,9 +11,15 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    embedding_size = 8
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    exogenous_size = 8
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
     n_features = x_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names)})
@@ -23,13 +29,13 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = LinearZU(in_features=latent_dims,
                                out_features=c_annotations.shape[1],
-                               embedding_size=embedding_size*2)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=embedding_size,
+                               exogenous_size=exogenous_size*2)
+    c_encoder = LinearUC(in_features_exogenous=exogenous_size,
                                     n_exogenous_per_concept=2)
-    y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
-                                       in_features_exogenous=embedding_size,
+    y_predictor = MixCUC(in_features_endogenous=c_annotations.shape[1],
+                                       in_features_exogenous=exogenous_size,
                                        out_features=y_annotations.shape[1])
     model = torch.nn.Sequential(encoder, exog_encoder, c_encoder, y_predictor)
 
@@ -41,9 +47,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        exog = exog_encoder(embedding=emb)
+        exog = exog_encoder(input=emb)
         c_pred = c_encoder(exogenous=exog)
-        y_pred = y_predictor(logits=c_pred, exogenous=exog)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=exog)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

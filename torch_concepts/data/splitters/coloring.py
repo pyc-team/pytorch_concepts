@@ -10,17 +10,17 @@ import os
 from typing import Union
 import numpy as np
 
+from ..utils import resolve_size
 from ..base.dataset import ConceptDataset
-
 from ..base.splitter import Splitter
 
 class ColoringSplitter(Splitter):
     """Coloring-based splitting strategy for distribution shift experiments.
     
-    Divides a dataset into train/val/test/ftune splits based on a pre-computed
+    Divides a dataset into train/val/test splits based on a pre-computed
     coloring scheme stored in a JSON file. This ensures that training and
-    validation sets contain samples with 'training' coloring, while test and
-    fine-tuning sets contain samples with 'test' coloring.
+    validation sets contain samples with 'training' coloring, while test
+    sets contain samples with 'test' coloring.
     
     This is useful for:
     - Out-of-distribution (OOD) evaluation
@@ -38,10 +38,6 @@ class ColoringSplitter(Splitter):
             colored samples). Defaults to 0.1.
         test_size (Union[int, float], optional): Test set size (from 'test'
             colored samples). Defaults to 0.2.
-        ftune_size (Union[int, float], optional): Fine-tuning set size (from 'test'
-            colored samples). Defaults to 0.0.
-        ftune_val_size (Union[int, float], optional): Fine-tuning validation size
-            (from 'test' colored samples). Defaults to 0.0.
             
     Example:
         >>> # Create a coloring file first: coloring_mode_seed_42.json
@@ -62,9 +58,7 @@ class ColoringSplitter(Splitter):
         root: str,
         seed: int = None,
         val_size: Union[int, float] = 0.1,
-        test_size: Union[int, float] = 0.2,
-        ftune_size: Union[int, float] = 0.0,
-        ftune_val_size: Union[int, float] = 0.0
+        test_size: Union[int, float] = 0.2
     ):
         """Initialize the ColoringSplitter.
         
@@ -77,46 +71,19 @@ class ColoringSplitter(Splitter):
                 If float, represents fraction. If int, absolute count. Defaults to 0.1.
             test_size: Test set size (from 'test' samples).
                 If float, represents fraction. If int, absolute count. Defaults to 0.2.
-            ftune_size: Fine-tuning set size (from 'test' samples).
-                If float, represents fraction. If int, absolute count. Defaults to 0.0.
-            ftune_val_size: Fine-tuning validation size (from 'test' samples).
-                If float, represents fraction. If int, absolute count. Defaults to 0.0.
         """
         super().__init__()
         self.root = root
         self.seed = seed
         self.val_size = val_size
         self.test_size = test_size
-        self.ftune_size = ftune_size
-        self.ftune_val_size = ftune_val_size
-
-    def _resolve_size(self, size: Union[int, float], n_samples: int) -> int:
-        """Convert size specification to absolute number of samples.
-        Args:
-            size: Either an integer (absolute count) or float (fraction).
-            n_samples: Total number of samples in dataset.
-        Returns:
-            Absolute number of samples.
-        """
-        if isinstance(size, float):
-            if not 0.0 <= size <= 1.0:
-                raise ValueError(f"Fractional size must be in [0, 1], got {size}")
-            return int(size * n_samples)
-        
-        elif isinstance(size, int):
-            if size < 0:
-                raise ValueError(f"Absolute size must be non-negative, got {size}")
-            return size
-        
-        else:
-            raise TypeError(f"Size must be int or float, got {type(size).__name__}")
 
     def fit(self, dataset: ConceptDataset) -> None:
         """Split dataset based on coloring scheme from JSON file.
         
         Loads the coloring mode file and divides indices into 'training' and
         'test' groups. Then allocates samples from each group to the appropriate
-        splits (train/val from 'training', test/ftune from 'test').
+        splits (train/val from 'training', test from 'test').
         
         Args:
             dataset: The ConceptDataset to split.
@@ -128,19 +95,16 @@ class ColoringSplitter(Splitter):
         n_samples = len(dataset)
         
         # Resolve all sizes to absolute numbers
-        n_val = self._resolve_size(self.val_size, n_samples)
-        n_test = self._resolve_size(self.test_size, n_samples)
-        n_ftune = self._resolve_size(self.ftune_size, n_samples)
-        n_ftune_val = self._resolve_size(self.ftune_val_size, n_samples)
+        n_val = resolve_size(self.val_size, n_samples)
+        n_test = resolve_size(self.test_size, n_samples)
         
         # Validate that splits don't exceed dataset size
-        total_split = n_val + n_test + n_ftune + n_ftune_val
+        total_split = n_val + n_test
         if total_split > n_samples:
             raise ValueError(
                 f"Split sizes sum to {total_split} but dataset has only "
                 f"{n_samples} samples. "
-                f"(val={n_val}, test={n_test}, ftune={n_ftune}, "
-                f"ftune_val={n_ftune_val})"
+                f"(val={n_val}, test={n_test})"
             )
         
         n_train = n_samples - total_split
@@ -167,9 +131,7 @@ class ColoringSplitter(Splitter):
             raise ValueError(f"Not enough samples colored with training mode for requested train+val size ({n_train + n_val}).")
 
         try:
-            ftune_val_idxs = np.array(test_indices[:n_ftune_val])
-            ftune_idxs = np.array(test_indices[n_ftune_val:n_ftune_val + n_ftune])
-            test_idxs = np.array(test_indices[n_ftune_val + n_ftune:])
+            test_idxs = np.array(test_indices[:n_test])
         except ValueError:
             raise ValueError(f"Not enough samples colored with test mode for requested test size ({n_test}).")
 
@@ -178,9 +140,7 @@ class ColoringSplitter(Splitter):
         self.set_indices(
             train=train_idxs.tolist(),
             val=val_idxs.tolist(),
-            test=test_idxs.tolist(),
-            ftune=ftune_idxs.tolist(),
-            ftune_val=ftune_val_idxs.tolist()
+            test=test_idxs.tolist()
         )
 
         self._fitted = True
@@ -194,7 +154,5 @@ class ColoringSplitter(Splitter):
             f"{self.__class__.__name__}("
             f"train_size={self.train_len}, "
             f"val_size={self.val_len}, "
-            f"test_size={self.test_len}, "
-            f"ftune_size={self.ftune_len}, "
-            f"ftune_val_size={self.ftune_val_len})"
+            f"test_size={self.test_len})"
         )

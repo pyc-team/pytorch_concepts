@@ -1,7 +1,7 @@
-Inference Modules
+Intervention Strategies and Context Manager
 ===============================
 
-This module provides inference mechanisms for querying concept-based models with support for interventions.
+This module provides inference mechanisms for intervening on concept-based models.
 
 .. currentmodule:: torch_concepts.nn
 

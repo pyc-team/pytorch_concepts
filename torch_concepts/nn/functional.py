@@ -2,15 +2,26 @@
 Functional utilities for concept-based neural networks.
 
 This module provides functional operations for concept manipulation, intervention,
-embedding mixture, and evaluation metrics for concept-based models.
+exogenous mixture, and evaluation metrics for concept-based models.
 """
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
 from typing import Callable, List, Union, Dict
 from torch.nn import Linear
+import warnings
+import numbers
+import torch
+import numpy as np
+import scipy
+from scipy.optimize import Bounds, NonlinearConstraint
+from scipy.optimize import minimize as minimize_scipy
+from scipy.sparse.linalg import LinearOperator
 
-from ..semantic import CMRSemantic
+_constr_keys = {"fun", "lb", "ub", "jac", "hess", "hessp", "keep_feasible"}
+_bounds_keys = {"lb", "ub", "keep_feasible"}
+
+from .modules.low.semantic import CMRSemantic
 
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
@@ -31,27 +42,27 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     return concept_names
 
 
-def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
+def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
                                       c_scores: torch.Tensor,
                                       groups: list[int]) -> torch.Tensor:
     """
-    Vectorized version of grouped concept embedding mixture.
+    Vectorized version of grouped concept exogenous mixture.
 
-    Extends concept_embedding_mixture to handle grouped concepts where
+    Extends  to handle grouped concepts where
     some groups may contain multiple related concepts. Adapted from "Concept Embedding Models:
     Beyond the Accuracy-Explainability Trade-Off" (Espinosa Zarlenga et al., 2022).
 
     Args:
-        c_emb: Concept embeddings of shape (B, n_concepts, emb_size).
+        c_emb: Concept exogenous of shape (B, n_concepts, emb_size).
         c_scores: Concept scores of shape (B, sum(groups)).
         groups: List of group sizes (e.g., [3, 4] for two groups).
 
     Returns:
-        Tensor: Mixed embeddings of shape (B, len(groups), emb_size // 2).
+        Tensor: Mixed exogenous of shape (B, len(groups), emb_size // 2).
 
     Raises:
         AssertionError: If group sizes don't sum to n_concepts.
-        AssertionError: If embedding dimension is not even.
+        AssertionError: If exogenous dimension is not even.
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -60,7 +71,7 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.functional import grouped_concept_embedding_mixture
+        >>> from torch_concepts.nn.functional import grouped_concept_exogenous_mixture
         >>>
         >>> # 10 concepts in 3 groups: [3, 4, 3]
         >>> # Embedding size = 20 (must be even)
@@ -69,24 +80,24 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
         >>> emb_size = 20
         >>> groups = [3, 4, 3]
         >>>
-        >>> # Generate random embeddings and scores
+        >>> # Generate random latent and scores
         >>> c_emb = torch.randn(batch_size, n_concepts, emb_size)
         >>> c_scores = torch.rand(batch_size, n_concepts)  # Probabilities
         >>>
         >>> # Apply grouped mixture
-        >>> mixed = grouped_concept_embedding_mixture(c_emb, c_scores, groups)
+        >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
         >>> print(mixed.shape)  # torch.Size([4, 3, 10])
         >>> # Output shape: (batch_size, n_groups, emb_size // 2)
         >>>
         >>> # Singleton groups use two-half mixture
-        >>> # Multi-concept groups use weighted average of base embeddings
+        >>> # Multi-concept groups use weighted average of base exogenous
     """
     B, C, D = c_emb.shape
-    assert sum(groups) == C, "group_sizes must sum to n_concepts"
-    assert D % 2 == 0, "embedding dim must be even (two halves)"
+    assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
+    assert D % 2 == 0, f"exogenous dim must be even (two halves). Current dim: {D}"
     E = D // 2
 
-    # Split concept embeddings into two halves
+    # Split concept exogenous into two halves
     emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
@@ -101,7 +112,7 @@ def grouped_concept_embedding_mixture(c_emb: torch.Tensor,
     eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
                       s * emb_a)                                           # multi: weight base embedding
 
-    # Sum weighted embeddings within each group (no loops)
+    # Sum weighted exogenous within each group (no loops)
     out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
     index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
     out = out.scatter_add(1, index, eff)                                   # [B, G, E]
@@ -200,10 +211,10 @@ def linear_equation_expl(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
@@ -371,10 +382,10 @@ def logic_rule_explanations(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_logic_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_logic_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_logic_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
@@ -617,7 +628,7 @@ def edge_type(graph, i, j):
         raise ValueError(f'invalid edge type {i}, {j}')
 
 # graph similairty metrics
-def hamming_distance(first, second):
+def custom_hamming_distance(first, second):
     """Compute the graph edit distance between two partially direceted graphs"""
     first = first.loc[[row for row in first.index if '#virtual_' not in row],
                       [col for col in first.columns if '#virtual_' not in col]]
@@ -726,3 +737,328 @@ def prune_linear_layer(linear: Linear, mask: torch.Tensor, dim: int = 0) -> Line
         raise ValueError("dim must be 0 (inputs) or 1 (outputs)")
 
     return new_linear
+
+
+def _build_obj(f, x0):
+    numel = x0.numel()
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    def f_with_jac(x):
+        x = to_tensor(x).requires_grad_(True)
+        with torch.enable_grad():
+            fval = f(x)
+        (grad,) = torch.autograd.grad(fval, x)
+        return fval.detach().cpu().numpy(), grad.view(-1).cpu().numpy()
+
+    def f_hess(x):
+        x = to_tensor(x).requires_grad_(True)
+        with torch.enable_grad():
+            fval = f(x)
+            (grad,) = torch.autograd.grad(fval, x, create_graph=True)
+
+        def matvec(p):
+            p = to_tensor(p)
+            (hvp,) = torch.autograd.grad(grad, x, p, retain_graph=True)
+            return hvp.view(-1).cpu().numpy()
+
+        return LinearOperator((numel, numel), matvec=matvec)
+
+    return f_with_jac, f_hess
+
+
+def _build_constr(constr, x0):
+    assert isinstance(constr, dict)
+    assert set(constr.keys()).issubset(_constr_keys)
+    assert "fun" in constr
+    assert "lb" in constr or "ub" in constr
+    if "lb" not in constr:
+        constr["lb"] = -np.inf
+    if "ub" not in constr:
+        constr["ub"] = np.inf
+    f_ = constr["fun"]
+    numel = x0.numel()
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    def f(x):
+        x = to_tensor(x)
+        return f_(x).cpu().numpy()
+
+    def f_jac(x):
+        x = to_tensor(x)
+        if "jac" in constr:
+            grad = constr["jac"](x)
+        else:
+            x.requires_grad_(True)
+            with torch.enable_grad():
+                (grad,) = torch.autograd.grad(f_(x), x)
+        return grad.view(-1).cpu().numpy()
+
+    def f_hess(x, v):
+        x = to_tensor(x)
+        if "hess" in constr:
+            hess = constr["hess"](x)
+            return v[0] * hess.view(numel, numel).cpu().numpy()
+        elif "hessp" in constr:
+
+            def matvec(p):
+                p = to_tensor(p)
+                hvp = constr["hessp"](x, p)
+                return v[0] * hvp.view(-1).cpu().numpy()
+
+            return LinearOperator((numel, numel), matvec=matvec)
+        else:
+            x.requires_grad_(True)
+            with torch.enable_grad():
+                if "jac" in constr:
+                    grad = constr["jac"](x)
+                else:
+                    (grad,) = torch.autograd.grad(f_(x), x, create_graph=True)
+
+            def matvec(p):
+                p = to_tensor(p)
+                if grad.grad_fn is None:
+                    # If grad_fn is None, then grad is constant wrt x, and hess is 0.
+                    hvp = torch.zeros_like(grad)
+                else:
+                    (hvp,) = torch.autograd.grad(grad, x, p, retain_graph=True)
+                return v[0] * hvp.view(-1).cpu().numpy()
+
+            return LinearOperator((numel, numel), matvec=matvec)
+
+    return NonlinearConstraint(
+        fun=f,
+        lb=constr["lb"],
+        ub=constr["ub"],
+        jac=f_jac,
+        hess=f_hess,
+        keep_feasible=constr.get("keep_feasible", False),
+    )
+
+
+def _check_bound(val, x0):
+    if isinstance(val, numbers.Number):
+        return np.full(x0.numel(), val)
+    elif isinstance(val, torch.Tensor):
+        assert val.numel() == x0.numel()
+        return val.detach().cpu().numpy().flatten()
+    elif isinstance(val, np.ndarray):
+        assert val.size == x0.numel()
+        return val.flatten()
+    else:
+        raise ValueError("Bound value has unrecognized format.")
+
+
+def _build_bounds(bounds, x0):
+    assert isinstance(bounds, dict)
+    assert set(bounds.keys()).issubset(_bounds_keys)
+    assert "lb" in bounds or "ub" in bounds
+    lb = _check_bound(bounds.get("lb", -np.inf), x0)
+    ub = _check_bound(bounds.get("ub", np.inf), x0)
+    keep_feasible = bounds.get("keep_feasible", False)
+
+    return Bounds(lb, ub, keep_feasible)
+
+#### CODE adapted from https://pytorch-minimize.readthedocs.io/en/latest/_modules/torchmin/minimize_constr.html#minimize_constr
+
+@torch.no_grad()
+def minimize_constr(
+    f,
+    x0,
+    constr=None,
+    bounds=None,
+    max_iter=None,
+    tol=None,
+    callback=None,
+    disp=0,
+    **kwargs
+):
+    """Minimize a scalar function of one or more variables subject to
+    bounds and/or constraints.
+
+    .. note::
+        This is a wrapper for SciPy's
+        `'trust-constr' <https://docs.scipy.org/doc/scipy/reference/optimize.minimize-trustconstr.html>`_
+        method. It uses autograd behind the scenes to build jacobian & hessian
+        callables before invoking scipy. Inputs and objectivs should use
+        PyTorch tensors like other routines. CUDA is supported; however,
+        data will be transferred back-and-forth between GPU/CPU.
+
+    Parameters
+    ----------
+    f : callable
+        Scalar objective function to minimize.
+    x0 : Tensor
+        Initialization point.
+    constr : dict, optional
+        Constraint specifications. Should be a dictionary with the
+        following fields:
+
+            * fun (callable) - Constraint function
+            * lb (Tensor or float, optional) - Constraint lower bounds
+            * ub : (Tensor or float, optional) - Constraint upper bounds
+
+        One of either `lb` or `ub` must be provided. When `lb` == `ub` it is
+        interpreted as an equality constraint.
+    bounds : dict, optional
+        Bounds on variables. Should a dictionary with at least one
+        of the following fields:
+
+            * lb (Tensor or float) - Lower bounds
+            * ub (Tensor or float) - Upper bounds
+
+        Bounds of `-inf`/`inf` are interpreted as no bound. When `lb` == `ub`
+        it is interpreted as an equality constraint.
+    max_iter : int, optional
+        Maximum number of iterations to perform. If unspecified, this will
+        be set to the default of the selected method.
+    tol : float, optional
+        Tolerance for termination. For detailed control, use solver-specific
+        options.
+    callback : callable, optional
+        Function to call after each iteration with the current parameter
+        state, e.g. ``callback(x)``.
+    disp : int
+        Level of algorithm's verbosity:
+
+            * 0 : work silently (default).
+            * 1 : display a termination report.
+            * 2 : display progress during iterations.
+            * 3 : display progress during iterations (more complete report).
+    **kwargs
+        Additional keyword arguments passed to SciPy's trust-constr solver.
+        See options `here <https://docs.scipy.org/doc/scipy/reference/optimize.minimize-trustconstr.html>`_.
+
+    Returns
+    -------
+    result : OptimizeResult
+        Result of the optimization routine.
+
+    """
+    if max_iter is None:
+        max_iter = 1000
+    x0 = x0.detach()
+    if x0.is_cuda:
+        warnings.warn(
+            "GPU is not recommended for trust-constr. "
+            "Data will be moved back-and-forth from CPU."
+        )
+
+    # handle callbacks
+    if callback is not None:
+        callback_ = callback
+        callback = lambda x, state: callback_(
+            torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0), state
+        )
+
+    # handle bounds
+    if bounds is not None:
+        bounds = _build_bounds(bounds, x0)
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    # build objective function (and hessian)
+    if "jac" in kwargs.keys() and "hess" in kwargs.keys():
+        jacobian = kwargs.pop("jac")
+        hessian = kwargs.pop("hess")
+
+        def f_with_jac(x):
+            x = to_tensor(x)
+            fval = f(x)
+            grad = jacobian(x)
+            return fval.cpu().numpy(), grad.cpu().numpy()
+
+        if type(hessian) == str:
+            f_hess = hessian
+        else:
+
+            def f_hess(x):
+                x = to_tensor(x)
+
+                def matvec(p):
+                    p = to_tensor(p)
+                    hvp = hessian(x) @ p
+                    return hvp.cpu().numpy()
+
+                return LinearOperator((x0.numel(), x0.numel()), matvec=matvec)
+
+    elif "jac" in kwargs.keys():
+        _, f_hess = _build_obj(f, x0)
+        jacobian = kwargs.pop("jac")
+
+        def f_with_jac(x):
+            x = to_tensor(x)
+            fval = f(x)
+            grad = jacobian(x)
+            return fval.cpu().numpy(), grad.cpu().numpy()
+
+    else:
+        f_with_jac, f_hess = _build_obj(f, x0)
+
+    # build constraints
+    if constr is not None:
+        constraints = [_build_constr(constr, x0)]
+    else:
+        constraints = []
+
+    # optimize
+    x0_np = x0.float().cpu().numpy().flatten().copy()
+    method = kwargs.pop("method", "trust-constr")  # Default to trust-constr
+    if method == "trust-constr":
+        result = minimize_scipy(
+            f_with_jac,
+            x0_np,
+            method="trust-constr",
+            jac=True,
+            hess=f_hess,
+            callback=callback,
+            tol=tol,
+            bounds=bounds,
+            constraints=constraints,
+            options=dict(verbose=int(disp), maxiter=max_iter, **kwargs),
+        )
+    elif method == "SLSQP":
+        if constr["ub"] == constr["lb"]:
+            constr["type"] = "eq"
+        elif constr["lb"] == 0:
+            constr["type"] = "ineq"
+        elif constr["ub"] == 0:
+            constr["type"] = "ineq"
+            original_fun2 = constr["fun"]
+            constr["fun"] = lambda x: -original_fun2(x)
+        else:
+            raise NotImplementedError(
+                "Only equality and inequality constraints around 0 are supported"
+            )
+        original_fun = constr["fun"]
+        original_jac = constr["jac"]
+        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy()
+        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=RuntimeWarning,
+                module=scipy.optimize._optimize.__name__,
+            )
+            result = minimize_scipy(
+                f_with_jac,
+                x0_np,
+                method="SLSQP",
+                jac=True,
+                callback=callback,
+                tol=tol,
+                bounds=bounds,
+                constraints=constr,
+                options=dict(maxiter=max_iter),
+            )
+
+    # convert the important things to torch tensors
+    for key in ["fun", "x"]:
+        result[key] = torch.tensor(result[key], dtype=x0.dtype, device=x0.device)
+    result["x"] = result["x"].view_as(x0)
+
+    return result

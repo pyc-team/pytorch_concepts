@@ -23,7 +23,7 @@ class WANDAGraphLearner(BaseGraphLearner):
     Attributes:
         np_params (nn.Parameter): Learnable priority values for each concept.
         priority_var (float): Variance for priority initialization.
-        threshold (nn.Parameter): Learnable threshold for edge creation.
+        threshold (torch.Tensor): Fixed threshold for edge creation (not learnable).
         hard_threshold (bool): Whether to use hard or soft thresholding.
 
     Args:
@@ -31,6 +31,7 @@ class WANDAGraphLearner(BaseGraphLearner):
         col_labels: List of concept names for graph columns.
         priority_var: Variance for priority initialization (default: 1.0).
         hard_threshold: Use hard thresholding for edges (default: True).
+        threshold_init: Initial value for threshold (default: 0.0).
 
     Example:
         >>> import torch
@@ -42,7 +43,8 @@ class WANDAGraphLearner(BaseGraphLearner):
         ...     row_labels=concepts,
         ...     col_labels=concepts,
         ...     priority_var=1.0,
-        ...     hard_threshold=True
+        ...     hard_threshold=True,
+        ...     threshold_init=0.5
         ... )
         >>>
         >>> # Get current graph estimate
@@ -60,6 +62,8 @@ class WANDAGraphLearner(BaseGraphLearner):
             col_labels: List[str],
             priority_var: float = 1.0,
             hard_threshold: bool = True,
+            threshold_init: float = 0.0,
+            eps: float = 1e-12,
     ):
         """
         Initialize the WANDA graph learner.
@@ -69,6 +73,8 @@ class WANDAGraphLearner(BaseGraphLearner):
             col_labels: List of concept names for graph columns.
             priority_var: Variance for priority initialization (default: 1.0).
             hard_threshold: Use hard thresholding for edges (default: True).
+            threshold_init: Initial value for threshold (default: 0.0).
+            eps: Small epsilon value for numerical stability (default: 1e-12).
         """
         super(WANDAGraphLearner, self).__init__(row_labels, col_labels)
 
@@ -76,8 +82,10 @@ class WANDAGraphLearner(BaseGraphLearner):
         self.np_params = torch.nn.Parameter(torch.zeros((self.n_labels, 1)))
         self.priority_var = priority_var / math.sqrt(2)
 
-        self.threshold = torch.nn.Parameter(torch.zeros(self.n_labels))
+        # Register threshold as a buffer (not a parameter) so it's not learnable
+        self.register_buffer('threshold', torch.full((self.n_labels,), threshold_init))
 
+        self.eps = eps
         self.hard_threshold = hard_threshold
         self._reset_parameters()
 
@@ -119,7 +127,8 @@ class WANDAGraphLearner(BaseGraphLearner):
             hard_orient_mat = hard_orient_mat.float()
 
             # Apply soft detaching trick
-            eps = 1e-12  # or smaller, depending on your precision needs
-            orient_mat = orient_mat + (torch.where(hard_orient_mat.abs() < eps, torch.zeros_like(hard_orient_mat), hard_orient_mat) - orient_mat).detach()
+            zero_mat = torch.zeros_like(orient_mat)
+            masked_mat = torch.where(hard_orient_mat.abs() < self.eps, zero_mat, hard_orient_mat)
+            orient_mat = orient_mat + (masked_mat - orient_mat).detach()
 
         return orient_mat

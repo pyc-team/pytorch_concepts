@@ -21,70 +21,92 @@ Documentation
 
    nn.base.low
    nn.encoders
-   nn.graph
+   nn.predictors
    nn.inference
    nn.policy
-   nn.predictors
+   nn.graph
    nn.dense_layers
 
 
 Design principles
 -----------------
 
-Objects
-"""""""
+Overview of Data Representations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+In |pyc_logo| PyC, we distinguish between three types of data representations:
 
-In |pyc_logo| PyC there are three types of objects:
+- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
+- **Exogenous**: Representations that are direct causes of endogenous variables
+- **Endogenous**: Representations of observable quantities of interest
 
-- **Embedding**: high-dimensional latent representations shared across all concepts.
-- **Exogenous**: high-dimensional latent representations related to a specific concept.
-- **Logits**: Concept scores before applying an activation function.
 
-Layers
-""""""
+Layer Types
+^^^^^^^^^^^
 
-There are only three types of layers:
+In |pyc_logo| PyC you will find three types of layers whose interfaces reflect the distinction between data representations:
 
-- **Encoders**: layers that map latent representations (embeddings or exogenous) to logits, e.g.:
+- ``Encoder`` layers: Never take as input endogenous variables
+- ``Predictor`` layers: Must take as input a set of endogenous variables
+- Special layers: Perform operations like memory selection or graph learning
 
-  .. code-block:: python
 
-     pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3)
+Layer Naming Standard
+^^^^^^^^^^^^^^^^^^^^^
 
-- **Predictors**: layers that map logits (plus optionally latent representations) to other logits.
+In order to easily identify the type of layer, |pyc_logo| PyC uses a consistent standard to assign names to layers.
+Each layer name follows the format:
 
-  .. code-block:: python
+``<LayerType><InputType><OutputType>``
 
-     pyc.nn.HyperLinearPredictor(in_features_logits=10, in_features_exogenous=7,
-                                 embedding_size=24, out_features=3)
+where:
 
-- **Special layers**: layers that perform special helpful operations such as memory selection:
+- ``LayerType``: describes the type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
+- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. |pyc_logo| PyC uses the following abbreviations:
 
-  .. code-block:: python
+  - ``Z``: Input
+  - ``U``: Exogenous
+  - ``C``: Endogenous
 
-     pyc.nn.MemorySelector(in_features_embedding=10, memory_size=5,
-                           embedding_size=24, out_features=3)
 
-  and graph learners:
+For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
+``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
+as input any endogenous variables, it is an encoder layer.
 
-  .. code-block:: python
+.. code-block:: python
 
-     wanda = pyc.nn.WANDAGraphLearner(['c1', 'c2', 'c3'], ['task A', 'task B', 'task C'])
+ pyc.nn.LinearZC(in_features=10, out_features=3)
+
+As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
+takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
+``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
+
+.. code-block:: python
+
+ pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
+                       embedding_size=24, out_features=3)
+
+As a final example, graph learners are a special layers that learn relationships between concepts.
+They do not follow the standard naming convention of encoders and predictors, but their purpose should be
+clear from their name.
+
+.. code-block:: python
+
+ wanda = pyc.nn.WANDAGraphLearner(['c1', 'c2', 'c3'], ['task A', 'task B', 'task C'])
 
 Models
-""""""
+^^^^^^^^^^^
 
 A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may include standard |pytorch_logo| PyTorch layers + |pyc_logo| PyC layers:
 
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.ProbEncoderFromEmb(in_features_embedding=10, out_features=3),
-       'predictor': pyc.nn.ProbPredictor(in_features_logits=3, out_features=2),
+       'encoder': pyc.nn.LinearZC(in_features=10, out_features=3),
+       'predictor': pyc.nn.LinearCC(in_features_endogenous=3, out_features=2),
    })
 
 Inference
-"""""""""
+^^^^^^^^^^^^^^
 
 At this API level, there are two types of inference that can be performed:
 
@@ -92,12 +114,12 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     logits_concepts = concept_bottleneck_model['encoder'](embedding=embedding)
-     logits_tasks = concept_bottleneck_model['predictor'](logits=logits_concepts)
+     endogenous_concepts = concept_bottleneck_model['encoder'](input=x)
+     endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 
 - **Interventions**: interventions are context managers that temporarily modify a layer.
 
-  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept logits to a constant value:
+  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept endogenous to a constant value:
 
   .. code-block:: python
 
@@ -118,6 +140,6 @@ At this API level, there are two types of inference that can be performed:
                               strategies=int_strategy,
                               target_concepts=[0, 2]) as new_encoder_layer:
 
-         logits_concepts = new_encoder_layer(embedding=embedding)
-         logits_tasks = concept_bottleneck_model['predictor'](logits=logits_concepts)
+         endogenous_concepts = new_encoder_layer(input=x)
+         endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
 

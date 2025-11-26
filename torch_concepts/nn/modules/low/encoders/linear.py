@@ -1,7 +1,7 @@
 """
 Linear encoder modules for concept prediction from latent features.
 
-This module provides encoder layers that transform embeddings or exogenous
+This module provides encoder layers that transform latent or exogenous
 variables into concept representations.
 """
 import torch
@@ -9,43 +9,43 @@ import torch
 from ..base.layer import BaseEncoder
 
 
-class ProbEncoderFromEmb(BaseEncoder):
+class LinearZC(BaseEncoder):
     """
-    Encoder that predicts concept activations from embeddings.
+    Encoder that predicts concept activations from latent.
 
-    This encoder transforms input embeddings into concept logits using a
+    This encoder transforms input latent into concept endogenous using a
     linear layer. It's typically used as the first layer in concept bottleneck
-    models to extract concepts from neural network embeddings.
+    models to extract concepts from neural network input.
 
     Attributes:
-        in_features_embedding (int): Number of input embedding features.
+        in_features (int): Number of input latent features.
         out_features (int): Number of output concept features.
         encoder (nn.Sequential): The encoding network.
 
     Args:
-        in_features_embedding: Number of input embedding features.
+        in_features: Number of input latent features.
         out_features: Number of output concept features.
         *args: Additional arguments for torch.nn.Linear.
         **kwargs: Additional keyword arguments for torch.nn.Linear.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ProbEncoderFromEmb
+        >>> from torch_concepts.nn import LinearZC
         >>>
         >>> # Create encoder
-        >>> encoder = ProbEncoderFromEmb(
-        ...     in_features_embedding=128,
+        >>> encoder = LinearZC(
+        ...     in_features=128,
         ...     out_features=10
         ... )
         >>>
-        >>> # Forward pass with embeddings from a neural network
-        >>> embeddings = torch.randn(4, 128)  # batch_size=4, embedding_dim=128
-        >>> concept_logits = encoder(embeddings)
-        >>> print(concept_logits.shape)
+        >>> # Forward pass with latent from a neural network
+        >>> latent = torch.randn(4, 128)  # batch_size=4, latent_dim=128
+        >>> concept_endogenous = encoder(latent)
+        >>> print(concept_endogenous.shape)
         torch.Size([4, 10])
         >>>
         >>> # Apply sigmoid to get probabilities
-        >>> concept_probs = torch.sigmoid(concept_logits)
+        >>> concept_probs = torch.sigmoid(concept_endogenous)
         >>> print(concept_probs.shape)
         torch.Size([4, 10])
 
@@ -55,27 +55,27 @@ class ProbEncoderFromEmb(BaseEncoder):
     """
     def __init__(
         self,
-        in_features_embedding: int,
+        in_features: int,
         out_features: int,
         *args,
         **kwargs,
     ):
         """
-        Initialize the embedding encoder.
+        Initialize the latent encoder.
 
         Args:
-            in_features_embedding: Number of input embedding features.
+            in_features: Number of input latent features.
             out_features: Number of output concept features.
             *args: Additional arguments for torch.nn.Linear.
             **kwargs: Additional keyword arguments for torch.nn.Linear.
         """
         super().__init__(
-            in_features_embedding=in_features_embedding,
+            in_features=in_features,
             out_features=out_features,
         )
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                in_features_embedding,
+                in_features,
                 out_features,
                 *args,
                 **kwargs,
@@ -85,21 +85,21 @@ class ProbEncoderFromEmb(BaseEncoder):
 
     def forward(
         self,
-        embedding: torch.Tensor,
+        input: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Encode embeddings into concept logits.
+        Encode latent into concept endogenous.
 
         Args:
-            embedding: Input embeddings of shape (batch_size, in_features_embedding).
+            input: Input input of shape (batch_size, in_features).
 
         Returns:
-            torch.Tensor: Concept logits of shape (batch_size, out_features).
+            torch.Tensor: Concept endogenous of shape (batch_size, out_features).
         """
-        return self.encoder(embedding)
+        return self.encoder(input)
 
 
-class ProbEncoderFromExog(BaseEncoder):
+class LinearUC(BaseEncoder):
     """
     Encoder that extracts concepts from exogenous variables.
 
@@ -117,10 +117,10 @@ class ProbEncoderFromExog(BaseEncoder):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import ProbEncoderFromExog
+        >>> from torch_concepts.nn import LinearUC
         >>>
         >>> # Create encoder with 2 exogenous vars per concept
-        >>> encoder = ProbEncoderFromExog(
+        >>> encoder = LinearUC(
         ...     in_features_exogenous=5,
         ...     n_exogenous_per_concept=2
         ... )
@@ -128,8 +128,8 @@ class ProbEncoderFromExog(BaseEncoder):
         >>> # Forward pass with exogenous variables
         >>> # Expected input shape: (batch, out_features, in_features * n_exogenous_per_concept)
         >>> exog_vars = torch.randn(4, 3, 10)  # batch=4, concepts=3, exog_features=5*2
-        >>> concept_logits = encoder(exog_vars)
-        >>> print(concept_logits.shape)
+        >>> concept_endogenous = encoder(exog_vars)
+        >>> print(concept_endogenous.shape)
         torch.Size([4, 3])
 
     References:
@@ -168,13 +168,13 @@ class ProbEncoderFromExog(BaseEncoder):
         exogenous: torch.Tensor
     ) -> torch.Tensor:
         """
-        Encode exogenous variables into concept logits.
+        Encode exogenous variables into concept endogenous.
 
         Args:
             exogenous: Exogenous variables of shape
                       (batch_size, out_features, in_features_exogenous).
 
         Returns:
-            torch.Tensor: Concept logits of shape (batch_size, out_features).
+            torch.Tensor: Concept endogenous of shape (batch_size, out_features).
         """
         return self.encoder(exogenous)

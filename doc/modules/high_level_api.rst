@@ -11,6 +11,7 @@ Documentation
    :maxdepth: 1
 
    nn.base.high
+   annotations
    nn.models.high
 
 

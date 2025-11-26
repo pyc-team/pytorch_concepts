@@ -23,13 +23,12 @@ LICENSE = 'Apache 2.0'
 DOWNLOAD_URL = 'https://github.com/pyc-team/pytorch_concepts'
 VERSION = about["__version__"]
 INSTALL_REQUIRES = [
-    'numpy',
-    'opencv-python',
-    'pandas',
-    'Pillow==9.5.0',
     'scikit-learn',
     'scipy',
     'torch',
+    'pytorch-minimize',
+    'pytorch-lightning',
+    'networkx',
 ]
 CLASSIFIERS = [
     'Intended Audience :: Developers',
@@ -48,6 +47,16 @@ CLASSIFIERS = [
     'Topic :: Software Development',
 ]
 EXTRAS_REQUIRE = {
+    'data': [
+        'opencv-python',
+        'pandas',
+        'torchvision',
+        'pgmpy',
+        'bnlearn',
+        'datasets',
+        'transformers',
+        'tables',
+    ],
     'tests': [
         'pytest-cov',
         'pytest',
@@ -55,9 +64,14 @@ EXTRAS_REQUIRE = {
     'docs': [
         'matplotlib',
         'numpydoc',
-        'sphinx_rtd_theme',
+        'furo',
         'sphinx-gallery',
         'sphinx',
+        'sphinx_design',
+        'sphinxext-opengraph',
+        'sphinx-copybutton',
+        'myst-nb',
+        'sphinx-hoverxref',
     ],
 }
 

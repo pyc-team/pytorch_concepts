@@ -2,7 +2,7 @@ import torch
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromExog, MixProbExogPredictor
+from torch_concepts.nn import LinearZU, LinearUC, MixCUC
 
 
 def main():
@@ -10,8 +10,14 @@ def main():
     n_epochs = 2000
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
     n_features = x_train.shape[1]
 
     y = torch.stack([
@@ -41,11 +47,11 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = LinearZU(in_features=latent_dims,
                                out_features=c_annotations.shape[1],
-                               embedding_size=latent_dims)
-    c_encoder = ProbEncoderFromExog(in_features_exogenous=latent_dims)
-    y_predictor = MixProbExogPredictor(in_features_logits=c_annotations.shape[1],
+                               exogenous_size=latent_dims)
+    c_encoder = LinearUC(in_features_exogenous=latent_dims)
+    y_predictor = MixCUC(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=latent_dims,
                                        out_features=y_annotations.shape[1],
                                        cardinalities=c_annotations.get_axis_annotation(1).cardinalities)
@@ -63,9 +69,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        exog = exog_encoder(embedding=emb)
+        exog = exog_encoder(input=emb)
         c_pred = c_encoder(exogenous=exog)
-        y_pred = y_predictor(logits=c_pred, exogenous=exog)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=exog)
 
         # compute loss
         concept_loss = 0

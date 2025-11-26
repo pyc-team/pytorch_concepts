@@ -4,8 +4,8 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator, \
-    MixProbExogPredictor, ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy
+from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor, \
+    MixCUC, LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy
 
 
 def main():
@@ -13,13 +13,19 @@ def main():
     n_epochs = 200
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = ['c1', 'c2']
+    task_names = ['xor']
+
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
-    concept_names = ('c1', 'c2')
-    task_names = ('xor',)
-    cardinalities = (1, 1, 2)
+    cardinalities = [1, 1, 2]
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
@@ -32,9 +38,9 @@ def main():
     concept_model = BipartiteModel(task_names=task_names,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=12),
-                                   encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(MixProbExogPredictor),
+                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=12),
+                                   encoder=LazyConstructor(LinearUC),
+                                   predictor=LazyConstructor(MixCUC),
                                    use_source_exogenous=True)
 
     # Inference Initialization
@@ -51,7 +57,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -71,11 +77,11 @@ def main():
     print("=== Interventions ===")
 
     int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.factors, constants=-10)
+    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
         task_accuracy = accuracy_score(y_train, y_pred > 0.)
@@ -85,12 +91,12 @@ def main():
         print()
 
         int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
-        int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
+        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+        int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
         with intervention(policies=[int_policy_c1, int_policy_c1],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:]
             task_accuracy = accuracy_score(y_train, y_pred > 0.)

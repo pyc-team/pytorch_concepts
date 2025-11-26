@@ -1,4 +1,4 @@
-Pre-built Models
+Out-of-the-box Models
 ===============================
 
 This module provides ready-to-use implementations of state-of-the-art concept-based models.

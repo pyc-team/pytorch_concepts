@@ -1,39 +1,57 @@
 import torch
 from torch import nn
-from typing import Any, List, Optional, Dict, Mapping
+from typing import Any, List, Optional, Dict, Mapping, Type, Union
 
-from .....data.annotations import Annotations
-from ....modules.mid.models.variable import Variable
-from .....distributions.delta import Delta
-from ....modules.mid.models.factor import Factor
-from ....modules.low.encoders.linear import ProbEncoderFromEmb
-from ....modules.mid.models.probabilistic_model import ProbabilisticModel
-from ....modules.low.base.inference import BaseInference
+
+from .....annotations import Annotations
+from .....typing import BackboneType
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
+from ..learners import JointLearner
 
 
 
-class BlackBox_torch(BaseModel):
+class BlackBox(BaseModel, JointLearner):
     def __init__(
         self,
         input_size: int,
+
+        loss: nn.Module,
+        metrics: Mapping,
         annotations: Annotations,
         variable_distributions: Mapping,
-        embs_precomputed: bool = False,
-        backbone: Optional[callable] = None,
-        encoder_kwargs: Dict = None,
+        optim_class: Type,
+        optim_kwargs: Mapping,
+
+        backbone: Optional[BackboneType] = None,
+        encoder: Optional[nn.Module] = None,
+        encoder_kwargs: Optional[Dict] = None,
+
+        scheduler_class: Optional[Type] = None,
+        scheduler_kwargs: Optional[Mapping] = None,     
+        summary_metrics: Optional[bool] = True,
+        perconcept_metrics: Optional[Union[bool, list]] = False,
         **kwargs
     ) -> None:
+        # Initialize using super() to properly handle MRO
         super().__init__(
+            #-- Learner args
+            loss=loss,
+            metrics=metrics,
             annotations=annotations,
             variable_distributions=variable_distributions,
-            # encoder params
+            optim_class=optim_class,
+            optim_kwargs=optim_kwargs,
+            scheduler_class=scheduler_class,
+            scheduler_kwargs=scheduler_kwargs,
+            summary_metrics=summary_metrics,
+            perconcept_metrics=perconcept_metrics,
+            # -- BaseModel args
             input_size=input_size,
-            embs_precomputed=embs_precomputed,
             backbone=backbone,
-            encoder_kwargs=encoder_kwargs,
+            encoder=encoder,
+            encoder_kwargs=encoder_kwargs
         )
 
         self.concept_annotations = annotations.get_axis_annotation(1)
@@ -41,102 +59,41 @@ class BlackBox_torch(BaseModel):
                        output_size=sum(self.concept_annotations.cardinalities),
                        **encoder_kwargs
                        )
-        
-    def filter_output_for_loss(self, forward_out):
-        # forward_out: logits
-        # return: logits
-        return forward_out
-
-    def filter_output_for_metric(self, forward_out):
-        # forward_out: logits
-        # return: logits
-        return forward_out
     
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
-                *args,
-                backbone_kwargs: Optional[Mapping[str, Any]] = None,
-                **kwargs
-            ) -> torch.Tensor:
-        features = self.maybe_apply_backbone(x, backbone_kwargs)
-        logits = self.mlp(features)
-        return logits
+        ) -> torch.Tensor:
+        features = self.maybe_apply_backbone(x)
+        endogenous = self.mlp(features)
+        return endogenous
 
+    def filter_output_for_loss(self, forward_out, target):
+        """No filtering needed - return raw endogenous for standard loss computation.
 
+        Args:
+            forward_out: Model output endogenous.
+            target: Ground truth labels.
 
-class BlackBox(BaseModel):
-    def __init__(
-        self,
-        input_size: int,
-        inference: BaseInference,
-        annotations: Annotations,
-        variable_distributions: Mapping,
-        embs_precomputed: bool = False,
-        backbone: Optional[callable] = None,
-        encoder_kwargs: Dict = None,
-        **kwargs
-    ) -> None:
-        super().__init__(
-            annotations=annotations,
-            variable_distributions=variable_distributions,
-            # encoder params
-            input_size=input_size,
-            embs_precomputed=embs_precomputed,
-            backbone=backbone,
-            encoder_kwargs=encoder_kwargs,
-        )
+        Returns:
+            Dict with 'input' and 'target' for loss computation.
+        """
+        # forward_out: endogenous
+        # return: endogenous
+        return {'input': forward_out,
+                'target': target}
 
-        # init variable for the latent embedding from the encoder
-        embedding = Variable("embedding", parents=[], distribution=Delta, size=self.encoder_out_features)
-        embedding_factor = Factor("embedding", module_class=nn.Identity())
-        
-        # variables initialization
-        concept_names = self.annotations.get_axis_labels(1)
-        concepts = Variable(concept_names,
-                            parents=['embedding'], # all concepts have the same parent='embedding'
-                            distribution=[annotations[1].metadata[c]['distribution'] for c in concept_names],
-                            size=[annotations[1].cardinalities[annotations[1].get_index(c)] for c in concept_names])
-        
-        # layers initialization
-        concept_encoders = Factor(concept_names, 
-                                  module_class=[ProbEncoderFromEmb(in_features_embedding=embedding.size, 
-                                                                   out_features=c.size) for c in concepts])
-        
-        # ProbabilisticModel Initialization
-        self.probabilistic_model = ProbabilisticModel(
-            variables=[embedding, *concepts],
-            factors=[embedding_factor, *concept_encoders]
-        )
+    def filter_output_for_metric(self, forward_out, target):
+        """No filtering needed - return raw endogenous for metric computation.
 
-        self.inference = inference(self.probabilistic_model)
+        Args:
+            forward_out: Model output endogenous.
+            target: Ground truth labels.
 
-    def filter_output_for_loss(self, forward_out):
-        # forward_out: logits
-        # return: logits
-        return forward_out
-
-    def filter_output_for_metric(self, forward_out):
-        # forward_out: logits
-        # return: logits
-        return forward_out
-    
-    def forward(self,
-                x: torch.Tensor,
-                query: List[str] = None,
-                *args,
-                backbone_kwargs: Optional[Mapping[str, Any]] = None,
-                **kwargs
-            ) -> torch.Tensor:
-        
-        # (b, input_size) -> (b, backbone_out_features)
-        features = self.maybe_apply_backbone(x, backbone_kwargs)
-
-        # (b, backbone_out_features) -> (b, encoder_out_features)
-        features = self.encoder(features)
-
-        # inference
-        # get logits for the query concepts
-        # (b, encoder_out_features) -> (b, sum(concept_cardinalities))
-        out = self.inference.query(query, evidence={'embedding': features})
-        return out
+        Returns:
+            Dict with 'input' and 'target' for metric computation.
+        """
+        # forward_out: endogenous
+        # return: endogenous
+        return {'input': forward_out,
+                'target': target}

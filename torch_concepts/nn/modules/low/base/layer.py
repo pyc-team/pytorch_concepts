@@ -20,15 +20,15 @@ class BaseConceptLayer(ABC, torch.nn.Module):
     and predictors.
 
     Attributes:
-        in_features_logits (int): Number of input logit features.
-        in_features_embedding (int): Number of input embedding features.
+        in_features_endogenous (int): Number of input logit features.
+        in_features (int): Number of input latent features.
         in_features_exogenous (int): Number of exogenous input features.
         out_features (int): Number of output features.
 
     Args:
         out_features: Number of output features.
-        in_features_logits: Number of input logit features (optional).
-        in_features_embedding: Number of input embedding features (optional).
+        in_features_endogenous: Number of input logit features (optional).
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
 
     Example:
@@ -37,39 +37,39 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         >>>
         >>> # Create a custom concept layer
         >>> class MyConceptLayer(BaseConceptLayer):
-        ...     def __init__(self, out_features, in_features_logits):
+        ...     def __init__(self, out_features, in_features_endogenous):
         ...         super().__init__(
         ...             out_features=out_features,
-        ...             in_features_logits=in_features_logits
+        ...             in_features_endogenous=in_features_endogenous
         ...         )
-        ...         self.linear = torch.nn.Linear(in_features_logits, out_features)
+        ...         self.linear = torch.nn.Linear(in_features_endogenous, out_features)
         ...
-        ...     def forward(self, logits):
-        ...         return torch.sigmoid(self.linear(logits))
+        ...     def forward(self, endogenous):
+        ...         return torch.sigmoid(self.linear(endogenous))
         >>>
         >>> # Example usage
-        >>> layer = MyConceptLayer(out_features=5, in_features_logits=10)
+        >>> layer = MyConceptLayer(out_features=5, in_features_endogenous=10)
         >>>
         >>> # Generate random input
-        >>> logits = torch.randn(2, 10)  # batch_size=2, in_features=10
+        >>> endogenous = torch.randn(2, 10)  # batch_size=2, in_features=10
         >>>
         >>> # Forward pass
-        >>> output = layer(logits)
+        >>> output = layer(endogenous)
         >>> print(output.shape)  # torch.Size([2, 5])
     """
 
     def __init__(
         self,
         out_features: int,
-        in_features_logits: int = None,
-        in_features_embedding: int = None,
+        in_features_endogenous: int = None,
+        in_features: int = None,
         in_features_exogenous: int = None,
         *args,
         **kwargs,
     ):
         super().__init__()
-        self.in_features_logits = in_features_logits
-        self.in_features_embedding = in_features_embedding
+        self.in_features_endogenous = in_features_endogenous
+        self.in_features = in_features
         self.in_features_exogenous = in_features_exogenous
         self.out_features = out_features
 
@@ -96,12 +96,12 @@ class BaseEncoder(BaseConceptLayer):
     """
     Abstract base class for concept encoder layers.
 
-    Encoders transform input features (embeddings or exogenous variables)
+    Encoders transform input features (latent or exogenous variables)
     into concept representations.
 
     Args:
         out_features: Number of output concept features.
-        in_features_embedding: Number of input embedding features (optional).
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
 
     Example:
@@ -110,24 +110,24 @@ class BaseEncoder(BaseConceptLayer):
         >>>
         >>> # Create a custom encoder
         >>> class MyEncoder(BaseEncoder):
-        ...     def __init__(self, out_features, in_features_embedding):
+        ...     def __init__(self, out_features, in_features):
         ...         super().__init__(
         ...             out_features=out_features,
-        ...             in_features_embedding=in_features_embedding
+        ...             in_features=in_features
         ...         )
         ...         self.net = torch.nn.Sequential(
-        ...             torch.nn.Linear(in_features_embedding, 128),
+        ...             torch.nn.Linear(in_features, 128),
         ...             torch.nn.ReLU(),
         ...             torch.nn.Linear(128, out_features)
         ...         )
         ...
-        ...     def forward(self, embedding):
-        ...         return self.net(embedding)
+        ...     def forward(self, latent):
+        ...         return self.net(latent)
         >>>
         >>> # Example usage
-        >>> encoder = MyEncoder(out_features=10, in_features_embedding=784)
+        >>> encoder = MyEncoder(out_features=10, in_features=784)
         >>>
-        >>> # Generate random image embedding (e.g., flattened MNIST)
+        >>> # Generate random image latent (e.g., flattened MNIST)
         >>> x = torch.randn(4, 784)  # batch_size=4, pixels=784
         >>>
         >>> # Encode to concepts
@@ -137,11 +137,11 @@ class BaseEncoder(BaseConceptLayer):
 
     def __init__(self,
                  out_features: int,
-                 in_features_embedding: int = None,
+                 in_features: int = None,
                  in_features_exogenous: int = None):
         super().__init__(
-            in_features_logits=None,
-            in_features_embedding=in_features_embedding,
+            in_features_endogenous=None,
+            in_features=in_features,
             in_features_exogenous=in_features_exogenous,
             out_features=out_features
         )
@@ -151,7 +151,7 @@ class BasePredictor(BaseConceptLayer):
     """
     Abstract base class for concept predictor layers.
 
-    Predictors take concept representations (plus embeddings or exogenous
+    Predictors take concept representations (plus latent or exogenous
     variables) and predict other concept representations.
 
     Attributes:
@@ -159,8 +159,8 @@ class BasePredictor(BaseConceptLayer):
 
     Args:
         out_features: Number of output concept features.
-        in_features_logits: Number of input logit features.
-        in_features_embedding: Number of input embedding features (optional).
+        in_features_endogenous: Number of input logit features.
+        in_features: Number of input latent features (optional).
         in_features_exogenous: Number of exogenous input features (optional).
         in_activation: Activation function for input (default: torch.sigmoid).
 
@@ -170,44 +170,44 @@ class BasePredictor(BaseConceptLayer):
         >>>
         >>> # Create a custom predictor
         >>> class MyPredictor(BasePredictor):
-        ...     def __init__(self, out_features, in_features_logits):
+        ...     def __init__(self, out_features, in_features_endogenous):
         ...         super().__init__(
         ...             out_features=out_features,
-        ...             in_features_logits=in_features_logits,
+        ...             in_features_endogenous=in_features_endogenous,
         ...             in_activation=torch.sigmoid
         ...         )
-        ...         self.linear = torch.nn.Linear(in_features_logits, out_features)
+        ...         self.linear = torch.nn.Linear(in_features_endogenous, out_features)
         ...
-        ...     def forward(self, logits):
-        ...         # Apply activation to input logits
-        ...         probs = self.in_activation(logits)
+        ...     def forward(self, endogenous):
+        ...         # Apply activation to input endogenous
+        ...         probs = self.in_activation(endogenous)
         ...         # Predict next concepts
         ...         return self.linear(probs)
         >>>
         >>> # Example usage
-        >>> predictor = MyPredictor(out_features=3, in_features_logits=10)
+        >>> predictor = MyPredictor(out_features=3, in_features_endogenous=10)
         >>>
-        >>> # Generate random concept logits
-        >>> concept_logits = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> # Generate random concept endogenous
+        >>> concept_endogenous = torch.randn(4, 10)  # batch_size=4, n_concepts=10
         >>>
         >>> # Predict task labels from concepts
-        >>> task_logits = predictor(concept_logits)
-        >>> print(task_logits.shape)  # torch.Size([4, 3])
+        >>> task_endogenous = predictor(concept_endogenous)
+        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
         >>>
         >>> # Get task predictions
-        >>> task_probs = torch.sigmoid(task_logits)
+        >>> task_probs = torch.sigmoid(task_endogenous)
         >>> print(task_probs.shape)  # torch.Size([4, 3])
     """
 
     def __init__(self,
                  out_features: int,
-                 in_features_logits: int,
-                 in_features_embedding: int = None,
+                 in_features_endogenous: int,
+                 in_features: int = None,
                  in_features_exogenous: int = None,
                  in_activation: Callable = torch.sigmoid):
         super().__init__(
-            in_features_logits=in_features_logits,
-            in_features_embedding=in_features_embedding,
+            in_features_endogenous=in_features_endogenous,
+            in_features=in_features,
             in_features_exogenous=in_features_exogenous,
             out_features=out_features,
         )

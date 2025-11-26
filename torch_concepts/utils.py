@@ -3,17 +3,50 @@ Utility functions for the torch_concepts package.
 
 This module provides various utility functions for working with concept-based models,
 including concept name validation, output size computation, explanation analysis,
-and numerical stability checks.
+seeding for reproducibility, and numerical stability checks.
 """
 import importlib
+import os
 import warnings
 from collections import Counter
 from copy import deepcopy
 from typing import Dict, Union, List, Mapping
 import torch, math
 import logging
+from pytorch_lightning import seed_everything as pl_seed_everything
 
-from .data.annotations import Annotations
+from .annotations import AxisAnnotation
+
+
+def seed_everything(seed: int, workers: bool = True) -> int:
+    """Set random seeds across all libraries for reproducibility.
+    
+    Enhanced wrapper around PyTorch Lightning's seed_everything that also sets
+    PYTHONHASHSEED environment variable for complete reproducibility, including
+    Python's hash randomization.
+    
+    Sets seeds for:
+    - Python's random module
+    - NumPy's random module  
+    - PyTorch (CPU and CUDA)
+    - PYTHONHASHSEED environment variable
+    - PL_GLOBAL_SEED environment variable (via Lightning)
+    
+    Args:
+        seed: Random seed value to set across all libraries.
+        workers: If True, sets worker seed for DataLoaders.
+        
+    Returns:
+        The seed value that was set.
+        
+    Example:
+        >>> import torch_concepts as tc
+        >>> tc.seed_everything(42)
+        42
+        >>> # All random operations are now reproducible
+    """
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    return pl_seed_everything(seed, workers=workers)
 
 
 def validate_and_generate_concept_names(
@@ -146,11 +179,7 @@ def numerical_stability_check(cov, device, epsilon=1e-6):
             # Attempt Cholesky decomposition; if it fails, the matrix is not positive definite
             torch.linalg.cholesky(cov)
             if num_added > 0.0001:
-                logging.warning(
-                    "Added {} to the diagonal of the covariance matrix.".format(
-                        num_added
-                    )
-                )
+                logging.warning(f"Added {num_added} to the diagonal of the covariance matrix.")
             break
         except RuntimeError:
             # Add epsilon to the diagonal
@@ -195,13 +224,23 @@ def _check_tensors(tensors):
     Raises:
         ValueError: If tensors have incompatible shapes, dtypes, devices, or settings.
     """
+    # First, check that all tensors have at least 2 dimensions
+    for i, t in enumerate(tensors):
+        if t.dim() < 2:
+            raise ValueError(f"Tensor {i} must have at least 2 dims (B, c_i, ...); got {tuple(t.shape)}.")
+
+    # Check that all tensors have the same number of dimensions
+    first_ndim = tensors[0].dim()
+    for i, t in enumerate(tensors):
+        if t.dim() != first_ndim:
+            raise ValueError(f"All tensors must have at least 2 dims and the same total number of dimensions; Tensor 0 has {first_ndim} dims, but Tensor {i} has {t.dim()} dims.")
+
     B = tensors[0].shape[0]
     dtype = tensors[0].dtype
     device = tensors[0].device
     rest_shape = tensors[0].shape[2:]  # dims >=2 must match
+
     for i, t in enumerate(tensors):
-        if t.dim() < 2:
-            raise ValueError(f"Tensor {i} must have at least 2 dims (B, c_i, ...); got {tuple(t.shape)}.")
         if t.shape[0] != B:
             raise ValueError(f"All tensors must share batch dim. Got {t.shape[0]} != {B} at field {i}.")
         # only dim=1 may vary; dims >=2 must match exactly
@@ -218,8 +257,8 @@ def _check_tensors(tensors):
             raise ValueError("All tensors must have the same requires_grad setting.")
 
 
-def add_distribution_to_annotations(annotations: Annotations,
-                                    variable_distributions: Mapping) -> Annotations:
+def add_distribution_to_annotations(annotations: AxisAnnotation,
+                                    variable_distributions: Mapping) -> AxisAnnotation:
     """Add probability distribution classes to concept annotations metadata.
 
     Maps concept types and cardinalities to appropriate distribution classes
@@ -246,9 +285,8 @@ def add_distribution_to_annotations(annotations: Annotations,
         ...     annotations, distributions
         ... )
     """
-    concepts_annotations = deepcopy(annotations[1])
-    metadatas = concepts_annotations.metadata
-    cardinalities = concepts_annotations.cardinalities
+    metadatas = annotations.metadata
+    cardinalities = annotations.cardinalities
     for (concept_name, metadata), cardinality in zip(metadatas.items(), cardinalities):
         if 'distribution' in metadata:
             warnings.warn(
@@ -270,7 +308,7 @@ def add_distribution_to_annotations(annotations: Annotations,
 
         metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
 
-    annotations[1].metadata = metadatas
+    annotations.metadata = metadatas
     return annotations
 
 

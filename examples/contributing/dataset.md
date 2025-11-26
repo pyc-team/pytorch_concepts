@@ -1,6 +1,6 @@
 # Contributing a New Dataset
 
-This guide will help you implement a new dataset in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. The process involves creating two main components:
+This guide will help you implement a new dataset in <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="../../doc/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. The process involves creating two main components:
 
 1. **Dataset Class** (`dataset_name.py`) - handles data loading, downloading, and building
 2. **DataModule Class** (`datamodule_name.py`) - handles data splitting, transformations, and PyTorch Lightning integration
@@ -31,8 +31,8 @@ import torch
 import pandas as pd
 from typing import List
 from torch_concepts import Annotations, AxisAnnotation
-from ..base import ConceptDataset
-from ..io import download_url
+from torch_concepts.data.base import ConceptDataset
+from torch_concepts.data.io import download_url
 
 class YourDataset(ConceptDataset):
     """Dataset class for [Your Dataset Name].
@@ -76,37 +76,35 @@ class YourDataset(ConceptDataset):
 
 ### 1.2 Required Properties
 
-#### `files_to_download_names`
-Defines which files need to be present in the root directory in order to skip download(). Returns a dict mapping file identifiers to filenames. The download() method below should ensure these files are created.
+#### `raw_filenames`
+Defines which raw files need to be present in the root directory in order to skip download(). Returns a list of filenames. The download() method below should ensure these files are created.
 
 ```python
 @property
-def files_to_download_names(self) -> dict[str, str]:
-    """Files that must be present to skip downloading."""
-    # Example: dataset needs a CSV file and an adjacency matrix
-    return {
-        "data": "dataset.csv",
-    }
+def raw_filenames(self) -> List[str]:
+    """List of raw filenames that must be present to skip downloading."""
+    # Example: dataset needs a CSV file
+    return ["dataset.csv"]
     
     # If nothing needs downloading (e.g., generated data):
-    # return {}
+    # return []
 ```
 
-#### `files_to_build_names`
-Defines which files need to be present in the root directory in order to skip build(). Returns a dict mapping file identifiers to filenames. The build() method below should ensure these files are created. 
+#### `processed_filenames`
+Defines which processed files need to be present in the root directory in order to skip build(). Returns a list of filenames. The build() method below should ensure these files are created. 
 
 If the dataset is synthetic and dependent on a seed, include the seed in the filenames to avoid conflicts.
 
 ```python
 @property
-def files_to_build_names(self) -> dict[str, str]:
-    """Files that will be created during build step."""
-    return {
-        "inputs": "raw_data.pt",
-        "concepts": "concepts.h5",
-        "annotations": "annotations.pt",
-        "graph": "graph.h5",
-    }
+def processed_filenames(self) -> List[str]:
+    """List of processed filenames that will be created during build step."""
+    return [
+        "raw_data.pt",
+        "concepts.h5",
+        "annotations.pt",
+        "graph.h5"
+    ]
 ```
 
 ### 1.3 Required Methods
@@ -125,7 +123,7 @@ def download(self):
     import gzip
     import shutil
     gz_path = os.path.join(self.root_dir, "data.gz")
-    output_path = os.path.join(self.root_dir, "data.csv")
+    output_path = self.raw_paths[0]  # Get path to raw file 
     with gzip.open(gz_path, 'rb') as f_in:
         with open(output_path, 'wb') as f_out:
             shutil.copyfileobj(f_in, f_out)
@@ -143,7 +141,7 @@ def build(self):
     
     # Step 2: Load raw data
     # Example: Load from CSV
-    df = pd.read_csv(self.files_to_download_paths["data"])
+    df = pd.read_csv(self.raw_paths[0])  # Get path to raw file 
     
     # Step 3: Extract/generate embeddings (input features)
     embeddings = ...
@@ -155,13 +153,9 @@ def build(self):
     concept_names = list(concept_columns)
     
     # Define metadata for each concept (REQUIRED: must include 'type')
+    # type can be 'discrete' or 'continuous' ('continuous' is not yet supported)
     concept_metadata = {
-        name: {
-            'type': 'discrete',  # or 'continuous' (not yet fully supported)
-            'description': self.label_descriptions.get(name, "")  # optinal description
-                          if self.label_descriptions else ""
-        }
-        for name in concept_names
+        name: {'type': 'discrete'} for name in concept_names
     }
     
     # Define cardinalities (number of possible values)
@@ -172,10 +166,10 @@ def build(self):
     
     # State names can also be provided (this is optional)
     # if not, default is '0', '1', ...
-    states = [[], # state labels for concept 1 
-              [], # state labels for concept 2
-              [], # ...
-              []]
+    states = [[label_1, label_2, label_3], # state labels for concept 1 
+              [label_1, label_2, label_3], # state labels for concept 2
+              [label_1, label_2], # state labels for concept 3
+              [label_1, label_2]] # state labels for concept 4
 
     # Create annotations object
     annotations = Annotations({
@@ -188,25 +182,21 @@ def build(self):
         )
     })
     
-    # Step 6: Create graph (optional)
-    # If you have a causal graph structure
+    # Step 6 (optional): If the dataset has a causal graph structure, create it here
+    # skip this step if no graph is available, graph defaults is `None`
     graph = pd.DataFrame(
-        adjacency_matrix,  # numpy array or similar
+        adjacency_matrix,  # your adj: numpy array or similar
         index=concept_names,
         columns=concept_names
     )
     graph = graph.astype(int)
     
-    # If no graph available:
-    # graph = None
-    
     # Step 7: Save all components
     print(f"Saving dataset to {self.root_dir}")
-    torch.save(embeddings, self.files_to_build_paths["inputs"])
-    concepts.to_hdf(self.files_to_build_paths["concepts"], key="concepts", mode="w")
-    torch.save(annotations, self.files_to_build_paths["annotations"])
-    if graph is not None:
-        graph.to_hdf(self.files_to_build_paths["graph"], key="graph", mode="w")
+    torch.save(embeddings, self.processed_paths[0])
+    concepts.to_hdf(self.processed_paths[1], key="concepts", mode="w")
+    torch.save(annotations, self.processed_paths[2])
+    graph.to_hdf(self.processed_paths[3], key="graph", mode="w")
 ```
 
 #### `load_raw()` and `load()`
@@ -218,16 +208,10 @@ def load_raw(self):
     self.maybe_build()  # Ensures build() is called if needed
     
     print(f"Loading dataset from {self.root_dir}")
-    inputs = torch.load(self.files_to_build_paths["inputs"])
-    concepts = pd.read_hdf(self.files_to_build_paths["concepts"], "concepts")
-    annotations = torch.load(self.files_to_build_paths["annotations"])
-    
-    # Load graph if available
-    if "graph" in self.files_to_build_paths and \
-       os.path.exists(self.files_to_build_paths["graph"]):
-        graph = pd.read_hdf(self.files_to_build_paths["graph"], "graph")
-    else:
-        graph = None
+    inputs = torch.load(self.processed_paths[0])
+    concepts = pd.read_hdf(self.processed_paths[1], "concepts")
+    annotations = torch.load(self.processed_paths[2])
+    graph = pd.read_hdf(self.processed_paths[3], "graph")
     
     return embeddings, concepts, annotations, graph
 
@@ -278,7 +262,7 @@ def __getitem__(self, idx: int) -> dict:
 
 #### Concept Types
 - **`discrete`**: Binary and Categorical variables
-- **`continuous`**: Continuous variables
+- **`continuous`**: Continuous variables (not yet supported)
 
 #### Cardinalities
 - **Binary concepts (2 states)**: Use cardinality = **1** (treated as Bernoulli)
@@ -316,9 +300,9 @@ Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base
 
 ```python
 from env import DATA_ROOT
-from torch_concepts.data import YourDataset
-from ..base.datamodule import ConceptDataModule
-from ...typing import BackboneType
+from torch_concepts.data.datasets import YourDataset
+from torch_concepts.data.base.datamodule import ConceptDataModule
+from torch_concepts.typing import BackboneType
 
 
 class YourDataModule(ConceptDataModule):
@@ -383,10 +367,10 @@ class YourDataModule(ConceptDataModule):
 ```
 
 ### 2.2 Available Default Components
-The following default scalers and splitters will be used if the 'scalers' and 'splitters' parameters are not specified.
+The following default components will be used if the corresponding parameters are not specified.
 
 #### Default Scalers
-- `StandardScaler`: Z-score normalization (default). Located in `torch_concepts/data/scalers/standard.py`.
+- **None**: No scaling is applied by default. You can provide custom scalers via the `scalers` parameter if normalization is needed (e.g., `StandardScaler` for Z-score normalization, located in `torch_concepts/data/scalers/standard.py`).
 
 #### Default Splitters
 - `RandomSplitter`: Random train/val/test split (default). Located in `torch_concepts/data/splitters/random.py`.

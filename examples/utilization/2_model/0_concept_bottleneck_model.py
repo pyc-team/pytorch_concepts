@@ -4,8 +4,8 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, \
-    RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, Propagator
+from torch_concepts.nn import LinearZC, LinearCC, \
+    RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor
 
 
 def main():
@@ -13,13 +13,19 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = ['c1', 'c2']
+    task_names = ['xor']
+
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
-    concept_names = ('c1', 'c2')
-    task_names = ('xor',)
-    cardinalities = (1, 1, 2)
+    cardinalities = [1, 1, 2]
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
@@ -32,8 +38,8 @@ def main():
     concept_model = BipartiteModel(task_names,
                                    latent_dims,
                                    annotations,
-                                   Propagator(ProbEncoderFromEmb),
-                                   Propagator(ProbPredictor))
+                                   LazyConstructor(LinearZC),
+                                   LazyConstructor(LinearCC))
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.probabilistic_model)
@@ -49,7 +55,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -72,11 +78,11 @@ def main():
     emb = encoder(x_train)
 
     int_policy_c = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.factors, constants=-10)
+    int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         print(cy_pred[:5])
 
     return

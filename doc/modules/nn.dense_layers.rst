@@ -3,7 +3,7 @@ Dense Layers
 
 This module provides specialized dense layer implementations for concept-based models.
 
-.. currentmodule:: torch_concepts.nn.modules.low.dense_layers
+.. currentmodule:: torch_concepts.nn
 
 Summary
 -------

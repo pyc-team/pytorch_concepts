@@ -1,5 +1,12 @@
-# Configure warnings before importing any third-party libraries
-import conceptarium.warnings_config  # noqa: F401 - suppress WandB/Pydantic warnings
+#!/usr/bin/env python
+"""Run concept-based model experiments using Hydra configuration."""
+
+import warnings
+# Suppress Pydantic warnings from third-party libraries
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+
+import logging
+logger = logging.getLogger(__name__)
 
 import hydra
 from omegaconf import DictConfig
@@ -25,33 +32,30 @@ def main(cfg: DictConfig) -> None:
     # 2. Setup the data (preprocess with backbone, split, fit scalers)
     # 3. Update config based on data
     # ----------------------------------
+    logger.info("----------------------INIT DATA--------------------------------------")
     datamodule = instantiate(cfg.dataset, _convert_="all")
-    datamodule.setup('fit')
+    datamodule.setup('fit', verbose=True)
     cfg = update_config_from_data(cfg, datamodule)
 
     # ----------------------------------
     # Model
-    # 
-    # 1. Instantiate the model
+    # 1. Instantiate the loss function
+    # 2. Instantiate the model
     # ----------------------------------
-    model = instantiate(cfg.model, _convert_="all", _partial_=True)(annotations=datamodule.annotations,
-                                                                    graph=datamodule.graph)
-
-    # ----------------------------------
-    # Engine
-    #
-    # 1. Instantiate the engine, passing the model as argument
-    # ----------------------------------
-    engine = instantiate(cfg.engine, _convert_="all", _partial_=True)(model=model)
-
-    print("-------------------------------------------------------")
+    logger.info("----------------------INIT MODEL-------------------------------------")
+    loss = instantiate(cfg.loss, annotations=datamodule.annotations, _convert_="all")
+    logger.info(loss)
+    metrics = instantiate(cfg.metrics, annotations=datamodule.annotations, _convert_="all")
+    logger.info(metrics)
+    model = instantiate(cfg.model, annotations=datamodule.annotations, loss=loss, metrics=metrics, _convert_="all")
+    
+    logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:
         trainer = Trainer(cfg)
         trainer.logger.log_hyperparams(parse_hyperparams(cfg))
-        # maybe_set_summary_metrics(trainer.logger, engine)
         # ----------------------------------
         # Train
-        trainer.fit(engine, datamodule=datamodule)
+        trainer.fit(model, datamodule=datamodule)
         # ----------------------------------
         # TODO: implement finetuning
         # if cfg.get("finetune") is not None:

@@ -9,38 +9,41 @@ import pickle
 import tarfile
 import urllib.request
 import zipfile
+import logging
 from typing import Any, Optional
 
 from tqdm import tqdm
 
+logger = logging.getLogger(__name__)
 
-def extract_zip(path: str, folder: str, log: bool = True):
+
+def extract_zip(path: str, folder: str):
     """
     Extract a zip archive to a specific folder.
 
     Args:
         path: The path to the zip archive.
         folder: The destination folder.
-        log: If False, will not log anything (default: True).
     """
-    print(f"Extracting {path}")
+    logger.info(f"Extracting {path}")
     with zipfile.ZipFile(path, 'r') as f:
         f.extractall(folder)
 
 
-def extract_tar(path: str, folder: str, log: bool = True):
+def extract_tar(path: str, folder: str, verbose: bool = True):
     """
     Extract a tar (or tar.gz) archive to a specific folder.
 
     Args:
         path: The path to the tar(gz) archive.
         folder: The destination folder.
-        log: If False, will not log anything (default: True).
+        verbose: If False, will not show progress bars (default: True).
     """
-    print(f"Extracting {path}")
+    logger.info(f"Extracting {path}")
     with tarfile.open(path, 'r') as tar:
         for member in tqdm(iterable=tar.getmembers(),
-                           total=len(tar.getmembers())):
+                           total=len(tar.getmembers()),
+                           disable=not verbose):
             tar.extract(member=member, path=folder)
 
 
@@ -103,7 +106,7 @@ class DownloadProgressBar(tqdm):
 def download_url(url: str,
                  folder: str,
                  filename: Optional[str] = None,
-                 log: bool = True):
+                 verbose: bool = True):
     r"""Downloads the content of an URL to a specific folder.
 
     Args:
@@ -111,7 +114,7 @@ def download_url(url: str,
         folder (string): The folder.
         filename (string, optional): The filename. If :obj:`None`, inferred from
             url.
-        log (bool, optional): If :obj:`False`, will not log anything.
+        verbose (bool, optional): If :obj:`False`, will not show progress bars.
             (default: :obj:`True`)
     """
     if filename is None:
@@ -119,10 +122,10 @@ def download_url(url: str,
     path = os.path.join(folder, filename)
 
     if os.path.exists(path):
-        print(f'Using existing file {filename}')
+        logger.info(f'Using existing file {filename}')
         return path
 
-    print(f'Downloading {url}')
+    logger.info(f'Downloading {url}')
 
     os.makedirs(folder, exist_ok=True)
 
@@ -130,6 +133,7 @@ def download_url(url: str,
     with DownloadProgressBar(unit='B',
                              unit_scale=True,
                              miniters=1,
-                             desc=url.split('/')[-1]) as t:
+                             desc=url.split('/')[-1],
+                             disable=not verbose) as t:
         urllib.request.urlretrieve(url, filename=path, reporthook=t.update_to)
     return path

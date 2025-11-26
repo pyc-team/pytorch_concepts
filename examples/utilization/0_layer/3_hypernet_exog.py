@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ExogEncoder, ProbEncoderFromEmb, HyperLinearPredictor
+from torch_concepts.nn import LinearZU, LinearZC, HyperLinearCUC
 
 
 def main():
@@ -11,10 +11,14 @@ def main():
     n_epochs = 2000
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
-    y_train = torch.cat([y_train, 1 - y_train, y_train], dim=1)
-    task_names = task_names + task_names + task_names
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
     n_features = x_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names)})
@@ -27,12 +31,12 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
+    encoder_layer = LinearZC(in_features=latent_dims,
                                        out_features=c_annotations.shape[1])
-    exog_encoder = ExogEncoder(in_features_embedding=latent_dims,
+    exog_encoder = LinearZU(in_features=latent_dims,
                                out_features=y_annotations.shape[1],
-                               embedding_size=11)
-    y_predictor = HyperLinearPredictor(in_features_logits=c_annotations.shape[1],
+                               exogenous_size=11)
+    y_predictor = HyperLinearCUC(in_features_endogenous=c_annotations.shape[1],
                                        in_features_exogenous=11,
                                        embedding_size=latent_dims)
     model = torch.nn.Sequential(encoder, exog_encoder, encoder_layer, y_predictor)
@@ -45,9 +49,9 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        emb_rule = exog_encoder(embedding=emb)
-        y_pred = y_predictor(logits=c_pred, exogenous=emb_rule)
+        c_pred = encoder_layer(input=emb)
+        emb_rule = exog_encoder(input=emb)
+        y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

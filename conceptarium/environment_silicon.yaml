@@ -1,0 +1,32 @@
+name: conceptarium
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12.*
+
+  # PyTorch for macOS Silicon (uses MPS backend for GPU acceleration)
+  - pytorch::pytorch
+  - pytorch::torchvision>=0.17.1
+  - torchmetrics>=0.7
+
+  # Image processing libraries required by torchvision
+  - conda-forge::jpeg
+  
+  - lightning
+  - hydra-core
+  - wandb
+  - numpy
+  - pandas
+  - pytables
+  - tqdm
+  - scikit-learn
+  - scipy
+  - openpyxl
+
+  - pip
+  - pip:
+    - pytorch-concepts
+    - bnlearn
+    - hydra-list-sweeper

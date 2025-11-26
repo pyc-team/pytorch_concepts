@@ -4,9 +4,9 @@ from torch.distributions import RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, Propagator, \
-    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearPredictor, GraphModel, AncestralSamplingInference
+from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, LazyConstructor, \
+    LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy, \
+    HyperLinearCUC, GraphModel, AncestralSamplingInference
 
 
 def main():
@@ -14,14 +14,20 @@ def main():
     n_epochs = 200
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = ['c1', 'c2']
+    task_names = ['xor']
+    task_names2 = ['not_xor']
+
     y_train2 =  1 - y_train
 
-    concept_names = ('c1', 'c2')
-    task_names = ('xor',)
-    task_names2 = ('not_xor',)
-    cardinalities = (1, 1, 1, 1)
+    cardinalities = [1, 1, 1, 1]
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
@@ -40,10 +46,10 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=12),
-                                   internal_exogenous=Propagator(ExogEncoder, embedding_size=13),
-                                   encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(HyperLinearPredictor, embedding_size=11))
+                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=12),
+                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=13),
+                                   encoder=LazyConstructor(LinearUC),
+                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=11))
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, temperature=1.)
@@ -59,7 +65,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
         y2_pred = cy_pred[:, c_train.shape[1]+1:]
@@ -81,11 +87,11 @@ def main():
 
     print("=== Interventions ===")
     int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.factors, constants=0)
+    int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=0)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
         y2_pred = cy_pred[:, c_train.shape[1]+1:]
@@ -97,11 +103,11 @@ def main():
         print()
 
         int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.factors, ground_truth=c_train[:, 0:1])
+        int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 0:1])
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=["c1"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:c_train.shape[1]+1]
             y2_pred = cy_pred[:, c_train.shape[1]+1:]

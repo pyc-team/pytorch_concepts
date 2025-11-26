@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, GroundTruthIntervention, \
+from torch_concepts.nn import LinearZC, LinearCC, GroundTruthIntervention, \
     UncertaintyInterventionPolicy, intervention, DoIntervention, DistributionIntervention, UniformPolicy, RandomPolicy
 
 
@@ -12,11 +12,18 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
+
     c_train = torch.concat([c_train, c_train, c_train], dim=1)
     n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names+['C3', 'C4', 'C5', 'C6'])})
     y_annotations = Annotations({1: AxisAnnotation(task_names)})
@@ -25,8 +32,8 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1], out_features=y_annotations.shape[1])
+    encoder_layer = LinearZC(in_features=latent_dims, out_features=c_annotations.shape[1])
+    y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1], out_features=y_annotations.shape[1])
 
     # all models in a ModuleDict for easier intervention
     model = torch.nn.ModuleDict({
@@ -43,8 +50,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = encoder_layer(input=emb)
+        y_pred = y_predictor(endogenous=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -67,8 +74,8 @@ def main():
                       strategies=int_strategy_c,
                       target_concepts=[0, 1]) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(input=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5])
         print("\nGround truth (first 5):")
@@ -84,8 +91,8 @@ def main():
             target_concepts=[1],
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(input=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5, :2])
 
@@ -100,8 +107,8 @@ def main():
             quantiles=0.5
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
-        y_pred = model["y_predictor"](logits=c_pred)
+        c_pred = new_encoder_layer(input=emb)
+        y_pred = model["y_predictor"](endogenous=c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5, :2])
 
@@ -115,7 +122,7 @@ def main():
             quantiles=.5
     ) as new_encoder_layer:
         emb = model["encoder"](x_train)
-        c_pred = new_encoder_layer(embedding=emb)
+        c_pred = new_encoder_layer(input=emb)
         y_pred = model["y_predictor"](c_pred)
         print("\nConcept predictions (first 5):")
         print(c_pred[:5])

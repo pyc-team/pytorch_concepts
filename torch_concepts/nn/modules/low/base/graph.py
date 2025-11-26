@@ -82,5 +82,4 @@ class BaseGraphLearner(nn.Module, ABC):
         Raises:
             NotImplementedError: This is an abstract method.
         """
-        # Return the model's graph representation
-        return self._model_graph
+        raise NotImplementedError

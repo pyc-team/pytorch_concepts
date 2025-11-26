@@ -13,6 +13,7 @@ The data can be downloaded from: https://cvml.ista.ac.at/AwA2/
 """
 import numpy as np
 import os
+import logging
 import sklearn
 import torch
 import torchvision.transforms as transforms
@@ -20,6 +21,8 @@ import torchvision.transforms as transforms
 from functools import reduce
 from PIL import Image
 from torch.utils.data import Dataset, Subset, DataLoader
+
+logger = logging.getLogger(__name__)
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -274,7 +277,7 @@ class AwA2Dataset(Dataset):
                 f'{split_attempt}_split.npz',
             )
             if not os.path.exists(split_file):
-                print(
+                logger.info(
                     f"Split files for AWA2 could not be found. Generating new "
                     f"train, validation, and test splits with seed {seed}."
                 )

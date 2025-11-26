@@ -1,6 +1,6 @@
 # Contributing a New Model
 
-This guide will help you implement a new model in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/docs/source/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
+This guide will help you implement a new model in <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="../../doc/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Before implementing your model, ensure you have:
 The library provides three main API levels for model implementation:
 
 1. **High-Level API**: Use pre-built models like `BipartiteModel` for standard architectures
-2. **Mid-Level API**: Build custom models using `Variables`, `Factors`, and `ProbabilisticGraphicalModel`
+2. **Mid-Level API**: Build custom models using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`
 3. **Low-Level API**: Assemble custom architectures from basic interpretable layers
 
 **Recommendation**: Start with the high-level API if possible, and only use lower-level APIs when you need custom behavior.
@@ -51,9 +51,9 @@ from torch import nn
 from torch_concepts import Annotations
 from torch_concepts.nn import (
     BipartiteModel, 
-    ProbEncoderFromEmb, 
-    ProbPredictor, 
-    Propagator,
+    LinearZC, 
+    LinearCC, 
+    LazyConstructor,
     BaseInference
 )
 
@@ -104,8 +104,8 @@ class YourModel(BaseModel):
             task_names=task_names,
             input_size=self.encoder_out_features,
             annotations=annotations,
-            encoder=Propagator(ProbEncoderFromEmb),
-            predictor=Propagator(ProbPredictor)
+            encoder=LazyConstructor(LinearZC),
+            predictor=LazyConstructor(LinearCC)
         )
         self.pgm = model.pgm
         
@@ -127,7 +127,7 @@ class YourModel(BaseModel):
             backbone_kwargs: Optional kwargs for backbone
             
         Returns:
-            Output logits for queried concepts (batch_size, sum(concept_cardinalities))
+            Output endogenous for queried concepts (batch_size, sum(concept_cardinalities))
         """
         # (batch, input_size) -> (batch, backbone_out_features)
         features = self.maybe_apply_backbone(x, backbone_kwargs)
@@ -156,40 +156,40 @@ class YourModel(BaseModel):
 
 ### 1.3 Mid-Level API Implementation
 
-For custom architectures using `Variables`, `Factors`, and `ProbabilisticGraphicalModel`:
+For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
-from torch_concepts import Variable
+from torch_concepts import Variable, InputVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    Factor, 
+    ParametricCPD,
     ProbabilisticGraphicalModel,
-    ProbEncoderFromEmb,
-    ProbPredictor,
+    LinearZC,
+    LinearCC,
     BaseInference
 )
 
 
-class YourModel_Factors(BaseModel):
-    """Mid-level implementation using Variables and Factors.
+class YourModel_ParametricCPDs(BaseModel):
+    """Mid-level implementation using Variables and ParametricCPDs.
     
     Use this approach when you need:
     - Custom concept dependencies
     - Non-standard graph structures
     - Fine-grained control over layer instantiation
     """
-    
+
     def __init__(
-        self,
-        task_names: Union[List[str], str, List[int]],
-        inference: BaseInference,
-        input_size: int,
-        annotations: Annotations,
-        variable_distributions: Mapping,
-        embs_precomputed: bool = False,
-        backbone: Optional[callable] = None,
-        encoder_kwargs: Dict = None,
-        **kwargs
+            self,
+            task_names: Union[List[str], str, List[int]],
+            inference: BaseInference,
+            input_size: int,
+            annotations: Annotations,
+            variable_distributions: Mapping,
+            embs_precomputed: bool = False,
+            backbone: Optional[callable] = None,
+            encoder_kwargs: Dict = None,
+            **kwargs
     ) -> None:
         super().__init__(
             annotations=annotations,
@@ -199,84 +199,84 @@ class YourModel_Factors(BaseModel):
             backbone=backbone,
             encoder_kwargs=encoder_kwargs,
         )
-        
+
         # Step 1: Define embedding variable (latent representation from encoder)
-        embedding = Variable(
-            "embedding", 
-            parents=[], 
-            distribution=Delta, 
+        embedding = InputVariable(
+            "embedding",
+            parents=[],
+            distribution=Delta,
             size=self.encoder_out_features
         )
-        embedding_factor = Factor("embedding", module_class=nn.Identity())
-        
+        embedding_cpd = ParametricCPD("embedding", parametrization=nn.Identity())
+
         # Step 2: Define concept variables
-        concept_names = [c for c in annotations.get_axis_labels(1) 
-                        if c not in task_names]
+        concept_names = [c for c in annotations.get_axis_labels(1)
+                         if c not in task_names]
         concepts = Variable(
             concept_names,
             parents=['embedding'],  # All concepts depend on embedding
-            distribution=[annotations[1].metadata[c]['distribution'] 
-                         for c in concept_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)] 
-                 for c in concept_names]
+            distribution=[annotations[1].metadata[c]['distribution']
+                          for c in concept_names],
+            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+                  for c in concept_names]
         )
-        
+
         # Step 3: Define task variables
         tasks = Variable(
             task_names,
             parents=concept_names,  # Tasks depend on concepts
-            distribution=[annotations[1].metadata[c]['distribution'] 
-                         for c in task_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)] 
-                 for c in task_names]
+            distribution=[annotations[1].metadata[c]['distribution']
+                          for c in task_names],
+            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+                  for c in task_names]
         )
-        
-        # Step 4: Define concept encoder factors (layers)
-        concept_encoders = Factor(
+
+        # Step 4: Define concept encoder CPDs (layers)
+        concept_encoders = ParametricCPD(
             concept_names,
-            module_class=[
-                ProbEncoderFromEmb(
-                    in_features_embedding=embedding.size,
+            parametrization=[
+                LinearZC(
+                    in_features=embedding.size,
                     out_features=c.size
                 ) for c in concepts
             ]
         )
-        
-        # Step 5: Define task predictor factors
-        task_predictors = Factor(
+
+        # Step 5: Define task predictor CPDs
+        task_predictors = ParametricCPD(
             task_names,
-            module_class=[
-                ProbPredictor(
-                    in_features_logits=sum([c.size for c in concepts]),
+            parametrization=[
+                LinearCC(
+                    in_features_endogenous=sum([c.size for c in concepts]),
                     out_features=t.size
                 ) for t in tasks
             ]
         )
-        
+
         # Step 6: Build Probabilistic Graphical Model
         self.pgm = ProbabilisticGraphicalModel(
             variables=[embedding, *concepts, *tasks],
-            factors=[embedding_factor, *concept_encoders, *task_predictors]
+            parametric_cpds=[embedding_factor, *concept_encoders, *task_predictors]
         )
-        
+
         # Step 7: Initialize inference
         self.inference = inference(self.pgm)
-    
+
     def forward(
-        self,
-        x: torch.Tensor,
-        query: List[str] = None,
-        backbone_kwargs: Optional[Mapping[str, Any]] = None,
-        **kwargs
+            self,
+            x: torch.Tensor,
+            query: List[str] = None,
+            backbone_kwargs: Optional[Mapping[str, Any]] = None,
+            **kwargs
     ) -> torch.Tensor:
         features = self.maybe_apply_backbone(x, backbone_kwargs)
         features = self.encoder(features)
         out = self.inference.query(query, evidence={'embedding': features})
         return out
-    
+
     def filter_output_for_loss(self, forward_out):
         return forward_out
-    
+
     def filter_output_for_metric(self, forward_out):
         return forward_out
 ```
@@ -306,26 +306,26 @@ concepts = Variable(['age', 'gender', 'bmi'],
                    size=[1, 1, 1])
 ```
 
-#### Factors
+#### ParametricCPDs
 Represent computational modules (neural network layers):
-- `name`: Factor identifier(s) matching variable names
+- `name`: ParametricCPD identifier(s) matching variable names
 - `module_class`: PyTorch module(s) that compute the factor
 
 ```python
 # Single factor
-encoder = Factor("smoking", module_class=ProbEncoderFromEmb(...))
+encoder = ParametricCPD("smoking", parametrization=LinearZC(...))
 
-# Multiple factors
-encoders = Factor(['age', 'gender'], 
-                 module_class=[ProbEncoderFromEmb(...), ProbEncoderFromEmb(...)])
+# Multiple CPDs
+encoders = ParametricCPD(['age', 'gender'], 
+                 parametrization=[LinearZC(...), LinearZC(...)])
 ```
 
-#### Propagator
+#### LazyConstructor
 Utility for automatically instantiating modules for multiple concepts:
 
 ```python
-# Creates one ProbEncoderFromEmb per concept
-encoder = Propagator(ProbEncoderFromEmb)
+# Creates one LinearZC per concept
+encoder = LazyConstructor(LinearZC)
 ```
 
 #### Inference
@@ -339,25 +339,25 @@ Controls how information flows through the model:
 #### Encoders (Embedding/Exogenous → Logits)
 ```python
 from torch_concepts.nn import (
-    ProbEncoderFromEmb,      # Linear encoder from embedding
-    ProbEncoderFromExog,     # Linear encoder from exogenous
-    ExogEncoder,             # Creates exogenous representations
+    LinearZC,      # Linear encoder from embedding
+    LinearUC,     # Linear encoder from exogenous
+    LinearZU,             # Creates exogenous representations
 )
 ```
 
 #### Predictors (Logits → Logits)
 ```python
 from torch_concepts.nn import (
-    ProbPredictor,           # Linear predictor
-    HyperLinearPredictor,    # Hypernetwork-based predictor
-    MixProbExogPredictor,    # Mix of logits and exogenous
+    LinearCC,           # Linear predictor
+    HyperLinearCUC,    # Hypernetwork-based predictor
+    MixCUC,    # Mix of endogenous and exogenous
 )
 ```
 
 #### Special Layers
 ```python
 from torch_concepts.nn import (
-    MemorySelector,          # Memory-augmented selection
+    SelectorZU,          # Memory-augmented selection
     WANDAGraphLearner,       # Learn concept graph structure
 )
 ```
@@ -372,11 +372,11 @@ def filter_output_for_loss(self, forward_out):
     
     Example: Split concepts and tasks for weighted loss
     """
-    concept_logits = forward_out[:, :self.n_concepts]
-    task_logits = forward_out[:, self.n_concepts:]
+    concept_endogenous = forward_out[:, :self.n_concepts]
+    task_endogenous = forward_out[:, self.n_concepts:]
     return {
-        'concept_input': concept_logits,
-        'task_input': task_logits
+        'concept_input': concept_endogenous,
+        'task_input': task_endogenous
     }
 
 def filter_output_for_metric(self, forward_out):

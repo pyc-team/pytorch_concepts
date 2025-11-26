@@ -6,8 +6,8 @@ import torch
 class CEBaBDataset:
     def __init__(self, 
                  pre_trained_transformer='bert-base-uncased',
-                 batch_size=32,
-                 ):
+                 batch_size=32
+    ):
         
         ds = load_dataset("CEBaB/CEBaB")
         self.batch_size = batch_size

@@ -4,7 +4,7 @@ from torch.nn import ModuleDict
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, RandomPolicy, DoIntervention, intervention
+from torch_concepts.nn import LinearZC, LinearCC, RandomPolicy, DoIntervention, intervention
 
 
 def main():
@@ -12,8 +12,14 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+    concept_names = [dataset.concept_names[i] for i in concept_idx]
+    task_names = [dataset.concept_names[i] for i in task_idx]
     n_features = x_train.shape[1]
 
     c_annotations = Annotations({1: AxisAnnotation(concept_names)})
@@ -23,9 +29,9 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = ProbEncoderFromEmb(in_features_embedding=latent_dims,
+    encoder_layer = LinearZC(in_features=latent_dims,
                                        out_features=c_annotations.shape[1])
-    y_predictor = ProbPredictor(in_features_logits=c_annotations.shape[1],
+    y_predictor = LinearCC(in_features_endogenous=c_annotations.shape[1],
                                 out_features=y_annotations.shape[1])
     model = ModuleDict(
         {"encoder": encoder,
@@ -41,8 +47,8 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        c_pred = encoder_layer(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = encoder_layer(input=emb)
+        y_pred = y_predictor(endogenous=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -64,8 +70,8 @@ def main():
                       target_concepts=[1],
                       quantiles=1) as new_encoder:
         emb = encoder(x_train)
-        c_pred = new_encoder(embedding=emb)
-        y_pred = y_predictor(logits=c_pred)
+        c_pred = new_encoder(input=emb)
+        y_pred = y_predictor(endogenous=c_pred)
         cy_pred = torch.cat([c_pred, y_pred], dim=1)
         print(cy_pred[:5])
 

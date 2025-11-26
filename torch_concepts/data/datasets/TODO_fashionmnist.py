@@ -55,19 +55,21 @@ class FashionMNISTDataset(ConceptDataset):
         )
         
     @property
-    def files_to_download_names(self) -> List[str]:
-        """List of files that need to be found in the raw directory for the dataset to be
-        considered present."""
-        return {"data": "fashionmnist_data.pt",
-                "targets": "fashionmnist_targets.pt"}
+    def raw_filenames(self) -> List[str]:
+        """List of raw filenames that need to be present in the raw directory
+        for the dataset to be considered present."""
+        return ["fashionmnist_data.pt", "fashionmnist_targets.pt"]
 
     @property
-    def files_to_build_names(self) -> dict[str, str]:
-        return {"embeddings": f"embs_seed_{self.seed}.pt",
-                "concepts": f"concepts_seed_{self.seed}.h5",
-                "graph": "graph.h5",
-                "cardinality": "cardinality.json",
-                "coloring_mode": f"coloring_mode_seed_{self.seed}.json"}
+    def processed_filenames(self) -> List[str]:
+        """List of processed filenames that will be created during build step."""
+        return [
+            f"embs_seed_{self.seed}.pt",
+            f"concepts_seed_{self.seed}.h5",
+            "graph.h5",
+            "cardinality.json",
+            f"coloring_mode_seed_{self.seed}.json"
+        ]
 
     def download(self):
         train_data = FashionMNIST(root=self.root, train=True, download=True, transform=self.transform)
@@ -76,15 +78,15 @@ class FashionMNISTDataset(ConceptDataset):
         data = torch.cat([train_data.data, test_data.data], dim=0)
         targets = torch.cat([train_data.targets, test_data.targets], dim=0)
 
-        torch.save(data, os.path.join(self.root_dir, "fashionmnist_data.pt"))
-        torch.save(targets, os.path.join(self.root_dir, "fashionmnist_targets.pt"))
+        torch.save(data, self.raw_paths[0])
+        torch.save(targets, self.raw_paths[1])
 
     def build(self):
         self.maybe_download()
 
         # load raw data
-        data = torch.load(os.path.join(self.root_dir, "fashionmnist_data.pt"))
-        targets = torch.load(os.path.join(self.root_dir, "fashionmnist_targets.pt"))
+        data = torch.load(self.raw_paths[0])
+        targets = torch.load(self.raw_paths[1])
 
         # color the images based on the coloring scheme
         if self.coloring is None:
@@ -108,7 +110,7 @@ class FashionMNISTDataset(ConceptDataset):
                                                               test_kwargs=[self.coloring.get('test_kwargs', {})])
 
         # save coloring mode
-        with open(self.files_to_build_paths["coloring_mode"], "w") as f:
+        with open(self.processed_paths[4], "w") as f:
             json.dump(coloring_mode, f)
 
         # construct dataframe with concepts
@@ -129,22 +131,22 @@ class FashionMNISTDataset(ConceptDataset):
 
         # save embeddings
         print(f"Saving dataset from {self.root_dir}")
-        torch.save(embeddings, self.files_to_build_paths["embeddings"])
+        torch.save(embeddings, self.processed_paths[0])
         # save concepts
-        concepts.to_hdf(self.files_to_build_paths["concepts"], key="concepts", mode="w")
+        concepts.to_hdf(self.processed_paths[1], key="concepts", mode="w")
         # save graph
-        graph.to_hdf(self.files_to_build_paths["graph"], key="graph", mode="w")
+        graph.to_hdf(self.processed_paths[2], key="graph", mode="w")
         # save cardinality
-        with open(self.files_to_build_paths["cardinality"], "w") as f:
+        with open(self.processed_paths[3], "w") as f:
             json.dump(concept_cardinality, f)
 
     def load_raw(self):
         self.maybe_build()
         print(f"Loading dataset from {self.root_dir}")
-        embeddings = torch.load(self.files_to_build_paths["embeddings"])
-        concepts = pd.read_hdf(self.files_to_build_paths["concepts"], "concepts")
-        graph = pd.read_hdf(self.files_to_build_paths["graph"], "graph")
-        with open(self.files_to_build_paths["cardinality"], "r") as f:
+        embeddings = torch.load(self.processed_paths[0])
+        concepts = pd.read_hdf(self.processed_paths[1], "concepts")
+        graph = pd.read_hdf(self.processed_paths[2], "graph")
+        with open(self.processed_paths[3], "r") as f:
             concept_cardinality = json.load(f)
         return embeddings, concepts, graph, concept_cardinality
 

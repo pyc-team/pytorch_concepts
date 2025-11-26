@@ -5,14 +5,16 @@ configuration for concept-based learning tasks.
 """
 
 import os
+import logging
 from typing import Literal, Mapping, Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
 
+logger = logging.getLogger(__name__)
+
 from ..backbone import get_backbone_embs
-from ..scalers.standard import StandardScaler
 from ..splitters.random import RandomSplitter
 from ...typing import BackboneType
 
@@ -23,7 +25,7 @@ class ConceptDataModule(LightningDataModule):
     """PyTorch Lightning DataModule for concept-based datasets.
     
     Handles the complete data pipeline:
-    1. Data splitting (train/val/test + optional fine-tuning splits)
+    1. Data splitting (train/val/test)
     2. Optional backbone embedding precomputation and caching
     3. Data scaling/normalization
     4. DataLoader creation with appropriate configurations
@@ -32,8 +34,6 @@ class ConceptDataModule(LightningDataModule):
         dataset (ConceptDataset): Complete dataset to be split.
         val_size (float, optional): Validation set fraction. Defaults to 0.1.
         test_size (float, optional): Test set fraction. Defaults to 0.2.
-        ftune_size (float, optional): Fine-tuning set fraction. Defaults to 0.0.
-        ftune_val_size (float, optional): Fine-tuning validation fraction. Defaults to 0.0.
         batch_size (int, optional): Mini-batch size. Defaults to 64.
         backbone (BackboneType, optional): Feature extraction model. If provided
             with precompute_embs=True, embeddings are computed and cached. Defaults to None.
@@ -43,7 +43,7 @@ class ConceptDataModule(LightningDataModule):
             Defaults to False.
         scalers (Mapping, optional): Dict of custom scalers for data normalization. 
             Keys must match the target keys in the batch (e.g., 'input', 'concepts'). 
-            If None, uses StandardScaler. Defaults to None.
+            If None, no scaling is applied. Defaults to None.
         splitter (object, optional): Custom splitter for train/val/test splits.
             If None, uses RandomSplitter. Defaults to None.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
@@ -70,20 +70,20 @@ class ConceptDataModule(LightningDataModule):
         >>> train_loader = datamodule.train_dataloader()
     """
 
-    def __init__(self,
-                 dataset: ConceptDataset,
-                 val_size: float = 0.1,
-                 test_size: float = 0.2,
-                 ftune_size: float = 0.0,
-                 ftune_val_size: float = 0.0,
-                 batch_size: int = 64,
-                 backbone: BackboneType = None,     # optional backbone
-                 precompute_embs: bool = False,
-                 force_recompute: bool = False,      # whether to recompute embeddings even if cached
-                 scalers: Optional[Mapping] = None, # optional custom scalers
-                 splitter: Optional[object] = None, # optional custom splitter
-                 workers: int = 0,
-                 pin_memory: bool = False):
+    def __init__(
+        self,
+        dataset: ConceptDataset,
+        val_size: float = 0.1,
+        test_size: float = 0.2,
+        batch_size: int = 64,
+        backbone: BackboneType = None,     # optional backbone
+        precompute_embs: bool = False,
+        force_recompute: bool = False, # whether to recompute embeddings even if cached
+        scalers: Optional[Mapping] = None, # optional custom scalers
+        splitter: Optional[object] = None, # optional custom splitter
+        workers: int = 0,
+        pin_memory: bool = False
+    ):
         super(ConceptDataModule, self).__init__()
         self.dataset = dataset
 
@@ -101,10 +101,7 @@ class ConceptDataModule(LightningDataModule):
         if scalers is not None:
             self.scalers = scalers
         else:
-            self.scalers = {
-                'input': StandardScaler(axis=0),
-                'concepts': StandardScaler(axis=0)
-            }
+            self.scalers = {}
             
         # set splitter
         self.trainset = self.valset = self.testset = None
@@ -113,9 +110,7 @@ class ConceptDataModule(LightningDataModule):
         else:
             self.splitter = RandomSplitter(
                 val_size=val_size,
-                test_size=test_size,
-                ftune_size=ftune_size,
-                ftune_val_size=ftune_val_size
+                test_size=test_size
             )
 
     def __len__(self) -> int:
@@ -129,12 +124,10 @@ class ConceptDataModule(LightningDataModule):
             raise AttributeError(item)
 
     def __repr__(self):
-        return "{}(train_len={}, val_len={}, test_len={}, " \
-               "scalers=[{}], batch_size={}, n_features={}, n_concepts={})" \
-            .format(self.__class__.__name__,
-                   self.train_len, self.val_len, self.test_len,
-                   ', '.join(self.scalers.keys()), self.batch_size,
-                   self.n_features, self.n_concepts)
+        scalers_str = ', '.join(self.scalers.keys())
+        return (f"{self.__class__.__name__}(train_len={self.train_len}, val_len={self.val_len}, "
+                f"test_len={self.test_len}, scalers=[{scalers_str}], batch_size={self.batch_size}, "
+                f"n_features={self.n_features}, n_concepts={self.n_concepts})")
 
     @property
     def trainset(self):
@@ -147,14 +140,6 @@ class ConceptDataModule(LightningDataModule):
     @property
     def testset(self):
         return self._testset
-
-    @property
-    def ftuneset(self):
-        return self._ftuneset
-    
-    @property
-    def ftune_valset(self):
-        return self._ftune_valset
     
     @trainset.setter
     def trainset(self, value):
@@ -168,14 +153,6 @@ class ConceptDataModule(LightningDataModule):
     def testset(self, value):
         self._add_set('test', value)
 
-    @ftuneset.setter
-    def ftuneset(self, value):
-        self._add_set('ftune', value)
-    
-    @ftune_valset.setter
-    def ftune_valset(self, value):
-        self._add_set('ftune_val', value)
-
     @property
     def train_len(self):
         return len(self.trainset) if self.trainset is not None else None
@@ -187,14 +164,6 @@ class ConceptDataModule(LightningDataModule):
     @property
     def test_len(self):
         return len(self.testset) if self.testset is not None else None
-
-    @property
-    def ftune_len(self):
-        return len(self.ftuneset) if self.ftuneset is not None else None
-    
-    @property
-    def ftune_val_len(self):
-        return len(self.ftune_valset) if self.ftune_valset is not None else None
 
     @property
     def n_samples(self) -> int:
@@ -210,10 +179,10 @@ class ConceptDataModule(LightningDataModule):
         """
         Add a dataset or a sequence of indices as a specific split.
         Args:
-            split_type: One of 'train', 'val', 'test', 'ftune', 'ftune_val'. 
+            split_type: One of 'train', 'val', 'test'. 
             _set: A Dataset or a sequence of indices.
         """
-        assert split_type in ['train', 'val', 'test', 'ftune', 'ftune_val']
+        assert split_type in ['train', 'val', 'test']
         split_type = '_' + split_type
         name = split_type + 'set'
         
@@ -234,8 +203,9 @@ class ConceptDataModule(LightningDataModule):
                 _set = None  # Empty split
             setattr(self, name, _set)
 
-    def maybe_use_backbone_embs(self, precompute_embs: bool = False):
-        print(f"Input shape: {tuple(self.dataset.input_data.shape)}")
+    def maybe_use_backbone_embs(self, precompute_embs: bool = False, backbone_device: Optional[str] = None, verbose: bool = True):
+        if verbose:
+            logger.info(f"Input shape: {tuple(self.dataset.input_data.shape)}")
         if precompute_embs:
             if self.backbone is not None:
                 # Precompute embeddings with automatic caching
@@ -246,34 +216,44 @@ class ConceptDataModule(LightningDataModule):
                     batch_size=self.batch_size,
                     force_recompute=self.force_recompute,  # whether to recompute embeddings even if cached
                     workers=self.workers,
-                    show_progress=True,
+                    device=backbone_device,
+                    verbose=verbose,
                 )
                 self.dataset.input_data = embs
                 self.embs_precomputed = True
-                print(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
+                if verbose:
+                    logger.info(f"✓ Using embeddings. New input shape: {tuple(self.dataset.input_data.shape)}")
             else:
                 self.embs_precomputed = False
-                print("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
+                if verbose:
+                    logger.warning("Warning: precompute_embs=True but no backbone provided. Using raw input data.")
         else:
             # Use raw input data without preprocessing
             self.embs_precomputed = False
-            print("Using raw input data without backbone preprocessing.")
-            if self.backbone is not None:
-                print("Note: Backbone provided but precompute_embs=False. Using raw input data.")
+            if verbose:
+                logger.info("Using raw input data without backbone preprocessing.")
+                if self.backbone is not None:
+                    logger.info("Note: Backbone provided but precompute_embs=False. Using raw input data.")
 
-    def preprocess(self, precompute_embs: bool = False):
+    def preprocess(self, precompute_embs: bool = False, backbone_device: Optional[str] = None, verbose: bool = True):
         """
         Preprocess the data. This method can be overridden by subclasses to
         implement custom preprocessing logic.
+        
+        Args:
+            precompute_embs: Whether to precompute embeddings using backbone.
+            verbose: Whether to print detailed logging information.
         """
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.maybe_use_backbone_embs(precompute_embs)
+        self.maybe_use_backbone_embs(precompute_embs, backbone_device=backbone_device, verbose=verbose)
 
-
-
-    def setup(self, stage: StageOptions = None):
+    def setup(
+            self, 
+            stage: StageOptions = None, 
+            backbone_device: Optional[str] = None,
+            verbose: Optional[bool] = True):
         """
         Prepare the data. This method is called by Lightning with both
         'fit' and 'test' stages.
@@ -281,6 +261,8 @@ class ConceptDataModule(LightningDataModule):
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'.
                 (default :obj:`None`, which means both 'fit' and 'test' stages)
+            verbose: Print detailed logging information during setup and preprocessing.
+                Defaults to True.
         
         Note:
             When precompute_embs=True:
@@ -296,7 +278,10 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Preprocess data with backbone if needed
         # ----------------------------------
-        self.preprocess(self.precompute_embs)
+        self.preprocess(
+            precompute_embs=self.precompute_embs, 
+            backbone_device=backbone_device,
+            verbose=verbose)
 
         # ----------------------------------
         # Splitting
@@ -306,8 +291,6 @@ class ConceptDataModule(LightningDataModule):
             self.trainset = self.splitter.train_idxs
             self.valset = self.splitter.val_idxs
             self.testset = self.splitter.test_idxs
-            self.ftuneset = self.splitter.ftune_idxs
-            self.ftune_valset = self.splitter.ftune_val_idxs
 
         # ----------------------------------
         # Fit scalers on training data only
@@ -329,7 +312,7 @@ class ConceptDataModule(LightningDataModule):
 
 
     def get_dataloader(self, 
-                       split: Literal['train', 'val', 'test', 'ftune', 'ftune_val'] = None,
+                       split: Literal['train', 'val', 'test'] = None,
                        shuffle: bool = False,
                        batch_size: Optional[int] = None) -> Optional[DataLoader]:
         """
@@ -350,11 +333,11 @@ class ConceptDataModule(LightningDataModule):
         """
         if split is None:
             dataset = self.dataset
-        elif split in ['train', 'val', 'test', 'ftune', 'ftune_val']:
+        elif split in ['train', 'val', 'test']:
             dataset = getattr(self, f'{split}set')
         else:
             raise ValueError("Argument `split` must be one of "
-                             "'train', 'val', 'test', 'ftune', 'ftune_val', or None.")
+                             "'train', 'val', 'test', or None.")
         if dataset is None: 
             return None
         pin_memory = self.pin_memory if split == 'train' else None

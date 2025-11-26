@@ -7,8 +7,11 @@ representations of high-dimensional concept data.
 import torch.nn as nn
 import torch
 import torch.optim as optim
+import logging
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleAutoencoder(nn.Module):
@@ -129,7 +132,7 @@ class AutoencoderTrainer:
             epochs: int = 2000,
             batch_size: int = 512,
             patience: int = 50,
-            device='cpu'
+            device=None
     ):  
         self.noise_level = noise
         self.latend_dim = latent_dim
@@ -138,12 +141,18 @@ class AutoencoderTrainer:
         self.batch_size = batch_size
         self.patience = patience
 
+        if device is None:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+
         self.model = SimpleAutoencoder(input_shape, self.latend_dim)
-        self.model.to(device)
+        self.model.to(self.device)
 
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-        self.device = device
+        
+        self.best_model_wts = None
 
     def train(self, dataset):
         """
@@ -160,36 +169,37 @@ class AutoencoderTrainer:
         best_loss = float('inf')
         patience_counter = 0
 
-        print('Autoencoder training started...')
+        logger.info('Autoencoder training started...')
         for epoch in tqdm(range(self.epochs)):
             self.model.train()
             train_loss = 0.0
             for data in self.data_loader:
-                if 'cuda' in self.device:
-                    data = data.to(self.device)
+                data = data.to(self.device)
                 self.optimizer.zero_grad()
                 _, outputs = self.model(data)
                 loss = self.criterion(outputs, data)
                 loss.backward()
                 self.optimizer.step()
                 train_loss += loss.item()
+            
+            train_loss /= len(self.data_loader)
 
             if epoch % 300 == 0:
-                print(f'Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}')
+                logger.info(f'Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}')
 
             if train_loss < best_loss:
                 best_loss = train_loss
                 patience_counter = 0
-                best_model_wts = self.model.state_dict()
+                self.best_model_wts = self.model.state_dict()
             else:
                 patience_counter += 1
                 
             if patience_counter >= self.patience:
-                print('Early stopping')
+                logger.info('Early stopping')
                 break
 
-        print(f'Epoch {epoch+1}/{self.epochs}, Final Train Loss: {train_loss:.4f}')
-        self.best_model_wts = best_model_wts
+        logger.info(f'Epoch {epoch+1}/{self.epochs}, Final Train Loss: {train_loss:.4f}')
+        self.is_fitted = True
 
     def extract_latent(self):
         """
@@ -233,6 +243,7 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
     Args:
         df: Input pandas DataFrame.
         autoencoder_kwargs: Dictionary of keyword arguments for AutoencoderTrainer.
+            Can include 'device' to specify training device (default: 'cpu').
 
     Returns:
         torch.Tensor: Latent representations of shape (n_samples, latent_dim).
@@ -252,7 +263,8 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
         ...         'latent_dim': 10,
         ...         'epochs': 50,
         ...         'batch_size': 32,
-        ...         'noise': 0.1
+        ...         'noise': 0.1,
+        ...         'device': 'cpu'  # or 'cuda' if desired
         ...     }
         ... )
         >>> print(embeddings.shape)
@@ -261,12 +273,9 @@ def extract_embs_from_autoencoder(df, autoencoder_kwargs):
     # Convert DataFrame to tensor
     data = torch.tensor(df.values, dtype=torch.float32)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     # Train autoencoder
     trainer = AutoencoderTrainer(
         input_shape=data.shape[1],
-        device=device,
         **autoencoder_kwargs
     )
     

@@ -5,9 +5,9 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, Propagator, \
-    ExogEncoder, ProbEncoderFromExog, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearPredictor, GraphModel, WANDAGraphLearner
+from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, LazyConstructor, \
+    LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy, \
+    HyperLinearCUC, GraphModel, WANDAGraphLearner
 
 
 def main():
@@ -15,17 +15,23 @@ def main():
     n_epochs = 1000
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
+
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
+
     c_train = torch.cat([c_train, y_train], dim=1)
     y_train = deepcopy(c_train)
     cy_train = torch.cat([c_train, y_train], dim=1)
     c_train_one_hot = torch.cat([cy_train[:, :2], torch.nn.functional.one_hot(cy_train[:, 2].long(), num_classes=2).float()], dim=1)
     cy_train_one_hot = torch.cat([c_train_one_hot, c_train_one_hot], dim=1)
 
-    concept_names = ('c1', 'c2', 'xor')
-    task_names = ('c1_copy', 'c2_copy', 'xor_copy')
-    cardinalities = (1, 1, 2, 1, 1, 2)
+    concept_names = ['c1', 'c2', 'xor']
+    task_names = ['c1_copy', 'c2_copy', 'xor_copy']
+    cardinalities = [1, 1, 2, 1, 1, 2]
     metadata = {
         'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
@@ -48,10 +54,10 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=Propagator(ExogEncoder, embedding_size=11),
-                                   internal_exogenous=Propagator(ExogEncoder, embedding_size=7),
-                                   encoder=Propagator(ProbEncoderFromExog),
-                                   predictor=Propagator(HyperLinearPredictor, embedding_size=20),)
+                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=11),
+                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=7),
+                                   encoder=LazyConstructor(LinearUC),
+                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20),)
 
     # graph learning init
     graph_learner = WANDAGraphLearner(concept_names, task_names)
@@ -70,7 +76,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
         c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
         y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
 
@@ -104,7 +110,7 @@ def main():
         print("=== Unrolled Model Predictions ===")
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
         task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
         print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
 
@@ -113,22 +119,22 @@ def main():
         intervened_concept = query_concepts[0]
 
         int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
-        int_strategy_c1 = DoIntervention(model=concept_model_new.factors, constants=-10)
+        int_strategy_c1 = DoIntervention(model=concept_model_new.parametric_cpds, constants=-10)
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
                           target_concepts=[intervened_concept]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
             task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
             print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
             print(cy_pred[:5])
             print()
 
             int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
-            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.factors, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+            int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=int_policy_c1,
                               strategies=int_strategy_c1,
                               target_concepts=[intervened_concept]):
-                cy_pred = inference_engine.query(query_concepts, evidence={'embedding': emb})
+                cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
                 task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
                 print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
                 print(cy_pred[:5])

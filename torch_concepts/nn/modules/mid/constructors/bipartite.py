@@ -3,11 +3,11 @@ from typing import List, Optional, Union
 import pandas as pd
 import torch
 
-from .....data.annotations import Annotations
+from .....annotations import Annotations
 from .concept_graph import ConceptGraph
-from ...propagator import Propagator
+from ...low.lazy import LazyConstructor
 from .graph import GraphModel
-
+from .....data.utils import ensure_list
 
 class BipartiteModel(GraphModel):
     """
@@ -26,8 +26,8 @@ class BipartiteModel(GraphModel):
         task_names: List of task names (must be in annotations labels).
         input_size: Size of input features.
         annotations: Annotations object with concept and task metadata.
-        encoder: Propagator for encoding concepts from inputs.
-        predictor: Propagator for predicting tasks from concepts.
+        encoder: LazyConstructor for encoding concepts from inputs.
+        predictor: LazyConstructor for predicting tasks from concepts.
         use_source_exogenous: Whether to use exogenous features for source nodes.
         source_exogenous: Optional propagator for source exogenous features.
         internal_exogenous: Optional propagator for internal exogenous features.
@@ -35,7 +35,7 @@ class BipartiteModel(GraphModel):
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BipartiteModel, Propagator
+        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and tasks
@@ -56,8 +56,8 @@ class BipartiteModel(GraphModel):
         ...     task_names=task_names,
         ...     input_size=784,
         ...     annotations=annotations,
-        ...     encoder=Propagator(torch.nn.Linear),
-        ...     predictor=Propagator(torch.nn.Linear)
+        ...     encoder=LazyConstructor(torch.nn.Linear),
+        ...     predictor=LazyConstructor(LinearCC)
         ... )
         >>>
         >>> # Generate random input
@@ -75,18 +75,21 @@ class BipartiteModel(GraphModel):
     """
     def __init__(
             self,
-            task_names: Union[List[str], str, List[int]],
+            task_names: Union[List[str], str],
             input_size: int,
             annotations: Annotations,
-            encoder: Propagator,
-            predictor: Propagator,
+            encoder: LazyConstructor,
+            predictor: LazyConstructor,
             use_source_exogenous: bool = None,
-            source_exogenous: Optional[Propagator] = None,
-            internal_exogenous: Optional[Propagator] = None,
+            source_exogenous: Optional[LazyConstructor] = None,
+            internal_exogenous: Optional[LazyConstructor] = None,
     ):
+        task_names = ensure_list(task_names)
         # get label names
         label_names = annotations.get_axis_labels(axis=1)
-        assert all([t in label_names for t in task_names]), "All tasks must be in axis label names"
+        assert all([t in label_names for t in task_names]), (f"All tasks must be in axis label names. "
+                                                             f"Tasks {[t for t in task_names if t not in label_names]} "
+                                                             f"are not in labels {label_names}")
         concept_names = [c for c in annotations.get_axis_annotation(1).labels if c not in task_names]
 
         # build bipartite graph

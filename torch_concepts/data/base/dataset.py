@@ -4,17 +4,18 @@ Base dataset class for concept-annotated datasets.
 This module provides the ConceptDataset class, which serves as the foundation
 for all concept-based datasets in the torch_concepts package.
 """
+from abc import abstractmethod
 import os
 import numpy as np
 import pandas as pd
 from torch import Tensor
 from torch.utils.data import Dataset
 from copy import deepcopy
-from typing import Dict, List, Mapping, Optional, Union
+from typing import Dict, List, Optional, Union
 import warnings
 
 from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
-from ..annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations, AxisAnnotation
 from ..utils import files_exist, parse_tensor, convert_precision
 
 # TODO: implement masks for missing values
@@ -60,17 +61,17 @@ class ConceptDataset(Dataset):
         >>> len(dataset)
         100
     """
-    def __init__(self,
-                 input_data: Union[np.ndarray, pd.DataFrame, Tensor],
-                 concepts: Union[np.ndarray, pd.DataFrame, Tensor],
-                 annotations: Optional[Annotations] = None,
-                 graph: Optional[pd.DataFrame] = None,
-                 concept_names_subset: Optional[List[str]] = None,
-                 precision: Union[int, str] = 32,
-                 name: Optional[str] = None,
-                 # TODO
-                 exogenous: Optional[Mapping[str, Union[np.ndarray, pd.DataFrame, Tensor]]] = None,
-                 ):
+    def __init__(
+        self,
+        input_data: Union[np.ndarray, pd.DataFrame, Tensor],
+        concepts: Union[np.ndarray, pd.DataFrame, Tensor],
+        annotations: Optional[Annotations] = None,
+        graph: Optional[pd.DataFrame] = None,
+        concept_names_subset: Optional[List[str]] = None,
+        precision: Union[int, str] = 32,
+        name: Optional[str] = None,
+        # TODO: implement handling of exogenous inputs
+    ):
         super(ConceptDataset, self).__init__()
 
         # Set info
@@ -92,7 +93,8 @@ class ConceptDataset(Dataset):
                                       })
         # assert first axis is annotated axis for concepts
         if 1 not in annotations.annotated_axes:
-            raise ValueError("Concept annotations must include axis 1 for concepts.")
+            raise ValueError("Concept annotations must include axis 1 for concepts. " \
+            "Axis 0 is always assumed to be the batch dimension")
 
         # sanity check
         axis_annotation = annotations[1]
@@ -128,7 +130,7 @@ class ConceptDataset(Dataset):
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
         # allow more complex data structures in the future with a custom parser
-        self.input_data: Tensor = self._parse_tensor(input_data, 'input', self.precision)
+        self.input_data: Tensor = parse_tensor(input_data, 'input', self.precision)
 
         # Store concept data C
         self.concepts = None
@@ -140,13 +142,6 @@ class ConceptDataset(Dataset):
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
 
-        # Store exogenous variables
-        # self.exogenous = dict()
-        if exogenous is not None:
-            # for name, value in exogenous.items():
-            #     self.add_exogenous(name, value)
-            raise NotImplementedError("Exogenous variables are not supported for now.")
-
     def __repr__(self):
         """
         Return string representation of the dataset.
@@ -154,8 +149,7 @@ class ConceptDataset(Dataset):
         Returns:
             str: String showing dataset name and dimensions.
         """
-        return "{}(n_samples={}, n_features={}, n_concepts={})" \
-            .format(self.name, self.n_samples, self.n_features, self.n_concepts)
+        return f"{self.name}(n_samples={self.n_samples}, n_features={self.n_features}, n_concepts={self.n_concepts})"
 
     def __len__(self) -> int:
         """
@@ -186,8 +180,9 @@ class ConceptDataset(Dataset):
         sample = {
             'inputs': {'x': x},    # input data: multiple inputs can be stored in a dict
             'concepts': {'c': c},  # concepts: multiple concepts can be stored in a dict
-            # TODO: check if batch transforms work correctly inside the Predictor engine
-            # 'transform': {'x': self.scalers.get('input', None),
+            # TODO: add scalers when these are set
+            # also check if batch transforms work correctly inside the model training loop
+            # 'transforms': {'x': self.scalers.get('input', None),
             #               'c': self.scalers.get('concepts', None)}
         }
 
@@ -285,53 +280,40 @@ class ConceptDataset(Dataset):
         return root
         
     @property
-    def files_to_download_names(self) -> Mapping[str, str]:
-        """The name of the files in the :obj:`self.root_dir` folder that must be
-        present in order to skip downloading."""
-        raise NotImplementedError
+    @abstractmethod
+    def raw_filenames(self) -> List[str]:
+        """The list of raw filenames in the :obj:`self.root_dir` folder that must be
+        present in order to skip `download()`. Should be implemented by subclasses."""
+        pass
 
     @property
-    def files_to_build_names(self) -> Mapping[str, str]:
-        """The name of the files in the :obj:`self.root_dir` folder that must be
-        present in order to skip building."""
-        return {"input": "input.pt",
-                "concepts": "concepts.h5",
-                "graph": "graph.h5",
-                "concept_metadata": "concept_metadata.json"}
+    @abstractmethod
+    def processed_filenames(self) -> List[str]:
+        """The list of processed filenames in the :obj:`self.root_dir` folder that must be
+        present in order to skip `build()`. Should be implemented by subclasses."""
+        pass
 
     @property
-    def files_to_download_paths(self) -> Mapping[str, str]:
-        """The abs path of the files that must be present in order to skip downloading."""
-        files = self.files_to_download_names
-        return {
-            k: os.path.join(self.root_dir, f)
-            for k, f in files.items()
-        }
+    def raw_paths(self) -> List[str]:
+        """The absolute paths of the raw files that must be present in order to skip downloading."""
+        return [os.path.join(self.root_dir, f) for f in self.raw_filenames]
 
     @property
-    def files_to_build_paths(self) -> Mapping[str, str]:
-        """The abs path of the files that must be present in order to skip building."""
-        files = self.files_to_build_names
-        return {
-            k: os.path.join(self.root_dir, f)
-            for k, f in files.items()
-        }
+    def processed_paths(self) -> List[str]:
+        """The absolute paths of the processed files that must be present in order to skip building."""
+        return [os.path.join(self.root_dir, f) for f in self.processed_filenames]
 
     # Directory utilities ###########################################################
 
     # Loading pipeline: load() → load_raw() → build() → download()
 
     def maybe_download(self):
-        files = self.files_to_download_paths
-        files = list(files.values())        
-        if not files_exist(files):
+        if not files_exist(self.raw_paths):
             os.makedirs(self.root_dir, exist_ok=True)
             self.download()
 
     def maybe_build(self):
-        files = self.files_to_build_paths
-        files = list(files.values())
-        if not files_exist(files):
+        if not files_exist(self.processed_paths):
             os.makedirs(self.root_dir, exist_ok=True)
             self.build()
 
@@ -369,7 +351,8 @@ class ConceptDataset(Dataset):
         self.concept_names_all = annotations.get_axis_labels(1)
         if concept_names_subset is not None:
             # sanity check, all subset concepts must be in all concepts
-            assert set(concept_names_subset).issubset(set(self.concept_names_all)), "All subset concepts must be in all concepts."
+            missing_concepts = set(concept_names_subset) - set(self.concept_names_all)
+            assert not missing_concepts, f"Concepts not found in dataset: {missing_concepts}"
             to_select = deepcopy(concept_names_subset)
             
             # Get indices of selected concepts
@@ -380,18 +363,17 @@ class ConceptDataset(Dataset):
             reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
             
             # Reduce cardinalities
-            reduced_cardinalities = None
             reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
         
             # Reduce states
-            reduced_states = None
             reduced_states = tuple(axis_annotation.states[i] for i in indices)
 
             # Reduce metadata if present
-            reduced_metadata = None
             if axis_annotation.metadata is not None:
                 reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
                                    for i in range(len(indices))}
+            else:
+                reduced_metadata = None
             
             # Create reduced annotations
             self._annotations = Annotations({
@@ -403,8 +385,6 @@ class ConceptDataset(Dataset):
                 )
             })
 
-
-
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 
         as a pandas DataFrame.
@@ -415,11 +395,14 @@ class ConceptDataset(Dataset):
                    variables in the dataset.
         """
         if not isinstance(graph, pd.DataFrame):
-            raise TypeError("Graph must be a pandas DataFrame.")
+            raise TypeError(f"Graph must be a pandas DataFrame, got {type(graph).__name__}.")
         # eventually extract subset
         graph = graph.loc[self.concept_names, self.concept_names]
-        self._graph = ConceptGraph(data=self._parse_tensor(graph, 'graph', self.precision),
-                                         node_names=self.concept_names)
+        self._graph = ConceptGraph(
+            data=parse_tensor(graph, 'graph', self.precision),
+            node_names=self.concept_names
+        )
+        
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
         """Set concept annotations for the dataset.
         
@@ -432,7 +415,7 @@ class ConceptDataset(Dataset):
         # concepts' length must match dataset's length
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
-                             f"input_data has {self.n_samples}.")
+                f"input_data has {self.n_samples}.")
         
         # eventually extract subset
         if isinstance(concepts, pd.DataFrame):
@@ -441,13 +424,14 @@ class ConceptDataset(Dataset):
             rows = [self.concept_names_all.index(name) for name in self.concept_names]
             concepts = concepts[:, rows]
         else:
-            raise TypeError("Concepts must be a np.ndarray, pd.DataFrame, or Tensor.")
+            raise TypeError(f"Concepts must be a np.ndarray, pd.DataFrame, "
+                f"or Tensor, got {type(concepts).__name__}.")
         
         #########################################################################
         ###### modify this to change convention for how to store concepts  ######
         #########################################################################
         # convert pd.Dataframe to tensor
-        concepts = self._parse_tensor(concepts, 'concepts', self.precision)
+        concepts = parse_tensor(concepts, 'concepts', self.precision)
         #########################################################################
 
         self.concepts = concepts
@@ -473,24 +457,3 @@ class ConceptDataset(Dataset):
         self.scalers[key] = scaler
 
     # Utilities ###########################################################
-
-    def _parse_tensor(self, 
-                      data: Union[np.ndarray, pd.DataFrame, Tensor],
-                      name: str,
-                      precision: Union[int, str]) -> Tensor:
-        """Convert input data to torch tensor with appropriate format."""
-        return parse_tensor(data, name, precision)
-
-    def _convert_precision(self, 
-                           tensor: Tensor,
-                           precision: Union[int, str]) -> Tensor:
-        """Convert tensor to the dataset's precision."""
-        return convert_precision(tensor, precision)
-
-    # def numpy(self) -> np.ndarray:
-    #     """Convert data tensor to numpy array."""
-    #     return self.input_data.numpy()
-
-    # def dataframe(self) -> pd.DataFrame:
-    #     """Convert data tensor to pandas DataFrame."""
-    #     return pd.DataFrame(self.input_data.numpy())

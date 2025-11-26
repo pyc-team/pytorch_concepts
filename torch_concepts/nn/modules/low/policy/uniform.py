@@ -24,11 +24,11 @@ class UniformPolicy(BaseConceptLayer):
         >>> # Create uniform policy
         >>> policy = UniformPolicy(out_features=10)
         >>>
-        >>> # Generate random concept logits
-        >>> logits = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> # Generate random concept endogenous
+        >>> endogenous = torch.randn(4, 10)  # batch_size=4, n_concepts=10
         >>>
         >>> # Apply policy - returns zeros (uniform priority)
-        >>> scores = policy(logits)
+        >>> scores = policy(endogenous)
         >>> print(scores.shape)  # torch.Size([4, 10])
         >>> print(torch.all(scores == 0.0))  # True
         >>>
@@ -48,15 +48,15 @@ class UniformPolicy(BaseConceptLayer):
 
     def forward(
         self,
-        logits: torch.Tensor
+        endogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Generate uniform (zero) intervention scores.
 
         Args:
-            logits: Input concept logits of shape (batch_size, n_concepts).
+            endogenous: Input concept endogenous of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Zeros tensor of same shape as input.
         """
-        return torch.zeros_like(logits)
+        return torch.zeros_like(endogenous)

@@ -2,9 +2,9 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, RelaxedOneHotCategorical
 
-from torch_concepts import Annotations, AxisAnnotation, Variable
+from torch_concepts import Annotations, AxisAnnotation, Variable, InputVariable, EndogenousVariable
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
+from torch_concepts.nn import LinearZC, LinearCC, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference
 
 
@@ -13,24 +13,29 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    data = ToyDataset('xor', size=n_samples, random_state=42)
-    x_train, c_train, y_train, concept_names, task_names = data.data, data.concept_labels, data.target_labels, data.concept_attr_names, data.task_attr_names
-    y_train = torch.cat([y_train, 1-y_train], dim=1)
 
+    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    x_train = dataset.input_data
+    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
+    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
+    c_train = dataset.concepts[:, concept_idx]
+    y_train = dataset.concepts[:, task_idx]
     concept_names = ['c1', 'c2']
 
-    # Variable setup
-    latent_var = Variable("emb", parents=[], size=latent_dims)
-    concepts = Variable(concept_names, parents=["emb"], distribution=Bernoulli)
-    tasks = Variable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    y_train = torch.cat([y_train, 1-y_train], dim=1)
 
-    # Factor setup
-    backbone = Factor("emb", module_class=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = Factor(["c1", "c2"], module_class=ProbEncoderFromEmb(in_features_embedding=latent_dims, out_features=concepts[0].size))
-    y_predictor = Factor("xor", module_class=ProbPredictor(in_features_logits=sum(c.size for c in concepts), out_features=tasks.size))
+    # Variable setup
+    input_var = InputVariable("input", parents=[], size=latent_dims)
+    concepts = EndogenousVariable(concept_names, parents=["input"], distribution=Bernoulli)
+    tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+
+    # ParametricCPD setup
+    backbone = ParametricCPD("input", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LinearZC(in_features=latent_dims, out_features=concepts[0].size))
+    y_predictor = ParametricCPD("xor", parametrization=LinearCC(in_features_endogenous=sum(c.size for c in concepts), out_features=tasks.size))
 
     # ProbabilisticModel Initialization
-    concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
+    concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)
@@ -44,7 +49,7 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -65,12 +70,12 @@ def main():
     print(cy_pred[:5])
 
     int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c = DoIntervention(model=concept_model.factors, constants=-10)
+    int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"],
                       quantiles=1):
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True)
         print(cy_pred[:5])
 
     return

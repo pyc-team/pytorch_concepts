@@ -6,7 +6,7 @@ concept-based models. Variables can have different probability distributions
 and support hierarchical concept structures.
 """
 import torch
-from torch.distributions import Distribution, Bernoulli, Categorical
+from torch.distributions import Distribution, Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Dict, Any, Union, Optional, Type
 
 from .....distributions import Delta
@@ -39,7 +39,7 @@ class Variable:
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli, Categorical, Normal
-        >>> from torch_concepts.concepts.variable import Variable
+        >>> from torch_concepts import Variable
         >>> from torch_concepts.distributions import Delta
         >>>
         >>> # Create a binary concept variable
@@ -123,6 +123,12 @@ class Variable:
 
         n_concepts = len(concepts)
 
+        # If single concept in list, normalize parameters and return single instance
+        if n_concepts == 1:
+            # This will return a new instance and Python will automatically call __init__
+            # We don't call __init__ manually - just return the instance
+            return object.__new__(cls)
+
         # Standardize distribution: single value -> list of N values
         if distribution is None:
             distribution_list = [Delta] * n_concepts
@@ -179,6 +185,13 @@ class Variable:
         # Ensure concepts is a list (important if called internally after __new__ splitting)
         if isinstance(concepts, str):
             concepts = [concepts]
+
+        # Handle case where distribution/size are lists with single element (for single concept)
+        if len(concepts) == 1:
+            if isinstance(distribution, list) and len(distribution) == 1:
+                distribution = distribution[0]
+            if isinstance(size, list) and len(size) == 1:
+                size = size[0]
 
         # Original validation logic
         if distribution is None:
@@ -288,9 +301,9 @@ class Variable:
 
         if self.distribution in [Delta, torch.distributions.Normal]:
             new_var._out_features = self.size * n_concepts
-        elif self.distribution is Bernoulli:
+        elif self.distribution in [Bernoulli, RelaxedBernoulli]:
             new_var._out_features = n_concepts
-        elif self.distribution is Categorical:
+        elif self.distribution is [Categorical, RelaxedOneHotCategorical]:
             new_var._out_features = self.size
         else:
             new_var._out_features = self.size * n_concepts
@@ -306,3 +319,192 @@ class Variable:
         """
         meta_str = f", metadata={self.metadata}" if self.metadata else ""
         return f"Variable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{meta_str})"
+
+
+class EndogenousVariable(Variable):
+    """
+    Represents an endogenous variable in a concept-based model.
+    
+    Endogenous variables are observable and supervisable concepts that can be
+    directly measured or annotated in the data. These are typically the concepts
+    that we want to learn and predict, such as object attributes, semantic features,
+    or intermediate representations that have ground truth labels.
+    
+    Attributes:
+        concepts (List[str]): List of concept names represented by this variable.
+        parents (List[Variable]): List of parent variables in the graphical model.
+        distribution (Type[Distribution]): PyTorch distribution class for this variable.
+        size (int): Size/cardinality of the variable.
+        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'endogenous'.
+        
+    Example:
+        >>> from torch.distributions import Bernoulli, Categorical
+        >>> # Observable binary concept
+        >>> has_wings = EndogenousVariable(
+        ...     concepts='has_wings',
+        ...     parents=[],
+        ...     distribution=Bernoulli,
+        ...     size=1
+        ... )
+        >>> 
+        >>> # Observable categorical concept (e.g., color)
+        >>> color = EndogenousVariable(
+        ...     concepts=['color'],
+        ...     parents=[],
+        ...     distribution=Categorical,
+        ...     size=3  # red, green, blue
+        ... )
+    """
+    
+    def __init__(self, concepts: Union[str, List[str]],
+                 parents: List[Union['Variable', str]],
+                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
+                 size: Union[int, List[int]] = 1,
+                 metadata: Dict[str, Any] = None):
+        """
+        Initialize an EndogenousVariable instance.
+        
+        Args:
+            concepts: Single concept name or list of concept names.
+            parents: List of parent Variable instances.
+            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
+            size: Size parameter for the distribution.
+            metadata: Optional metadata dictionary.
+        """
+        if metadata is None:
+            metadata = {}
+        metadata['variable_type'] = 'endogenous'
+        super().__init__(concepts, parents, distribution, size, metadata)
+
+
+class ExogenousVariable(Variable):
+    """
+    Represents an exogenous variable in a concept-based model.
+    
+    Exogenous variables are high-dimensional representations related to a single
+    endogenous variable. They capture rich, detailed information about a specific
+    concept (e.g., image patches, embeddings, or feature vectors) that can be used
+    to predict or explain the corresponding endogenous concept.
+    
+    Attributes:
+        concepts (List[str]): List of concept names represented by this variable.
+        parents (List[Variable]): List of parent variables in the graphical model.
+        distribution (Type[Distribution]): PyTorch distribution class for this variable.
+        size (int): Dimensionality of the high-dimensional representation.
+        endogenous_var (Optional[EndogenousVariable]): The endogenous variable this exogenous variable is related to.
+        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'exogenous'.
+        
+    Example:
+        >>> from torch.distributions import Normal
+        >>> from torch_concepts.distributions import Delta
+        >>> # Endogenous concept
+        >>> has_wings = EndogenousVariable(
+        ...     concepts='has_wings',
+        ...     parents=[],
+        ...     distribution=Bernoulli,
+        ...     size=1
+        ... )
+        >>> 
+        >>> # Exogenous high-dim representation for has_wings
+        >>> wings_features = ExogenousVariable(
+        ...     concepts='wings_exogenous',
+        ...     parents=[],
+        ...     distribution=Delta,
+        ...     size=128,  # 128-dimensional exogenous
+        ...     endogenous_var=has_wings
+        ... )
+    """
+    
+    def __init__(self, concepts: Union[str, List[str]],
+                 parents: List[Union['Variable', str]],
+                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
+                 size: Union[int, List[int]] = 1,
+                 endogenous_var: Optional['EndogenousVariable'] = None,
+                 metadata: Dict[str, Any] = None):
+        """
+        Initialize an ExogenousVariable instance.
+        
+        Args:
+            concepts: Single concept name or list of concept names.
+            parents: List of parent Variable instances.
+            distribution: Distribution type (typically Delta or Normal for continuous representations).
+            size: Dimensionality of the high-dimensional representation.
+            endogenous_var: Optional reference to the related endogenous variable.
+            metadata: Optional metadata dictionary.
+        """
+        if metadata is None:
+            metadata = {}
+        metadata['variable_type'] = 'exogenous'
+        if endogenous_var is not None:
+            metadata['endogenous_var'] = endogenous_var
+        super().__init__(concepts, parents, distribution, size, metadata)
+        self.endogenous_var = endogenous_var
+    
+    def __repr__(self):
+        """Return string representation including endogenous variable reference."""
+        meta_str = f", metadata={self.metadata}" if self.metadata else ""
+        endo_str = f", endogenous={self.endogenous_var.concepts if self.endogenous_var else None}"
+        return f"ExogenousVariable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{endo_str}{meta_str})"
+
+
+class InputVariable(Variable):
+    """
+    Represents a latent variable in a concept-based model.
+    
+    Latent variables are high-dimensional global representations of the whole input
+    object (e.g., raw input images, text, or sensor data). They capture the complete
+    information about the input before it is decomposed into specific concepts.
+    These are typically unobserved, learned representations that encode all relevant
+    information from the raw input.
+    
+    Attributes:
+        concepts (List[str]): List of concept names represented by this variable.
+        parents (List[Variable]): List of parent variables in the graphical model (typically empty).
+        distribution (Type[Distribution]): PyTorch distribution class for this variable.
+        size (int): Dimensionality of the latent representation.
+        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'input'.
+        
+    Example:
+        >>> from torch_concepts.distributions import Delta
+        >>> # Global latent representation from input image
+        >>> image_latent = InputVariable(
+        ...     concepts='global_image_features',
+        ...     parents=[],
+        ...     distribution=Delta,
+        ...     size=512  # 512-dimensional global latent
+        ... )
+        >>> 
+        >>> # Multiple latent variables for hierarchical representation
+        >>> low_level_features = InputVariable(
+        ...     concepts='low_level_features',
+        ...     parents=[],
+        ...     distribution=Delta,
+        ...     size=256
+        ... )
+        >>> high_level_features = InputVariable(
+        ...     concepts='high_level_features',
+        ...     parents=[low_level_features],
+        ...     distribution=Delta,
+        ...     size=512
+        ... )
+    """
+    
+    def __init__(self, concepts: Union[str, List[str]],
+                 parents: List[Union['Variable', str]],
+                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
+                 size: Union[int, List[int]] = 1,
+                 metadata: Dict[str, Any] = None):
+        """
+        Initialize a InputVariable instance.
+        
+        Args:
+            concepts: Single concept name or list of concept names.
+            parents: List of parent Variable instances (often empty for root latent variables).
+            distribution: Distribution type (typically Delta or Normal for continuous representations).
+            size: Dimensionality of the latent representation.
+            metadata: Optional metadata dictionary.
+        """
+        if metadata is None:
+            metadata = {}
+        metadata['variable_type'] = 'input'
+        super().__init__(concepts, parents, distribution, size, metadata)

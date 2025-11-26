@@ -32,12 +32,10 @@ def parse_hyperparams(cfg: DictConfig) -> dict[str, any]:
     for W&B logging.
     
     Args:
-        cfg (DictConfig): Full Hydra configuration with engine, dataset, 
-            and model sections.
+        cfg (DictConfig): Full Hydra configuration with dataset and model sections.
     
     Returns:
         dict[str, any]: Dictionary containing:
-            - engine: Engine class name (lowercase)
             - dataset: Dataset name (lowercase, without "Dataset" suffix)
             - model: Model class name (lowercase)
             - hidden_size: Hidden layer size (if present in encoder_kwargs)
@@ -47,26 +45,19 @@ def parse_hyperparams(cfg: DictConfig) -> dict[str, any]:
             
     Example:
         >>> cfg = OmegaConf.create({
-        ...     "engine": {"_target_": "conceptarium.engines.Predictor"},
         ...     "dataset": {"_target_": "torch_concepts.data.dataset.MNISTDataset"},
         ...     "model": {"_target_": "torch_concepts.nn.models.CBM",
         ...               "encoder_kwargs": {"hidden_size": 128}},
         ...     "seed": 42
         ... })
         >>> parse_hyperparams(cfg)
-        {'engine': 'predictor', 'dataset': 'mnist', 'model': 'cbm', 
-         'hidden_size': 128, 'lr': 0.001, 'seed': 42, 'hydra_cfg': {...}}
+        {'dataset': 'mnist', 'model': 'cbm', 'hidden_size': 128, 
+         'lr': 0.001, 'seed': 42, 'hydra_cfg': {...}}
     """
     hyperparams = {
-        "engine": target_classname(cfg.engine)
-        .lower(),
-        "dataset": target_classname(cfg.dataset)
-        .replace("Dataset", "")
-        .lower(),
-        "model": target_classname(cfg.model)
-        .lower(),
-        "hidden_size": cfg.model.encoder_kwargs.get("hidden_size", None),
-        "lr": cfg.engine.optim_kwargs.lr,
+        "dataset": target_classname(cfg.dataset).replace("Dataset", "").lower(),
+        "model": target_classname(cfg.model).lower(),
+        "lr": cfg.model.optim_kwargs.lr,
         "seed": cfg.get("seed"),
         "hydra_cfg": OmegaConf.to_container(cfg),
     }

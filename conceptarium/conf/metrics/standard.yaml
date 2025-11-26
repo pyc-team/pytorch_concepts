@@ -1,0 +1,24 @@
+# =============================================================
+# Metrics settings
+# =============================================================
+_target_: "torch_concepts.nn.ConceptMetrics"
+
+# tracking of summary metrics for each concept type
+summary_metrics: true
+# tracking of metrics for each individual concept 
+# `true` for all concepts, list of concept names, or `false` for none
+# ${dataset.default_task_names} for tracking tasks individually
+perconcept_metrics: true
+
+fn_collection:
+  _target_: "torch_concepts.nn.modules.utils.GroupConfig"
+  binary: 
+    accuracy: 
+      _target_: "torchmetrics.classification.BinaryAccuracy"
+  categorical: 
+    accuracy:
+      - _target_: "hydra.utils.get_class"
+        path: "torchmetrics.classification.MulticlassAccuracy"
+      - average: 'micro'
+  # continuous: 
+    # ... not supported yet

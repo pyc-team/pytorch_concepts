@@ -7,34 +7,66 @@ a {
     word-wrap: break-word;
 }
 
+/* Adaptive Logo for Light/Dark Theme */
+.index-logo-cropped {
+    content: url('../img/pyc_logo_transparent.png');
+}
+
+[data-theme="dark"] .index-logo-cropped {
+    content: url('../img/pyc_logo_transparent_w.png');
+}
+
+/* Adaptive Sidebar Logo - Working solution */
+.sidebar-logo-img {
+    content: url('../img/pyc_logo_transparent.png') !important;
+}
+
+[data-theme="dark"] .sidebar-logo-img {
+    content: url('../img/pyc_logo_transparent_w.png') !important;
+}
+
 /* Index Page Logo Cropping */
 .index-logo-cropped {
     display: block;
-    max-width: 60%;
+    max-width: 40%;
     height: auto;
     margin: 0 auto;
     object-fit: cover;
-    /* Crop 20% from each side by scaling - to show 60% of image, scale by 1/0.6 = 1.67 */
-    transform: scale(1.4);
-    /* Create a container effect using margins to prevent overflow */
+    /* Crop 20% from each side using clip-path (inset: top right bottom left) */
+    clip-path: inset(20% 20% 20% 20%);
+    /* Scale up to compensate for the cropped area and fill the container */
+    transform: scale(1.67);
+    /* Ensure proper rendering */
     padding: 0;
 }
 
 /* Wrapper to contain the scaled image */
 img.index-logo-cropped {
-    /* Apply overflow clipping via a pseudo-container approach */
-    clip-path: inset(0);
+    /* Apply overflow clipping */
+    overflow: hidden;
 }
 
 /* Sidebar Logo Link */
+.sidebar-logo-container {
+    position: sticky;
+    top: 0;
+    background: var(--color-sidebar-background);
+    z-index: 1000;
+    padding: 0.25rem 0 1rem 0;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-sidebar-background-border);
+}
+
 .sidebar-logo-link {
     display: block;
     text-align: center;
-    padding: 0.5rem;
-    margin: 0.5rem auto;
-    max-width: 130px;
+    padding: 0.25rem;
+    margin: 0 auto;
+    width: 100%;
+    height: auto;
     transition: transform 0.2s ease, opacity 0.2s ease;
     overflow: hidden;
+    position: relative;
 }
 
 .sidebar-logo-link:hover {
@@ -45,13 +77,69 @@ img.index-logo-cropped {
 .sidebar-logo-img {
     width: 100%;
     height: auto;
-    max-width: 72px;
     display: block;
     margin: 0 auto;
     object-fit: cover;
-    /* Crop 15% from each side by scaling up and using aspect ratio */
-    transform: scale(2.5);
-    /* Add overflow hidden to parent container via padding trick */
+    /* Crop 20% from each side using clip-path (inset: top right bottom left) */
+    clip-path: inset(20% 20% 20% 20%);
+    /* Scale up to compensate for the cropped area and fill the container */
+    transform: scale(2.3);
+}
+
+/* Fix sidebar brand container positioning */
+.sidebar-brand {
+    position: relative;
+    z-index: 50;
+}
+
+.sidebar-brand-text,
+.sidebar-brand-container {
+    position: relative;
+    z-index: 50;
+}
+
+/* Fix for Furo's sidebar structure */
+.sidebar-sticky {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.sidebar-sticky > .sidebar-brand {
+    background: var(--color-sidebar-background);
+}
+
+/* Keep logo container truly sticky at top of sidebar */
+.sidebar-logo-container {
+    position: sticky;
+    top: 0;
+    background: var(--color-sidebar-background);
+    z-index: 1000;
+    padding: 0.25rem 0 1rem 0;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-sidebar-background-border);
+}
+
+/* Ensure the scroll container doesn't overlap the logo */
+.sidebar-scroll {
+    position: relative;
+    z-index: 10;
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Ensure navigation doesn't overlap the logo */
+.sidebar-tree {
+    position: relative;
+    z-index: 10;
+}
+
+/* Add proper spacing and background for search container */
+.sidebar-search-container {
+    position: relative;
+    z-index: 50;
+    background: var(--color-sidebar-background);
 }
 
 /* Responsive sizing for the logo */
@@ -137,6 +225,70 @@ section#torch-spatiotemporal h1 {
     transform: unset;
 }
 
+/* Funding Carousel */
+.funding-carousel-container {
+    overflow: hidden;
+    width: 100%;
+    padding: 2rem 0;
+    background: transparent;
+    position: relative;
+}
+
+.funding-carousel-track {
+    display: flex;
+    gap: 4rem;
+    animation: scroll-logos 20s linear infinite;
+    width: max-content;
+}
+
+.funding-carousel-track:hover {
+    animation-play-state: paused;
+}
+
+.funding-logo-item {
+    flex-shrink: 0;
+    width: 180px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: grayscale(100%) opacity(0.7);
+    transition: all 0.3s ease;
+}
+
+.funding-logo-item:hover {
+    filter: grayscale(0%) opacity(1);
+    transform: scale(1.1);
+}
+
+.funding-logo-item img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+@keyframes scroll-logos {
+    0% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(-50%);
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .funding-logo-item {
+        width: 120px;
+        height: 60px;
+    }
+
+    .funding-carousel-track {
+        gap: 2rem;
+        animation-duration: 15s;
+    }
+}
+
 /* Tables */
 
 table.docutils {
@@ -215,6 +367,51 @@ img.inline-logo.tsl {
     border-radius: 1rem 0rem 0rem 1rem;
     font-size: 0.8rem;
     font-weight: 700;
+}
+
+/* Custom Card Styling */
+
+.sd-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    border-width: 1px !important;
+}
+
+.sd-card.sd-border-primary {
+    border-color: rgba(59, 130, 246, 0.2) !important;
+    box-shadow: 0 4px 8px -2px rgba(59, 130, 246, 0.25), 0 2px 4px -2px rgba(59, 130, 246, 0.2) !important;
+}
+
+.sd-card.sd-border-danger {
+    border-color: rgba(220, 38, 38, 0.2) !important;
+    box-shadow: 0 4px 8px -2px rgba(220, 38, 38, 0.25), 0 2px 4px -2px rgba(220, 38, 38, 0.2) !important;
+}
+
+.sd-card:hover {
+    transform: translateY(-6px);
+    border-width: 1px !important;
+}
+
+.sd-card.sd-border-primary:hover {
+    box-shadow: 0 12px 20px -5px rgba(59, 130, 246, 0.35), 0 6px 10px -3px rgba(59, 130, 246, 0.3) !important;
+    border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+.sd-card.sd-border-danger:hover {
+    box-shadow: 0 12px 20px -5px rgba(220, 38, 38, 0.35), 0 6px 10px -3px rgba(220, 38, 38, 0.3) !important;
+    border-color: rgba(220, 38, 38, 0.3) !important;
+}
+
+/* Remove background colors from card content */
+.sd-card .sd-card-body {
+    background-color: transparent !important;
+}
+
+.sd-card .sd-card-title {
+    color: inherit !important;
+}
+
+.sd-card .sd-card-text {
+    color: inherit !important;
 }
 
 /* Home Button in Sidebar */

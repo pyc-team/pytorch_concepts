@@ -7,27 +7,48 @@ conversion, image colorization, and affine transformations.
 import os
 import numpy as np
 import pandas as pd
+import logging
 from typing import Any, List, Sequence, Union
 import torch
 import random
 from torch import Tensor
 from torchvision.transforms import v2
 
+logger = logging.getLogger(__name__)
+
 
 def ensure_list(value: Any) -> List:
     """
-    Ensure a value is converted to a list.
-
-    If the value is iterable (but not a string), converts it to a list.
-    Otherwise, wraps it in a list.
+    Ensure a value is converted to a list. If the value is iterable (but not a 
+    string or dict), converts it to a list. Otherwise, wraps it in a list.
 
     Args:
         value: Any value to convert to list.
 
     Returns:
         List: The value as a list.
+    
+    Examples:
+        >>> ensure_list([1, 2, 3])
+        [1, 2, 3]
+        >>> ensure_list((1, 2, 3))
+        [1, 2, 3]
+        >>> ensure_list(5)
+        [5]
+        >>> ensure_list("hello")
+        ['hello']
+        >>> ensure_list({'a': 1, 'b': 2})  # doctest: +SKIP
+        TypeError: Cannot convert dict to list. Use list(dict.values()) 
+        or list(dict.keys()) explicitly.
     """
-    # if isinstance(value, Sequence) and not isinstance(value, str):
+    # Explicitly reject dictionaries to avoid silent conversion to keys
+    if isinstance(value, dict):
+        raise TypeError(
+            "Cannot convert dict to list. Use list(dict.values()) or " \
+            "list(dict.keys()) explicitly to make your intent clear."
+        )
+    
+    # Check for iterables (but not strings)
     if hasattr(value, '__iter__') and not isinstance(value, str):
         return list(value)
     else:
@@ -42,9 +63,10 @@ def files_exist(files: Sequence[str]) -> bool:
 
     Returns:
         bool: True if all files exist, False otherwise.
+              Returns True for empty sequences (vacuous truth).
     """
     files = ensure_list(files)
-    return len(files) != 0 and all([os.path.exists(f) for f in files])
+    return all([os.path.exists(f) for f in files])
 
 def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
                 name: str,
@@ -94,6 +116,33 @@ def convert_precision(tensor: Tensor,
         tensor = tensor.to(torch.float16)
     return tensor
 
+def resolve_size(size: Union[int, float], n_samples: int) -> int:
+    """Convert size specification to absolute number of samples.
+    
+    Args:
+        size: Either an integer (absolute count) or float (fraction in [0, 1]).
+        n_samples: Total number of samples in dataset.
+        
+    Returns:
+        int: Absolute number of samples.
+        
+    Raises:
+        ValueError: If fractional size is not in [0, 1] or absolute size is negative.
+        TypeError: If size is neither int nor float.
+    """
+    if isinstance(size, float):
+        if not 0.0 <= size <= 1.0:
+            raise ValueError(f"Fractional size must be in [0, 1], got {size}")
+        return int(size * n_samples)
+    
+    elif isinstance(size, int):
+        if size < 0:
+            raise ValueError(f"Absolute size must be non-negative, got {size}")
+        return size
+    
+    else:
+        raise TypeError(f"Size must be int or float, got {type(size).__name__}")
+        
 def colorize(images, colors):
     """
     Colorize grayscale images based on specified colors.
@@ -134,10 +183,10 @@ def affine_transform(images, degrees, scales, batch_size=512):
         Tensor: Transformed images with same shape as input.
     """
     if degrees is None:
-        print("Degrees for affine transformation of images not provided, setting to 0.")
+        logger.warning("Degrees for affine transformation of images not provided, setting to 0.")
         degrees = torch.zeros(images.shape[0], device=images.device)
     if scales is None:
-        print("Scales for affine transformation of images not provided, setting to 1.")
+        logger.warning("Scales for affine transformation of images not provided, setting to 1.")
         scales = torch.ones(images.shape[0], device=images.device)
 
     N = images.shape[0]
@@ -273,7 +322,7 @@ def colorize_and_transform(data, targets, training_percentage=0.8, test_percenta
         test_kwargs: List of dictionaries containing additional arguments for each test mode.
  
     Returns:
-        embeddings: Tensor of shape (N, 3, 28, 28) containing colorized and/or transformed images.
+        input: Tensor of shape (N, 3, 28, 28) containing colorized and/or transformed images.
         concepts: Dictionary containing values of the parameters used for coloring and transformations (e.g., colors, scales, degrees).
         targets: Tensor of shape (N) containing target values (0-9).
         coloring_mode: List of strings indicating the coloring mode used for each sample ('training' or 'test').
@@ -446,24 +495,6 @@ def colorize_and_transform(data, targets, training_percentage=0.8, test_percenta
                                             colors= selected_concepts[concepts_used[idx_color]],
                                             degrees= selected_concepts[concepts_used[idx_degree]] if idx_degree is not None else None, 
                                             scales= selected_concepts[concepts_used[idx_scale]] if idx_scale is not None else None)
-            
-
-            # plot one example before and after transformation, save outputs in CACHE/colormnist con os
-            #import matplotlib.pyplot as plt
-            #from env import CACHE
-            #plt.figure(figsize=(8,4))
-            #plt.title("Original")
-            #plt.imshow(selected_data[0], cmap='gray')  # squeeze removes channel dim
-            #plt.axis('off')
-            #plt.savefig(os.path.join(CACHE, "colormnist", f"before.png"))
-            #plt.close()
-            #plt.figure(figsize=(8,4))
-            #plt.title("Transformed")
-            #img_tensor = colored_data[0]
-            #plt.imshow(img_tensor.permute(1,2,0).cpu().numpy())  # <- convert to numpy
-            #plt.axis('off')
-            #plt.savefig(os.path.join(CACHE, "colormnist", f"after.png"))
-            #plt.close()
 
         elif m == 'additional_concepts_random':
             # check keys of kw are exactly the ones expected

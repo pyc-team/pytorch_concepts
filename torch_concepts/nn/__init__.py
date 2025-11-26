@@ -14,29 +14,47 @@ from torch_concepts.nn.modules.low.base.layer import (
 )
 from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
 
-# Propagator
-from .modules.propagator import Propagator
+# LazyConstructor
+from .modules.mid.base.model import BaseConstructor
+from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.exogenous import ExogEncoder
-from .modules.low.encoders.linear import ProbEncoderFromEmb, ProbEncoderFromExog
-from .modules.low.encoders.stochastic import StochasticEncoderFromEmb
-from .modules.low.encoders.selector import MemorySelector
+from .modules.low.encoders.exogenous import LinearZU
+from .modules.low.encoders.linear import LinearZC, LinearUC
+from .modules.low.encoders.stochastic import StochasticZC
+from .modules.low.encoders.selector import SelectorZU
 
 # Predictors
-from .modules.low.predictors.linear import ProbPredictor
-from .modules.low.predictors.embedding import MixProbExogPredictor
-from .modules.low.predictors.hypernet import HyperLinearPredictor
+from .modules.low.predictors.linear import LinearCC
+from .modules.low.predictors.exogenous import MixCUC
+from .modules.low.predictors.hypernet import HyperLinearCUC
+from .modules.low.predictors.call import CallableCC
+
+# Dense layers
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
 
+# Loss functions
+from .modules.loss import ConceptLoss, WeightedConceptLoss
+
+# Metrics
+from .modules.metrics import ConceptMetrics
+
+# Configuration
+from .modules.utils import GroupConfig
+
 # Models (high-level)
-from .modules.high.models.blackbox import BlackBox, BlackBox_torch
-from .modules.high.models.cbm import CBM, CBM_factors
+from .modules.high.models.blackbox import BlackBox
+from .modules.high.models.cbm import ConceptBottleneckModel, \
+    ConceptBottleneckModel_Joint
+
+# Learners (high-level)
+from .modules.high.learners.joint import JointLearner
 
 # Models (mid-level)
-from .modules.mid.models.factor import Factor
+from .modules.mid.models.cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.constructors.bipartite import BipartiteModel
 from .modules.mid.constructors.graph import GraphModel
@@ -71,36 +89,57 @@ __all__ = [
     "BaseModel",
     "BaseInference",
     "BaseIntervention",
+    "BaseConstructor",
 
-    # Propagator
-    "Propagator",
+    # LazyConstructor
+    "LazyConstructor",
     
     # Exogenous encoder classes
-    "ExogEncoder",
+    "LinearZU",
 
     # Encoder classes
-    "ProbEncoderFromEmb",
-    "ProbEncoderFromExog",
-    "StochasticEncoderFromEmb",
+    "LinearZC",
+    "LinearUC",
+    "StochasticZC",
 
     # Predictor classes
-    "ProbPredictor",
-    "MixProbExogPredictor",
-    "HyperLinearPredictor",
+    "LinearCC",
+    "MixCUC",
+    "HyperLinearCUC",
+    "CallableCC",
 
-    "MemorySelector",
+    # Dense layers
+    "Dense",
+    "ResidualMLP",
+    "MLP",
+
+    "SelectorZU",
 
     # COSMO
     "WANDAGraphLearner",
 
+    # Loss functions
+    "ConceptLoss",
+    "WeightedConceptLoss",
+
+    # Metrics
+    "ConceptMetrics",
+
+    # Configuration
+    "GroupConfig",
+
     # Models (high-level)
     "BlackBox",
-    "BlackBox_torch",
-    "CBM",
-    "CBM_factors",
+    # "BlackBox_torch",
+    "ConceptBottleneckModel",
+    "ConceptBottleneckModel_Joint",
+    "ConceptBottleneckModel_Independent",
+
+    # Learners (high-level)
+    "JointLearner",
 
     # Models (mid-level)
-    "Factor",
+    "ParametricCPD",
     "ProbabilisticModel",
     "BipartiteModel",
     "GraphModel",
