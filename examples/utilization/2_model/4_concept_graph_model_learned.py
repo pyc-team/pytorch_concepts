@@ -57,7 +57,7 @@ def main():
                                    source_exogenous=LazyConstructor(LinearZU, exogenous_size=11),
                                    internal_exogenous=LazyConstructor(LinearZU, exogenous_size=7),
                                    encoder=LazyConstructor(LinearUC),
-                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20),)
+                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20))
 
     # graph learning init
     graph_learner = WANDAGraphLearner(concept_names, task_names)

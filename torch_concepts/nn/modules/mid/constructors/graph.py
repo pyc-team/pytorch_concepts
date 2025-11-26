@@ -188,14 +188,7 @@ class GraphModel(BaseConstructor):
                             distribution=Delta,
                             size=layer._module_kwargs['exogenous_size'])
 
-        lazy_constructor = layer.build(
-            in_features=parent_var.size,
-            in_features_endogenous=None,
-            in_features_exogenous=None,
-            out_features=1,
-        )
-
-        exog_cpds = ParametricCPD(exog_names, parametrization=lazy_constructor)
+        exog_cpds = ParametricCPD(exog_names, parametrization=layer)
         return exog_vars, exog_cpds
 
     def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, ParametricCPD]:
@@ -220,13 +213,7 @@ class GraphModel(BaseConstructor):
             if not isinstance(encoder_vars, list):
                 encoder_vars = [encoder_vars]
 
-            lazy_constructor = layer.build(
-                in_features=parent_vars[0].size,
-                in_features_endogenous=None,
-                in_features_exogenous=None,
-                out_features=encoder_vars[0].size,
-            )
-            encoder_cpds = ParametricCPD(label_names, parametrization=lazy_constructor)
+            encoder_cpds = ParametricCPD(label_names, parametrization=layer)
             # Ensure encoder_cpds is always a list
             if not isinstance(encoder_cpds, list):
                 encoder_cpds = [encoder_cpds]
@@ -241,13 +228,7 @@ class GraphModel(BaseConstructor):
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
-                lazy_constructor = layer.build(
-                    in_features=None,
-                    in_features_endogenous=None,
-                    in_features_exogenous=exog_vars[0].size,
-                    out_features=encoder_var.size,
-                )
-                encoder_cpd = ParametricCPD(label_name, parametrization=lazy_constructor)
+                encoder_cpd = ParametricCPD(label_name, parametrization=layer)
                 encoder_vars.append(encoder_var)
                 encoder_cpds.append(encoder_cpd)
         return encoder_vars, encoder_cpds

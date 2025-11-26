@@ -9,7 +9,8 @@ from torch import nn
 from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type
 
-from .variable import Variable, ExogenousVariable
+from torch_concepts.nn import LazyConstructor
+from .variable import Variable, ExogenousVariable, EndogenousVariable, InputVariable
 from .cpd import ParametricCPD
 
 
@@ -159,14 +160,34 @@ class ProbabilisticModel(nn.Module):
                 if concept in self.concept_to_variable:
                     parametric_cpd.variable = self.concept_to_variable[concept]
                     parametric_cpd.parents = self.concept_to_variable[concept].parents
-                if not isinstance(parametric_cpd.variable, ExogenousVariable):
-                    new_parametrization = _reinitialize_with_new_param(parametric_cpd.parametrization,
-                                                                       'out_features',
-                                                                       self.concept_to_variable[concept].size)
-                    new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=new_parametrization)
-                    self.parametric_cpds[concept] = new_parametric_cpd
+
+                if isinstance(parametric_cpd.parametrization, LazyConstructor):
+                    parent_vars = [self.concept_to_variable[parent_ref] for parent_ref in parametric_cpd.variable.parents]
+                    in_features_endogenous = in_features_exogenous = in_features = 0
+                    for pv in parent_vars:
+                        if isinstance(pv, ExogenousVariable):
+                            in_features_exogenous = pv.size
+                        elif isinstance(pv, EndogenousVariable):
+                            in_features_endogenous += pv.size
+                        else:
+                            in_features += pv.size
+
+                    if isinstance(parametric_cpd.variable, ExogenousVariable):
+                        out_features = 1
+                    else:
+                        out_features = self.concept_to_variable[concept].size
+
+                    initialized_layer = parametric_cpd.parametrization.build(
+                        in_features=in_features,
+                        in_features_endogenous=in_features_endogenous,
+                        in_features_exogenous=in_features_exogenous,
+                        out_features=out_features,
+                    )
+                    new_parametrization = ParametricCPD(concepts=[concept], parametrization=initialized_layer)
                 else:
-                    self.parametric_cpds[concept] = parametric_cpd
+                    new_parametrization = parametric_cpd
+
+                self.parametric_cpds[concept] = new_parametrization
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:

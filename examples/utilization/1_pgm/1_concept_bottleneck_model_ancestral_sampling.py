@@ -5,7 +5,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 from torch_concepts import Annotations, AxisAnnotation, Variable, InputVariable, EndogenousVariable
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import LinearZC, LinearCC, ParametricCPD, ProbabilisticModel, \
-    RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
+    RandomPolicy, DoIntervention, intervention, AncestralSamplingInference, LazyConstructor
 
 
 def main():
@@ -24,14 +24,14 @@ def main():
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
     # Variable setup
-    input_var = InputVariable("input", parents=[], size=latent_dims)
+    input_var = InputVariable("input", parents=[], size=x_train.shape[1])
     concepts = EndogenousVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli)
     tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Identity())
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LinearZC(in_features=x_train.shape[1], out_features=concepts[0].size))
-    y_predictor = ParametricCPD("xor", parametrization=LinearCC(in_features_endogenous=sum(c.size for c in concepts), out_features=tasks.size))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearZC))
+    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearCC))
 
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
