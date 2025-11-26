@@ -7,6 +7,7 @@ from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import ProbEncoderFromEmb, ProbPredictor, Factor, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, AncestralSamplingInference
 
+from bp_with_conditional import BPInference
 
 def main():
     latent_dims = 10
@@ -32,6 +33,10 @@ def main():
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[latent_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
+
+
+    inference_engine = BPInference(concept_model)
+
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
     initial_input = {'emb': x_train}
@@ -44,7 +49,7 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
+        cy_pred = inference_engine.query(query_concepts, observed=initial_input)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 

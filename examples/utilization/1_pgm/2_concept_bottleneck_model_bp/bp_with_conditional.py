@@ -1,60 +1,10 @@
 import torch
 import itertools
 
+from torch.distributions import RelaxedBernoulli, RelaxedOneHotCategorical
 
-
-def clamp_messages_to_evidence(messages, evidence, md, eps=1e-20):
-    """
-    Clamp messages so that observed variables become delta distributions.
-
-    messages: [B, total_edge_states]   (this can be v2f or f2v)
-    evidence: dict {var_name: observed_state}  (same evidence for all B)
-    md:       metadata from build_graph_metadata
-
-    Returns:
-        messages_clamped: [B, total_edge_states]
-    """
-    B, S = messages.shape
-    assert S == md["total_edge_states"]
-
-    var_names = md["var_names"]
-    var_arity = md["var_arity"]
-    var_state_offset = md["var_state_offset"]      # [V]
-    vs_id_for_edge_state = md["vs_id_for_edge_state"]  # [S]
-    edge_id = md["edge_id_per_state"]             # [S]
-    E = md["E"]
-
-    # 1) Build a boolean mask over variable-states: which (var, state) are allowed?
-    num_vs = md["total_var_states"]
-    allowed_vs = torch.ones(num_vs, dtype=torch.bool, device=messages.device)
-
-    for vname, s_obs in evidence.items():
-        v = var_names.index(vname)
-        a = int(var_arity[v])
-        start = int(var_state_offset[v])
-
-        # default: disallow all states of v
-        allowed_vs[start:start + a] = False
-        # allow only the observed state
-        allowed_vs[start + int(s_obs)] = True
-
-    # 2) Map this to edge-states
-    allowed_es = allowed_vs[vs_id_for_edge_state]  # [S]
-
-    # 3) Zero out forbidden edge-states
-    messages_clamped = messages.clone()
-    messages_clamped[:, ~allowed_es] = 0.0
-
-    # 4) Renormalize per edge (still fully tensorized)
-    edge_id_b = edge_id.unsqueeze(0).expand(B, -1)     # [B, S]
-    sum_per_edge = torch.zeros(B, E,
-                               device=messages.device,
-                               dtype=messages.dtype)
-    sum_per_edge.scatter_add_(1, edge_id_b, messages_clamped)
-    norm = sum_per_edge.gather(1, edge_id_b) + eps
-    messages_clamped = messages_clamped / norm
-
-    return messages_clamped
+from torch_concepts.distributions import Delta
+from torch_concepts.nn import BaseInference, ProbabilisticModel
 
 
 # ------------------------------------------------------------------
@@ -111,7 +61,7 @@ def build_graph_metadata(variables, factors):
     edge_id_per_state = torch.empty(total_edge_states, dtype=torch.long)
     for e in range(E):
         a = int(edge_arity[e])
-        edge_id_per_state[edge_state_offset[e]:edge_state_offset[e]+a] = e
+        edge_id_per_state[edge_state_offset[e]:edge_state_offset[e] + a] = e
 
     # ----- variable-state indexing: each (var, state) gets a group id -----
     var_state_offset = torch.zeros(V, dtype=torch.long)
@@ -174,7 +124,7 @@ def build_graph_metadata(variables, factors):
     for fi in range(F):
         n = factor_num_assign[fi]
         start = int(factor_assign_offset[fi])
-        fa2factor[start:start+n] = fi
+        fa2factor[start:start + n] = fi
 
     metadata = dict(
         var_names=var_names,
@@ -208,13 +158,61 @@ def build_graph_metadata(variables, factors):
 
 
 # ------------------------------------------------------------------
+# 1b. Evidence handling: build (var,state) log-mask in batch
+# ------------------------------------------------------------------
+
+def build_evidence_logmask(evidence, md):
+    """
+    evidence: [B, V] with -1 for unobserved,
+              k in [0, arity_v-1] for observed.
+    Returns:
+        logmask_vs: [B, total_var_states] with 0 or -inf.
+        0    -> allowed state
+        -inf -> forbidden state
+    """
+    B, V = evidence.shape
+    var_arity = md["var_arity"]           # [V]
+    var_state_offset = md["var_state_offset"]  # [V]
+    total_vs = md["total_var_states"]
+
+    device = evidence.device
+    dtype = torch.float32  # can be changed to match messages dtype
+
+    # By default, everything is allowed: log(1) = 0
+    logmask_vs = torch.zeros(B, total_vs, device=device, dtype=dtype)
+
+    for v in range(V):
+        a = int(var_arity[v])
+        start = int(var_state_offset[v])
+        ev_v = evidence[:, v]      # [B]
+
+        # Indices where this variable is observed
+        observed = ev_v >= 0
+        if not observed.any():
+            continue
+
+        # For observed batch entries, forbid all states first
+        logmask_vs[observed, start:start + a] = float("-inf")
+
+        # Then re-enable the observed state
+        obs_states = ev_v[observed].long()               # [B_obs]
+        rows = torch.arange(B, device=device)[observed]  # [B_obs]
+        logmask_vs[rows, start + obs_states] = 0.0
+
+    return logmask_vs
+
+
+# ------------------------------------------------------------------
 # 2. Variable -> Factor messages (tensorized, no loops)
 # ------------------------------------------------------------------
 
-def update_var_to_factor(messages_f2v, md, eps=1e-20):
+def update_var_to_factor(messages_f2v, md, evidence_logmask_vs=None, eps=1e-20):
     """
     messages_f2v: [B, total_edge_states]
         factor->variable messages, stored per (edge,state).
+    evidence_logmask_vs: [B, total_var_states] or None
+        0 for allowed (var,state), -inf for forbidden.
+
     Returns:
         messages_v2f: [B, total_edge_states]
     """
@@ -226,13 +224,19 @@ def update_var_to_factor(messages_f2v, md, eps=1e-20):
 
     # log-domain so product over neighbors becomes sum
     log_m_f2v = torch.log(messages_f2v + eps)       # [B, S]
+
     vs_id_b = vs_id.unsqueeze(0).expand(B, -1)      # [B, S]
 
-    # sum logs per (var,state)
+    # sum logs per (var,state) over neighboring factors
     log_sum_vs = torch.zeros(B, num_vs,
                              device=messages_f2v.device,
                              dtype=messages_f2v.dtype)
     log_sum_vs.scatter_add_(1, vs_id_b, log_m_f2v)
+
+    # Apply evidence AFTER aggregation (avoid -inf - -inf)
+    if evidence_logmask_vs is not None:
+        # unary log-potentials on (var,state)
+        log_sum_vs = log_sum_vs + evidence_logmask_vs
 
     # for each edge-state, retrieve total for its (var,state)
     total_for_edge_state = log_sum_vs.gather(1, vs_id_b)  # [B, S]
@@ -320,7 +324,7 @@ def update_factor_to_var(messages_v2f, factor_eval_list, md, eps=1e-20):
     E = md["E"]
     edge_id_b = edge_id.unsqueeze(0).expand(B, -1)
     sum_per_edge = torch.zeros(B, E,
-                               device=messages_v2f.device,
+                               device=messages_f2v_num.device,
                                dtype=messages_f2v_num.dtype)
     sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v_num)
     norm = sum_per_edge.gather(1, edge_id_b) + eps
@@ -330,14 +334,14 @@ def update_factor_to_var(messages_v2f, factor_eval_list, md, eps=1e-20):
 
 
 # ------------------------------------------------------------------
-# 4. (Optional) helper: variable marginals from factor->var messages
+# 4. Variable marginals from factor->var messages (with evidence)
 # ------------------------------------------------------------------
 
-def compute_var_marginals(messages_f2v, md, eps=1e-20):
+def compute_var_marginals(messages_f2v, md, evidence_logmask_vs=None, eps=1e-20):
     """
     Approximate variable marginals from final factor->variable messages.
-    This does use a small Python loop over variables, but it's not in the
-    hot path of message propagation.
+    If evidence_logmask_vs is given, it is applied as unary log-potentials
+    on (var,state) before normalization.
     """
     B, S = messages_f2v.shape
     vs_id = md["vs_id_for_edge_state"]
@@ -354,6 +358,10 @@ def compute_var_marginals(messages_f2v, md, eps=1e-20):
                              dtype=messages_f2v.dtype)
     log_sum_vs.scatter_add_(1, vs_id_b, log_m_f2v)
 
+    # apply evidence as log-potentials on (var,state)
+    if evidence_logmask_vs is not None:
+        log_sum_vs = log_sum_vs + evidence_logmask_vs
+
     marginals = []
     for v in range(V):
         a = int(var_arity[v])
@@ -364,8 +372,18 @@ def compute_var_marginals(messages_f2v, md, eps=1e-20):
     return marginals
 
 
+# ------------------------------------------------------------------
+# 5. Exact marginals (uncond OR conditional, via brute force)
+# ------------------------------------------------------------------
 
-def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md, eps=1e-20):
+def compute_exact_marginals_bruteforce(
+    variables,
+    factors,
+    factor_eval_list,
+    md,
+    evidence=None,
+    eps=1e-20,
+):
     """
     Exact marginals by enumerating all assignments of all variables.
 
@@ -375,6 +393,9 @@ def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md,
         factor_eval_list[fi]: [B, num_assign_fi], in SAME assignment ordering
         as build_graph_metadata (lexicographic over factor scope).
     md: metadata from build_graph_metadata
+    evidence: None or [B, V] Long tensor
+        -1 -> unobserved; k in [0, arity_v-1] -> observed.
+        If given, returns p(X | evidence); otherwise p(X).
 
     Returns:
         exact_marginals: list of length V
@@ -388,15 +409,18 @@ def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md,
 
     B = factor_eval_list[0].shape[0]
 
+    device = factor_eval_list[0].device
+    dtype = factor_eval_list[0].dtype
+
     # --- 1. Build global assignments over all variables ---
-    # order: var_names[0], var_names[1], ...
     ranges = [range(int(a)) for a in var_arity]
     global_assignments = list(itertools.product(*ranges))  # list of tuples length V
     G = len(global_assignments)  # total number of global assignments
 
+    # Tensor form: [G, V]
+    global_assign_tensor = torch.tensor(global_assignments, device=device, dtype=torch.long)
+
     # --- 2. Precompute local index mapping for each factor ---
-    # For each factor fi, map local assignment (tuple of var states in its scope)
-    # to the local index used in factor_eval_list[fi].
     factor_local_index = []
     for fi, fname in enumerate(factor_names):
         scope = factors[fname]  # e.g. ["v1", "v2"]
@@ -410,14 +434,12 @@ def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md,
     var_index = {name: i for i, name in enumerate(var_names)}
 
     # --- 3. Compute unnormalized joint over all global assignments ---
-    joint = torch.zeros(B, G, device=factor_eval_list[0].device,
-                        dtype=factor_eval_list[0].dtype)
+    joint = torch.zeros(B, G, device=device, dtype=dtype)
 
     for g_idx, g_assign in enumerate(global_assignments):
         # g_assign is a tuple of length V, e.g. (x_v1, x_v2, ..., x_vV)
         # Start with ones per batch element, then multiply factor contributions
-        phi = torch.ones(B, device=factor_eval_list[0].device,
-                         dtype=factor_eval_list[0].dtype)
+        phi = torch.ones(B, device=device, dtype=dtype)
         for fi, fname in enumerate(factor_names):
             scope = factors[fname]
             # Extract local assignment of scope variables from global assignment
@@ -425,6 +447,18 @@ def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md,
             local_idx = factor_local_index[fi][local_states]
             phi = phi * factor_eval_list[fi][:, local_idx]
         joint[:, g_idx] = phi
+
+    # --- 3b. Apply evidence if given: zero out inconsistent assignments ---
+    if evidence is not None:
+        evidence = evidence.to(device=device)
+        # Shape to [B, G, V]
+        ev_exp = evidence.unsqueeze(1).expand(B, G, V)              # [B, G, V]
+        ga_exp = global_assign_tensor.unsqueeze(0).expand(B, G, V)  # [B, G, V]
+
+        # Valid if: for all v, evidence[b,v] == -1 or equals assignment
+        cond_ok = ((ev_exp < 0) | (ev_exp == ga_exp)).all(dim=-1)  # [B, G] bool
+        mask = cond_ok.to(dtype)
+        joint = joint * mask
 
     # --- 4. Normalize joint per batch ---
     Z = joint.sum(dim=1, keepdim=True) + eps
@@ -445,44 +479,72 @@ def compute_exact_marginals_bruteforce(variables, factors, factor_eval_list, md,
     return exact_marginals
 
 
+class BPInference(BaseInference):
 
-# ------------------------------------------------------------------
-# 5. Example usage
-# ------------------------------------------------------------------
+    def __init__(self, model):
+        super().__init__()
+        self.model : ProbabilisticModel = model
+
+        # variables = {"v1": 3, "v2": 2, "v3": 2, "v4": 4, "v5": 2}
+        # factors = {
+        #     "f12": ["v1", "v2"],
+        #     "f13": ["v1", "v3"],
+        #     "f14": ["v1", "v4"],
+        #     "f15": ["v1", "v5"],
+        # }
+        variables = {}
+        factors = {}
+        for var in self.model.variables:
+            if var.distribution is RelaxedBernoulli:
+                variables[var.concepts[0]] = 2
+            elif var.distribution is RelaxedOneHotCategorical:
+                variables[var.concepts[0]] = var.size
+            elif var.distribution is Delta:
+                variables[var.concepts[0]] = 1
+            else:
+                raise NotImplementedError("Distribution for variable unknown.")
+            factors["f_"+var.concepts[0]] = [var.concepts[0]] + [c.concepts[0] for c in var.parents]
+
+
+
+
+
+
+
+    def query(self, query, observed):
+
+
+        observed[]
+
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)
 
-    # CHAIN GRAPH EXAMPLE
-    # variables = {"v1": 3, "v2": 4, "v3": 1}
+    # # FACTOR GRAPH WITH HIGHER-ORDER FACTORS (LOOPY)
+    # variables = {"v1": 2, "v2": 2, "v3": 3, "v4": 2}
     # factors = {
-    #     "f1": ["v1", "v2"],  # 3 x 4 -> 12 assignments
-    #     "f2": ["v2", "v3"],  # 4 x 1 -> 4 assignments
+    #     "f124": ["v1", "v2", "v4"],  # size 2×2×2 = 8
+    #     "f243": ["v2", "v4", "v3"],  # size 2×2×3 = 12
     # }
+
 
     # STAR GRAPH EXAMPLE
-    # variables = {"v1": 3, "v2": 2, "v3": 2, "v4": 4, "v5": 2}
-    # factors = {
-    #     "f12": ["v1", "v2"],
-    #     "f13": ["v1", "v3"],
-    #     "f14": ["v1", "v4"],
-    #     "f15": ["v1", "v5"],
-    # }
-
-    # LOOP GRAPH EXAMPLE
-    # variables = {"v1": 3, "v2": 2, "v3": 4}
-    # factors = {
-    #     "f12": ["v1", "v2"],
-    #     "f23": ["v2", "v3"],
-    #     "f31": ["v3", "v1"],
-    # }
-
-
-    # FACTOR GRAPH WITH HIGHER-ORDER FACTORS (LOOPY)
-    variables = {"v1": 2, "v2": 2, "v3": 3, "v4": 2}
+    variables = {"v1": 3, "v2": 2, "v3": 3, "v4": 4, "v5": 2}
     factors = {
-        "f124": ["v1", "v2", "v4"],  # size 2×2×2 = 8
-        "f243": ["v2", "v4", "v3"],  # size 2×2×3 = 12
+        "f12": ["v1", "v2"],
+        "f13": ["v1", "v3"],
+        "f14": ["v1", "v4"],
+        "f15": ["v1", "v5"],
     }
 
     md = build_graph_metadata(variables, factors)
@@ -491,7 +553,7 @@ if __name__ == "__main__":
     print("Total edge-states:", md["total_edge_states"])
     print("Total assignments:", md["total_assignments"])
 
-    B = 2
+    B = 2  # batch size
 
     # Create random factor evals **consistent with metadata**
     factor_eval_list = []
@@ -504,37 +566,89 @@ if __name__ == "__main__":
     # Initialize factor->variable messages randomly and normalize per edge
     S = md["total_edge_states"]
     E = md["E"]
-    messages_f2v = torch.rand(B, S)
+    messages_f2v_init = torch.rand(B, S)
 
     edge_id = md["edge_id_per_state"]  # [S]
     edge_id_b = edge_id.unsqueeze(0).expand(B, -1)  # [B, S]
     sum_per_edge = torch.zeros(B, E)
-    sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v)
-    messages_f2v = messages_f2v / (sum_per_edge.gather(1, edge_id_b) + 1e-20)
+    sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v_init)
+    messages_f2v_init = messages_f2v_init / (sum_per_edge.gather(1, edge_id_b) + 1e-20)
 
-    # Run BP
-    evidence = {
-        "v2": 1,  # for example: v2 is observed to be state index 1
-        "v4": 0,
-    }
+    # ------------------------------------------------------------------
+    # Evidence:
+    #   -1 = unobserved
+    #   otherwise the observed state index
+    #
+    # Example:
+    #   batch 0: observe v1 = 1
+    #   batch 1: observe v3 = 2
+    # ------------------------------------------------------------------
+    V = md["V"]
+    evidence = torch.full((B, V), -1, dtype=torch.long)  # [B, V]
+    # var_names order: ["v1", "v2", "v3", "v4"]
+    evidence[0, 0] = 1  # batch 0: v1 = 1
+    evidence[1, 2] = 2  # batch 1: v3 = 2
+
+    evidence_logmask_vs = build_evidence_logmask(evidence, md)
 
     num_iters = 10
-    for it in range(num_iters):
-        messages_v2f = update_var_to_factor(messages_f2v, md)
-        messages_v2f = clamp_messages_to_evidence(messages_v2f, evidence, md)  
-        messages_f2v = update_factor_to_var(messages_v2f, factor_eval_list, md)
-    # BP marginals
-    bp_marginals = compute_var_marginals(messages_f2v, md)
 
-    # Exact marginals
-    exact_marginals = compute_exact_marginals_bruteforce(
-        variables, factors, factor_eval_list, md
+    # ------------------------
+    # Unconditional BP
+    # ------------------------
+    messages_f2v_uncond = messages_f2v_init.clone()
+    for it in range(num_iters):
+        messages_v2f_uncond = update_var_to_factor(
+            messages_f2v_uncond, md, evidence_logmask_vs=None
+        )
+        messages_f2v_uncond = update_factor_to_var(
+            messages_v2f_uncond, factor_eval_list, md
+        )
+    bp_marginals_uncond = compute_var_marginals(
+        messages_f2v_uncond, md, evidence_logmask_vs=None
     )
 
-    print("\nApproximate (BP) vs exact marginals after", num_iters, "iterations:")
-    for i, (m_bp, m_ex) in enumerate(zip(bp_marginals, exact_marginals)):
+    # ------------------------
+    # Conditional BP
+    # ------------------------
+    messages_f2v_cond = messages_f2v_init.clone()
+    for it in range(num_iters):
+        messages_v2f_cond = update_var_to_factor(
+            messages_f2v_cond, md, evidence_logmask_vs=evidence_logmask_vs
+        )
+        messages_f2v_cond = update_factor_to_var(
+            messages_v2f_cond, factor_eval_list, md
+        )
+    bp_marginals_cond = compute_var_marginals(
+        messages_f2v_cond, md, evidence_logmask_vs=evidence_logmask_vs
+    )
+
+    # ------------------------
+    # Exact marginals
+    # ------------------------
+    exact_marginals_uncond = compute_exact_marginals_bruteforce(
+        variables, factors, factor_eval_list, md, evidence=None
+    )
+    exact_marginals_cond = compute_exact_marginals_bruteforce(
+        variables, factors, factor_eval_list, md, evidence=evidence
+    )
+
+    # ------------------------
+    # Print comparisons
+    # ------------------------
+    print("\n=== Unconditional: BP vs Exact ===")
+    for i, (m_bp, m_ex) in enumerate(zip(bp_marginals_uncond, exact_marginals_uncond)):
         name = md["var_names"][i]
         print(f"\nVariable {name}:")
-        print("  BP   :", m_bp)
-        print("  Exact:", m_ex)
+        print("  BP   (uncond):", m_bp)
+        print("  Exact(uncond):", m_ex)
+        print("  L1 diff per batch:", (m_bp - m_ex).abs().sum(dim=-1))
+
+    print("\n=== Conditional on evidence: BP vs Exact ===")
+    print("Evidence tensor (per batch, per var):", evidence)
+    for i, (m_bp, m_ex) in enumerate(zip(bp_marginals_cond, exact_marginals_cond)):
+        name = md["var_names"][i]
+        print(f"\nVariable {name}:")
+        print("  BP   (cond):", m_bp)
+        print("  Exact(cond):", m_ex)
         print("  L1 diff per batch:", (m_bp - m_ex).abs().sum(dim=-1))
