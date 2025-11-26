@@ -3,7 +3,6 @@ Probabilistic Model implementation for concept-based architectures.
 
 This module provides a framework for building and managing probabilistic models over concepts.
 """
-import copy
 import inspect
 
 from torch import nn
@@ -152,23 +151,16 @@ class ProbabilisticModel(nn.Module):
 
         # ---- ParametricCPD modules: fill only self.parametric_cpds (ModuleDict) ----
         for parametric_cpd in input_parametric_cpds:
-            if len(parametric_cpd.concepts) > 1:
-                # Multi-concept parametric_cpd: split into individual CPDs
-                for concept in parametric_cpd.concepts:
-                    new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=copy.deepcopy(parametric_cpd.parametrization))
-                    # Link the parametric_cpd to its variable
-                    if concept in self.concept_to_variable:
-                        new_parametric_cpd.variable = self.concept_to_variable[concept]
-                        new_parametric_cpd.parents = self.concept_to_variable[concept].parents
-                    self.parametric_cpds[concept] = new_parametric_cpd
-            else:
-                # Single concept parametric_cpd
-                concept = parametric_cpd.concepts[0]
+            for concept in parametric_cpd.concepts:
                 # Link the parametric_cpd to its variable
                 if concept in self.concept_to_variable:
                     parametric_cpd.variable = self.concept_to_variable[concept]
                     parametric_cpd.parents = self.concept_to_variable[concept].parents
-                self.parametric_cpds[concept] = parametric_cpd
+                new_parametrization = _reinitialize_with_new_param(parametric_cpd.parametrization,
+                                                                   'out_features',
+                                                                   self.concept_to_variable[concept].size)
+                new_parametric_cpd = ParametricCPD(concepts=[concept], parametrization=new_parametrization)
+                self.parametric_cpds[concept] = new_parametric_cpd
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:
