@@ -56,8 +56,8 @@ Structural Equation Models
   .. code-block:: python
 
      sem_model = ProbabilisticModel(
-         variables=[exogenous_var, genotype_var, ...],
-         parametric_cpds=[exogenous_cpd, genotype_cpd, ...]
+         variables=[exogenous_var, genotype_var],
+         parametric_cpds=[exogenous_cpd, genotype_cpd]
      )
 
 Interventions
@@ -78,9 +78,9 @@ For example, to set ``smoking`` to 0 (prevent smoking) and query the effect on d
    )
 
    with intervention(
-           policies=UniformPolicy(out_features=1),
-           strategies=smoking_strategy_0,
-           target_concepts=["smoking"]
+       policies=UniformPolicy(out_features=1),
+       strategies=smoking_strategy_0,
+       target_concepts=["smoking"]
    ):
        intervened_results_0 = inference_engine.query(
            query_concepts=["genotype", "smoking", "tar", "cancer"],
@@ -258,9 +258,9 @@ Perform do-interventions to estimate causal effects:
    )
 
    with intervention(
-           policies=UniformPolicy(out_features=1),
-           strategies=smoking_strategy_0,
-           target_concepts=["smoking"]
+       policies=UniformPolicy(out_features=1),
+       strategies=smoking_strategy_0,
+       target_concepts=["smoking"]
    ):
        intervened_results_0 = inference_engine.query(
            query_concepts=["genotype", "smoking", "tar", "cancer"],
@@ -275,9 +275,9 @@ Perform do-interventions to estimate causal effects:
    )
 
    with intervention(
-           policies=UniformPolicy(out_features=1),
-           strategies=smoking_strategy_1,
-           target_concepts=["smoking"]
+       policies=UniformPolicy(out_features=1),
+       strategies=smoking_strategy_1,
+       target_concepts=["smoking"]
    ):
        intervened_results_1 = inference_engine.query(
            query_concepts=["genotype", "smoking", "tar", "cancer"],

@@ -66,8 +66,12 @@ takes as input both ``Endogenous`` and ``Exogenous`` representations and produce
 
 .. code-block:: python
 
- pyc.nn.HyperLinearCUC(in_features_endogenous=10, in_features_exogenous=7,
-                       embedding_size=24, out_features=3)
+ pyc.nn.HyperLinearCUC(
+    in_features_endogenous=10,
+    in_features_exogenous=7,
+    embedding_size=24,
+    out_features=3
+ )
 
 As a final example, graph learners are a special layers that learn relationships between concepts.
 They do not follow the standard naming convention of encoders and predictors, but their purpose should be
@@ -75,7 +79,10 @@ clear from their name.
 
 .. code-block:: python
 
- wanda = pyc.nn.WANDAGraphLearner(['c1', 'c2', 'c3'], ['task A', 'task B', 'task C'])
+ wanda = pyc.nn.WANDAGraphLearner(
+    ['c1', 'c2', 'c3'],
+    ['task A', 'task B', 'task C']
+ )
 
 
 Step 1: Import Libraries
@@ -152,9 +159,7 @@ Train with both concept and task supervision:
    import torch.nn.functional as F
 
    # Compute losses
-   concept_loss = F.binary_cross_entropy_with_endogenous(
-       concept_endogenous, concept_labels
-   )
+   concept_loss = F.binary_cross_entropy(torch.sigmoid(concept_endogenous), concept_labels)
    task_loss = F.cross_entropy(task_endogenous, task_labels)
    total_loss = task_loss + 0.5 * concept_loss
 
@@ -183,9 +188,11 @@ The context manager takes two main arguments: **strategies** and **policies**.
    policy = UniformPolicy(out_features=n_concepts)
 
    # Apply intervention to encoder
-   with intervention(policies=policy,
-                     strategies=strategy,
-                     target_concepts=[0, 2]) as new_encoder_layer:
+   with intervention(
+       policies=policy,
+       strategies=strategy,
+       target_concepts=[0, 2]
+   ) as new_encoder_layer:
        intervened_concepts = new_encoder_layer(input=x)
        intervened_tasks = model['predictor'](endogenous=intervened_concepts)
 
