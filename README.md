@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
 </p>
 
 <p align="center">
@@ -10,12 +10,12 @@
 </p>
 
 <p align="center">
-  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html">🚀 Getting Started</a> - 
-  <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> - 
+  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html">🚀 Getting Started</a> -
+  <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> -
   <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html">💻 User guide</a>
 </p>
 
-<img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC is a library built upon <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
 
 The name of the library stands for both
@@ -26,7 +26,7 @@ The name of the library stands for both
 
 # Quick Start
 
-You can install PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
+You can install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px"> PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
 
 ```bash
 pip install pytorch-concepts
@@ -38,19 +38,19 @@ After installation, you can import it in your Python scripts as:
 import torch_concepts as pyc
 ```
 
-Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) to get started with building interpretable models using PyC!
+Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) to get started with building interpretable models using <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px"> PyC!
 
 ---
 
-# <img src="doc/_static/img/logos/pyc.svg" width="20px" align="center"> PyC Software Stack
+# <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg" width="20px"> PyC Software Stack
 The library is organized to be modular and accessible at different levels of abstraction:
-- <img src="doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API). Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files. Built on top of <img src="doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
-- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code. This interface is built in <img src="doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily standardize training and evaluation.
+- <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API). Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
+- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code. This interface is built in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily standardize training and evaluation.
 - **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference.
-- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include metrics, losses, and datasets.
+- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include metrics, losses, and datasets.
 
 <p align="center">
-  <img src="doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="90%">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="90%">
 </p>
 
 ---
@@ -96,9 +96,10 @@ Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/), [Giovanni D
 This project is supported by the following organizations:
 
 <p align="center">
-  <img src="doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
 </p>
+
