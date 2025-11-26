@@ -19,6 +19,8 @@ from torch_concepts.utils import (
     instantiate_from_string,
     seed_everything,
 )
+
+from torch_concepts import GroupConfig
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -300,7 +302,7 @@ class TestUtils(unittest.TestCase):
         # Should not raise on same device
         _check_tensors([t1, t2])
 
-    def test_add_distribution_to_annotations(self):
+    def test_add_distribution_to_annotations_with_dict(self):
         """Test add_distribution_to_annotations function."""
         from torch_concepts.utils import add_distribution_to_annotations
 
@@ -312,11 +314,28 @@ class TestUtils(unittest.TestCase):
         annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
 
         variable_distributions = {
-            'discrete_card1': {'path': 'torch.distributions.Bernoulli'},
-            'discrete_cardn': {'path': 'torch.distributions.Categorical'},
-            'continuous_card1': {'path': 'torch.distributions.Normal'},
-            'continuous_cardn': {'path': 'torch.distributions.Normal'}
+            'color': torch.distributions.Bernoulli,
+            'shape': torch.distributions.Categorical
         }
+
+        result = add_distribution_to_annotations(annotations, variable_distributions)
+        self.assertIsInstance(result, AxisAnnotation)
+
+    def test_add_distribution_to_annotations_with_groups(self):
+        """Test add_distribution_to_annotations function."""
+        from torch_concepts.utils import add_distribution_to_annotations
+
+        # Create simple annotations with proper metadata
+        metadata = {
+            'color': {'type': 'discrete'},
+            'shape': {'type': 'discrete'}
+        }
+        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
+
+        variable_distributions = GroupConfig(
+            binary=torch.distributions.Bernoulli,
+            categorical=torch.distributions.Categorical
+        )
 
         result = add_distribution_to_annotations(annotations, variable_distributions)
         self.assertIsInstance(result, AxisAnnotation)

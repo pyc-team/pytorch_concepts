@@ -12,34 +12,14 @@ The model uses:
 """
 
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
 from torch.distributions import Bernoulli
-
 from torchmetrics.classification import BinaryAccuracy
-
 from pytorch_lightning import Trainer
 
-from torch_concepts.nn.modules.loss import ConceptLoss
-from torch_concepts.nn.modules.utils import GroupConfig
-
-class ConceptDataset(Dataset):
-    """Custom dataset that returns batches in the format expected by ConceptBottleneckModel."""
-    
-    def __init__(self, x, c, y):
-        self.x = x
-        self.concepts = torch.cat([c, y], dim=1)
-    
-    def __len__(self):
-        return len(self.x)
-    
-    def __getitem__(self, idx):
-        return {
-            'inputs': {'x': self.x[idx]},
-            'concepts': {'c': self.concepts[idx]},
-        }
+from torch_concepts import GroupConfig
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
+from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data.base.datamodule import ConceptDataModule
 
 def main():
     # Set random seed for reproducibility
@@ -50,51 +30,24 @@ def main():
     print("Step 1: Generate toy XOR dataset")
     print("=" * 60)
     
-    n_samples = 1000
+    n_samples = 10000
+    batch_size = 2048
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
-    x_train = dataset.input_data
-    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
-    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-    c_train = dataset.concepts[:, concept_idx]
-    y_train = dataset.concepts[:, task_idx]
-    concept_names = [dataset.concept_names[i] for i in concept_idx]
-    task_names = [dataset.concept_names[i] for i in task_idx]
-    
-    n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_tasks = y_train.shape[1]
-    
+    datamodule = ConceptDataModule(dataset=dataset, 
+                                   batch_size=batch_size,
+                                   val_size=0.1,
+                                   test_size=0.2)
+    annotations = dataset.annotations
+    concept_names = annotations.get_axis_annotation(1).labels
+
+    n_features = dataset.input_data.shape[1]
+    n_concepts = 2
+    n_tasks = 1
+
     print(f"Input features: {n_features}")
-    print(f"Concepts: {n_concepts} - {concept_names}")
-    print(f"Tasks: {n_tasks} - {task_names}")
+    print(f"Concepts: {n_concepts} - {concept_names[:2]}")
+    print(f"Tasks: {n_tasks} - {concept_names[2]}")
     print(f"Training samples: {n_samples}")
-
-    # For binary concepts, we can use simple labels
-    concept_annotations = Annotations({
-        1: AxisAnnotation(
-            labels=tuple(concept_names + task_names),
-            metadata={
-                concept_names[0]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                },
-                concept_names[1]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                },
-                task_names[0]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                }
-            }
-        )
-    })
-    
-    print(f"Concept axis labels: {concept_annotations[1].labels}")
-    print(f"Concept types: {[concept_annotations[1].metadata[name]['type'] for name in concept_names]}")
-    print(f"Concept cardinalities: {concept_annotations[1].cardinalities}")
-    print(f"Concept distributions: {[concept_annotations[1].metadata[name]['distribution'] for name in concept_names]}")
-
 
     # Init model
     print("\n" + "=" * 60)
@@ -103,7 +56,7 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations = concept_annotations,
+        annotations = annotations,
         fn_collection = GroupConfig(
             binary = torch.nn.BCEWithLogitsLoss(),
             categorical = torch.nn.CrossEntropyLoss(),
@@ -111,15 +64,17 @@ def main():
         )
     )
 
+    # Define variable distributions as Bernoulli
+    variable_distributions = {name: Bernoulli for name in concept_names}
+
     # Initialize the CBM
     model = ConceptBottleneckModel(
         input_size=n_features,
-        annotations=concept_annotations,
-        task_names=task_names,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
         loss=loss_fn,
-        summary_metrics=True,
-        perconcept_metrics=True,
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.02}
     )
@@ -134,11 +89,10 @@ def main():
     print("Step 3: Test forward pass")
     print("=" * 60)
     
-    batch_size = 8
-    x_batch = x_train[:batch_size]
+    x_batch = dataset.input_data[:batch_size]
     
     # Forward pass
-    query = list(concept_names) + list(task_names)
+    query = concept_names
     print(f"Query variables: {query}")
     
     with torch.no_grad():
@@ -149,43 +103,51 @@ def main():
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
-    # Test forward pass
+    # Test lightning training
     print("\n" + "=" * 60)
     print("Step 4: Training loop with lightning")
     print("=" * 60)
 
-    trainer = Trainer(
-        max_epochs=500,
-        log_every_n_steps=10
-    )
-
-    # Create dataset and dataloader
-    train_dataset = ConceptDataset(x_train, c_train, y_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=1000, shuffle=False)
+    trainer = Trainer(max_epochs=100)
 
     model.train()
-    trainer.fit(model, train_dataloaders=train_dataloader)
+    trainer.fit(model, datamodule=datamodule)
 
     # Evaluate
     print("\n" + "=" * 60)
-    print("Step 5: Evaluation")
+    print("Step 5: Evaluation with standard torch metrics")
     print("=" * 60)
     
     concept_acc_fn = BinaryAccuracy()
     task_acc_fn = BinaryAccuracy()
 
     model.eval()
+    concept_acc_sum = 0.0
+    task_acc_sum = 0.0
+    num_batches = 0
+
     with torch.no_grad():
-        endogenous = model(x_train, query=query)
-        c_pred = endogenous[:, :n_concepts]
-        y_pred = endogenous[:, n_concepts:]
-        
-        # Compute accuracy using BinaryAccuracy
-        concept_acc = concept_acc_fn(c_pred, c_train.int()).item()
-        task_acc = task_acc_fn(y_pred, y_train.int()).item()
-        
-        print(f"Concept accuracy: {concept_acc:.4f}")
-        print(f"Task accuracy: {task_acc:.4f}")
+        test_loader = datamodule.test_dataloader()
+        for batch in test_loader:
+            endogenous = model(batch['inputs']['x'], query=query)
+            c_pred = endogenous[:, :n_concepts]
+            y_pred = endogenous[:, n_concepts:]
+
+            c_true = batch['concepts']['c'][:, :n_concepts]
+            y_true = batch['concepts']['c'][:, n_concepts:]
+
+            concept_acc = concept_acc_fn(c_pred, c_true.int()).item()
+            task_acc = task_acc_fn(y_pred, y_true.int()).item()
+
+            concept_acc_sum += concept_acc
+            task_acc_sum += task_acc
+            num_batches += 1
+
+    avg_concept_acc = concept_acc_sum / num_batches if num_batches > 0 else 0.0
+    avg_task_acc = task_acc_sum / num_batches if num_batches > 0 else 0.0
+
+    print(f"Average concept accuracy: {avg_concept_acc:.4f}")
+    print(f"Average task accuracy: {avg_task_acc:.4f}")
 
 if __name__ == "__main__":
     main()

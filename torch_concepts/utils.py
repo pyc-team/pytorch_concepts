@@ -15,7 +15,8 @@ import torch, math
 import logging
 from pytorch_lightning import seed_everything as pl_seed_everything
 
-from .annotations import AxisAnnotation
+from .annotations import Annotations, AxisAnnotation
+from .nn.modules.utils import GroupConfig
 
 
 def seed_everything(seed: int, workers: bool = True) -> int:
@@ -257,59 +258,82 @@ def _check_tensors(tensors):
             raise ValueError("All tensors must have the same requires_grad setting.")
 
 
-def add_distribution_to_annotations(annotations: AxisAnnotation,
-                                    variable_distributions: Mapping) -> AxisAnnotation:
-    """Add probability distribution classes to concept annotations metadata.
+def add_distribution_to_annotations(
+        annotations: Union[Annotations, AxisAnnotation],
+        distributions: Union[GroupConfig, Mapping[str, object]]
+    ) -> Union[Annotations, AxisAnnotation]:
+    """
+    Add probability distribution classes to concept annotations metadata.
 
-    Maps concept types and cardinalities to appropriate distribution classes
-    (e.g., Bernoulli for binary, Categorical for multi-class). Used by models
-    to define probabilistic layers for each concept.
+    This function updates the metadata of each concept in the provided AxisAnnotation
+    by assigning a probability distribution class/config based on the concept's type
+    ('discrete' or 'continuous') and cardinality. The distribution can be provided
+    either as a GroupConfig (with keys 'binary' / 'categorical' / 'continuous') or as a Mapping
+    from concept names to distributions.
 
     Args:
-        annotations: Concept annotations with type and cardinality metadata.
-        variable_distributions: Mapping from distribution flags to config:
-            - discrete_card1: Binary concept distribution
-            - discrete_cardn: Categorical distribution
-            - continuous_card1: Scalar continuous distribution
-            - continuous_cardn: Vector continuous distribution
+        annotations (AxisAnnotation): Concept annotations containing metadata and cardinalities.
+        distributions (GroupConfig or Mapping): Either a GroupConfig with keys
+            'binary' / 'categorical' / 'continuous', or a Mapping from concept names to distributions.
 
     Returns:
-        Updated annotations with 'distribution' field in each concept's metadata.
+        AxisAnnotation: Updated annotations with a 'distribution' field added to each concept's metadata.
 
     Example:
-        >>> distributions = {
-        ...     'discrete_card1': {'path': 'torch.distributions.Bernoulli'},
-        ...     'discrete_cardn': {'path': 'torch.distributions.Categorical'}
-        ... }
-        >>> annotations = add_distribution_to_annotations(
-        ...     annotations, distributions
+        >>> from torch_concepts.annotations import AxisAnnotation
+        >>> from torch_concepts.nn.modules.utils import GroupConfig
+        >>> annotations = AxisAnnotation(
+        ...     metadata={
+        ...         'color': {'type': 'discrete'},
+        ...         'size': {'type': 'discrete'},
+        ...     },
+        ...     cardinalities=[3, 1]
         ... )
+        >>> distributions = GroupConfig(
+        ...     binary = torch.distributions.Bernoulli(),
+        ...     categorical = torch.distributions.Categorical()
+        ... )
+        >>> updated = add_distribution_to_annotations(annotations, distributions)
+        >>> print(updated.metadata['color']['distribution'])
+        {'path': 'torch.distributions.Categorical'}
+        >>> print(updated.metadata['size']['distribution'])
+        {'path': 'torch.distributions.Bernoulli'}
     """
-    metadatas = annotations.metadata
-    cardinalities = annotations.cardinalities
-    for (concept_name, metadata), cardinality in zip(metadatas.items(), cardinalities):
-        if 'distribution' in metadata:
-            warnings.warn(
-                f"Distribution field of concept {concept_name} already set; leaving existing value unchanged.",
-                RuntimeWarning
-            )
-            continue
-        else:
+    if isinstance(annotations, Annotations):
+        axis_annotation = annotations.get_axis_annotation(1)
+    elif isinstance(annotations, AxisAnnotation):
+        axis_annotation = annotations
+    else:
+        raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
+    new_metadata = deepcopy(axis_annotation.metadata)
+    cardinalities = axis_annotation.cardinalities
+
+    if isinstance(distributions, GroupConfig):
+        for (concept_name, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
             if metadata['type'] == 'discrete' and cardinality == 1:
-                distribution_flag = 'discrete_card1'
+                new_metadata[concept_name]['distribution'] = distributions['binary']
             elif metadata['type'] == 'discrete' and cardinality > 1:
-                distribution_flag = 'discrete_cardn'
+                new_metadata[concept_name]['distribution'] = distributions['categorical']
             elif metadata['type'] == 'continuous' and cardinality == 1:
-                distribution_flag = 'continuous_card1'
+                raise NotImplementedError("Continuous concepts not supported yet.")
             elif metadata['type'] == 'continuous' and cardinality > 1:
-                distribution_flag = 'continuous_cardn'
+                raise NotImplementedError("Continuous concepts not supported yet.")
             else:
                 raise ValueError(f"Cannot set distribution type for concept {concept_name}.")
-
-        metadatas[concept_name]['distribution'] = get_from_string(variable_distributions[distribution_flag]['path'])
-
-    annotations.metadata = metadatas
-    return annotations
+    elif isinstance(distributions, Mapping):
+        for concept_name in axis_annotation.metadata.keys():
+            dist = distributions.get(concept_name, None)
+            if dist is None:
+                raise ValueError(f"No distribution config found for concept {concept_name}.")
+            new_metadata[concept_name]['distribution'] = dist
+    else:
+        raise ValueError("Distributions must be a GroupConfig or a Mapping.")
+    axis_annotation.metadata = new_metadata
+    if isinstance(annotations, Annotations):
+        annotations[1] = axis_annotation
+        return annotations
+    else:
+        return axis_annotation
 
 
 def get_from_string(class_path: str):

@@ -13,12 +13,13 @@ The model uses:
 
 import torch
 from torch import nn
-from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
-from torch_concepts.data.datasets import ToyDataset
 from torch.distributions import Bernoulli
 
+from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.data.datasets import ToyDataset
+
 from torchmetrics.classification import BinaryAccuracy
+
 
 
 def main():
@@ -33,12 +34,10 @@ def main():
     n_samples = 1000
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
-    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
-    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-    c_train = dataset.concepts[:, concept_idx]
-    y_train = dataset.concepts[:, task_idx]
-    concept_names = [dataset.concept_names[i] for i in concept_idx]
-    task_names = [dataset.concept_names[i] for i in task_idx]
+    c_train = dataset.concepts[:, :2]
+    y_train = dataset.concepts[:, 2:]
+    concept_names = dataset.concept_names[:2]
+    task_names = dataset.concept_names[2:]
     
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
@@ -49,41 +48,25 @@ def main():
     print(f"Tasks: {n_tasks} - {task_names}")
     print(f"Training samples: {n_samples}")
 
-    # For binary concepts, we can use simple labels
-    concept_annotations = Annotations({
-        1: AxisAnnotation(
-            labels=tuple(concept_names + task_names),
-            metadata={
-                concept_names[0]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                },
-                concept_names[1]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                },
-                task_names[0]: {
-                    'type': 'discrete',
-                    'distribution': Bernoulli
-                }
-            }
-        )
-    })
+    concept_annotations = dataset.annotations
     
     print(f"Concept axis labels: {concept_annotations[1].labels}")
     print(f"Concept types: {[concept_annotations[1].metadata[name]['type'] for name in concept_names]}")
     print(f"Concept cardinalities: {concept_annotations[1].cardinalities}")
-    print(f"Concept distributions: {[concept_annotations[1].metadata[name]['distribution'] for name in concept_names]}")
 
     # Init model
     print("\n" + "=" * 60)
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
+    # Define variable distributions as Bernoulli
+    variable_distributions = {name: Bernoulli for name in concept_names + task_names}
+
     # Initialize the CBM
     model = ConceptBottleneckModel(
         input_size=n_features,
         annotations=concept_annotations,
+        variable_distributions=variable_distributions,
         task_names=task_names,
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1}
     )

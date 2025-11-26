@@ -42,9 +42,6 @@ from .modules.loss import ConceptLoss, WeightedConceptLoss
 # Metrics
 from .modules.metrics import ConceptMetrics
 
-# Configuration
-from .modules.utils import GroupConfig
-
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox
 from .modules.high.models.cbm import ConceptBottleneckModel, \
@@ -124,9 +121,6 @@ __all__ = [
 
     # Metrics
     "ConceptMetrics",
-
-    # Configuration
-    "GroupConfig",
 
     # Models (high-level)
     "BlackBox",

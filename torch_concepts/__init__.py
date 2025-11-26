@@ -8,6 +8,7 @@ from importlib import import_module
 from typing import Any
 
 from .annotations import Annotations, AxisAnnotation
+from .nn.modules.utils import GroupConfig
 from .nn.modules.mid.constructors.concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable, InputVariable, ExogenousVariable, EndogenousVariable
 from .utils import seed_everything
@@ -23,10 +24,15 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "__version__",
 
+    # Data properties
     "Annotations",
     "AxisAnnotation",
     "ConceptGraph",
 
+    # Configuration
+    "GroupConfig",
+
+    # Variables
     "Variable",
     "InputVariable",
     "ExogenousVariable",

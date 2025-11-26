@@ -17,19 +17,12 @@ latent_encoder_kwargs:
 # Concept distribution configs
 # =============================================================
 variable_distributions:
-  discrete_card1: 
-    path: "torch.distributions.RelaxedBernoulli"
-    kwargs:
-      temperature: 0.1
-  discrete_cardn: 
-    path: "torch.distributions.RelaxedOneHotCategorical"
-    kwargs:
-      temperature: 0.1
-      # num_classes: to be set dynamically for each concept
-  continuous_card1: 
-    path: "torch_concepts.distributions.Delta"
-  continuous_cardn: 
-    path: "torch_concepts.distributions.Delta"
+  _target_: "torch_concepts.GroupConfig"
+  binary: "torch.distributions.RelaxedBernoulli"
+  categorical: "torch.distributions.RelaxedOneHotCategorical"
+  # TODO: handle kwargs
+  # continuous: 
+    # ... not supported yet
 
 
 # =============================================================
