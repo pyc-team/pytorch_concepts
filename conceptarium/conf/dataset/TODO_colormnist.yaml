@@ -1,0 +1,27 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: conceptarium.data.datamodules.colormnist.ColorMNISTDataModule
+
+seed: ${seed}
+
+coloring:
+  training_mode: 'intervals'
+  training_kwargs:
+    intervals: [[1,3,5,7,9], [0,2,4,6,8]]
+    values:  [["green"],["red"]]
+
+
+  test_mode: "random"
+  test_kwargs: 
+    random_prob: ["uniform"] 
+    values: ["green","red"] 
+ # odd -> green vs even -> red
+
+
+
+label_descriptions:
+  number: "a variable representing a number from 0 to 9."
+  parity: "a categorical variable that classifies each number based on its parity. It takes one of two values, 'even' (1) or 'odd' (0), where 'even' refers to numbers divisible by 2."
+  color: "a binary variable indicating a color, taking one of two possible values: 'red' (1) or 'green' (0)."

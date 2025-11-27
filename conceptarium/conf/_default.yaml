@@ -1,0 +1,31 @@
+defaults:
+  - dataset: asia
+  - model: cbm_joint
+  - loss: standard
+  - metrics: standard
+  - _self_
+
+# =============================================================
+# Hydra sweep settings
+# =============================================================
+hydra:
+  mode: MULTIRUN
+  job:
+    name: unnamed_sweep
+    chdir: true
+  sweep:
+    dir: "outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+    subdir: "${hydra.job.num}"
+
+# =============================================================
+# Pytorch Lightning Trainer settings
+# =============================================================
+trainer:
+  logger: null
+  max_epochs: 200
+  monitor: "val_loss"
+  patience: 20
+  accelerator: "auto"
+
+seed: 42
+notes: null

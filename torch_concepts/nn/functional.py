@@ -1,18 +1,39 @@
+"""
+Functional utilities for concept-based neural networks.
+
+This module provides functional operations for concept manipulation, intervention,
+exogenous mixture, and evaluation metrics for concept-based models.
+"""
 import torch
-
 from collections import defaultdict
+from sklearn.metrics import roc_auc_score
+from typing import Callable, List, Union, Dict
+from torch.nn import Linear
+import warnings
+import numbers
+import torch
+import numpy as np
+import scipy
+from scipy.optimize import Bounds, NonlinearConstraint
+from scipy.optimize import minimize as minimize_scipy
+from scipy.sparse.linalg import LinearOperator
 
-from torch import Tensor
+_constr_keys = {"fun", "lb", "ub", "jac", "hess", "hessp", "keep_feasible"}
+_bounds_keys = {"lb", "ub", "keep_feasible"}
 
-from torch_concepts.semantic import CMRSemantic
-from typing import List, Dict, Iterable
-from torch_concepts.utils import numerical_stability_check
-from scipy.stats import chi2
-from torch_concepts.nn.minimize_constraint import minimize_constr
-from torch.distributions import MultivariateNormal
+from .modules.low.semantic import CMRSemantic
 
 
 def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
+    """
+    Generate default concept names for a given shape.
+
+    Args:
+        shape: List of integers representing the shape of concept dimensions.
+
+    Returns:
+        Dict mapping dimension index to list of concept names.
+    """
     concept_names = {}
     for dim in range(len(shape)):
         concept_names[dim+1] = [
@@ -21,94 +42,81 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     return concept_names
 
 
-def intervene(
-    c_pred: torch.Tensor,
-    c_true: torch.Tensor,
-    indexes: torch.Tensor,
-) -> torch.Tensor:
+def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
+                                      c_scores: torch.Tensor,
+                                      groups: list[int]) -> torch.Tensor:
     """
-    Intervene on concept embeddings.
+    Vectorized version of grouped concept exogenous mixture.
+
+    Extends  to handle grouped concepts where
+    some groups may contain multiple related concepts. Adapted from "Concept Embedding Models:
+    Beyond the Accuracy-Explainability Trade-Off" (Espinosa Zarlenga et al., 2022).
 
     Args:
-        c_pred (Tensor): Predicted concepts.
-        c_true (Tensor): Ground truth concepts.
-        indexes (Tensor): Boolean Tensor indicating which concepts to intervene
-            on.
+        c_emb: Concept exogenous of shape (B, n_concepts, emb_size).
+        c_scores: Concept scores of shape (B, sum(groups)).
+        groups: List of group sizes (e.g., [3, 4] for two groups).
 
     Returns:
-        Tensor: Intervened concepts.
+        Tensor: Mixed exogenous of shape (B, len(groups), emb_size // 2).
+
+    Raises:
+        AssertionError: If group sizes don't sum to n_concepts.
+        AssertionError: If exogenous dimension is not even.
+
+    References:
+        Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
+        Accuracy-Explainability Trade-Off", NeurIPS 2022.
+        https://arxiv.org/abs/2209.09056
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn.functional import grouped_concept_exogenous_mixture
+        >>>
+        >>> # 10 concepts in 3 groups: [3, 4, 3]
+        >>> # Embedding size = 20 (must be even)
+        >>> batch_size = 4
+        >>> n_concepts = 10
+        >>> emb_size = 20
+        >>> groups = [3, 4, 3]
+        >>>
+        >>> # Generate random latent and scores
+        >>> c_emb = torch.randn(batch_size, n_concepts, emb_size)
+        >>> c_scores = torch.rand(batch_size, n_concepts)  # Probabilities
+        >>>
+        >>> # Apply grouped mixture
+        >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
+        >>> print(mixed.shape)  # torch.Size([4, 3, 10])
+        >>> # Output shape: (batch_size, n_groups, emb_size // 2)
+        >>>
+        >>> # Singleton groups use two-half mixture
+        >>> # Multi-concept groups use weighted average of base exogenous
     """
-    if c_true is None or indexes is None:
-        return c_pred
+    B, C, D = c_emb.shape
+    assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
+    assert D % 2 == 0, f"exogenous dim must be even (two halves). Current dim: {D}"
+    E = D // 2
 
-    if c_pred.shape != c_true.shape:
-        raise ValueError(
-            "Predicted and true concepts must have the same shape."
-        )
+    # Split concept exogenous into two halves
+    emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
+    s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
-    if c_true is not None and indexes is not None:
-        if indexes.max() >= c_pred.shape[1]:
-            raise ValueError(
-                "Intervention indices must be less than the number of concepts."
-            )
+    # Build group ids per concept: [0,0,...,0, 1,1,...,1, ...]
+    device = c_emb.device
+    G = len(groups)
+    gs = torch.as_tensor(groups, device=device)
+    group_id = torch.repeat_interleave(torch.arange(G, device=device), gs)  # [C]
 
-    return torch.where(indexes, c_true, c_pred)
+    # For singleton groups, do the two-half mixture; otherwise use emb_a weighted by the score
+    is_singleton_concept = (gs == 1)[group_id].view(1, C, 1)               # [1, C, 1], bool
+    eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
+                      s * emb_a)                                           # multi: weight base embedding
 
-
-def concept_embedding_mixture(
-    c_emb: torch.Tensor,
-    c_scores: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Mixes concept embeddings and concept predictions.
-    Main reference: `"Concept Embedding Models: Beyond the
-    Accuracy-Explainability Trade-Off" <https://arxiv.org/abs/2209.09056>`_
-
-    Args:
-        c_emb (Tensor): Concept embeddings with shape (batch_size, n_concepts,
-            emb_size).
-        c_scores (Tensor): Concept scores with shape (batch_size, n_concepts).
-        concept_names (List[str]): Concept names.
-
-    Returns:
-        Tensor: Mix of concept embeddings and concept scores with shape
-            (batch_size, n_concepts, emb_size//2)
-    """
-    emb_size = c_emb[0].shape[1] // 2
-    c_mix = (
-        c_scores.unsqueeze(-1) * c_emb[:, :, :emb_size] +
-        (1 - c_scores.unsqueeze(-1)) * c_emb[:, :, emb_size:]
-    )
-    return c_mix
-
-
-def intervene_on_concept_graph(
-    c_adj: torch.Tensor,
-    indexes: List[int],
-) -> torch.Tensor:
-    """
-    Intervene on a Tensor adjacency matrix by zeroing out specified
-    concepts representing parent nodes.
-
-    Args:
-        c_adj: torch.Tensor adjacency matrix.
-        indexes: List of indices to zero out.
-
-    Returns:
-        Tensor: Intervened Tensor adjacency matrix.
-    """
-    # Check if the tensor is a square matrix
-    if c_adj.shape[0] != c_adj.shape[1]:
-        raise ValueError(
-            "The Tensor must be a square matrix (it represents an "
-            "adjacency matrix)."
-        )
-
-    # Zero out specified columns
-    c_adj = c_adj.clone()
-    c_adj[:, indexes] = 0
-
-    return c_adj
+    # Sum weighted exogenous within each group (no loops)
+    out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
+    index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
+    out = out.scatter_add(1, index, eff)                                   # [B, G, E]
+    return out
 
 
 def selection_eval(
@@ -116,16 +124,14 @@ def selection_eval(
     *predictions: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Evaluate predictions as a weighted product based on selection weights.
+    Evaluate concept selection by computing weighted predictions.
 
     Args:
-        selection_weights (Tensor): Selection weights with at least two
-            dimensions (D1, ..., Dn).
-        predictions (Tensor): Arbitrary number of prediction tensors, each with
-            the same shape as selection_weights (D1, ..., Dn).
+        selection_weights: Weights for selecting between predictions.
+        *predictions: Variable number of prediction tensors to combine.
 
     Returns:
-        Tensor: Weighted product sum with shape (D1, ...).
+        Tensor: Weighted combination of predictions.
     """
     if len(predictions) == 0:
         raise ValueError("At least one prediction tensor must be provided.")
@@ -205,10 +211,10 @@ def linear_equation_expl(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
@@ -376,10 +382,10 @@ def logic_rule_explanations(
         c_names = names[1]
         t_names = names[2]
     else:
-        names = _default_concept_names(concept_logic_weights.shape[1:3])
+        # Generate default names for concepts (dimension 2) and tasks (dimension 3)
         if concept_names is None:
-            c_names = names[1]
-            t_names = names[2]
+            c_names = [f"c_{i}" for i in range(concept_logic_weights.shape[2])]
+            t_names = [f"t_{i}" for i in range(concept_logic_weights.shape[3])]
         else:
             c_names = concept_names[1]
             t_names = concept_names[2]
@@ -469,144 +475,590 @@ def soft_select(values, temperature, dim=1) -> torch.Tensor:
                                softmax_scores.mean(dim=dim, keepdim=True))
     return soft_scores
 
-class ConfIntervalOptimalStrategy:
+def completeness_score(
+    y_true,
+    y_pred_blackbox,
+    y_pred_whitebox,
+    scorer=roc_auc_score,
+    average='macro',
+):
     """
-    A strategy for intervening on concepts using confidence interval bounds.
+    Calculate the completeness score for the given predictions and true labels.
+    Main reference: `"On Completeness-aware Concept-Based Explanations in
+    Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_
+
+    Parameters:
+        y_true (torch.Tensor): True labels.
+        y_pred_blackbox (torch.Tensor): Predictions from the blackbox model.
+        y_pred_whitebox (torch.Tensor): Predictions from the whitebox model.
+        scorer (function): Scoring function to evaluate predictions. Default is
+            roc_auc_score.
+        average (str): Type of averaging to use. Default is 'macro'.
+
+    Returns:
+        float: Completeness score.
+    """
+    # Convert to numpy for sklearn metrics
+    y_true_np = y_true.cpu().detach().numpy()
+    y_pred_blackbox_np = y_pred_blackbox.cpu().detach().numpy()
+    y_pred_whitebox_np = y_pred_whitebox.cpu().detach().numpy()
+
+    # Compute accuracy or other score using scorer
+    blackbox_score = scorer(y_true_np, y_pred_blackbox_np, average=average)
+    whitebox_score = scorer(y_true_np, y_pred_whitebox_np, average=average)
+
+    return (whitebox_score) / (blackbox_score + 1e-10)
+
+
+def intervention_score(
+    y_predictor: torch.nn.Module,
+    c_pred: torch.Tensor,
+    c_true: torch.Tensor,
+    y_true: torch.Tensor,
+    intervention_groups: List[List[int]],
+    activation: Callable = torch.sigmoid,
+    scorer: Callable = roc_auc_score,
+    average: str = 'macro',
+    auc: bool = True,
+) -> Union[float, List[float]]:
+    """
+    Compute the effect of concept interventions on downstream task predictions.
+
+    Given  set of intervention groups, the intervention score measures the
+    effectiveness of each intervention group on the model's task predictions.
+
+    Main reference: `"Concept Bottleneck
+    Models" <https://arxiv.org/abs/2007.04612>`_
+
+    Parameters:
+        y_predictor (torch.nn.Module): Model that predicts downstream task
+            abels.
+        c_pred (torch.Tensor): Predicted concept values.
+        c_true (torch.Tensor): Ground truth concept values.
+        y_true (torch.Tensor): Ground truth task labels.
+        intervention_groups (List[List[int]]): List of intervention groups.
+        activation (Callable): Activation function to apply to the model's
+            predictions. Default is torch.sigmoid.
+        scorer (Callable): Scoring function to evaluate predictions. Default is
+            roc_auc_score.
+        average (str): Type of averaging to use. Default is 'macro'.
+        auc (bool): Whether to return the average score across all intervention
+            groups. Default is True.
+
+    Returns:
+        Union[float, List[float]]: The intervention effectiveness for each
+            intervention group or the average score across all groups.
+    """
+    # Convert to numpy for sklearn metrics
+    y_true_np = y_true.cpu().detach().numpy()
+
+    # Re-compute the model's predictions for each intervention group
+    intervention_effectiveness = []
+    for group in intervention_groups:
+        # Intervene on the concept values
+        c_pred_group = c_pred.clone()
+        c_pred_group[:, group] = c_true[:, group]
+
+        # Compute the new model's predictions
+        y_pred_group = activation(y_predictor(c_pred_group))
+
+        # Compute the new model's task performance
+        intervention_effectiveness.append(scorer(
+            y_true_np,
+            y_pred_group.cpu().detach().numpy(),
+            average=average,
+        ))
+
+    # Compute the area under the curve of the intervention curve
+    if auc:
+        intervention_effectiveness = (
+            sum(intervention_effectiveness) / len(intervention_groups)
+        )
+    return intervention_effectiveness
+
+
+def cace_score(y_pred_c0, y_pred_c1):
+    """
+    Compute the Average Causal Effect (ACE) also known as the Causal Concept
+    Effect (CaCE) score.
+
+    The ACE/CaCE score measures the causal effect of a concept on the
+    predictions of a model. It is computed as the absolute difference between
+    the expected predictions when the concept is inactive (c0) and active (c1).
+
+    Main reference: `"Explaining Classifiers with Causal Concept Effect
+    (CaCE)" <https://arxiv.org/abs/1907.07165>`_
+
+    Parameters:
+        y_pred_c0 (torch.Tensor): Predictions of the model when the concept is
+            inactive. Shape: (batch_size, num_classes).
+        y_pred_c1 (torch.Tensor): Predictions of the model when the concept is
+            active. Shape: (batch_size, num_classes).
+
+    Returns:
+        torch.Tensor: The ACE/CaCE score for each class. Shape: (num_classes,).
+    """
+    if y_pred_c0.shape != y_pred_c1.shape:
+        raise RuntimeError(
+            "The shapes of y_pred_c0 and y_pred_c1 must be the same but got "
+            f"{y_pred_c0.shape} and {y_pred_c1.shape} instead."
+        )
+    return y_pred_c1.mean(dim=0) - y_pred_c0.mean(dim=0)
+
+
+def residual_concept_causal_effect(cace_before, cace_after):
+    """
+    Compute the residual concept causal effect between two concepts.
     Args:
-        level (float, optional): The confidence level for the confidence interval.
+        cace_metric_before: ConceptCausalEffect metric before the do-intervention on the inner concept
+        cace_metric_after: ConceptCausalEffect metric after do-intervention on the inner concept
     """
-    # Set intervened concept logits to bounds of 90% confidence interval
-    def __init__(self, level=0.9):
-        from torchmin import minimize
-        self.level = level
-    def compute_intervened_logits(self, c_mu, c_cov, c_true, c_mask):
-        """
-        Compute the logits for the intervened-on concepts based on the confidence interval bounds.
-        This method finds values that lie on the confidence region boundary and maximize the likelihood
-        of the intervened concepts.
-        Args:
-            c_mu (torch.Tensor): The predicted mean values of the concepts. Shape: (batch_size, num_concepts)
-            c_cov (torch.Tensor): The predicted covariance matrix of the concepts. Shape: (batch_size, num_concepts, num_concepts)
-            c_true (torch.Tensor): The ground-truth concept values. Shape: (batch_size, num_concepts)
-            c_mask (torch.Tensor): A mask indicating which concepts are intervened-on. Shape: (batch_size, num_concepts)
-        Returns:
-            torch.Tensor: The logits for the intervened-on concepts, rest filled with NaN. Shape: (batch_size, num_concepts)
-        Step-by-step procedure:
-            - The method first separates the intervened-on concepts from the others.
-            - It finds a good initial point on the confidence region boundary, that is spanned in the logit space.
-                It is defined as a vector with equal magnitude in each dimension, originating from c_mu and oriented
-                in the direction of the ground truth. Thus, only the scale factor of this vector needs to be found
-                s.t. it lies on the confidence region boundary.
-            - It defines the confidence region bounds on the logits, as well as defining some objective and derivatives
-              for faster optimization.
-            - It performs sample-wise constrained optimization to find the intervention logits by minimizing the concept BCE
-              while ensuring they lie within the boundary of the confidence region. The starting point from before is used as
-              initialization. Note that this is done sequentially for each sample, and therefore very slow.
-              The optimization problem also scales with the number of intervened-on concepts. There are certainly ways to make it much faster.
-            - After having found the optimal points at the confidence region bound, it permutes determined concept logits back into the original order.
-        """
-        # Find values that lie on confidence region ball
-        # Approach: Find theta s.t.  Λn(θ)= −2(ℓ(θ)−ℓ(θ^))=χ^2_{1-α,n} and minimize concept loss of intervened concepts.
-        # Note, theta^ is = mu, evaluated for the N(mu,Sigma) distribution, while theta is point on the boundary of the confidence region
-        # Then, we make theta by arg min Concept BCE(θ) s.t. Λn(θ) <= holds with 1-α = self.level for theta~N(0,Sigma) (not fully correct explanation, but intuition).
-        n_intervened = c_mask.sum(1)[0]
-        # Separate intervened-on concepts from others
-        indices = torch.argsort(c_mask, dim=1, descending=True, stable=True)
-        perm_cov = c_cov.gather(1, indices.unsqueeze(2).expand(-1, -1, c_cov.size(2)))
-        perm_cov = perm_cov.gather(
-            2, indices.unsqueeze(1).expand(-1, c_cov.size(1), -1)
+    return cace_after / cace_before
+
+def edge_type(graph, i, j):
+    if graph[i,j]==1 and graph[j,i]==0:
+        return 'i->j'
+    elif graph[i,j]==0 and graph[j,i]==1:
+        return 'i<-j'
+    elif (graph[i,j]==-1 and graph[j,i]==-1) or (graph[i,j]==1 and graph[j,i]==1):
+        return 'i-j'
+    elif graph[i,j]==0 and graph[j,i]==0:
+        return '/'
+    else:
+        raise ValueError(f'invalid edge type {i}, {j}')
+
+# graph similairty metrics
+def custom_hamming_distance(first, second):
+    """Compute the graph edit distance between two partially direceted graphs"""
+    first = first.loc[[row for row in first.index if '#virtual_' not in row],
+                      [col for col in first.columns if '#virtual_' not in col]]
+    first = torch.Tensor(first.values)
+    second = second.loc[[row for row in second.index if '#virtual_' not in row],
+                        [col for col in second.columns if '#virtual_' not in col]]
+    second = torch.Tensor(second.values)
+    assert (first.diag() == 0).all() and (second.diag() == 0).all()
+    assert first.size() == second.size()
+    N = first.size(0)
+    cost = 0
+    count = 0
+    for i in range(N):
+        for j in range(i, N):
+            if i==j: continue
+            if edge_type(first, i, j)==edge_type(second, i, j): continue
+            else:
+                count += 1
+                # edge was directed
+                if edge_type(first, i, j)=='i->j' and edge_type(second, i, j)=='/': cost += 1./4.
+                elif edge_type(first, i, j)=='i<-j' and edge_type(second, i, j)=='/': cost += 1./4.
+                elif edge_type(first, i, j)=='i->j' and edge_type(second, i, j)=='i-j': cost += 1./5.
+                elif edge_type(first, i, j)=='i<-j' and edge_type(second, i, j)=='i-j': cost += 1./5.
+                elif edge_type(first, i, j)=='i->j' and edge_type(second, i, j)=='i<-j': cost += 1./3.
+                elif edge_type(first, i, j)=='i<-j' and edge_type(second, i, j)=='i->j': cost += 1./3.
+                # edge was undirected
+                elif edge_type(first, i, j)=='i-j' and edge_type(second, i, j)=='/': cost += 1./4.
+                elif edge_type(first, i, j)=='i-j' and edge_type(second, i, j)=='i->j': cost += 1./4. 
+                elif edge_type(first, i, j)=='i-j' and edge_type(second, i, j)=='i<-j': cost += 1./4.
+                # there was no edge
+                elif edge_type(first, i, j)=='/' and edge_type(second, i, j)=='i-j': cost += 1./2.
+                elif edge_type(first, i, j)=='/' and edge_type(second, i, j)=='i->j': cost += 1
+                elif edge_type(first, i, j)=='/' and edge_type(second, i, j)=='i<-j': cost += 1
+
+                else:  
+                    raise ValueError(f'invalid combination of edge types {i}, {j}')
+    
+    # cost = cost / (N*(N-1))/2
+    return cost, count
+
+
+def prune_linear_layer(linear: Linear, mask: torch.Tensor, dim: int = 0) -> Linear:
+    """
+    Return a new nn.Linear where inputs (dim=0) or outputs (dim=1)
+    have been pruned according to `mask`.
+
+    Args
+    ----
+    linear : nn.Linear
+        Layer to prune.
+    mask : 1D Tensor[bool] or 0/1
+        Mask over features. True/1 = keep, False/0 = drop.
+        - If dim=0: length == in_features
+        - If dim=1: length == out_features
+    dim : int
+        0 -> prune input features (columns of weight)
+        1 -> prune output units (rows of weight)
+    """
+    if not isinstance(linear, Linear):
+        raise TypeError("`linear` must be an nn.Linear")
+
+    mask = mask.to(dtype=torch.bool)
+    weight = linear.weight
+    device = weight.device
+    dtype = weight.dtype
+
+    idx = mask.nonzero(as_tuple=False).view(-1)  # indices to KEEP
+
+    if dim == 0:
+        if mask.numel() != linear.in_features:
+            raise ValueError("mask length must equal in_features when dim=0")
+
+        new_in = idx.numel()
+        new_linear = Linear(
+            in_features=new_in,
+            out_features=linear.out_features,
+            bias=linear.bias is not None,
+            device=device,
+            dtype=dtype,
         )
-        marginal_interv_cov = perm_cov[:, :n_intervened, :n_intervened]
-        marginal_interv_cov = numerical_stability_check(
-            marginal_interv_cov.float(), device=marginal_interv_cov.device
-        ).cpu()
-        target = (c_true * c_mask).gather(1, indices)[:, :n_intervened].float().cpu()
-        marginal_c_mu = c_mu.gather(1, indices)[:, :n_intervened].float().cpu()
-        interv_direction = (
-            ((2 * c_true - 1) * c_mask)
-            .gather(1, indices)[:, :n_intervened]
-            .float()
-            .cpu()
-        )  # direction
-        quantile_cutoff = chi2.ppf(q=self.level, df=n_intervened.cpu())
-        # Finding good init point on confidence region boundary (each dim with equal magnitude)
-        dist = MultivariateNormal(torch.zeros(n_intervened), marginal_interv_cov)
-        loglikeli_theta_hat = dist.log_prob(torch.zeros(n_intervened))
-        def conf_region(scale):
-            loglikeli_theta_star = dist.log_prob(scale * interv_direction)
-            log_likelihood_ratio = -2 * (loglikeli_theta_star - loglikeli_theta_hat)
-            return ((quantile_cutoff - log_likelihood_ratio) ** 2).sum(-1)
-        scale = minimize(
-            conf_region,
-            x0=torch.ones(c_mu.shape[0], 1),
-            method="bfgs",
-            max_iter=50,
-            tol=1e-5,
-        ).x
-        scale = (
-            scale.abs()
-        )  # in case negative root was found (note that both give same log-likelihood as its point-symmetric around 0)
-        x0 = marginal_c_mu + (interv_direction * scale)
-        # Define bounds on logits
-        lb_interv = torch.where(
-            interv_direction > 0, marginal_c_mu + 1e-4, torch.tensor(float("-inf"))
+        with torch.no_grad():
+            # keep all rows (outputs), select only kept input columns
+            new_linear.weight.copy_(weight[:, idx])
+            if linear.bias is not None:
+                new_linear.bias.copy_(linear.bias)
+
+    elif dim == 1:
+        if mask.numel() != linear.out_features:
+            raise ValueError("mask length must equal out_features when dim=1")
+
+        new_out = idx.numel()
+        new_linear = Linear(
+            in_features=linear.in_features,
+            out_features=new_out,
+            bias=linear.bias is not None,
+            device=device,
+            dtype=dtype,
         )
-        ub_interv = torch.where(
-            interv_direction < 0, marginal_c_mu - 1e-4, torch.tensor(float("inf"))
+        with torch.no_grad():
+            # select only kept output rows
+            new_linear.weight.copy_(weight[idx, :])
+            if linear.bias is not None:
+                new_linear.bias.copy_(linear.bias[idx])
+
+    else:
+        raise ValueError("dim must be 0 (inputs) or 1 (outputs)")
+
+    return new_linear
+
+
+def _build_obj(f, x0):
+    numel = x0.numel()
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    def f_with_jac(x):
+        x = to_tensor(x).requires_grad_(True)
+        with torch.enable_grad():
+            fval = f(x)
+        (grad,) = torch.autograd.grad(fval, x)
+        return fval.detach().cpu().numpy(), grad.view(-1).cpu().numpy()
+
+    def f_hess(x):
+        x = to_tensor(x).requires_grad_(True)
+        with torch.enable_grad():
+            fval = f(x)
+            (grad,) = torch.autograd.grad(fval, x, create_graph=True)
+
+        def matvec(p):
+            p = to_tensor(p)
+            (hvp,) = torch.autograd.grad(grad, x, p, retain_graph=True)
+            return hvp.view(-1).cpu().numpy()
+
+        return LinearOperator((numel, numel), matvec=matvec)
+
+    return f_with_jac, f_hess
+
+
+def _build_constr(constr, x0):
+    assert isinstance(constr, dict)
+    assert set(constr.keys()).issubset(_constr_keys)
+    assert "fun" in constr
+    assert "lb" in constr or "ub" in constr
+    if "lb" not in constr:
+        constr["lb"] = -np.inf
+    if "ub" not in constr:
+        constr["ub"] = np.inf
+    f_ = constr["fun"]
+    numel = x0.numel()
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    def f(x):
+        x = to_tensor(x)
+        return f_(x).cpu().numpy()
+
+    def f_jac(x):
+        x = to_tensor(x)
+        if "jac" in constr:
+            grad = constr["jac"](x)
+        else:
+            x.requires_grad_(True)
+            with torch.enable_grad():
+                (grad,) = torch.autograd.grad(f_(x), x)
+        return grad.view(-1).cpu().numpy()
+
+    def f_hess(x, v):
+        x = to_tensor(x)
+        if "hess" in constr:
+            hess = constr["hess"](x)
+            return v[0] * hess.view(numel, numel).cpu().numpy()
+        elif "hessp" in constr:
+
+            def matvec(p):
+                p = to_tensor(p)
+                hvp = constr["hessp"](x, p)
+                return v[0] * hvp.view(-1).cpu().numpy()
+
+            return LinearOperator((numel, numel), matvec=matvec)
+        else:
+            x.requires_grad_(True)
+            with torch.enable_grad():
+                if "jac" in constr:
+                    grad = constr["jac"](x)
+                else:
+                    (grad,) = torch.autograd.grad(f_(x), x, create_graph=True)
+
+            def matvec(p):
+                p = to_tensor(p)
+                if grad.grad_fn is None:
+                    # If grad_fn is None, then grad is constant wrt x, and hess is 0.
+                    hvp = torch.zeros_like(grad)
+                else:
+                    (hvp,) = torch.autograd.grad(grad, x, p, retain_graph=True)
+                return v[0] * hvp.view(-1).cpu().numpy()
+
+            return LinearOperator((numel, numel), matvec=matvec)
+
+    return NonlinearConstraint(
+        fun=f,
+        lb=constr["lb"],
+        ub=constr["ub"],
+        jac=f_jac,
+        hess=f_hess,
+        keep_feasible=constr.get("keep_feasible", False),
+    )
+
+
+def _check_bound(val, x0):
+    if isinstance(val, numbers.Number):
+        return np.full(x0.numel(), val)
+    elif isinstance(val, torch.Tensor):
+        assert val.numel() == x0.numel()
+        return val.detach().cpu().numpy().flatten()
+    elif isinstance(val, np.ndarray):
+        assert val.size == x0.numel()
+        return val.flatten()
+    else:
+        raise ValueError("Bound value has unrecognized format.")
+
+
+def _build_bounds(bounds, x0):
+    assert isinstance(bounds, dict)
+    assert set(bounds.keys()).issubset(_bounds_keys)
+    assert "lb" in bounds or "ub" in bounds
+    lb = _check_bound(bounds.get("lb", -np.inf), x0)
+    ub = _check_bound(bounds.get("ub", np.inf), x0)
+    keep_feasible = bounds.get("keep_feasible", False)
+
+    return Bounds(lb, ub, keep_feasible)
+
+#### CODE adapted from https://pytorch-minimize.readthedocs.io/en/latest/_modules/torchmin/minimize_constr.html#minimize_constr
+
+@torch.no_grad()
+def minimize_constr(
+    f,
+    x0,
+    constr=None,
+    bounds=None,
+    max_iter=None,
+    tol=None,
+    callback=None,
+    disp=0,
+    **kwargs
+):
+    """Minimize a scalar function of one or more variables subject to
+    bounds and/or constraints.
+
+    .. note::
+        This is a wrapper for SciPy's
+        `'trust-constr' <https://docs.scipy.org/doc/scipy/reference/optimize.minimize-trustconstr.html>`_
+        method. It uses autograd behind the scenes to build jacobian & hessian
+        callables before invoking scipy. Inputs and objectivs should use
+        PyTorch tensors like other routines. CUDA is supported; however,
+        data will be transferred back-and-forth between GPU/CPU.
+
+    Parameters
+    ----------
+    f : callable
+        Scalar objective function to minimize.
+    x0 : Tensor
+        Initialization point.
+    constr : dict, optional
+        Constraint specifications. Should be a dictionary with the
+        following fields:
+
+            * fun (callable) - Constraint function
+            * lb (Tensor or float, optional) - Constraint lower bounds
+            * ub : (Tensor or float, optional) - Constraint upper bounds
+
+        One of either `lb` or `ub` must be provided. When `lb` == `ub` it is
+        interpreted as an equality constraint.
+    bounds : dict, optional
+        Bounds on variables. Should a dictionary with at least one
+        of the following fields:
+
+            * lb (Tensor or float) - Lower bounds
+            * ub (Tensor or float) - Upper bounds
+
+        Bounds of `-inf`/`inf` are interpreted as no bound. When `lb` == `ub`
+        it is interpreted as an equality constraint.
+    max_iter : int, optional
+        Maximum number of iterations to perform. If unspecified, this will
+        be set to the default of the selected method.
+    tol : float, optional
+        Tolerance for termination. For detailed control, use solver-specific
+        options.
+    callback : callable, optional
+        Function to call after each iteration with the current parameter
+        state, e.g. ``callback(x)``.
+    disp : int
+        Level of algorithm's verbosity:
+
+            * 0 : work silently (default).
+            * 1 : display a termination report.
+            * 2 : display progress during iterations.
+            * 3 : display progress during iterations (more complete report).
+    **kwargs
+        Additional keyword arguments passed to SciPy's trust-constr solver.
+        See options `here <https://docs.scipy.org/doc/scipy/reference/optimize.minimize-trustconstr.html>`_.
+
+    Returns
+    -------
+    result : OptimizeResult
+        Result of the optimization routine.
+
+    """
+    if max_iter is None:
+        max_iter = 1000
+    x0 = x0.detach()
+    if x0.is_cuda:
+        warnings.warn(
+            "GPU is not recommended for trust-constr. "
+            "Data will be moved back-and-forth from CPU."
         )
-        # Define confidence region
-        dist_logits = MultivariateNormal(marginal_c_mu, marginal_interv_cov)
-        loglikeli_theta_hat = dist_logits.log_prob(marginal_c_mu)
-        loglikeli_goal = -quantile_cutoff / 2 + loglikeli_theta_hat
-        # Initialize variables
-        cov_inverse = torch.linalg.inv(marginal_interv_cov)
-        interv_vector = torch.empty_like(marginal_c_mu)
-        #### Sample-wise constrained optimization (as there are no batched functions available out-of-the-box). Can surely be optimized
-        for i in range(marginal_c_mu.shape[0]):
-            # Define variables required for optimization
-            dist_logits_uni = MultivariateNormal(
-                marginal_c_mu[i], marginal_interv_cov[i]
+
+    # handle callbacks
+    if callback is not None:
+        callback_ = callback
+        callback = lambda x, state: callback_(
+            torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0), state
+        )
+
+    # handle bounds
+    if bounds is not None:
+        bounds = _build_bounds(bounds, x0)
+
+    def to_tensor(x):
+        return torch.tensor(x, dtype=x0.dtype, device=x0.device).view_as(x0)
+
+    # build objective function (and hessian)
+    if "jac" in kwargs.keys() and "hess" in kwargs.keys():
+        jacobian = kwargs.pop("jac")
+        hessian = kwargs.pop("hess")
+
+        def f_with_jac(x):
+            x = to_tensor(x)
+            fval = f(x)
+            grad = jacobian(x)
+            return fval.cpu().numpy(), grad.cpu().numpy()
+
+        if type(hessian) == str:
+            f_hess = hessian
+        else:
+
+            def f_hess(x):
+                x = to_tensor(x)
+
+                def matvec(p):
+                    p = to_tensor(p)
+                    hvp = hessian(x) @ p
+                    return hvp.cpu().numpy()
+
+                return LinearOperator((x0.numel(), x0.numel()), matvec=matvec)
+
+    elif "jac" in kwargs.keys():
+        _, f_hess = _build_obj(f, x0)
+        jacobian = kwargs.pop("jac")
+
+        def f_with_jac(x):
+            x = to_tensor(x)
+            fval = f(x)
+            grad = jacobian(x)
+            return fval.cpu().numpy(), grad.cpu().numpy()
+
+    else:
+        f_with_jac, f_hess = _build_obj(f, x0)
+
+    # build constraints
+    if constr is not None:
+        constraints = [_build_constr(constr, x0)]
+    else:
+        constraints = []
+
+    # optimize
+    x0_np = x0.float().cpu().numpy().flatten().copy()
+    method = kwargs.pop("method", "trust-constr")  # Default to trust-constr
+    if method == "trust-constr":
+        result = minimize_scipy(
+            f_with_jac,
+            x0_np,
+            method="trust-constr",
+            jac=True,
+            hess=f_hess,
+            callback=callback,
+            tol=tol,
+            bounds=bounds,
+            constraints=constraints,
+            options=dict(verbose=int(disp), maxiter=max_iter, **kwargs),
+        )
+    elif method == "SLSQP":
+        if constr["ub"] == constr["lb"]:
+            constr["type"] = "eq"
+        elif constr["lb"] == 0:
+            constr["type"] = "ineq"
+        elif constr["ub"] == 0:
+            constr["type"] = "ineq"
+            original_fun2 = constr["fun"]
+            constr["fun"] = lambda x: -original_fun2(x)
+        else:
+            raise NotImplementedError(
+                "Only equality and inequality constraints around 0 are supported"
             )
-            loglikeli_goal_uni = loglikeli_goal[i]
-            target_uni = target[i]
-            inverse = cov_inverse[i]
-            marginal = marginal_c_mu[i]
-            # Define minimization objective and jacobian
-            def loglikeli_bern_uni(marginal_interv_vector):
-                return F.binary_cross_entropy_with_logits(
-                    input=marginal_interv_vector, target=target_uni, reduction="sum"
-                )
-            def jac_min_fct(x):
-                return torch.sigmoid(x) - target_uni
-            # Define confidence region constraint and its jacobian
-            def conf_region_uni(marginal_interv_vector):
-                loglikeli_theta_star = dist_logits_uni.log_prob(marginal_interv_vector)
-                return loglikeli_theta_star - loglikeli_goal_uni
-            def jac_constraint(x):
-                return -(inverse @ (x - marginal).unsqueeze(-1)).squeeze(-1)
-            # Wrapper for scipy "minimize" function
-            # Find intervention logits by minimizing the concept BCE s.t. they still lie on the boundary of the confidence region
-            minimum = minimize_constr(
-                f=loglikeli_bern_uni,
-                x0=x0[i],
-                jac=jac_min_fct,
+        original_fun = constr["fun"]
+        original_jac = constr["jac"]
+        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy()
+        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=RuntimeWarning,
+                module=scipy.optimize._optimize.__name__,
+            )
+            result = minimize_scipy(
+                f_with_jac,
+                x0_np,
                 method="SLSQP",
-                constr={
-                    "fun": conf_region_uni,
-                    "lb": 0,
-                    "ub": float("inf"),
-                    "jac": jac_constraint,
-                },
-                bounds={"lb": lb_interv[i], "ub": ub_interv[i]},
-                max_iter=50,
-                tol=1e-4 * n_intervened.cpu(),
+                jac=True,
+                callback=callback,
+                tol=tol,
+                bounds=bounds,
+                constraints=constr,
+                options=dict(maxiter=max_iter),
             )
-            interv_vector[i] = minimum.x
-        # Permute intervened concept logits back into original order
-        indices_reversed = torch.argsort(indices)
-        interv_vector_unordered = torch.full_like(
-            c_mu, float("nan"), device=c_mu.device, dtype=torch.float32
-        )
-        interv_vector_unordered[:, :n_intervened] = interv_vector
-        c_intervened_logits = interv_vector_unordered.gather(1, indices_reversed)
-        return c_intervened_logits
+
+    # convert the important things to torch tensors
+    for key in ["fun", "x"]:
+        result[key] = torch.tensor(result[key], dtype=x0.dtype, device=x0.device)
+    result["x"] = result["x"].view_as(x0)
+
+    return result

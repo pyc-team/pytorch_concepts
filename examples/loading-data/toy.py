@@ -1,4 +1,4 @@
-from torch_concepts.data import ToyDataset, CompletenessDataset
+from torch_concepts.data.datasets import ToyDataset, CompletenessDataset
 
 
 def main():

@@ -69,9 +69,20 @@ target/
 # pycharm
 .idea/*
 
+# vscode
+.vscode
+
 # lightning logs
 examples/lightning_logs/
 lightning_logs/
 
 # results
 model_results.csv
+
+# data folder (but not torch_concepts/data/)
+data/
+!torch_concepts/data/
+!tests/data/
+
+# conceptarium logs
+outputs/

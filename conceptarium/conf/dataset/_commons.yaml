@@ -1,0 +1,6 @@
+batch_size: 512
+
+val_size: 0.1
+test_size: 0.2
+
+concept_subset: null # if null, use all concepts

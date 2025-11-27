@@ -1,0 +1,20 @@
+defaults:
+  - _self_
+
+batch_size: 512
+
+n_gen: 10000 # number of samples to generate
+ 
+seed: ${seed}
+
+backbone: null # input is not structured data, so no backbone by default
+precompute_embs: false 
+force_recompute: false 
+
+autoencoder_kwargs:
+  noise: 0.
+  latent_dim: 32
+  lr: 0.0005
+  epochs: 2000
+  batch_size: 512
+  patience: 50

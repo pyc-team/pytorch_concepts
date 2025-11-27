@@ -1,0 +1,13 @@
+# =============================================================
+# Loss settings
+# =============================================================
+_target_: "torch_concepts.nn.ConceptLoss"
+
+fn_collection:
+  _target_: "torch_concepts.nn.modules.utils.GroupConfig"
+  binary: 
+    _target_: "torch.nn.BCEWithLogitsLoss"
+  categorical: 
+    _target_: "torch.nn.CrossEntropyLoss"
+  # continuous: 
+    # ... not supported yet

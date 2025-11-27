@@ -1,0 +1,27 @@
+defaults:
+  - _commons
+  - _commons_bnlearn
+  - _self_
+
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+
+name: sachs
+
+default_task_names: [Akt]
+
+autoencoder_kwargs:
+  latent_dim: 32
+
+# all concepts have 3 states (low, medium, high)
+label_descriptions:
+  Akt: "(protein kinase B) A serine/threonine-specific protein kinase involved in multiple cellular processes such as glucose metabolism, apoptosis, and cell proliferation. Measured as continuous activation levels."
+  Erk: "(extracellular signal-regulated kinase) A kinase involved in the MAPK signaling pathway, crucial for cell division, differentiation, and survival. Measured as continuous activation levels."
+  Jnk: "(c-Jun N-terminal kinase) A kinase involved in stress signaling pathways that regulate apoptosis, inflammation, and cytokine production. Measured as continuous activation levels."
+  P38: "(p38 mitogen-activated protein kinase) A kinase involved in cellular responses to stress and inflammation. Measured as continuous activation levels."
+  Mek: "(MAPK/ERK kinase) An upstream activator of ERK, involved in signal transduction for growth and survival. Measured as continuous activation levels."
+  PKC: "(protein kinase C) A family of protein kinases involved in controlling the function of other proteins, regulating various cellular processes. Measured as continuous activation levels."
+  PKA: "(protein kinase A) A kinase regulated by cyclic AMP, playing a key role in metabolism, gene transcription, and cell survival. Measured as continuous activation levels."
+  Raf: "(RAF kinase) An upstream regulator of the MEK/ERK pathway, important in cell proliferation and differentiation. Measured as continuous activation levels."
+  Plcg: "(phospholipase C gamma) An enzyme involved in the phosphoinositide signaling pathway, critical for cell proliferation and differentiation. Measured as continuous activation levels."
+  PIP2: "(phosphatidylinositol 4,5-bisphosphate) A precursor molecule in the phosphoinositide signaling pathway, hydrolyzed to produce DAG and IP3. Measured as continuous concentration levels."
+  PIP3: "(phosphatidylinositol 3,4,5-trisphosphate) A lipid signaling molecule produced by PI3K, critical for cell growth and survival. Measured as continuous concentration levels."

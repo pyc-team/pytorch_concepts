@@ -1,0 +1,24 @@
+defaults:
+  - _commons
+  - _commons_bnlearn
+  - _self_
+
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+
+name: asia
+
+default_task_names: [dysp]
+
+autoencoder_kwargs:
+  latent_dim: 32
+
+# all concepts are binary
+label_descriptions:
+  asia: "a variable indicating whether a patient has recently been in Asia."
+  smoke: "a variable indicating whether a patient is a smoker."
+  lung: "a variable indicating whether a patient has lung cancer."
+  tub: "a variable indicating whether a patient has tuberculosis."
+  bronc: "a variable indicating whether a patient has bronchitis."
+  either: "a variable indicating whether a patient has either tuberculosis or lung cancer."
+  xray: "a variable indicating whether a patient's chest X-ray shows abnormalities."
+  dysp: "a variable indicating whether a patient has difficulty breathing (dyspnea)."

@@ -1,0 +1,10 @@
+{% extends "!sidebar/brand.html" %}
+
+{% block brand_content %}
+<div class="sidebar-logo-container">
+  <a href="{{ pathto(master_doc) }}" class="sidebar-logo-link">
+    <img src="{{ pathto('_static/img/pyc_logo_transparent.png', 1) }}" alt="PyC Logo" class="sidebar-logo-img">
+  </a>
+</div>
+{{ super() }}
+{% endblock %}

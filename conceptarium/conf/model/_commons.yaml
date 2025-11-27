@@ -1,0 +1,54 @@
+defaults:
+  - _self_
+
+
+# =============================================================
+# Encoder (features -> latent space) settings
+# =============================================================
+latent_encoder: null # default is MLP
+latent_encoder_kwargs:
+  hidden_size: 64
+  n_layers: 1
+  activation: leaky_relu
+  dropout: 0.5
+
+
+# =============================================================
+# Concept distribution configs
+# =============================================================
+variable_distributions:
+  _target_: "torch_concepts.GroupConfig"
+  binary: "torch.distributions.RelaxedBernoulli"
+  categorical: "torch.distributions.RelaxedOneHotCategorical"
+  # TODO: handle kwargs
+  # continuous: 
+    # ... not supported yet
+
+
+# =============================================================
+# Optimizer settings
+# =============================================================
+optim_class:
+  _target_: "hydra.utils.get_class"
+  path: "torch.optim.AdamW"
+optim_kwargs:
+  lr: 0.00075
+
+
+# =============================================================
+# Scheduler settings
+# =============================================================
+# scheduler_class: 
+#   _target_: "hydra.utils.get_class"
+#   path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
+# scheduler_kwargs:
+#   factor: 0.2
+
+
+# TODO: implement this
+# =============================================================
+# Training settings
+# =============================================================
+# train_interv_prob: 0.1
+# test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
+# test_interv_noise: 0.

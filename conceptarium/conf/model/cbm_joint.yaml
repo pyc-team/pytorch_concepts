@@ -1,0 +1,11 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "torch_concepts.nn.ConceptBottleneckModel_Joint"
+
+task_names: ${dataset.default_task_names}
+
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true

@@ -1,0 +1,31 @@
+defaults:
+  - _default
+  - _self_
+
+hydra:
+  job:
+    name: test
+  sweeper:
+    # standard grid search
+    params:
+      seed: 1
+      dataset: asia, sachs, insurance
+      model: cbm
+      #loss: standard, weighted
+
+model:
+  optim_kwargs:
+    lr: 0.01
+
+metrics:
+  summary_metrics: true
+  perconcept_metrics: true #${dataset.default_task_names}
+
+trainer:
+  logger: null
+  max_epochs: 200
+  patience: 20
+
+matmul_precision: medium
+
+notes: test

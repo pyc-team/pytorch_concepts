@@ -1,125 +1,105 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/master/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/pyc_logo.png" alt="PyC Logo" width="40%">
 </p>
 
-# PyTorch Concepts
+<p align="center">
+  <a href="https://pypi.org/project/pytorch-concepts/"><img src="https://img.shields.io/pypi/v/pytorch-concepts?style=for-the-badge" alt="PyPI"></a>
+  <a href="https://pepy.tech/project/pytorch-concepts"><img src="https://img.shields.io/pepy/dt/pytorch-concepts?style=for-the-badge" alt="Total downloads"></a>
+  <a href="https://codecov.io/gh/pyc-team/pytorch_concepts"><img src="https://img.shields.io/codecov/c/github/pyc-team/pytorch_concepts?style=for-the-badge" alt="Codecov"></a>
+  <a href="https://pytorch-concepts.readthedocs.io/"><img src="https://img.shields.io/readthedocs/pytorch-concepts?style=for-the-badge" alt="Documentation Status"></a>
+</p>
 
-PyC (PyTorch Concepts) is a library built upon PyTorch to easily write and train Concept-Based Deep Learning models.
+<p align="center">
+  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html">🚀 Getting Started</a> -
+  <a href="https://pytorch-concepts.readthedocs.io/">📚 Documentation</a> -
+  <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html">💻 User guide</a>
+</p>
 
-You can install PyC along with all its dependencies from
-[PyPI](https://pypi.org/project/pytorch-concepts/):
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
+The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
 
-```pip install pytorch-concepts ```
+The name of the library stands for both
+- **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
+- $P(y|C)$: as the main purpose of the library is to support sound probabilistic modeling of the conditional distribution of targets $y$ given concepts $C$.
 
-The folder [https://github.com/pyc-team/pytorch_concepts/tree/master/examples](https://github.com/pyc-team/pytorch_concepts/tree/master/examples)
- includes many examples showing how the library can be used.
+---
 
-## Low-level APIs
+# Quick Start
 
-**Concept data types** (`pyc.base`):
+You can install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
 
-- `AnnotatedTensor`: A subclass of `torch.Tensor` which assigns names to individual elements of each tensor dimension.
+```bash
+pip install pytorch-concepts
+```
 
-**Base concept layers** (`pyc.nn.base`):
+After installation, you can import it in your Python scripts as:
 
-- `Annotate`: A layer taking as input a common `tensor` and producing an `AnnotatedTensor` as output.
-- `LinearConceptLayer`: A layer which first applies a linear transformation to the input tensor, then it reshapes and annotates the output tensor.
+```python
+import torch_concepts as pyc
+```
 
-**Base functions** (`pyc.nn.functional`):
+Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) to get started with building interpretable models using <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC!
 
-- `intervene`: A function to intervene on concept scores.
-- `intervene_on_concept_graph`: A function to intervene on a concept adjacency matrix (it can be used to perform do-interventions).
-- `concept_embedding_mixture`: A function to generate a mixture of concept embeddings and concept predictions.
+---
 
-## High-level APIs
+# <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC Software Stack
+The library is organized to be modular and accessible at different levels of abstraction:
+- <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API). Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
+- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code. This interface is built in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily standardize training and evaluation.
+- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference.
+- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include metrics, losses, and datasets.
 
-**Concept bottleneck layers** (`pyc.nn.bottleneck`):
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="90%">
+</p>
 
-- `BaseConceptBottleneck`: A base class you can extend to build new concept bottlenecks.
-- `LinearConceptBottleneck`: A vanilla concept bottleneck from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
-- `LinearConceptResidualBottleneck`: A residual bottleneck composed of a set of supervised concepts and a residual unsupervised embedding from ["Promises and Pitfalls of Black-Box Concept Learning Models"](https://arxiv.org/abs/2106.13314) (ICML 2021, workshop).
-- `ConceptEmbeddingBottleneck`: A bottleneck of supervised concept embeddings from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022).
-- `StochasticConceptBottleneck`: A bottleneck of supervised concepts with their covariance matrix ["Stochastic Concept Bottleneck Models"](https://arxiv.org/pdf/2406.19272) (NeurIPS 2024).
+---
 
-## Evaluation APIs
+# Contributing
+Contributions are welcome! Please check our [contributing guidelines](CONTRIBUTING.md) to get started.
 
-**Datasets** (`pyc.data`):
+Thanks to all contributors! 🧡
 
-- `TrafficLights`: A dataset loader for traffic scenarios representing road intersections.
-- `ToyDataset`: A toy dataset loader. XOR, Trigonometry, and Dot datasets are from ["Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off"](https://arxiv.org/abs/2209.09056) (NeurIPS 2022). The Checkmark dataset is from ["Causal Concept Graph Models: Beyond Causal Opacity in Deep Learning"](https://arxiv.org/abs/2405.16507) (ICLR 2025).
-- `CompletenessDataset`: A dataset loader for the completeness score from ["Beyond Concept Bottleneck Models: How to Make Black Boxes Intervenable?"](https://arxiv.org/abs/2401.13544) (NeurIPS 2024).
-- `ColorMNISTDataset`: A dataset loader for MNIST Even/Odd where colors act as confounders inspired from ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165) and ["Interpretable Concept-Based Memory Reasoning"](https://arxiv.org/abs/2407.15527) (NeurIPS 2024).
-- `CelebA`: A dataset loader for CelebA dataset with attributes as concepts from ["Deep Learning Face Attributes in the Wild"](https://arxiv.org/abs/1411.7766) (ICCV 2015).
-- `CUB`: A dataset loader for CUB dataset to predict bird species from ["The Caltech-UCSD Birds-200-2011 Dataset"](https://authors.library.caltech.edu/records/cvm3y-5hh21).
-- `AwA2`: A dataset loader for AwA2 dataset where concepts are animal attributes from ["Zero-Shot Learning - A Comprehensive Evaluation of the Good, the Bad and the Ugly"](https://arxiv.org/abs/1707.00600) (CVPR 2017).
-- `CEBaB`: A dataset loader for CEBaB dataset where concepts describe restaurant reviews from ["CEBaB: Estimating the Causal Effects of Real-World Concepts on NLP Model Behavior"](https://arxiv.org/abs/2205.14140) (NeurIPS 2022).
+<a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" />
+</a>
 
-**Metrics** (`pyc.metrics`):
-
-- `intervention_score`: A score measuring the effectiveness of concept interventions from ["Concept Bottleneck Models"](https://arxiv.org/pdf/2007.04612) (ICML 2020).
-- `completeness_score`: A score measuring concept completeness from ["On Completeness-aware Concept-Based Explanations in Deep Neural Networks"](https://arxiv.org/abs/1910.07969) (NeurIPS 2020).
-- `cace_score`: A score measuring causal concept effects (CaCE) from ["Explaining Classifiers with Causal Concept Effect (CaCE)"](https://arxiv.org/abs/1907.07165).
-
-## Contributing
-
-- Use the `dev` branch to write and test your contributions locally.
-- Make small commits and use ["Gitmoji"](https://gitmoji.dev/) to add emojis to your commit messages.
-- Make sure to write documentation and tests for your contributions.
-- Make sure all tests pass before submitting the pull request.
-- Submit a pull request to the `main` branch.
-
-## PyC Book
-
-You can find further reading materials and tutorials in our book [Concept-based Interpretable Deep Learning in Python](https://pyc-team.github.io/pyc-book/).
-
-## Authors
-
-### Core Contributors
-
-- [Pietro Barbiero](http://www.pietrobarbiero.eu/), IBM Research Zurich (CH) and University of Cambridge (UK).
-- [Gabriele Ciravegna](https://dbdmg.polito.it/dbdmg_web/gabriele-ciravegna/), Politecnico di Torino (IT).
-- [David Debot](https://www.kuleuven.be/wieiswie/en/person/00165387), KU Leuven (BE).
-- [Michelangelo Diligenti](https://docenti.unisi.it/en/diligenti), Università degli Studi di Siena (IT).
-- [Gabriele Dominici](https://pc.inf.usi.ch/team/gabriele-dominici/), Universita' della Svizzera Italiana (CH).
-- [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/), University of Oxford (UK) and University of Cambridge (UK).
-- [Francesco Giannini](https://www.francescogiannini.eu/), Scuola Normale Superiore di Pisa (IT).
-- [Giuseppe Marra](https://www.giuseppemarra.com/), KU Leuven (BE).
-
-
-### External Contributors
+## External Contributors
 
 - [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
 - [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
 
-## Licence
-
-Copyright 2024 Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra.
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at: <http://www.apache.org/licenses/LICENSE-2.0>.
-
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-See the License for the specific language governing permissions and limitations under the License.
+---
 
 
-## Cite this library
 
-If you found this library useful for your blog post, research article or product, we would be grateful if you would cite it like this:
+# Cite this Library
+
+If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
 
 ```
-Barbiero P., Ciravegna G., Debot D., Diligenti M., 
-Dominici G., Espinosa Zarlenga M., Giannini F., Marra G. (2024).
-Concept-based Interpretable Deep Learning in Python.
-https://pyc-team.github.io/pyc-book/intro.html
-```
-
-Or use the following bibtex entry:
-
-```
-@book{pycteam2024concept,
-  title      = {Concept-based Interpretable Deep Learning in Python},
-  author     = {Pietro Barbiero, Gabriele Ciravegna, David Debot, Michelangelo Diligenti, Gabriele Dominici, Mateo Espinosa Zarlenga, Francesco Giannini, Giuseppe Marra},
-  year       = {2024},
-  url        = {https://pyc-team.github.io/pyc-book/intro.html}
+@software{pycteam2025concept,
+    author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
+    license = {Apache 2.0},
+    month = {3},
+    title = {{PyTorch Concepts}},
+    url = {https://github.com/pyc-team/pytorch_concepts},
+    year = {2025}
 }
 ```
+Reference authors: [Pietro Barbiero](http://www.pietrobarbiero.eu/), [Giovanni De Felice](https://gdefe.github.io/), and [Mateo Espinosa Zarlenga](https://hairyballtheorem.com/).
+
+---
+
+# Funding
+
+This project is supported by the following organizations:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/funding/fwo_kleur.png" alt="FWO - Research Foundation Flanders" height="60" style="margin: 20px;">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/funding/hasler.png" alt="Hasler Foundation" height="60" style="margin: 20px;">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/funding/snsf.png" alt="SNSF - Swiss National Science Foundation" height="60" style="margin: 20px;">
+</p>
+
