@@ -120,7 +120,7 @@ Pick the best entry point based on your experience:
 
         Start from the High-Level API to use pre-defined models with one line of code.
 
-    .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` No experience with programming?
+    .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` Benchmarking or no experience with programming?
         :link: guides/using_conceptarium
         :link-type: doc
         :shadow: lg
@@ -205,6 +205,27 @@ The library also includes shared modules that provide additional functionalities
         :class-card: sd-border-primary
 
         Functional utilities for concept-based models.
+
+
+Conceptarium
+-------------
+
+Conceptarium is a no-code framework for running large-scale experiments on concept-based models.
+The interface is based on YAML configuration files, making it easy to set up and run experiments without writing code.
+This framework is intended for benchmarking or researchers in other fields who want to use concept-based models without programming knowledge.
+
+.. grid:: 1
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  |conceptarium_logo| Conceptarium
+        :link: guides/using_conceptarium
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Conceptarium is a no-code framework for running large-scale experiments on concept-based models. Built on top of |pyc_logo| PyC, with |pl_logo| PyTorch Lightning, |hydra_logo| Hydra and |wandb_logo| WandB.
 
 
 Extra Modules
