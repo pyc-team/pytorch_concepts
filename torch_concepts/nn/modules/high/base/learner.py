@@ -22,6 +22,24 @@ from .....nn.modules.metrics import ConceptMetrics
 
 
 class BaseLearner(pl.LightningModule):
+    """
+    Base training engine for concept-based models (PyTorch Lightning).
+
+    Handles loss, metrics, optimizer, scheduler, batch validation, and logging.
+
+    Args:
+        loss (nn.Module, optional): Loss function.
+        metrics (ConceptMetrics or dict, optional): Metrics for evaluation.
+        optim_class (Optimizer, optional): Optimizer class.
+        optim_kwargs (dict, optional): Optimizer arguments.
+        scheduler_class (LRScheduler, optional): Scheduler class.
+        scheduler_kwargs (dict, optional): Scheduler arguments.
+
+    Example:
+        >>> from torch_concepts.nn.modules.high.base.learner import BaseLearner
+        >>> from torch_concepts.nn.modules.metrics import ConceptMetrics, GroupConfig
+        >>> learner = BaseLearner(loss=None, metrics=None)
+    """
     def __init__(self,
                 loss: Optional[nn.Module] = None,
                 metrics: Optional[Union[ConceptMetrics, Mapping[str, MetricCollection]]] = None,

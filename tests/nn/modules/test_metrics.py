@@ -4,6 +4,8 @@ Comprehensive tests for torch_concepts.nn.modules.metrics
 Tests metrics module for concept-based models:
 - Completeness score, intervention score, CACE score (functional metrics)
 - ConceptMetrics: Unified metric tracking for different concept types
+- Edge cases, error handling, and advanced scenarios
+- Integration with PyTorch Lightning workflows
 """
 import unittest
 import torch
@@ -188,7 +190,7 @@ class TestConceptMetrics(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update and compute
-        metrics.update(endogenous, targets, split='train')
+        metrics.update(preds=endogenous, target=targets, split='train')
         result = metrics.compute('train')
         
         self.assertIn('train/SUMMARY-binary_accuracy', result)
@@ -219,7 +221,7 @@ class TestConceptMetrics(unittest.TestCase):
         ], dim=1)
         
         # Update and compute
-        metrics.update(endogenous, targets, split='val')
+        metrics.update(preds=endogenous, target=targets, split='val')
         result = metrics.compute('val')
         
         self.assertIn('val/SUMMARY-categorical_accuracy', result)
@@ -254,7 +256,7 @@ class TestConceptMetrics(unittest.TestCase):
         ], dim=1)
         
         # Update and compute
-        metrics.update(endogenous, targets, split='test')
+        metrics.update(preds=endogenous, target=targets, split='test')
         result = metrics.compute('test')
         
         self.assertIn('test/SUMMARY-binary_accuracy', result)
@@ -280,7 +282,7 @@ class TestConceptMetrics(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update and compute
-        metrics.update(endogenous, targets, split='train')
+        metrics.update(preds=endogenous, target=targets, split='train')
         result = metrics.compute('train')
         
         self.assertIn('train/b1_accuracy', result)
@@ -306,7 +308,7 @@ class TestConceptMetrics(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update and compute
-        metrics.update(endogenous, targets, split='val')
+        metrics.update(preds=endogenous, target=targets, split='val')
         result = metrics.compute('val')
         
         # Check both summary and per-concept
@@ -339,8 +341,8 @@ class TestConceptMetrics(unittest.TestCase):
         val_targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update different splits
-        metrics.update(train_endogenous, train_targets, split='train')
-        metrics.update(val_endogenous, val_targets, split='val')
+        metrics.update(preds=train_endogenous, target=train_targets, split='train')
+        metrics.update(preds=val_endogenous, target=val_targets, split='val')
         
         # Compute each split
         train_result = metrics.compute('train')
@@ -368,14 +370,14 @@ class TestConceptMetrics(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update and compute
-        metrics.update(endogenous, targets, split='train')
+        metrics.update(preds=endogenous, target=targets, split='train')
         result1 = metrics.compute('train')
         
         # Reset and update with different data
         metrics.reset('train')
         endogenous2 = torch.randn(16, 3)
         targets2 = torch.randint(0, 2, (16, 3)).float()
-        metrics.update(endogenous2, targets2, split='train')
+        metrics.update(preds=endogenous2, target=targets2, split='train')
         result2 = metrics.compute('train')
         
         # Results should be different (with high probability)
@@ -400,9 +402,9 @@ class TestConceptMetrics(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
         
         # Update all splits
-        metrics.update(endogenous, targets, split='train')
-        metrics.update(endogenous, targets, split='val')
-        metrics.update(endogenous, targets, split='test')
+        metrics.update(preds=endogenous, target=targets, split='train')
+        metrics.update(preds=endogenous, target=targets, split='val')
+        metrics.update(preds=endogenous, target=targets, split='test')
         
         # Reset all at once
         metrics.reset()
@@ -485,7 +487,7 @@ class TestConceptMetrics(unittest.TestCase):
         ], dim=1)
         
         # Update and compute
-        metrics.update(endogenous, targets, split='train')
+        metrics.update(preds=endogenous, target=targets, split='train')
         result = metrics.compute('train')
         
         self.assertIn('train/SUMMARY-categorical_accuracy', result)
@@ -513,7 +515,7 @@ class TestConceptMetrics(unittest.TestCase):
             torch.randint(0, 5, (16, 1))
         ], dim=1)
         
-        metrics.update(endogenous, targets, split='val')
+        metrics.update(preds=endogenous, target=targets, split='val')
         result = metrics.compute('val')
         
         self.assertIn('val/SUMMARY-categorical_accuracy', result)
@@ -540,7 +542,7 @@ class TestConceptMetrics(unittest.TestCase):
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
         
-        metrics.update(endogenous, targets, split='test')
+        metrics.update(preds=endogenous, target=targets, split='test')
         result = metrics.compute('test')
         
         self.assertIn('test/SUMMARY-binary_accuracy', result)
@@ -570,10 +572,594 @@ class TestConceptMetrics(unittest.TestCase):
                 torch.randint(0, 3, (16, 1)),
                 torch.randint(0, 5, (16, 1))
             ], dim=1)
-            metrics.update(endogenous, targets, split='train')
+            metrics.update(preds=endogenous, target=targets, split='train')
         
         self.assertIn('num_classes', str(cm.exception))
         self.assertIn('automatically', str(cm.exception).lower())
+
+
+class TestConceptMetricsEdgeCases(unittest.TestCase):
+    """Test edge cases and error handling in ConceptMetrics."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Standard binary concepts
+        axis_binary = AxisAnnotation(
+            labels=('b1', 'b2'),
+            cardinalities=[1, 1],
+            metadata={
+                'b1': {'type': 'discrete'},
+                'b2': {'type': 'discrete'}
+            }
+        )
+        self.annotations_binary = Annotations({1: axis_binary})
+    
+    def test_empty_batch_update(self):
+        """Test updating with empty batch."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Empty batch
+        endogenous = torch.randn(0, 2)
+        targets = torch.randint(0, 2, (0, 2)).float()
+        
+        # Should not crash
+        metrics.update(preds=endogenous, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        # Result should have the metric key
+        self.assertIn('train/SUMMARY-binary_accuracy', result)
+    
+    def test_single_sample_batch(self):
+        """Test with batch size of 1."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Single sample
+        endogenous = torch.randn(1, 2)
+        targets = torch.randint(0, 2, (1, 2)).float()
+        
+        metrics.update(preds=endogenous, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        self.assertIn('train/SUMMARY-binary_accuracy', result)
+        self.assertTrue(0 <= result['train/SUMMARY-binary_accuracy'] <= 1)
+    
+    def test_very_large_batch(self):
+        """Test with large batch size."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Large batch
+        batch_size = 10000
+        endogenous = torch.randn(batch_size, 2)
+        targets = torch.randint(0, 2, (batch_size, 2)).float()
+        
+        metrics.update(preds=endogenous, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        self.assertIn('train/SUMMARY-binary_accuracy', result)
+    
+    def test_invalid_split_name(self):
+        """Test that invalid split names raise ValueError."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        endogenous = torch.randn(16, 2)
+        targets = torch.randint(0, 2, (16, 2)).float()
+        
+        # Invalid split name
+        with self.assertRaises(ValueError):
+            metrics.update(preds=endogenous, target=targets, split='invalid_split')
+    
+    def test_validation_alias(self):
+        """Test that 'validation' works as alias for 'val'."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        endogenous = torch.randn(16, 2)
+        targets = torch.randint(0, 2, (16, 2)).float()
+        
+        # Use 'validation' instead of 'val'
+        metrics.update(preds=endogenous, target=targets, split='validation')
+        result = metrics.compute('validation')
+        
+        self.assertIn('val/SUMMARY-binary_accuracy', result)
+    
+    def test_no_metrics_config(self):
+        """Test creating metrics with empty config."""
+        metrics_config = GroupConfig(binary={})
+        
+        # Should create metrics but with no actual metrics
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Should have empty collections
+        self.assertEqual(len(metrics.train_metrics), 0)
+    
+    def test_perconcept_invalid_name(self):
+        """Test that invalid concept names in perconcept_metrics are handled."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        # Invalid concept name in list
+        with self.assertRaises(ValueError):
+            metrics = ConceptMetrics(
+                self.annotations_binary,
+                metrics_config,
+                summary_metrics=True,
+                perconcept_metrics=['nonexistent_concept']
+            )
+    
+    def test_perconcept_invalid_type(self):
+        """Test that invalid type for perconcept_metrics raises error."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        # Invalid type (should be bool or list)
+        with self.assertRaises(ValueError):
+            metrics = ConceptMetrics(
+                self.annotations_binary,
+                metrics_config,
+                summary_metrics=True,
+                perconcept_metrics="invalid_string"
+            )
+
+
+class TestConceptMetricsAccuracy(unittest.TestCase):
+    """Test that metrics compute accurate values."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        axis_binary = AxisAnnotation(
+            labels=('b1', 'b2'),
+            cardinalities=[1, 1],
+            metadata={
+                'b1': {'type': 'discrete'},
+                'b2': {'type': 'discrete'}
+            }
+        )
+        self.annotations_binary = Annotations({1: axis_binary})
+    
+    def test_perfect_accuracy(self):
+        """Test that perfect predictions give 100% accuracy."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Perfect predictions
+        torch.manual_seed(42)
+        targets = torch.randint(0, 2, (32, 2)).float()
+        predictions = targets.clone()  # Exact match
+        
+        metrics.update(preds=predictions, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        # Should be exactly 1.0
+        self.assertAlmostEqual(
+            result['train/SUMMARY-binary_accuracy'].item(), 
+            1.0, 
+            places=5
+        )
+    
+    def test_zero_accuracy(self):
+        """Test that completely wrong predictions give 0% accuracy."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Completely wrong predictions
+        torch.manual_seed(42)
+        targets = torch.randint(0, 2, (32, 2)).float()
+        predictions = 1 - targets  # Opposite of targets
+        
+        metrics.update(preds=predictions, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        # Should be exactly 0.0
+        self.assertAlmostEqual(
+            result['train/SUMMARY-binary_accuracy'].item(), 
+            0.0, 
+            places=5
+        )
+    
+    def test_known_accuracy_value(self):
+        """Test with known accuracy value."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations_binary,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Construct specific case: 3 out of 4 correct
+        targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        predictions = torch.tensor([[1.0, 1.0], [1.0, 0.0]])  # 3 out of 4 correct
+        
+        metrics.update(preds=predictions, target=targets, split='train')
+        result = metrics.compute('train')
+        
+        # Should be 0.75 (3 out of 4)
+        self.assertAlmostEqual(
+            result['train/SUMMARY-binary_accuracy'].item(), 
+            0.75, 
+            places=5
+        )
+
+
+class TestConceptMetricsMultipleBatches(unittest.TestCase):
+    """Test metrics with multiple batch updates."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        axis_binary = AxisAnnotation(
+            labels=('b1',),
+            cardinalities=[1],
+            metadata={'b1': {'type': 'discrete'}}
+        )
+        self.annotations = Annotations({1: axis_binary})
+    
+    def test_accumulation_across_batches(self):
+        """Test that metrics correctly accumulate across batches."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # Batch 1: 100% accuracy
+        targets1 = torch.tensor([[1.0], [1.0]])
+        preds1 = torch.tensor([[1.0], [1.0]])
+        
+        # Batch 2: 0% accuracy
+        targets2 = torch.tensor([[1.0], [1.0]])
+        preds2 = torch.tensor([[0.0], [0.0]])
+        
+        # Update with both batches
+        metrics.update(preds=preds1, target=targets1, split='train')
+        metrics.update(preds=preds2, target=targets2, split='train')
+        
+        result = metrics.compute('train')
+        
+        # Should be 50% (2 correct out of 4 total)
+        self.assertAlmostEqual(
+            result['train/SUMMARY-binary_accuracy'].item(),
+            0.5,
+            places=5
+        )
+    
+    def test_reset_clears_accumulation(self):
+        """Test that reset clears accumulated state."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        # First epoch
+        targets1 = torch.tensor([[1.0], [1.0]])
+        preds1 = torch.tensor([[0.0], [0.0]])  # 0% accuracy
+        
+        metrics.update(preds=preds1, target=targets1, split='train')
+        result1 = metrics.compute('train')
+        self.assertAlmostEqual(result1['train/SUMMARY-binary_accuracy'].item(), 0.0)
+        
+        # Reset
+        metrics.reset('train')
+        
+        # Second epoch with different data
+        targets2 = torch.tensor([[1.0], [1.0]])
+        preds2 = torch.tensor([[1.0], [1.0]])  # 100% accuracy
+        
+        metrics.update(preds=preds2, target=targets2, split='train')
+        result2 = metrics.compute('train')
+        
+        # Should be 100%, not affected by previous data
+        self.assertAlmostEqual(result2['train/SUMMARY-binary_accuracy'].item(), 1.0)
+
+
+class TestConceptMetricsRepr(unittest.TestCase):
+    """Test string representations and display methods."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        axis_binary = AxisAnnotation(
+            labels=('b1', 'b2'),
+            cardinalities=[1, 1],
+            metadata={
+                'b1': {'type': 'discrete'},
+                'b2': {'type': 'discrete'}
+            }
+        )
+        self.annotations = Annotations({1: axis_binary})
+    
+    def test_repr_with_metrics(self):
+        """Test __repr__ method."""
+        metrics_config = GroupConfig(
+            binary={
+                'accuracy': torchmetrics.classification.BinaryAccuracy(),
+                'f1': torchmetrics.classification.BinaryF1Score()
+            }
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True,
+            perconcept_metrics=False
+        )
+        
+        repr_str = repr(metrics)
+        
+        # Should contain key information
+        self.assertIn('ConceptMetrics', repr_str)
+        self.assertIn('n_concepts=2', repr_str)
+        self.assertIn('summary=True', repr_str)
+        self.assertIn('perconcept=False', repr_str)
+        self.assertIn('BinaryAccuracy', repr_str)
+        self.assertIn('BinaryF1Score', repr_str)
+    
+    def test_repr_with_mixed_metric_specs(self):
+        """Test __repr__ with different metric specification methods."""
+        metrics_config = GroupConfig(
+            binary={
+                'accuracy': torchmetrics.classification.BinaryAccuracy(),  # Instantiated
+                'f1': (torchmetrics.classification.BinaryF1Score, {}),  # Tuple
+                'precision': torchmetrics.classification.BinaryPrecision  # Class
+            }
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        repr_str = repr(metrics)
+        
+        # All metrics should appear
+        self.assertIn('BinaryAccuracy', repr_str)
+        self.assertIn('BinaryF1Score', repr_str)
+        self.assertIn('BinaryPrecision', repr_str)
+
+
+class TestConceptMetricsGetMethod(unittest.TestCase):
+    """Test the get() dict-like interface."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        axis_binary = AxisAnnotation(
+            labels=('b1',),
+            cardinalities=[1],
+            metadata={'b1': {'type': 'discrete'}}
+        )
+        self.annotations = Annotations({1: axis_binary})
+        
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
+        )
+        
+        self.metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True
+        )
+    
+    def test_get_train_metrics(self):
+        """Test getting train metrics collection."""
+        collection = self.metrics.get('train_metrics')
+        self.assertIsNotNone(collection)
+        self.assertTrue(len(collection) > 0)
+    
+    def test_get_val_metrics(self):
+        """Test getting validation metrics collection."""
+        collection = self.metrics.get('val_metrics')
+        self.assertIsNotNone(collection)
+    
+    def test_get_test_metrics(self):
+        """Test getting test metrics collection."""
+        collection = self.metrics.get('test_metrics')
+        self.assertIsNotNone(collection)
+    
+    def test_get_invalid_key(self):
+        """Test getting with invalid key returns default."""
+        result = self.metrics.get('invalid_key')
+        self.assertIsNone(result)
+    
+    def test_get_with_custom_default(self):
+        """Test get with custom default value."""
+        default = "custom_default"
+        result = self.metrics.get('invalid_key', default=default)
+        self.assertEqual(result, default)
+
+
+class TestConceptMetricsIntegration(unittest.TestCase):
+    """Integration tests simulating real training scenarios."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        axis_mixed = AxisAnnotation(
+            labels=('binary1', 'binary2', 'cat1'),
+            cardinalities=[1, 1, 3],
+            metadata={
+                'binary1': {'type': 'discrete'},
+                'binary2': {'type': 'discrete'},
+                'cat1': {'type': 'discrete'}
+            }
+        )
+        self.annotations = Annotations({1: axis_mixed})
+    
+    def test_full_training_epoch_simulation(self):
+        """Simulate a complete training epoch with multiple batches."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True,
+            perconcept_metrics=True
+        )
+        
+        # Simulate training batches
+        num_batches = 10
+        batch_size = 32
+        
+        for _ in range(num_batches):
+            # Mixed predictions: 2 binary + 3 categorical = 5 endogenous dims
+            predictions = torch.randn(batch_size, 5)
+            targets = torch.cat([
+                torch.randint(0, 2, (batch_size, 2)),
+                torch.randint(0, 3, (batch_size, 1))
+            ], dim=1)
+            
+            metrics.update(preds=predictions, target=targets, split='train')
+        
+        # Compute results
+        results = metrics.compute('train')
+        
+        # Verify all expected metrics are present
+        self.assertIn('train/SUMMARY-binary_accuracy', results)
+        self.assertIn('train/SUMMARY-categorical_accuracy', results)
+        self.assertIn('train/binary1_accuracy', results)
+        self.assertIn('train/binary2_accuracy', results)
+        self.assertIn('train/cat1_accuracy', results)
+        
+        # Reset for next epoch
+        metrics.reset('train')
+        
+        # After reset, metrics should be ready for new epoch
+        results_after_reset = metrics.compute('train')
+        self.assertIn('train/SUMMARY-binary_accuracy', results_after_reset)
+    
+    def test_train_val_test_workflow(self):
+        """Simulate complete train/val/test workflow."""
+        metrics_config = GroupConfig(
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy}
+        )
+        
+        metrics = ConceptMetrics(
+            self.annotations,
+            metrics_config,
+            summary_metrics=True
+        )
+        
+        batch_size = 16
+        
+        # Training
+        for _ in range(5):
+            predictions = torch.randn(batch_size, 5)
+            targets = torch.cat([
+                torch.randint(0, 2, (batch_size, 2)),
+                torch.randint(0, 3, (batch_size, 1))
+            ], dim=1)
+            metrics.update(preds=predictions, target=targets, split='train')
+        
+        # Validation
+        for _ in range(2):
+            predictions = torch.randn(batch_size, 5)
+            targets = torch.cat([
+                torch.randint(0, 2, (batch_size, 2)),
+                torch.randint(0, 3, (batch_size, 1))
+            ], dim=1)
+            metrics.update(preds=predictions, target=targets, split='val')
+        
+        # Testing
+        for _ in range(3):
+            predictions = torch.randn(batch_size, 5)
+            targets = torch.cat([
+                torch.randint(0, 2, (batch_size, 2)),
+                torch.randint(0, 3, (batch_size, 1))
+            ], dim=1)
+            metrics.update(preds=predictions, target=targets, split='test')
+        
+        # Compute all splits
+        train_results = metrics.compute('train')
+        val_results = metrics.compute('val')
+        test_results = metrics.compute('test')
+        
+        # All should have results
+        self.assertIn('train/SUMMARY-binary_accuracy', train_results)
+        self.assertIn('val/SUMMARY-binary_accuracy', val_results)
+        self.assertIn('test/SUMMARY-binary_accuracy', test_results)
+        
+        # Reset all
+        metrics.reset()
+        
+        # After reset, all should be clean
+        train_clean = metrics.compute('train')
+        val_clean = metrics.compute('val')
+        test_clean = metrics.compute('test')
+        
+        self.assertIn('train/SUMMARY-binary_accuracy', train_clean)
+        self.assertIn('val/SUMMARY-binary_accuracy', val_clean)
+        self.assertIn('test/SUMMARY-binary_accuracy', test_clean)
 
 
 if __name__ == '__main__':

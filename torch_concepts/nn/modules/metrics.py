@@ -1,8 +1,70 @@
 """
 Metrics module for concept-based model evaluation.
 
-This module provides custom metrics for evaluating concept-based models,
-including causal effect metrics and concept accuracy measures.
+This module provides the :class:`ConceptMetrics` class for evaluating concept-based models
+with automatic handling of different concept types (binary, categorical, continuous).
+It integrates seamlessly with TorchMetrics and PyTorch Lightning, providing flexible
+metric tracking at both aggregate and per-concept levels.
+
+Key Features:
+    - Automatic routing of concept predictions to appropriate metrics based on type
+    - Summary metrics: aggregated performance across all concepts of each type
+    - Per-concept metrics: individual tracking for specific concepts
+    - Flexible metric specification: pre-instantiated, class+kwargs, or class-only
+    - Independent tracking across train/validation/test splits
+    - Integration with PyTorch Lightning training loops
+
+Classes:
+    ConceptMetrics: Main metrics manager for concept-based models
+
+Example:
+    Basic usage with binary and categorical concepts::
+
+        import torch
+        import torchmetrics
+        from torch_concepts import Annotations, AxisAnnotation
+        from torch_concepts.nn.modules.metrics import ConceptMetrics
+        from torch_concepts.nn.modules.utils import GroupConfig
+
+        # Define concept structure
+        annotations = Annotations({
+            1: AxisAnnotation(
+                labels=['is_round', 'is_smooth', 'color'],
+                cardinalities=[1, 1, 3],  # binary, binary, categorical
+                metadata={
+                    'is_round': {'type': 'discrete'},
+                    'is_smooth': {'type': 'discrete'},
+                    'color': {'type': 'discrete'}
+                }
+            )
+        })
+
+        # Configure metrics
+        metrics = ConceptMetrics(
+            annotations=annotations,
+            fn_collection=GroupConfig(
+                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+                categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy}
+            ),
+            summary_metrics=True,
+            perconcept_metrics=True
+        )
+
+        # During training
+        predictions = torch.randn(32, 5)  # 2 binary + 3 categorical (endogenous space)
+        targets = torch.cat([
+            torch.randint(0, 2, (32, 2)),  # binary concepts
+            torch.randint(0, 3, (32, 1))   # categorical concept
+        ], dim=1)
+
+        metrics.update(preds=predictions, target=targets, split='train')
+        results = metrics.compute('train')
+        metrics.reset('train')
+
+See Also:
+    - :doc:`/guides/using_metrics`: Comprehensive guide to using metrics
+    - :doc:`/modules/nn.loss`: Loss functions for concept-based models
+    - :class:`torch_concepts.nn.modules.utils.GroupConfig`: Metric configuration helper
 """
 from typing import Optional, Union, List
 import torch
@@ -17,66 +79,224 @@ from ...nn.modules.utils import check_collection, get_concept_groups
 
 
 class ConceptMetrics(nn.Module):
-    """Metrics module for concept-based models.
+    """Metrics manager for concept-based models with automatic type-aware routing.
     
-    Organizes and manages metrics for different concept types (binary, categorical, 
-    continuous) with support for both summary metrics (aggregated across all concepts 
-    of a type) and per-concept metrics (individual tracking per concept).
+    This class organizes and manages metrics for different concept types (binary, 
+    categorical, continuous) with support for both summary metrics (aggregated across 
+    all concepts of a type) and per-concept metrics (individual tracking per concept).
+    
+    The class automatically routes predictions to the appropriate metrics based on
+    concept types defined in the annotations, handles different metric instantiation
+    patterns, and maintains independent metric tracking across train/val/test splits.
     
     Args:
-        annotations (Annotations): Concept annotations with metadata.
-        fn_collection (GroupConfig): Metric configurations organized by concept type.
-            Each metric can be specified in three ways:
-            1. Pre-instantiated: `metric_instance` (e.g., BinaryAccuracy())
-            2. Class with user kwargs: `(MetricClass, {'kwarg': value})`
-            3. Class only: `MetricClass` (concept-specific params added automatically)
-        summary_metrics (bool): Whether to compute summary metrics. Default: True.
-        perconcept_metrics (Union[bool, List[str]]): Whether to compute per-concept 
-            metrics. If True, computes for all concepts. If list, computes only for 
-            specified concept names. Default: False.
+        annotations (Annotations): Concept annotations containing labels, types, and 
+            cardinalities. Should include axis 1 (concept axis) with metadata specifying
+            concept types as 'discrete' or 'continuous'.
+        fn_collection (GroupConfig): Metric configurations organized by concept type 
+            ('binary', 'categorical', 'continuous'). Each metric can be specified in 
+            three ways:
+            
+            1. **Pre-instantiated metric**: Pass an already instantiated metric object
+               for full control over all parameters.
+               
+               Example::
+               
+                   'accuracy': torchmetrics.classification.BinaryAccuracy(threshold=0.6)
+            
+            2. **Class with user kwargs**: Pass a tuple of (MetricClass, kwargs_dict)
+               to provide custom parameters while letting ConceptMetrics handle 
+               concept-specific parameters like num_classes automatically.
+               
+               Example::
+               
+                   'accuracy': (torchmetrics.classification.MulticlassAccuracy, 
+                               {'average': 'macro'})
+            
+            3. **Class only**: Pass just the metric class and let ConceptMetrics handle 
+               all instantiation with appropriate concept-specific parameters.
+               
+               Example::
+               
+                   'accuracy': torchmetrics.classification.MulticlassAccuracy
+                   
+        summary_metrics (bool, optional): Whether to compute summary metrics that 
+            aggregate performance across all concepts of each type. Defaults to True.
+        perconcept_metrics (Union[bool, List[str]], optional): Controls per-concept 
+            metric tracking. Options:
+            
+            - False: No per-concept tracking (default)
+            - True: Track all concepts individually  
+            - List[str]: Track only the specified concept names
+            
+    Attributes:
+        n_concepts (int): Total number of concepts
+        concept_names (Tuple[str]): Names of all concepts
+        cardinalities (List[int]): Number of classes for each concept
+        summary_metrics (bool): Whether summary metrics are computed
+        perconcept_metrics (Union[bool, List[str]]): Per-concept tracking configuration
+        train_metrics (MetricCollection): Metrics for training split
+        val_metrics (MetricCollection): Metrics for validation split  
+        test_metrics (MetricCollection): Metrics for test split
+        
+    Raises:
+        NotImplementedError: If continuous concepts are found (not yet supported)
+        ValueError: If metric configuration doesn't match concept types, or if 
+            user provides num_classes when it should be set automatically
             
     Example:
-        >>> from torch_concepts.nn.modules.metrics import ConceptMetrics, GroupConfig
-        >>> import torchmetrics
-        >>> import torch
-        >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> 
-        >>> # Three ways to specify metrics:
-        >>> concept_annotations = Annotations({1: AxisAnnotation(
-        ...     labels=['concept1', 'concept2'],
-        ...     metadata={
-        ...         'concept1': {'type': 'discrete'},
-        ...         'concept2': {'type': 'discrete'}
-        ...     },
-        ... )})
-        >>> metrics = ConceptMetrics(
-        ...     annotations=concept_annotations,
-        ...     fn_collection=GroupConfig(
-        ...         binary={
-        ...             # 1. Pre-instantiated
-        ...             'accuracy': torchmetrics.classification.BinaryAccuracy(),
-        ...             # 2. Class + user kwargs (average='macro')
-        ...             'f1': (torchmetrics.classification.BinaryF1Score, {'multidim_average': 'global'})
-        ...         },
-        ...         categorical={
-        ...             # 3. Class only (num_classes will be added automatically)
-        ...             'accuracy': torchmetrics.classification.MulticlassAccuracy
-        ...         }
-        ...     ),
-        ...     summary_metrics=True,
-        ...     perconcept_metrics=['concept1', 'concept2']
-        ... )
-        >>>
-        >>> # Simulated predictions and targets
-        >>> predictions = torch.tensor([[0.8, 0.2], [0.4, 0.6]])
-        >>> targets = torch.tensor([[1, 0], [0, 1]])
-        >>>
-        >>> # Update metrics during training
-        >>> metrics.update(predictions, targets, split='train')
-        >>> 
-        >>> # Compute metrics at epoch end
-        >>> train_metrics = metrics.compute('train')
-        >>> metrics.reset('train')
+        **Basic usage with pre-instantiated metrics**::
+        
+            import torch
+            import torchmetrics
+            from torch_concepts import Annotations, AxisAnnotation
+            from torch_concepts.nn.modules.metrics import ConceptMetrics
+            from torch_concepts.nn.modules.utils import GroupConfig
+            
+            # Define concept structure
+            annotations = Annotations({
+                1: AxisAnnotation(
+                    labels=('round', 'smooth'),
+                    cardinalities=[1, 1],
+                    metadata={
+                        'round': {'type': 'discrete'},
+                        'smooth': {'type': 'discrete'}
+                    }
+                )
+            })
+            
+            # Create metrics with pre-instantiated objects
+            metrics = ConceptMetrics(
+                annotations=annotations,
+                fn_collection=GroupConfig(
+                    binary={
+                        'accuracy': torchmetrics.classification.BinaryAccuracy(),
+                        'f1': torchmetrics.classification.BinaryF1Score()
+                    }
+                ),
+                summary_metrics=True,
+                perconcept_metrics=False
+            )
+            
+            # Simulate training batch
+            predictions = torch.randn(32, 2)  # endogenous predictions
+            targets = torch.randint(0, 2, (32, 2))  # binary targets
+            
+            # Update metrics
+            metrics.update(pred=predictions, target=targets, split='train')
+            
+            # Compute at epoch end
+            results = metrics.compute('train')
+            print(results)  # {'train/SUMMARY-binary_accuracy': ..., 'train/SUMMARY-binary_f1': ...}
+            
+            # Reset for next epoch
+            metrics.reset('train')
+            
+        **Using class + kwargs for flexible configuration**::
+        
+            # Mixed concept types with custom metric parameters
+            annotations = Annotations({
+                1: AxisAnnotation(
+                    labels=('binary1', 'binary2', 'category'),
+                    cardinalities=[1, 1, 5],
+                    metadata={
+                        'binary1': {'type': 'discrete'},
+                        'binary2': {'type': 'discrete'},
+                        'category': {'type': 'discrete'}
+                    }
+                )
+            })
+            
+            metrics = ConceptMetrics(
+                annotations=annotations,
+                fn_collection=GroupConfig(
+                    binary={
+                        # Custom threshold
+                        'accuracy': (torchmetrics.classification.BinaryAccuracy, 
+                                   {'threshold': 0.6})
+                    },
+                    categorical={
+                        # Custom averaging, num_classes added automatically
+                        'accuracy': (torchmetrics.classification.MulticlassAccuracy,
+                                   {'average': 'macro'})
+                    }
+                ),
+                summary_metrics=True,
+                perconcept_metrics=True  # Track all concepts individually
+            )
+            
+            # Predictions: 2 binary + 5 categorical = 7 dimensions
+            predictions = torch.randn(16, 7)
+            targets = torch.cat([
+                torch.randint(0, 2, (16, 2)),  # binary
+                torch.randint(0, 5, (16, 1))   # categorical
+            ], dim=1)
+            
+            metrics.update(pred=predictions, target=targets, split='train')
+            results = metrics.compute('train')
+            
+            # Results include both summary and per-concept metrics:
+            # 'train/SUMMARY-binary_accuracy'
+            # 'train/SUMMARY-categorical_accuracy'
+            # 'train/binary1_accuracy'
+            # 'train/binary2_accuracy'
+            # 'train/category_accuracy'
+            
+        **Selective per-concept tracking**::
+        
+            # Track only specific concepts
+            metrics = ConceptMetrics(
+                annotations=annotations,
+                fn_collection=GroupConfig(
+                    binary={'accuracy': torchmetrics.classification.BinaryAccuracy}
+                ),
+                summary_metrics=True,
+                perconcept_metrics=['binary1']  # Only track binary1 individually
+            )
+            
+        **Integration with PyTorch Lightning**::
+        
+            import pytorch_lightning as pl
+            
+            class ConceptModel(pl.LightningModule):
+                def __init__(self, annotations):
+                    super().__init__()
+                    self.model = ... # your model
+                    self.metrics = ConceptMetrics(
+                        annotations=annotations,
+                        fn_collection=GroupConfig(
+                            binary={'accuracy': torchmetrics.classification.BinaryAccuracy}
+                        ),
+                        summary_metrics=True
+                    )
+                    
+                def training_step(self, batch, batch_idx):
+                    x, concepts = batch
+                    preds = self.model(x)
+                    
+                    # Update metrics
+                    self.metrics.update(pred=preds, target=concepts, split='train')
+                    return loss
+                    
+                def on_train_epoch_end(self):
+                    # Compute and log metrics
+                    metrics_dict = self.metrics.compute('train')
+                    self.log_dict(metrics_dict)
+                    self.metrics.reset('train')
+                    
+    Note:
+        - Continuous concepts are not yet supported and will raise NotImplementedError
+        - For categorical concepts, ConceptMetrics automatically handles padding to
+          the maximum cardinality when computing summary metrics
+        - User-provided 'num_classes' parameter for categorical metrics will raise
+          an error as it's set automatically based on concept cardinalities
+        - Each split (train/val/test) maintains independent metric state
+        
+    See Also:
+        - :class:`torch_concepts.nn.modules.utils.GroupConfig`: Configuration helper
+        - :class:`torch_concepts.annotations.Annotations`: Concept annotations
+        - `TorchMetrics Documentation <https://lightning.ai/docs/torchmetrics>`_: 
+          Available metrics and their parameters
     """
     
     def __init__(
@@ -297,29 +517,93 @@ class ConceptMetrics(nn.Module):
         else:
             raise ValueError(f"Unknown split: {split}. Must be 'train', 'val', or 'test'.")
     
-    def update(self, input: torch.Tensor, target: torch.Tensor, split: str = 'train'):
-        """Update metrics with predictions and targets.
+    def update(self, preds: torch.Tensor, target: torch.Tensor, split: str = 'train'):
+        """Update metrics with predictions and targets for a given split.
+        
+        This method automatically routes predictions to the appropriate metrics based
+        on concept types. For summary metrics, it aggregates all concepts of each type.
+        For per-concept metrics, it extracts individual concept predictions.
+        
+        The preds tensor should be in the endogenous space (after applying the concept
+        distributions' transformations), and the target tensor should contain the
+        ground truth concept values.
         
         Args:
-            input (torch.Tensor): Model predictions (endogenous or values).
-            target (torch.Tensor): Ground truth labels/values.
-            split (str): Which split to update ('train', 'val', or 'test').
+            preds (torch.Tensor): Model predictions in endogenous space. Shape depends
+                on concept types:
+                
+                - Binary concepts: (batch_size, n_binary_concepts)
+                - Categorical concepts: (batch_size, sum of cardinalities)
+                - Mixed: (batch_size, n_binary + sum of cat cardinalities)
+                
+            target (torch.Tensor): Ground truth concept values. Shape (batch_size, n_concepts)
+                where each column corresponds to a concept:
+                
+                - Binary concepts: float values in {0, 1}
+                - Categorical concepts: integer class indices in {0, ..., cardinality-1}
+                - Continuous concepts: float values (not yet supported)
+                
+            split (str, optional): Which data split to update. Must be one of:
+                
+                - 'train': Training split
+                - 'val' or 'validation': Validation split
+                - 'test': Test split
+                
+                Defaults to 'train'.
+                
+        Raises:
+            ValueError: If split is not one of 'train', 'val', 'validation', or 'test'
+            NotImplementedError: If continuous concepts are encountered
+            
+        Example:
+            **Basic update**::
+            
+                # Binary concepts only
+                predictions = torch.randn(32, 3)  # 3 binary concepts
+                targets = torch.randint(0, 2, (32, 3))  # binary ground truth
+                
+                metrics.update(preds=predictions, target=targets, split='train')
+                
+            **Mixed concept types**::
+                
+                # 2 binary + 1 categorical (3 classes)
+                # Endogenous space: 2 binary + 3 categorical = 5 dims
+                predictions = torch.randn(32, 5)
+                targets = torch.cat([
+                    torch.randint(0, 2, (32, 2)),  # binary targets
+                    torch.randint(0, 3, (32, 1))   # categorical target
+                ], dim=1)
+                
+                metrics.update(preds=predictions, target=targets, split='train')
+                
+            **Validation split**::
+                
+                val_predictions = model(val_data)
+                metrics.update(preds=val_predictions, target=val_targets, split='val')        Note:
+            - This method accumulates metric state across multiple batches
+            - Call :meth:`compute` to calculate final metric values
+            - Call :meth:`reset` after computing to start fresh for next epoch
+            - Each split maintains independent state
         """
+        # Skip empty batches to avoid errors in underlying metric libraries
+        if preds.shape[0] == 0:
+            return
+        
         metric_collection = self._get_collection(split)
         
         for key in metric_collection:
             # Update summary metrics
             if self.summary_metrics:
                 if 'SUMMARY-binary_' in key and self.groups['binary_labels']:
-                    binary_input = input[:, self.groups['binary_endogenous_idx']]
+                    binary_pred = preds[:, self.groups['binary_endogenous_idx']]
                     binary_target = target[:, self.groups['binary_idx']].float()
-                    metric_collection[key].update(binary_input, binary_target)
+                    metric_collection[key].update(binary_pred, binary_target)
                     continue
                 
                 elif 'SUMMARY-categorical_' in key and self.groups['categorical_labels']:
                     # Pad and stack categorical endogenous
                     split_tuple = torch.split(
-                        input[:, self.groups['categorical_endogenous_idx']], 
+                        preds[:, self.groups['categorical_endogenous_idx']], 
                         [self.cardinalities[i] for i in self.groups['categorical_idx']], 
                         dim=1
                     )
@@ -330,9 +614,9 @@ class ConceptMetrics(nn.Module):
                             value=float('-inf')
                         ) for endogenous in split_tuple
                     ]
-                    cat_input = torch.cat(padded_endogenous, dim=0)
+                    cat_pred = torch.cat(padded_endogenous, dim=0)
                     cat_target = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
-                    metric_collection[key].update(cat_input, cat_target)
+                    metric_collection[key].update(cat_pred, cat_target)
                     continue
                 
                 elif 'SUMMARY-continuous_' in key and self.groups['continuous_labels']:
@@ -353,17 +637,17 @@ class ConceptMetrics(nn.Module):
                 
                 if c_type == 'discrete' and card == 1:
                     metric_collection[key].update(
-                        input[:, endogenous_idx], 
+                        preds[:, endogenous_idx], 
                         target[:, c_idx:c_idx+1].float()
                     )
                 elif c_type == 'discrete' and card > 1:
                     metric_collection[key].update(
-                        input[:, endogenous_idx], 
+                        preds[:, endogenous_idx], 
                         target[:, c_idx].long()
                     )
                 elif c_type == 'continuous':
                     metric_collection[key].update(
-                        input[:, endogenous_idx], 
+                        preds[:, endogenous_idx], 
                         target[:, c_idx:c_idx+1]
                     )
                 else:
@@ -371,23 +655,124 @@ class ConceptMetrics(nn.Module):
                                      type '{c_type}' for concept '{concept_name}'.")
     
     def compute(self, split: str = 'train'):
-        """Compute accumulated metrics for a split.
+        """Compute final metric values from accumulated state for a split.
+        
+        This method calculates the final metric values using all data accumulated
+        through :meth:`update` calls since the last :meth:`reset`. It does not
+        reset the metric state, allowing you to log results before resetting.
         
         Args:
-            split (str): Which split to compute ('train', 'val', or 'test').
-            
+            split (str, optional): Which data split to compute metrics for.
+                Must be one of 'train', 'val', 'validation', or 'test'.
+                Defaults to 'train'.
+                
         Returns:
-            dict: Dictionary of computed metric values.
+            dict: Dictionary mapping metric names (with split prefix) to computed
+                values. Keys follow the format:
+                
+                - Summary metrics: '{split}/SUMMARY-{type}_{metric_name}'
+                - Per-concept metrics: '{split}/{concept_name}_{metric_name}'
+                
+                Values are torch.Tensor objects containing the computed metric values.
+                
+        Raises:
+            ValueError: If split is not one of the valid options
+            
+        Example:
+            **Basic compute**::
+            
+                # After updating with training data
+                train_results = metrics.compute('train')
+                print(train_results)
+                # {
+                #     'train/SUMMARY-binary_accuracy': tensor(0.8500),
+                #     'train/SUMMARY-binary_f1': tensor(0.8234),
+                #     'train/concept1_accuracy': tensor(0.9000),
+                #     'train/concept2_accuracy': tensor(0.8000)
+                # }
+                
+            **Compute multiple splits**::
+            
+                train_metrics = metrics.compute('train')
+                val_metrics = metrics.compute('val')
+                
+                # Log to wandb or tensorboard
+                logger.log_metrics(train_metrics)
+                logger.log_metrics(val_metrics)
+                
+            **Extract specific metrics**::
+            
+                results = metrics.compute('val')
+                accuracy = results['val/SUMMARY-binary_accuracy'].item()
+                print(f"Validation accuracy: {accuracy:.2%}")
+                
+        Note:
+            - This method can be called multiple times without resetting
+            - Always call :meth:`reset` after logging to start fresh for next epoch
+            - Returned tensors are on the same device as the metric state
         """
         metric_collection = self._get_collection(split)
         return metric_collection.compute()
     
     def reset(self, split: Optional[str] = None):
-        """Reset metrics for one or all splits.
+        """Reset metric state for one or all splits.
+        
+        This method resets the accumulated metric state, clearing all data from
+        previous :meth:`update` calls. Call this after computing and logging metrics
+        to prepare for the next epoch.
         
         Args:
-            split (Optional[str]): Which split to reset ('train', 'val', 'test'), 
-                or None to reset all splits.
+            split (Optional[str], optional): Which split to reset. Options:
+                
+                - 'train': Reset only training metrics
+                - 'val' or 'validation': Reset only validation metrics
+                - 'test': Reset only test metrics
+                - None: Reset all splits simultaneously (default)
+                
+        Raises:
+            ValueError: If split is not None and not a valid split name
+            
+        Example:
+            **Reset single split**::
+            
+                # At end of training epoch
+                train_metrics = metrics.compute('train')
+                logger.log_metrics(train_metrics)
+                metrics.reset('train')  # Reset only training
+                
+            **Reset all splits**::
+            
+                # At end of validation
+                train_metrics = metrics.compute('train')
+                val_metrics = metrics.compute('val')
+                logger.log_metrics({**train_metrics, **val_metrics})
+                metrics.reset()  # Reset both train and val
+                
+            **Typical training loop**::
+            
+                for epoch in range(num_epochs):
+                    # Training
+                    for batch in train_loader:
+                        preds = model(batch)
+                        metrics.update(preds, targets, split='train')
+                    
+                    # Validation
+                    for batch in val_loader:
+                        preds = model(batch)
+                        metrics.update(preds, targets, split='val')
+                    
+                    # Compute and log
+                    train_results = metrics.compute('train')
+                    val_results = metrics.compute('val')
+                    log_metrics({**train_results, **val_results})
+                    
+                    # Reset for next epoch
+                    metrics.reset()  # Resets both train and val
+                    
+        Note:
+            - Resetting is essential to avoid mixing data from different epochs
+            - Each split can be reset independently
+            - Resetting does not affect the metric configuration, only the state
         """
         if split is None:
             self.train_metrics.reset()

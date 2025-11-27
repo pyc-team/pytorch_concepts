@@ -1,10 +1,9 @@
 import torch
 from torch import nn
-from typing import Any, List, Optional, Dict, Mapping, Type, Union
+from typing import List, Optional, Mapping
 
 
 from .....annotations import Annotations
-from .....typing import BackboneType
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
@@ -13,59 +12,50 @@ from ..learners import JointLearner
 
 
 class BlackBox(BaseModel, JointLearner):
+    """
+    BlackBox model.
+
+    This model implements a standard neural network architecture for concept-based tasks,
+    without explicit concept bottleneck or interpretable intermediate representations.
+    It uses a backbone for feature extraction and a latent encoder for concepts prediction.
+
+    Args:
+        input_size (int): Dimensionality of input features.
+        annotations (Annotations): Annotation object for output variables.
+        loss (nn.Module, optional): Loss function for training.
+        metrics (Mapping, optional): Metrics for evaluation.
+        backbone (nn.Module, optional): Feature extraction module.
+        latent_encoder (nn.Module, optional): Latent encoder module.
+        latent_encoder_kwargs (dict, optional): Arguments for latent encoder.
+        **kwargs: Additional arguments for BaseModel.
+
+    Example:
+        >>> model = BlackBox(input_size=8, annotations=ann)
+        >>> out = model(torch.randn(2, 8))
+    """
     def __init__(
         self,
         input_size: int,
-
-        loss: nn.Module,
-        metrics: Mapping,
         annotations: Annotations,
-        variable_distributions: Mapping,
-        optim_class: Type,
-        optim_kwargs: Mapping,
-
-        backbone: Optional[BackboneType] = None,
-        encoder: Optional[nn.Module] = None,
-        encoder_kwargs: Optional[Dict] = None,
-
-        scheduler_class: Optional[Type] = None,
-        scheduler_kwargs: Optional[Mapping] = None,     
-        summary_metrics: Optional[bool] = True,
-        perconcept_metrics: Optional[Union[bool, list]] = False,
+        loss: Optional[nn.Module] = None,
+        metrics: Optional[Mapping] = None,
         **kwargs
     ) -> None:
-        # Initialize using super() to properly handle MRO
         super().__init__(
-            #-- Learner args
+            input_size=input_size,
+            annotations=None,
+            variable_distributions=None,
             loss=loss,
             metrics=metrics,
-            annotations=annotations,
-            variable_distributions=variable_distributions,
-            optim_class=optim_class,
-            optim_kwargs=optim_kwargs,
-            scheduler_class=scheduler_class,
-            scheduler_kwargs=scheduler_kwargs,
-            summary_metrics=summary_metrics,
-            perconcept_metrics=perconcept_metrics,
-            # -- BaseModel args
-            input_size=input_size,
-            backbone=backbone,
-            encoder=encoder,
-            encoder_kwargs=encoder_kwargs
+            **kwargs
         )
-
-        self.concept_annotations = annotations.get_axis_annotation(1)
-        self.mlp = MLP(input_size=input_size,
-                       output_size=sum(self.concept_annotations.cardinalities),
-                       **encoder_kwargs
-                       )
     
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
         ) -> torch.Tensor:
         features = self.maybe_apply_backbone(x)
-        endogenous = self.mlp(features)
+        endogenous = self.latent_encoder(features)
         return endogenous
 
     def filter_output_for_loss(self, forward_out, target):
@@ -83,7 +73,7 @@ class BlackBox(BaseModel, JointLearner):
         return {'input': forward_out,
                 'target': target}
 
-    def filter_output_for_metric(self, forward_out, target):
+    def filter_output_for_metrics(self, forward_out, target):
         """No filtering needed - return raw endogenous for metric computation.
 
         Args:
@@ -95,5 +85,5 @@ class BlackBox(BaseModel, JointLearner):
         """
         # forward_out: endogenous
         # return: endogenous
-        return {'input': forward_out,
+        return {'preds': forward_out,
                 'target': target}

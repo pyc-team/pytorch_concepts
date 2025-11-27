@@ -10,17 +10,16 @@ This guide will help you implement a new dataset in <img src="../../doc/_static/
 Before implementing your dataset, ensure you have:
 - Raw data files or a method to download/generate them
 - Knowledge of the concept structure (concept names, types, cardinalities)
-- Optional: causal graph structure between concepts
-- Understanding of whether your data needs preprocessing or custom scalers/splitters
+- (Optional) Causal graph structure between concepts
 
 ## Part 1: Implementing the Dataset Class
 
-The dataset class should extend `ConceptDataset` from `torch_concepts.data.base.dataset` and be placed in `torch_concepts/data/datasets/your_dataset.py`.
+All <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC dataset classes should extend `ConceptDataset` from `torch_concepts.data.base.dataset` and be placed in `torch_concepts/data/datasets/your_dataset.py`.
 
 All datasets should provide 4 main objects to the base class `ConceptDataset`:
-- `input data`: raw input features as torch.Tensor
+- `input_data`: raw input features as torch.Tensor
 - `concepts`: concept labels as torch.Tensor or pandas DataFrame
-- `annotations`: an Annotations object describing the concepts
+- `annotations`: an Annotations object describing concepts' properties
 - `graph`: optional causal graph as a pandas DataFrame
 
 ### 1.1 Init Structure
@@ -29,7 +28,7 @@ All datasets should provide 4 main objects to the base class `ConceptDataset`:
 import os
 import torch
 import pandas as pd
-from typing import List
+from typing import List, Mapping, Optional
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
@@ -49,17 +48,18 @@ class YourDataset(ConceptDataset):
     
     def __init__(
         self,
-        root: str,
+        root: str = None,
         # Add your dataset-specific parameters here
         # ...
         concept_subset: Optional[list] = None, # subset of concept labels
-        label_descriptions: Optional[dict] = None,
+        label_descriptions: Optional[Mapping] = None,
         # Add your dataset-specific optional parameters here
         # ...
     ):
         self.root = root
         self.label_descriptions = label_descriptions
         # Store other parameters as needed
+        # ...
         
         # Load data and annotations
         input_data, concepts, annotations, graph = self.load()
@@ -119,19 +119,14 @@ def download(self):
     url = "https://example.com/dataset.zip"
     download_url(url, self.root_dir)
     
-    # Example: Decompress if needed
-    import gzip
-    import shutil
-    gz_path = os.path.join(self.root_dir, "data.gz")
-    output_path = self.raw_paths[0]  # Get path to raw file 
-    with gzip.open(gz_path, 'rb') as f_in:
-        with open(output_path, 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-    os.unlink(gz_path)
+    # Decompress if needed
+    # ...
 ```
 
 #### `build()`
-Processes raw data into a desired format. This is the most important method. This allow to store objects to avoid doing the processing at each loading. Importantly, this is were the Annotations object shold be created.
+Processes raw data into a desired format. This is the most important method. This allow to store objects to avoid doing the processing at each loading. 
+Importantly, this is were the `Annotations` object shold be created. See [annotations.md](./annotations.md) for details and advanced usage
+
 
 ```python
 def build(self):
@@ -141,7 +136,7 @@ def build(self):
     
     # Step 2: Load raw data
     # Example: Load from CSV
-    df = pd.read_csv(self.raw_paths[0])  # Get path to raw file 
+    df = pd.read_csv(self.raw_paths[0]) 
     
     # Step 3: Extract/generate embeddings (input features)
     embeddings = ...
@@ -208,9 +203,9 @@ def load_raw(self):
     self.maybe_build()  # Ensures build() is called if needed
     
     print(f"Loading dataset from {self.root_dir}")
-    inputs = torch.load(self.processed_paths[0])
+    inputs = torch.load(self.processed_paths[0], weights_only=False)
     concepts = pd.read_hdf(self.processed_paths[1], "concepts")
-    annotations = torch.load(self.processed_paths[2])
+    annotations = torch.load(self.processed_paths[2], weights_only=False)
     graph = pd.read_hdf(self.processed_paths[3], "graph")
     
     return embeddings, concepts, annotations, graph
@@ -258,32 +253,8 @@ def __getitem__(self, idx: int) -> dict:
 
 
 
-### 1.5 Key bits to Remember
 
-#### Concept Types
-- **`discrete`**: Binary and Categorical variables
-- **`continuous`**: Continuous variables (not yet supported)
-
-#### Cardinalities
-- **Binary concepts (2 states)**: Use cardinality = **1** (treated as Bernoulli)
-- **Categorical concepts (K states)**: Use cardinality = **K**
-- **Example**: `[1, 1, 3, 5]` → 2 binary concepts, 1 ternary, 1 with 5 classes
-
-#### Annotations Structure
-```python
-Annotations({
-    1: AxisAnnotation(
-        labels=['concept_1', 'concept_2', ...],      # Concept names (list)
-        cardinalities=[1, 3, 1, ...],                # Number of states per concept
-        metadata={                                    # Dict of metadata per concept
-            'concept_1': {'type': 'discrete', ...},
-            'concept_2': {'type': 'discrete', ...},
-        }
-    )
-})
-```
-
-### 1.6 Complete Example Template
+### 1.5 Complete Example Template
 
 See `torch_concepts/data/datasets/bnlearn.py` for a complete reference implementation.
 
@@ -550,6 +521,7 @@ from torch_concepts.data.datamodules import YourDataModule
 dataset = YourDataset(
     root="/path/to/data",
     seed=42,
+    ...
 )
 
 print(f"Dataset: {dataset}")
@@ -567,9 +539,9 @@ print(f"Concepts shape: {sample['concepts']['c'].shape}")
 # Test datamodule
 datamodule = YourDataModule(
     seed=42,
-    batch_size=32,
-    val_size=0.15,
-    test_size=0.15,
+    batch_size=128,
+    val_size=0.1,
+    test_size=0.2,
 )
 
 datamodule.setup()
@@ -585,21 +557,6 @@ print(f"\nBatch structure: {batch.keys()}")
 print(f"Batch input shape: {batch['inputs']['x'].shape}")
 print(f"Batch concepts shape: {batch['concepts']['c'].shape}")
 ```
-
-### 4.2 Verification Checklist
-
-- [ ] Ask for permission to the dataset authors (if required)
-- [ ] Dataset downloads/generates data correctly
-- [ ] Dataset builds processed files successfully
-- [ ] Dataset loads without errors
-- [ ] Annotations include all required fields ('cardinality' and `type` in metadata)
-- [ ] DataModule splits data correctly
-- [ ] DataLoaders return proper batch structure
-- [ ] Graph loads correctly (if applicable)
-- [ ] Configuration file instantiates DataModule without errors
-- [ ] IMPORTANT: Dataset tested within the Conceptarium pipeline with multiple models (sweep.yaml + experiment.py)
-- [ ] Contact PyC authors for submission
-
 
 ## Part 5: Integration & Submission
 

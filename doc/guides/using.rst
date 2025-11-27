@@ -78,7 +78,7 @@ Pick the best entry point based on your experience:
         Start from the High-Level API to use pre-defined models with one line of code.
 
     .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` No experience with programming?
-        :link: modules/conceptarium
+        :link: using_conceptarium
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
@@ -138,3 +138,4 @@ Need Help?
    using_mid_level_proba
    using_mid_level_causal
    using_high_level
+   using_conceptarium

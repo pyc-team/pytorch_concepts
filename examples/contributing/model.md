@@ -1,47 +1,32 @@
 # Contributing a New Model
 
-This guide will help you implement a new model in <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and also enable its usage in <img src="../../doc/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium. All models build un top of multiple levels of abstraction provided by the pytorch-concepts (PyC) library, allowing you to build models using high-level, mid-level, or low-level APIs.
+This guide will help you implement a new model in <img src="../../doc/_static/img/logos/pyc.svg" width="25px" align="center"/> PyC and enable its usage in <img src="../../doc/_static/img/logos/conceptarium.svg" width="25px" align="center"/> Conceptarium.
 
 ## Prerequisites
 
-Before implementing your model, ensure you have:
 - Understanding of the model architecture (encoder, concept layers, predictor)
-- Knowledge of the concept dependencies (which concepts depend on which)
-- Familiarity with the inference strategy (deterministic, sampling, etc.)
-- Understanding of which API level best suits your model complexity
+- Knowledge of concept dependencies
+- Familiarity with inference strategy (deterministic, sampling, etc.)
 
-## PyC API Levels Overview
+## Training Modes
 
-The library provides three main API levels for model implementation:
+PyC models support two training paradigms:
 
-1. **High-Level API**: Use pre-built models like `BipartiteModel` for standard architectures
-2. **Mid-Level API**: Build custom models using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`
-3. **Low-Level API**: Assemble custom architectures from basic interpretable layers
+### 1. Standard PyTorch Training (Manual)
+- Initialize model **without** loss parameter
+- Define optimizer, loss function, and training loop manually
+- Full control over forward pass and optimization
+- Example: `examples/utilization/2_model/5_torch_training.py`
 
-**Recommendation**: Start with the high-level API if possible, and only use lower-level APIs when you need custom behavior.
+### 2. PyTorch Lightning Training (Automatic)
+- Initialize model **with** loss, optim_class, and optim_kwargs parameters
+- Use Lightning Trainer for automatic training/validation/testing
+- Inherits training logic from Learner classes (JointLearner, IndependentLearner)
+- Example: `examples/utilization/2_model/6_lightning_training.py`
 
-## Part 1: Implementing the Model Class
+## Implementation Overview
 
-All models should extend `BaseModel` from `torch_concepts.nn.modules.high.base.model` and be placed in `torch_concepts/nn/modules/high/models`.
-
-### 1.1 Understanding BaseModel
-
-`BaseModel` provides common functionality:
-- **Backbone management**: Handles optional backbone networks (e.g., ResNet, ViT)
-- **Encoder setup**: Configures a shared encoder MLP
-- **Annotations**: Stores concept metadata used for metrics and loss computation
-- **Distribution handling**: Adds distribution information to annotations
-
-Key properties:
-- `self.annotations`: Concept metadata
-- `self.encoder`: Shared encoder layer (MLP or Identity)
-- `self.encoder_out_features`: Output dimension of encoder
-- `self.backbone`: Optional backbone network
-- `self.embs_precomputed`: Whether embeddings are pre-computed
-
-### 1.2 Basic Structure (High-Level API)
-
-Using `BipartiteModel` for standard concept bottleneck architectures:
+All models extend `BaseModel` from `torch_concepts.nn.modules.high.base.model` and implement:
 
 ```python
 from typing import Any, Dict, List, Optional, Union, Mapping
@@ -146,7 +131,7 @@ class YourModel(BaseModel):
         """
         return forward_out
     
-    def filter_output_for_metric(self, forward_out):
+    def filter_output_for_metrics(self, forward_out):
         """Process model output for metric computation.
         
         Default: return output as-is. Override for custom processing.
@@ -277,7 +262,7 @@ class YourModel_ParametricCPDs(BaseModel):
     def filter_output_for_loss(self, forward_out):
         return forward_out
 
-    def filter_output_for_metric(self, forward_out):
+    def filter_output_for_metrics(self, forward_out):
         return forward_out
 ```
 
@@ -379,7 +364,7 @@ def filter_output_for_loss(self, forward_out):
         'task_input': task_endogenous
     }
 
-def filter_output_for_metric(self, forward_out):
+def filter_output_for_metrics(self, forward_out):
     """Process output before metric computation.
     
     Example: Apply softmax for probability metrics
@@ -448,27 +433,12 @@ variable_distributions:
 ## Part 3: Testing & Verification
 Test your model thoroughly before submission. 
 
-### 3.1 Verification Checklist
-
-- [ ] Ask for permission to the dataset authors (if required)
-- [ ] Model extends `BaseModel`
-- [ ] `__init__` properly calls `super().__init__`
-- [ ] `forward` method implemented with correct signature
-- [ ] Configuration file created correctly
-- [ ] Model works with Hydra instantiation
-- [ ] Gradients flow correctly (test with `loss.backward()`)
-- [ ] IMPORTANT: Model tested within the Conceptarium pipeline on multiple dataset (sweep.yaml + experiment.py)
-- [ ] Contact PyC authors for submission
 
 ## Part 4: Integration & Submission
 
 ### 4.1 Contacting the Authors
 
 **Important**: Contact the library authors before submitting to ensure your model fits the library's scope and get guidance on:
-- Models naming conventions
-- Integration with existing infrastructure
-- Documentation requirements
-- Testing requirements
     
 ### 4.2 Documentation
 

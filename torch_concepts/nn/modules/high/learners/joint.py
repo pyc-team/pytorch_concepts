@@ -3,6 +3,15 @@ from ..base.learner import BaseLearner
 
 
 class JointLearner(BaseLearner):
+    """
+    Joint training engine for concept-based models.
+
+    Extends BaseLearner to support joint training of all concepts and tasks.
+
+    Example:
+        >>> from torch_concepts.nn.modules.high.learners.joint import JointLearner
+        >>> learner = JointLearner(loss=None, metrics=None)
+    """
     def __init__(self,**kwargs):
         super(JointLearner, self).__init__(**kwargs)
 
@@ -54,7 +63,7 @@ class JointLearner(BaseLearner):
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---
-        metrics_args = self.filter_output_for_metric(out, c)
+        metrics_args = self.filter_output_for_metrics(out, c)
         self.update_and_log_metrics(metrics_args, step, batch_size)
         return loss
 

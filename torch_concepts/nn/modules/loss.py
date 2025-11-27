@@ -27,6 +27,49 @@ def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks
     return concepts_idxs, tasks_idxs, concepts_endogenous, tasks_endogenous
 
 class ConceptLoss(nn.Module):
+    """
+    Concept loss for concept-based models.
+
+    Automatically routes to appropriate loss functions based on concept types
+    (binary, categorical, continuous) using annotation metadata.
+
+    Args:
+        annotations (Annotations): Concept annotations with metadata including
+            type information for each concept.
+        fn_collection (GroupConfig): Loss function configuration per concept type.
+            Keys should be 'binary', 'categorical', and/or 'continuous'.
+
+    Example:
+        >>> from torch_concepts.nn import ConceptLoss
+        >>> from torch_concepts import GroupConfig, Annotations, AxisAnnotation
+        >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
+        >>> from torch.distributions import Bernoulli, Categorical
+        >>> 
+        >>> # Define annotations
+        >>> ann = Annotations({1: AxisAnnotation(
+        ...     labels=['is_round', 'color'],
+        ...     cardinalities=[1, 3],
+        ...     metadata={
+        ...         'is_round': {'type': 'discrete', 'distribution': Bernoulli},
+        ...         'color': {'type': 'discrete', 'distribution': Categorical}
+        ...     }
+        ... )})
+        >>> 
+        >>> # Configure loss functions
+        >>> loss_config = GroupConfig(
+        ...     binary=BCEWithLogitsLoss(),
+        ...     categorical=CrossEntropyLoss()
+        ... )
+        >>> loss_fn = ConceptLoss(ann[1], loss_config)
+        >>> 
+        >>> # Compute loss
+        >>> predictions = torch.randn(2, 4)  # 1 binary + 3 categorical logits
+        >>> targets = torch.cat([
+        ...     torch.randint(0, 2, (2, 1)),  # binary target
+        ...     torch.randint(0, 3, (2, 1))   # categorical target
+        ... ], dim=1)
+        >>> loss = loss_fn(predictions, targets)
+    """
     def __init__(self, annotations: Annotations, fn_collection: GroupConfig):
         super().__init__()
         annotations = annotations.get_axis_annotation(axis=1)
@@ -63,11 +106,11 @@ class ConceptLoss(nn.Module):
         and sums them to get the total loss.
         
         Args:
-            inputs (torch.Tensor): Model predictions (endogenous or values).
-            targets (torch.Tensor): Ground truth labels/values.
+            input (torch.Tensor): Model predictions in endogenous space (logits).
+            target (torch.Tensor): Ground truth labels/values.
             
         Returns:
-            Tenso: Total computed loss.
+            torch.Tensor: Total computed loss (scalar).
         """
         total_loss = 0.0
         
@@ -104,13 +147,28 @@ class ConceptLoss(nn.Module):
 
 
 class WeightedConceptLoss(nn.Module):
-    """Concept loss with separate weighting for each concept type.
-    
+    """
+    Weighted concept loss for concept-based models.
+
+    Computes a weighted combination of concept and task losses.
+
     Args:
         annotations (Annotations): Annotations object with concept metadata.
-        fn_collection (Mapping): Loss function configuration.
+        fn_collection (GroupConfig): Loss function configuration.
         weight (float): Weight for concept loss; (1 - weight) is for task loss.
         task_names (List[str]): List of task concept names.
+
+    Example:
+        >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
+        >>> from torch_concepts.nn.modules.utils import GroupConfig
+        >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
+        >>> from torch_concepts.annotations import AxisAnnotation, Annotations
+        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 3, 1])})
+        >>> fn = GroupConfig(binary=BCEWithLogitsLoss(), categorical=CrossEntropyLoss())
+        >>> loss_fn = WeightedConceptLoss(ann, fn, weight=0.7, task_names=['task'])
+        >>> input = torch.randn(2, 5)
+        >>> target = torch.randint(0, 2, (2, 3))
+        >>> loss = loss_fn(input, target)
     """
     def __init__(
         self, 
@@ -140,11 +198,11 @@ class WeightedConceptLoss(nn.Module):
         """Compute weighted loss for concepts and tasks.
         
         Args:
-            inputs (torch.Tensor): Model predictions (endogenous or values).
-            targets (torch.Tensor): Ground truth labels/values.
+            input (torch.Tensor): Model predictions in endogenous space (logits).
+            target (torch.Tensor): Ground truth labels/values.
         
         Returns:
-            Tensor: Weighted combination of concept and task losses.
+            torch.Tensor: Weighted combination of concept and task losses (scalar).
         """
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
