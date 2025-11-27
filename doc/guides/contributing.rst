@@ -42,7 +42,7 @@ Install PyC and its dependencies:
 
 .. code-block:: bash
 
-   pip install pytorch-concepts
+   pip install --pre pytorch-concepts
 
 For development, you may want to install in editable mode:
 

@@ -33,7 +33,7 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 Install PyC and its dependencies:
 
 ```bash
-pip install pytorch-concepts
+pip install --pre pytorch-concepts
 ```
 
 For development, you may want to install in editable mode:

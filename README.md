@@ -29,7 +29,7 @@ The name of the library stands for both
 You can install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
 
 ```bash
-pip install pytorch-concepts
+pip install --pre pytorch-concepts
 ```
 
 After installation, you can import it in your Python scripts as:

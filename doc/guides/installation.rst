@@ -8,7 +8,7 @@ You can install PyC with core dependencies from `PyPI <https://pypi.org/project/
 
 .. code-block:: bash
 
-   pip install pytorch-concepts
+   pip install --pre pytorch-concepts
 
 This will install the core library without data-related dependencies (opencv-python, pgmpy, bnlearn, pandas, torchvision, datasets, transformers).
 
@@ -19,7 +19,7 @@ If you plan to use the ``torch_concepts.data`` module, install with the data ext
 
 .. code-block:: bash
 
-   pip install pytorch-concepts[data]
+   pip install --pre pytorch-concepts[data]
 
 This will install all dependencies including those required for data loading and preprocessing.
 
