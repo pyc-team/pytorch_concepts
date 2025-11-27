@@ -351,11 +351,11 @@ class CUBDataset(ConceptDataset):
 
     def __init__(
         self,
-        precision : int = 32,
-        concepts : np.ndarray | pd.DataFrame | torch.Tensor = None,
-        annotations : Annotations | None = None,
-        concept_names_subset : List[str] | None = None,
-        root : str = CUB_DIR,
+        precision: int = 32,
+        concepts: np.ndarray | pd.DataFrame | torch.Tensor = None,
+        annotations: Annotations | None = None,
+        concept_names_subset: List[str] | None = None,
+        root: str = CUB_DIR,
         image_transform: object | None = None,
     ) -> None:
         self.root = root
