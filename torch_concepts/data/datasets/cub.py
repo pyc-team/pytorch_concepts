@@ -499,8 +499,3 @@ class CUBDataset(ConceptDataset):
             'concepts': {'c': concepts},
         }
         return sample
-
-
-if __name__ == "__main__":
-    dataset = CUBDataset()
-    print(f"Dataset loaded with {dataset.n_samples} samples.")
