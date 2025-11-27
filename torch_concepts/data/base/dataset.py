@@ -42,7 +42,7 @@ class ConceptDataset(Dataset):
     Args:
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
         concepts: Concept annotations as numpy array, pandas DataFrame, or Tensor.
-        annotations: Optional Annotations object with concept metadata.
+        annotations: Optional Annotations object with concept metadata. (TODO: this can't be optional, since we need concept names in set_concepts(.))
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
         precision: Numerical precision (16, 32, or 64, default: 32).

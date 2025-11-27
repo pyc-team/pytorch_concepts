@@ -3,13 +3,15 @@ import tarfile
 import torch
 import pandas as pd
 import numpy as np
-from typing import List, Optional
-from PIL import Image
+from typing import List, Dict
+from PIL import Image, ImageFile
 import torchvision.transforms as T
 from torch_concepts import Annotations
 from torch_concepts.annotations import AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
+from torch_concepts.data.backbone import compute_backbone_embs
+from torchvision.models import resnet18
 
 # Names of all CUB attributes
 CONCEPT_SEMANTICS = [
@@ -328,16 +330,15 @@ CONCEPT_SEMANTICS = [
 ]
 
 CUB_DIR = os.environ.get("CUB_DIR", './CUB200/')
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-class CUB(ConceptDataset):
+class CUBDataset(ConceptDataset):
     """
     The CUB dataset is a dataset of bird images with annotated attributes.
     Each image is associated with a set of concept labels (attributes) and
     task labels (bird species).
 
     Attributes:
-        concept_attr_names: The names of the concept labels (attributes).
-        task_attr_names: The names of the task labels (bird species).
         root: The root directory where the dataset is stored.
         split: The dataset split to use ('train' or 'test').
         uncertain_concept_labels: Whether to treat uncertain concept labels as
@@ -348,36 +349,29 @@ class CUB(ConceptDataset):
     n_concepts = 312
     n_tasks = 200
 
-    concept_attr_names: List[str] = []
-    task_attr_names: List[str] = []
-
     def __init__(
         self,
-        name : str = "cub",
         precision : int = 32,
-        input_data : np.ndarray | pd.DataFrame | torch.Tensor = None,
         concepts : np.ndarray | pd.DataFrame | torch.Tensor = None,
         annotations : Annotations | None = None,
-        graph : pd.DataFrame | None = None,
         concept_names_subset : List[str] | None = None,
         root : str = CUB_DIR,
-        image_transform: Optional[object] = None,
+        image_transform: object | None = None,
     ) -> None:
         self.root = root
-        self.image_transform = image_transform or T.ToTensor()
-
-        input_data, concepts, annotations, graph, image_paths = self.load()
-
+        # ensure images have consistent size for batching
+        self.image_transform = image_transform or T.Compose([T.Resize((256, 256)), T.ToTensor()])
+        
+        embeddings, concepts, annotations, graph = self.load()
+        
         super().__init__(
-            name=name,
             precision=precision,
-            input_data=input_data,
+            input_data=embeddings,
             concepts=concepts,
             annotations=annotations,
             graph=graph,
             concept_names_subset=concept_names_subset,
         )
-        self.image_paths = image_paths
     
     @property
     def raw_filenames(self) -> List[str]:
@@ -398,10 +392,9 @@ class CUB(ConceptDataset):
     def processed_filenames(self) -> List[str]:
         """List of processed filenames that will be created during build step."""
         return [
-            "cub_inputs.pt",
             "cub_concepts.pt",
             "cub_annotations.pt",
-            "cub_graph.h5",
+            "cub_embeddings.pt",
         ]
     
     def download(self) -> None:
@@ -415,18 +408,23 @@ class CUB(ConceptDataset):
         with tarfile.open(tgz_path, "r:gz") as tar:
             tar.extractall(path=self.root)
         os.unlink(tgz_path)
-        
+                
     def build(self):
         self.maybe_download()
+        
+        # workaround to get self.n_samples() work in ConceptDataset. We will overwrite later in super().__init__()
+        # create a torch tensor with shape (n_samples, whatever) and set self.input_data to it temporarily
+        temp_input_data = torch.zeros((11788, 10))  # CUB has 11788 samples
+        self.input_data = temp_input_data
 
-        images = pd.read_csv(self.raw_paths[0], sep=r"\s+", header=None, names=['image_id', 'path'])
-        image_paths = images.set_index('image_id')['path']
-        image_paths = image_paths.apply(lambda p: os.path.join(self.root, "CUB_200_2011", "images", p))
-
-        # attribute names: use canonical order from CONCEPT_SEMANTICS (matches attr_id 1..312)
+        images = pd.read_csv(
+            self.raw_paths[0],
+            sep=r"\s+",
+            header=None,
+            names=["image_id", "path"],
+        )
         concept_names = CONCEPT_SEMANTICS
 
-        # image_attribute_labels.txt has 6 columns; we only need is_present (col 3)
         attr_labels = pd.read_csv(
             self.raw_paths[5],
             header=None,
@@ -436,7 +434,7 @@ class CUB(ConceptDataset):
             engine="python",
         )
         concepts_df = attr_labels.pivot(index='image_id', columns='attr_id', values='is_present').fillna(0)
-        concepts_df = concepts_df.loc[image_paths.index]
+        concepts_df = concepts_df.loc[images["image_id"]]
         concepts_tensor = torch.tensor(concepts_df.values, dtype=torch.float32)
 
         concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
@@ -447,30 +445,55 @@ class CUB(ConceptDataset):
                               metadata=concept_metadata)
         })
 
-        torch.save(list(image_paths.values), self.processed_paths[0])
-        torch.save(concepts_tensor, self.processed_paths[1])
-        torch.save(annotations, self.processed_paths[2])
+        torch.save(concepts_tensor, self.processed_paths[0])
+        torch.save(annotations, self.processed_paths[1])
+
+        annotations = torch.load(self.processed_paths[1], weights_only=False)
+        self._annotations = annotations
+        self.maybe_reduce_annotations(annotations, None)
+        concepts = torch.load(self.processed_paths[0], weights_only=False)
+        # temporary placeholder so set_concepts has a length reference
+        self.input_data = torch.zeros((concepts.shape[0], 1))
+        self.precision = 32  # set precision before calling set_concepts
+        self.set_concepts(concepts)
+
+        # Compute embeddings using a pretrained model (e.g., ResNet) as backbone from torch_concepts.data.backbone
+        backbone = torch.nn.Sequential(*list(resnet18(pretrained=True).children())[:-1])
+        embeddings = compute_backbone_embs(
+            self,
+            backbone,
+            batch_size=64,
+            workers=4,
+            verbose=True
+        )
+        
+        torch.save(embeddings, self.processed_paths[2])
 
     def load_raw(self):
         self.maybe_build()
-        # PyTorch 2.6 switches torch.load default to weights_only=True; set False to load metadata objects
-        image_paths = torch.load(self.processed_paths[0], weights_only=False)
-        concepts = torch.load(self.processed_paths[1], weights_only=False)
-        annotations = torch.load(self.processed_paths[2], weights_only=False)
-        return image_paths, concepts, annotations, None
+        concepts = torch.load(self.processed_paths[0], weights_only=False)
+        annotations = torch.load(self.processed_paths[1], weights_only=False)
+        embeddings = torch.load(self.processed_paths[2], weights_only=False)
+        return embeddings, concepts, annotations, None
 
     def load(self):
-        image_paths, concepts, annotations, graph = self.load_raw()
-        input_indices = torch.arange(len(image_paths), dtype=torch.long)
-        return input_indices, concepts, annotations, graph, image_paths
+        embeddings, concepts, annotations, graph = self.load_raw()
+        return embeddings, concepts, annotations, graph
 
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
+    def __getitem__(self, idx) -> Dict[str, Dict[str, torch.Tensor]]:
+        img_rel_path = pd.read_csv( # TODO: optimize by reading this once in __init__
+            self.raw_paths[0],
+            header=None,
+            names=['image_id', 'img_path'],
+            delim_whitespace=True,
+            engine="python",
+        ).set_index('image_id').loc[idx + 1, 'img_path']  # idx +1 because image_id starts from 1
+        img_path = os.path.join(self.root, "CUB_200_2011/images", img_rel_path)
         image = Image.open(img_path).convert("RGB")
         if self.image_transform is not None:
             image = self.image_transform(image)
 
-        concepts = self.concepts[idx]
+        concepts = self.concepts[idx].clone()
         sample = {
             'inputs': {'x': image},
             'concepts': {'c': concepts},
@@ -478,5 +501,6 @@ class CUB(ConceptDataset):
         return sample
 
 
-# test
-cub = CUB()
+if __name__ == "__main__":
+    dataset = CUBDataset()
+    print(f"Dataset loaded with {dataset.n_samples} samples.")
