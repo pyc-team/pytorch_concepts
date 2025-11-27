@@ -121,7 +121,7 @@ Detailed Guides
        # Random task labels
        task_labels = torch.randint(0, n_tasks, (batch_size,))
 
-    **Step 3: Build a Concept Bottleneck Model**
+    **Build a Concept Bottleneck Model**
 
     Use a ModuleDict to combine encoder and predictor:
 
@@ -143,7 +143,7 @@ Detailed Guides
 .. dropdown:: Inference and Training
     :icon: rocket
 
-    **Step 1: Inference**
+    **Inference**
 
     Once a concept bottleneck model is built, we can perform inference by first obtaining
     concept activations from the encoder, and then task predictions from the predictor:
@@ -159,7 +159,7 @@ Detailed Guides
        print(f"Concept endogenous shape: {concept_endogenous.shape}")  # [32, 5]
        print(f"Task endogenous shape: {task_endogenous.shape}")        # [32, 3]
 
-    **Step 2: Compute Loss and Train**
+    **Compute Loss and Train**
 
     Train with both concept and task supervision:
 
