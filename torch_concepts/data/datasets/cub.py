@@ -3,7 +3,7 @@ import tarfile
 import torch
 import pandas as pd
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from PIL import Image, ImageFile
 import torchvision.transforms as T
 from torch_concepts import Annotations
@@ -409,7 +409,7 @@ class CUBDataset(ConceptDataset):
             tar.extractall(path=self.root)
         os.unlink(tgz_path)
                 
-    def build(self):
+    def build(self) -> None:
         self.maybe_download()
         
         # workaround to get self.n_samples() work in ConceptDataset. We will overwrite later in super().__init__()
@@ -469,18 +469,18 @@ class CUBDataset(ConceptDataset):
         
         torch.save(embeddings, self.processed_paths[2])
 
-    def load_raw(self):
+    def load_raw(self) -> Tuple[torch.Tensor, pd.DataFrame, Annotations, None]:
         self.maybe_build()
         concepts = torch.load(self.processed_paths[0], weights_only=False)
         annotations = torch.load(self.processed_paths[1], weights_only=False)
         embeddings = torch.load(self.processed_paths[2], weights_only=False)
         return embeddings, concepts, annotations, None
 
-    def load(self):
+    def load(self) -> Tuple[torch.Tensor, pd.DataFrame, Annotations, None]:
         embeddings, concepts, annotations, graph = self.load_raw()
         return embeddings, concepts, annotations, graph
 
-    def __getitem__(self, idx) -> Dict[str, Dict[str, torch.Tensor]]:
+    def __getitem__(self, idx: int) -> Dict[str, Dict[str, torch.Tensor]]:
         img_rel_path = pd.read_csv( # TODO: optimize by reading this once in __init__
             self.raw_paths[0],
             header=None,
