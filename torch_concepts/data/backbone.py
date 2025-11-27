@@ -12,9 +12,57 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+def choose_backbone(name: str):
+    """Choose a backbone model by name.
+    
+    Args:
+        name (str): Name of the backbone model (e.g., 'resnet18', 'vit_b_16').
+        
+    Returns:
+        tuple: (backbone model, transforms) - The backbone model and its preprocessing transforms.
+        
+    Raises:
+        ValueError: If the backbone name is not recognized.
+        
+    Example:
+        >>> backbone, transforms = choose_backbone('resnet18')
+        >>> print(backbone)
+        ResNet(...)
+    """
+    from torchvision.models import (
+        resnet18, resnet50, vit_b_16, vit_l_16,
+        ResNet18_Weights, ResNet50_Weights, 
+        ViT_B_16_Weights, ViT_L_16_Weights
+    )
+
+    if name == 'resnet18':
+        weights = ResNet18_Weights.DEFAULT
+        model = resnet18(weights=weights)
+        transforms = weights.transforms()
+        backbone = nn.Sequential(*list(model.children())[:-1])  # Remove final FC layer
+    elif name == 'resnet50':
+        weights = ResNet50_Weights.DEFAULT
+        model = resnet50(weights=weights)
+        transforms = weights.transforms()
+        backbone = nn.Sequential(*list(model.children())[:-1])
+    elif name == 'vit_b_16':
+        weights = ViT_B_16_Weights.DEFAULT
+        model = vit_b_16(weights=weights)
+        transforms = weights.transforms()
+        backbone = nn.Sequential(*list(model.children())[:-1])
+    elif name == 'vit_l_16':
+        weights = ViT_L_16_Weights.DEFAULT
+        model = vit_l_16(weights=weights)
+        transforms = weights.transforms()
+        backbone = nn.Sequential(*list(model.children())[:-1])
+    else:
+        raise ValueError(f"Backbone '{name}' is not recognized.")
+    
+    return backbone, transforms
+
 def compute_backbone_embs(
     dataset,
-    backbone: nn.Module,
+    backbone: str,
     batch_size: int = 512,
     workers: int = 0,
     device: str = None,
@@ -28,7 +76,7 @@ def compute_backbone_embs(
     
     Args:
         dataset: Dataset with __getitem__ returning dict with 'x' key or 'inputs'.'x' nested key.
-        backbone (nn.Module): Feature extraction model (e.g., ResNet encoder).
+        backbone (str): Backbone model name for feature extraction (e.g., 'resnet18').
         batch_size (int, optional): Batch size for processing. Defaults to 512.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
         device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.). 
@@ -52,11 +100,12 @@ def compute_backbone_embs(
     device = torch.device(device)
     
     # Store original training state to restore later
-    was_training = backbone.training
+    #was_training = backbone.training
     
     # Move backbone to device and set to eval mode
-    backbone = backbone.to(device)
-    backbone.eval()
+    backbone_model, transforms = choose_backbone(backbone)
+    backbone_model = backbone_model.to(device)
+    backbone_model.eval()
     
     # Create dataloader
     dataloader = DataLoader(
@@ -78,20 +127,21 @@ def compute_backbone_embs(
                 x = batch['inputs']['x'].to(device)
             else:
                 x = batch['x'].to(device)
-            embeddings = backbone(x) # Forward pass through backbone
+                           
+            embeddings = backbone_model(transforms(x)) # Forward pass through backbone
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
     all_embeddings = torch.cat(embeddings_list, dim=0) # Concatenate all embeddings
     
     # Restore original training state
-    if was_training:
-        backbone.train()
+    #if was_training:
+    #     backbone.train()
     
     return all_embeddings
 
 def get_backbone_embs(path: str,
                     dataset,
-                    backbone,
+                    backbone: str,
                     batch_size,
                     force_recompute=False,
                     workers=0,
@@ -105,7 +155,7 @@ def get_backbone_embs(path: str,
     Args:
         path (str): File path for saving/loading embeddings (.pt file).
         dataset: Dataset to extract embeddings from.
-        backbone: Backbone model for feature extraction.
+        backbone: Backbone model name for feature extraction.
         batch_size: Batch size for computation.
         force_recompute (bool, optional): Recompute even if cached. Defaults to False.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
@@ -130,7 +180,7 @@ def get_backbone_embs(path: str,
     if not os.path.exists(path) or force_recompute:
         # compute
         embs = compute_backbone_embs(dataset,
-                                    backbone,
+                                    backbone=backbone,
                                     batch_size=batch_size,
                                     workers=workers,
                                     device=device,
