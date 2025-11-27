@@ -113,7 +113,10 @@ class BnLearnDataset(ConceptDataset):
         
         # extract embeddings from latent autoencoder state
         concepts = df.copy()
-        embeddings = extract_embs_from_autoencoder(df, self.autoencoder_kwargs)
+        embeddings = extract_embs_from_autoencoder(
+            df, 
+            self.autoencoder_kwargs if self.autoencoder_kwargs is not None else {}
+        )
 
         # get concept annotations
         concept_names = list(self.bn_model.nodes())

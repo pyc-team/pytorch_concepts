@@ -126,7 +126,7 @@ class AutoencoderTrainer:
     def __init__(
             self, 
             input_shape: int, 
-            noise: float = 0.5,
+            noise: float = 0.,
             latent_dim: int = 32,
             lr: float = 0.0005,
             epochs: int = 2000,
@@ -233,7 +233,10 @@ class AutoencoderTrainer:
         return latent
 
 
-def extract_embs_from_autoencoder(df, autoencoder_kwargs):
+def extract_embs_from_autoencoder(
+        df, 
+        autoencoder_kwargs={}
+    ):
     """
     Extract embeddings from a pandas DataFrame using an autoencoder.
 

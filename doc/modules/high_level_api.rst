@@ -1,7 +1,7 @@
 High-level API
-==============
+=====================
 
-High-level APIs allow you to quickly build and train concept-based models using pre-configured components and minimal code.
+High-level API models allow you to quickly build and train concept-based models using pre-configured components and minimal code.
 
 .. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/factors/doc/_static/img/logos/pyc.svg
    :width: 20px
@@ -156,7 +156,7 @@ Configure losses and metrics using ``GroupConfig`` to automatically handle mixed
    )
    
    concept_loss = ConceptLoss(
-       annotations=annotations[1],  # AxisAnnotation for concepts
+       annotations=annotations,
        fn_collection=loss_config
    )
 
@@ -174,7 +174,7 @@ Configure losses and metrics using ``GroupConfig`` to automatically handle mixed
    )
    
    concept_metrics = ConceptMetrics(
-       annotations=annotations[1],
+       annotations=annotations,
        fn_collection=metrics_config,
        summary_metrics=True,      # Compute average across concepts
        perconcept_metrics=True    # Compute per-concept metrics
