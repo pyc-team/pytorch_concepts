@@ -12,6 +12,18 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+def _collate_inputs(batch):
+    """Collate only the input images, ignoring other fields."""
+    first = batch[0]
+    if isinstance(first, dict):
+        if 'inputs' in first and isinstance(first['inputs'], dict) and 'x' in first['inputs']:
+            xs = [b['inputs']['x'] for b in batch]
+        else:
+            raise KeyError("Batch items must contain 'inputs'['x'].")
+    else:
+        xs = batch
+    return torch.stack(xs, dim=0)
+
 def compute_backbone_embs(
     dataset,
     backbone: nn.Module,
@@ -64,6 +76,7 @@ def compute_backbone_embs(
         batch_size=batch_size,
         shuffle=False,  # Important: maintain order
         num_workers=workers,
+        collate_fn=_collate_inputs,
     )
     
     embeddings_list = []
@@ -73,11 +86,7 @@ def compute_backbone_embs(
     with torch.no_grad():
         iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
         for batch in iterator:
-            # Handle both {'x': tensor} and {'inputs': {'x': tensor}} structures
-            if 'inputs' in batch:
-                x = batch['inputs']['x'].to(device)
-            else:
-                x = batch['x'].to(device)
+            x = batch.to(device) # batch already collated to only inputs
             embeddings = backbone(x) # Forward pass through backbone
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
