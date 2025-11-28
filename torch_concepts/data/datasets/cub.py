@@ -408,22 +408,17 @@ class CUBDataset(ConceptDataset):
             tar.extractall(path=self.root)
         os.unlink(tgz_path)
                 
-    def build(self) -> None:
+    def build(self):
         self.maybe_download()
-        
-        # workaround to get self.n_samples() work in ConceptDataset. We will overwrite later in super().__init__()
-        # create a torch tensor with shape (n_samples, whatever) and set self.input_data to it temporarily
-        temp_input_data = torch.zeros((11788, 10))  # CUB has 11788 samples
-        self.input_data = temp_input_data
 
-        images = pd.read_csv(
-            self.raw_paths[0],
-            sep=r"\s+",
-            header=None,
-            names=["image_id", "path"],
-        )
+        images = pd.read_csv(self.raw_paths[0], sep=r"\s+", header=None, names=['image_id', 'path'])
+        image_paths = images.set_index('image_id')['path']
+        image_paths = image_paths.apply(lambda p: os.path.join(self.root, "CUB_200_2011", "images", p))
+
+        # attribute names: use canonical order from CONCEPT_SEMANTICS (matches attr_id 1..312)
         concept_names = CONCEPT_SEMANTICS
 
+        # image_attribute_labels.txt has 6 columns; we only need is_present (col 3)
         attr_labels = pd.read_csv(
             self.raw_paths[5],
             header=None,
@@ -433,7 +428,7 @@ class CUBDataset(ConceptDataset):
             engine="python",
         )
         concepts_df = attr_labels.pivot(index='image_id', columns='attr_id', values='is_present').fillna(0)
-        concepts_df = concepts_df.loc[images["image_id"]]
+        concepts_df = concepts_df.loc[image_paths.index]
         concepts_tensor = torch.tensor(concepts_df.values, dtype=torch.float32)
 
         concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
@@ -444,30 +439,10 @@ class CUBDataset(ConceptDataset):
                               metadata=concept_metadata)
         })
 
-        torch.save(concepts_tensor, self.processed_paths[0])
-        torch.save(annotations, self.processed_paths[1])
-
-        annotations = torch.load(self.processed_paths[1], weights_only=False)
-        self._annotations = annotations
-        self.maybe_reduce_annotations(annotations, None)
-        concepts = torch.load(self.processed_paths[0], weights_only=False)
-        # temporary placeholder so set_concepts has a length reference
-        self.input_data = torch.zeros((concepts.shape[0], 1))
-        self.precision = 32  # set precision before calling set_concepts
-        self.set_concepts(concepts)
-
-        # Compute embeddings using a pretrained model (e.g., ResNet) as backbone from torch_concepts.data.backbone
-        backbone = torch.nn.Sequential(*list(resnet18(pretrained=True).children())[:-1])
-        embeddings = compute_backbone_embs(
-            self,
-            backbone,
-            batch_size=64,
-            workers=4,
-            verbose=True
-        )
+        torch.save(list(image_paths.values), self.processed_paths[0])
+        torch.save(concepts_tensor, self.processed_paths[1])
+        torch.save(annotations, self.processed_paths[2])
         
-        torch.save(embeddings, self.processed_paths[2])
-
     def load_raw(self) -> Tuple[torch.Tensor, pd.DataFrame, Annotations, None]:
         self.maybe_build()
         concepts = torch.load(self.processed_paths[0], weights_only=False)
