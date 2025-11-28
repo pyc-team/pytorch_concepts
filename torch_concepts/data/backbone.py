@@ -6,59 +6,12 @@ models (e.g., ResNet, ViT) to speed up training of concept-based models.
 import os
 import torch
 import logging
-from torch import nn
 from torch.utils.data import DataLoader
+from torchvision.models import get_model, get_model_weights
 from tqdm import tqdm
 
+
 logger = logging.getLogger(__name__)
-
-def choose_backbone(name: str):
-    """Choose a backbone model by name.
-    
-    Args:
-        name (str): Name of the backbone model (e.g., 'resnet18', 'vit_b_16').
-        
-    Returns:
-        tuple: (backbone model, transforms) - The backbone model and its preprocessing transforms.
-        
-    Raises:
-        ValueError: If the backbone name is not recognized.
-        
-    Example:
-        >>> backbone, transforms = choose_backbone('resnet18')
-        >>> print(backbone)
-        ResNet(...)
-    """
-    from torchvision.models import (
-        resnet18, resnet50, vit_b_16, vit_l_16,
-        ResNet18_Weights, ResNet50_Weights, 
-        ViT_B_16_Weights, ViT_L_16_Weights
-    )
-
-    if name == 'resnet18':
-        weights = ResNet18_Weights.DEFAULT
-        model = resnet18(weights=weights)
-        transforms = weights.transforms()
-        backbone = nn.Sequential(*list(model.children())[:-1])  # Remove final FC layer
-    elif name == 'resnet50':
-        weights = ResNet50_Weights.DEFAULT
-        model = resnet50(weights=weights)
-        transforms = weights.transforms()
-        backbone = nn.Sequential(*list(model.children())[:-1])
-    elif name == 'vit_b_16':
-        weights = ViT_B_16_Weights.DEFAULT
-        model = vit_b_16(weights=weights)
-        transforms = weights.transforms()
-        backbone = nn.Sequential(*list(model.children())[:-1])
-    elif name == 'vit_l_16':
-        weights = ViT_L_16_Weights.DEFAULT
-        model = vit_l_16(weights=weights)
-        transforms = weights.transforms()
-        backbone = nn.Sequential(*list(model.children())[:-1])
-    else:
-        raise ValueError(f"Backbone '{name}' is not recognized.")
-    
-    return backbone, transforms
 
 def compute_backbone_embs(
     dataset,
@@ -99,13 +52,9 @@ def compute_backbone_embs(
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(device)
     
-    # Store original training state to restore later
-    #was_training = backbone.training
-    
-    # Move backbone to device and set to eval mode
-    backbone_model, transforms = choose_backbone(backbone)
-    backbone_model = backbone_model.to(device)
-    backbone_model.eval()
+    backbone_model = get_model(backbone, weights="DEFAULT").to(device).eval() # "DEFAULT" points to best available weights
+    weights = get_model_weights(backbone, weights="DEFAULT")
+    preprocess = weights.transforms()
     
     # Create dataloader
     dataloader = DataLoader(
@@ -122,20 +71,11 @@ def compute_backbone_embs(
     with torch.no_grad():
         iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
         for batch in iterator:
-            # Handle both {'x': tensor} and {'inputs': {'x': tensor}} structures
-            if 'inputs' in batch:
-                x = batch['inputs']['x'].to(device)
-            else:
-                x = batch['x'].to(device)
-                           
-            embeddings = backbone_model(transforms(x)) # Forward pass through backbone
+            x = batch['inputs']['x'].to(device)
+            embeddings = backbone_model(preprocess(x)) # Forward pass through backbone
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
     all_embeddings = torch.cat(embeddings_list, dim=0) # Concatenate all embeddings
-    
-    # Restore original training state
-    #if was_training:
-    #     backbone.train()
     
     return all_embeddings
 
