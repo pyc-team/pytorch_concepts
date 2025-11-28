@@ -366,7 +366,6 @@ class CUBDataset(ConceptDataset):
         
         super().__init__(
             precision=precision,
-            input_data=embeddings,
             concepts=concepts,
             annotations=annotations,
             graph=graph,
