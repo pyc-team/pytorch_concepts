@@ -39,8 +39,8 @@ def main():
                                    input_size=latent_dims,
                                    annotations=annotations,
                                    source_exogenous=LazyConstructor(LinearZU, exogenous_size=12),
-                                   encoder=LazyConstructor(LinearUC),
-                                   predictor=LazyConstructor(MixCUC),
+                                   encoder=LazyConstructor(LinearUC, n_exogenous_per_concept=1),
+                                   predictor=LazyConstructor(MixCUC, cardinalities=[1, 1]),
                                    use_source_exogenous=True)
 
     # Inference Initialization
