@@ -42,7 +42,7 @@ class ConceptDataset(Dataset):
     Args:
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
         concepts: Concept annotations as numpy array, pandas DataFrame, or Tensor.
-        annotations: Optional Annotations object with concept metadata.
+        annotations: Optional Annotations object with concept metadata. (TODO: this can't be optional, since we need concept names in set_concepts(.))
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
         precision: Numerical precision (16, 32, or 64, default: 32).
@@ -63,7 +63,7 @@ class ConceptDataset(Dataset):
     """
     def __init__(
         self,
-        input_data: Union[np.ndarray, pd.DataFrame, Tensor],
+        input_data: Union[np.ndarray, pd.DataFrame, Tensor, None],
         concepts: Union[np.ndarray, pd.DataFrame, Tensor],
         annotations: Optional[Annotations] = None,
         graph: Optional[pd.DataFrame] = None,
@@ -126,11 +126,6 @@ class ConceptDataset(Dataset):
         # maybe reduce annotations based on subset of concept names
         self.maybe_reduce_annotations(annotations,
                                       concept_names_subset)
-
-        # Set dataset's input data X
-        # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
-        # allow more complex data structures in the future with a custom parser
-        self.input_data: Tensor = parse_tensor(input_data, 'input', self.precision)
 
         # Store concept data C
         self.concepts = None
