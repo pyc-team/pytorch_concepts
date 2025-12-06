@@ -1,0 +1,13 @@
+defaults:
+  - _commons
+  - _self_
+  
+_target_: "torch_concepts.nn.ConceptEmbeddingModel_Joint"
+
+task_names: ${dataset.default_task_names}
+
+exogenous_size: 16
+
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true

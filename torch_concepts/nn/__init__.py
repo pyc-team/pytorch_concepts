@@ -45,10 +45,12 @@ from .modules.metrics import ConceptMetrics
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox
 from .modules.high.models.cbm import ConceptBottleneckModel, \
-    ConceptBottleneckModel_Joint
+    ConceptBottleneckModel_Joint #, ConceptBottleneckModel_Independent
+from .modules.high.models.cem import ConceptEmbeddingModel, ConceptEmbeddingModel_Joint
 
 # Learners (high-level)
 from .modules.high.learners.joint import JointLearner
+# from .modules.high.learners.independent import IndependentLearner
 
 # Models (mid-level)
 from .modules.mid.models.cpd import ParametricCPD
@@ -128,9 +130,12 @@ __all__ = [
     "ConceptBottleneckModel",
     "ConceptBottleneckModel_Joint",
     "ConceptBottleneckModel_Independent",
+    "ConceptEmbeddingModel",
+    "ConceptEmbeddingModel_Joint",
 
     # Learners (high-level)
     "JointLearner",
+    #"IndependentLearner",
 
     # Models (mid-level)
     "ParametricCPD",

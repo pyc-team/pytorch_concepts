@@ -1,0 +1,14 @@
+defaults:
+  - _commons
+  - _self_
+  
+# wrapper for 'joint' training mode
+_target_: "torch_concepts.nn.ConceptEmbeddingModel"
+
+task_names: ${dataset.default_task_names}
+
+exogenous_size: 16
+
+inference: 
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true
