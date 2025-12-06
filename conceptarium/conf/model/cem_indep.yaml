@@ -2,8 +2,7 @@ defaults:
   - _commons
   - _self_
   
-# wrapper for 'joint' training mode
-_target_: "torch_concepts.nn.ConceptEmbeddingModel"
+_target_: "torch_concepts.nn.ConceptEmbeddingModel_Independent"
 
 task_names: ${dataset.default_task_names}
 

@@ -10,7 +10,7 @@ latent_encoder_kwargs:
   hidden_size: 64
   n_layers: 1
   activation: leaky_relu
-  dropout: 0.5
+  dropout: 0.
 
 
 # =============================================================
