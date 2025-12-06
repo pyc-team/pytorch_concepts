@@ -2,7 +2,7 @@ defaults:
   - _commons
   - _self_
   
-# default is joint training
+# wrapper for 'joint' training mode
 _target_: "torch_concepts.nn.ConceptBottleneckModel"
 
 task_names: ${dataset.default_task_names}

@@ -189,6 +189,13 @@ class GraphModel(BaseConstructor):
                             size=layer._module_kwargs['exogenous_size'])
 
         exog_cpds = ParametricCPD(exog_names, parametrization=layer)
+        # exog_vars and exog_cpds can be a single Variable or a list of Variables
+        # depending on whether len(exog_names) == 1 or > 1
+        # Ensure we always return lists for consistency
+        if not isinstance(exog_vars, list):
+            exog_vars = [exog_vars]
+        if not isinstance(exog_cpds, list):
+            exog_cpds = [exog_cpds]
         return exog_vars, exog_cpds
 
     def _init_encoder(self, layer: LazyConstructor, label_names, parent_vars, cardinalities=None) -> Tuple[Variable, ParametricCPD]:
@@ -196,9 +203,9 @@ class GraphModel(BaseConstructor):
         Initialize encoder variables and parametric_cpds for root concepts.
 
         Args:
-            layer: LazyConstructor for encoding.
-            label_names: Names of root concepts.
-            parent_vars: Parent variables (latent or exogenous).
+            layer: LazyConstructor for encoder.
+            label_names: Names of root concepts to encode.
+            parent_vars: Parent variables (either input or exogenous).
             cardinalities: Optional cardinalities for concepts.
 
         Returns:
@@ -222,8 +229,10 @@ class GraphModel(BaseConstructor):
             encoder_vars = []
             encoder_cpds = []
             for label_name in label_names:
-                exog_vars = [v for v in parent_vars if v.concepts[0].startswith(f"exog_{label_name}")]
+                # Use exact matching to avoid substring issues (e.g., "OtherCar" vs "OtherCarCost")
+                exog_vars = [v for v in parent_vars if v.concepts[0].startswith(f"exog_{label_name}_state_")]
                 exog_vars_names = [v.concepts[0] for v in exog_vars]
+                
                 encoder_var = EndogenousVariable(label_name,
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
@@ -268,10 +277,20 @@ class GraphModel(BaseConstructor):
                 exog_vars_names = [v.concepts[0] for v in used_exog_vars]
                 in_features_exogenous = used_exog_vars[0].size
             elif source_exog_vars is not None:
-                assert len(source_exog_vars) == len(endogenous_parents_names)
-                exog_vars_names = [v.concepts[0] for v in source_exog_vars]
-                used_exog_vars = source_exog_vars
-                in_features_exogenous = used_exog_vars[0].size
+                # source_exog_vars is a list of ExogenousVariable objects (one per concept state)
+                # Get all relevant exog variables for this task's parent concepts
+                # Use exact matching to avoid substring issues (e.g., "OtherCar" in "OtherCarCost")
+                used_exog_vars = [v for v in source_exog_vars if any(v.concepts[0].startswith(f"exog_{parent}_state_") for parent in endogenous_parents_names)]
+                exog_vars_names = [v.concepts[0] for v in used_exog_vars]
+                in_features_exogenous = used_exog_vars[0].size if used_exog_vars else None
+                
+                # Update cardinalities in the layer if using source_exog_vars
+                # The cardinalities should match the actual parent concepts, not the global root cardinalities
+                if isinstance(layer, LazyConstructor):
+                    if 'cardinalities' in layer._module_kwargs:
+                        # Compute cardinalities for the actual parent concepts of this predictor
+                        parent_cardinalities = [self.annotations[1].cardinalities[self.annotations[1].get_index(p)] for p in endogenous_parents_names]
+                        layer._module_kwargs['cardinalities'] = parent_cardinalities
             else:
                 exog_vars_names = []
                 used_exog_vars = []

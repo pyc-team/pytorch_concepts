@@ -162,7 +162,19 @@ class ProbabilisticModel(nn.Module):
                     parametric_cpd.parents = self.concept_to_variable[concept].parents
 
                 if isinstance(parametric_cpd.parametrization, LazyConstructor):
-                    parent_vars = [self.concept_to_variable[parent_ref] for parent_ref in parametric_cpd.variable.parents]
+                    # parametric_cpd.parents is a list of Variable objects (or strings)
+                    # We need to get the actual Variable objects to compute in_features
+                    parent_vars = []
+                    for parent_ref in parametric_cpd.parents:
+                        if isinstance(parent_ref, str):
+                            # Parent is a concept name string
+                            parent_vars.append(self.concept_to_variable[parent_ref])
+                        elif hasattr(parent_ref, 'concepts'):
+                            # Parent is a Variable object, use its concept name to look up
+                            parent_concept = parent_ref.concepts[0]
+                            parent_vars.append(self.concept_to_variable[parent_concept])
+                        else:
+                            raise ValueError(f"Unknown parent type: {type(parent_ref)}")
                     in_features_endogenous = in_features_exogenous = in_features = 0
                     for pv in parent_vars:
                         if isinstance(pv, ExogenousVariable):
@@ -184,6 +196,9 @@ class ProbabilisticModel(nn.Module):
                         out_features=out_features,
                     )
                     new_parametrization = ParametricCPD(concepts=[concept], parametrization=initialized_layer)
+                    # Copy parents and variable from old CPD to new CPD
+                    new_parametrization.parents = parametric_cpd.parents
+                    new_parametrization.variable = parametric_cpd.variable
                 else:
                     new_parametrization = parametric_cpd
 
