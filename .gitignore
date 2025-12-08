@@ -86,3 +86,7 @@ data/
 
 # conceptarium logs
 outputs/
+
+CUB200/
+
+.DS_Store
