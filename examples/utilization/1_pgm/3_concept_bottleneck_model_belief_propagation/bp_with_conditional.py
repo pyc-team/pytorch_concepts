@@ -272,7 +272,7 @@ def update_factor_to_var(messages_v2f, factor_eval_list, md, eps=1e-20):
         variable->factor messages, per (edge,state).
     factor_eval_list: list length F
         factor_eval_list[fi] has shape [B, num_assign_fi] in the SAME assignment
-        ordering used in build_graph_metadata (lexicographic over scope).
+        ordering used in build_garaph_metadata (lexicographic over scope).
     Returns:
         messages_f2v: [B, total_edge_states]
     """
@@ -348,6 +348,7 @@ def compute_var_marginals(messages_f2v, md, evidence_logmask_vs=None, eps=1e-20)
     vs_id = md["vs_id_for_edge_state"]
     num_vs = md["total_var_states"]
     var_arity = md["var_arity"]
+    var_names = md["var_names"]
     V = md["V"]
     var_state_offset = md["var_state_offset"]
 
@@ -363,13 +364,13 @@ def compute_var_marginals(messages_f2v, md, evidence_logmask_vs=None, eps=1e-20)
     if evidence_logmask_vs is not None:
         log_sum_vs = log_sum_vs + evidence_logmask_vs
 
-    marginals = []
+    marginals = {}
     for v in range(V):
         a = int(var_arity[v])
         start = int(var_state_offset[v])
         m_v = torch.exp(log_sum_vs[:, start:start + a])   # [B, a]
         m_v = m_v / (m_v.sum(dim=-1, keepdim=True) + eps)
-        marginals.append(m_v)
+        marginals[var_names[v]] = m_v
     return marginals
 
 
@@ -484,10 +485,11 @@ def compute_exact_marginals_bruteforce(
 
 class BPInference(BaseInference):
 
-    def __init__(self, model, iters = 5):
+    def __init__(self, model, iters = 20, alpha= 0.5):
         super().__init__()
         self.model : ProbabilisticModel = model
         self.iters = iters
+        self.alpha = alpha
 
 
         variables = {}
@@ -544,14 +546,14 @@ class BPInference(BaseInference):
 
 
 
-    def query(self, query, evidence):
+    def query(self, query, observed, evidence):
 
-        # TODO assumption is that cpts are unary (they are parameterizing a single variable per time.
+        # TODO assumption is that cpts are unary (they are parameterizing a single variable per time).
         # TODO we do not consider the optimization where multiple cpts with the same parents are batched together into a single factor)
 
-        embeddings_dict = evidence
+        embeddings_dict = observed
 
-        batch_size = list(evidence.values())[0].shape[0]
+        batch_size = list(observed.values())[0].shape[0]
         factor_eval_list = []
 
         assert all([v.concepts[0] in embeddings_dict.keys() for v in self.model.variables if v.distribution is Delta]), "All delta variables must have embeddings provided in evidence."
@@ -634,19 +636,21 @@ class BPInference(BaseInference):
         sum_per_edge.scatter_add_(1, edge_id_b, messages_f2v_init)
         messages_f2v_init = messages_f2v_init / (sum_per_edge.gather(1, edge_id_b) + 1e-20)
 
-        messages_f2v_uncond = messages_f2v_init.clone()
+
+
+        mask = build_evidence_logmask(evidence, md) if evidence is not None else None
+        messages_f2v = messages_f2v_init
+        alpha = self.alpha
         for it in range(self.iters):
-            messages_v2f_uncond = update_var_to_factor(
-                messages_f2v_uncond, self.metadata, evidence_logmask_vs=None
-            )
-            messages_f2v_uncond = update_factor_to_var(
-                messages_v2f_uncond, factor_eval_list, self.metadata
-            )
-        bp_marginals_uncond = compute_var_marginals(
-            messages_f2v_uncond, self.metadata, evidence_logmask_vs=None
+            messages_v2f = update_var_to_factor(messages_f2v, self.metadata, evidence_logmask_vs=mask)
+            m_f2v_new = update_factor_to_var(messages_v2f, factor_eval_list, self.metadata)
+            messages_f2v = (1 - alpha) * messages_f2v + alpha * m_f2v_new
+        bp_marginals = compute_var_marginals(
+            messages_f2v, self.metadata, evidence_logmask_vs=None
         )
 
-        return bp_marginals_uncond
+        return bp_marginals
+
 
 
 
