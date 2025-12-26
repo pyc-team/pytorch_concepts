@@ -6,15 +6,16 @@ models (e.g., ResNet, ViT) to speed up training of concept-based models.
 import os
 import torch
 import logging
-from torch import nn
 from torch.utils.data import DataLoader
+from torchvision.models import get_model, get_model_weights
 from tqdm import tqdm
+
 
 logger = logging.getLogger(__name__)
 
 def compute_backbone_embs(
     dataset,
-    backbone: nn.Module,
+    backbone: str,
     batch_size: int = 512,
     workers: int = 0,
     device: str = None,
@@ -28,7 +29,7 @@ def compute_backbone_embs(
     
     Args:
         dataset: Dataset with __getitem__ returning dict with 'x' key or 'inputs'.'x' nested key.
-        backbone (nn.Module): Feature extraction model (e.g., ResNet encoder).
+        backbone (str): Backbone model name for feature extraction (e.g., 'resnet18').
         batch_size (int, optional): Batch size for processing. Defaults to 512.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
         device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.). 
@@ -51,12 +52,9 @@ def compute_backbone_embs(
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(device)
     
-    # Store original training state to restore later
-    was_training = backbone.training
-    
-    # Move backbone to device and set to eval mode
-    backbone = backbone.to(device)
-    backbone.eval()
+    backbone_model = get_model(backbone, weights="DEFAULT").to(device).eval() # "DEFAULT" points to best available weights
+    weights = get_model_weights(backbone, weights="DEFAULT")
+    preprocess = weights.transforms()
     
     # Create dataloader
     dataloader = DataLoader(
@@ -73,25 +71,17 @@ def compute_backbone_embs(
     with torch.no_grad():
         iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
         for batch in iterator:
-            # Handle both {'x': tensor} and {'inputs': {'x': tensor}} structures
-            if 'inputs' in batch:
-                x = batch['inputs']['x'].to(device)
-            else:
-                x = batch['x'].to(device)
-            embeddings = backbone(x) # Forward pass through backbone
+            x = batch['inputs']['x'].to(device)
+            embeddings = backbone_model(preprocess(x)) # Forward pass through backbone
             embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
 
     all_embeddings = torch.cat(embeddings_list, dim=0) # Concatenate all embeddings
-    
-    # Restore original training state
-    if was_training:
-        backbone.train()
     
     return all_embeddings
 
 def get_backbone_embs(path: str,
                     dataset,
-                    backbone,
+                    backbone: str,
                     batch_size,
                     force_recompute=False,
                     workers=0,
@@ -105,7 +95,7 @@ def get_backbone_embs(path: str,
     Args:
         path (str): File path for saving/loading embeddings (.pt file).
         dataset: Dataset to extract embeddings from.
-        backbone: Backbone model for feature extraction.
+        backbone: Backbone model name for feature extraction.
         batch_size: Batch size for computation.
         force_recompute (bool, optional): Recompute even if cached. Defaults to False.
         workers (int, optional): Number of DataLoader workers. Defaults to 0.
@@ -130,7 +120,7 @@ def get_backbone_embs(path: str,
     if not os.path.exists(path) or force_recompute:
         # compute
         embs = compute_backbone_embs(dataset,
-                                    backbone,
+                                    backbone=backbone,
                                     batch_size=batch_size,
                                     workers=workers,
                                     device=device,

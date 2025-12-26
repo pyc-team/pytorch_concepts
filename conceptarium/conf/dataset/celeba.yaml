@@ -1,0 +1,18 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.celeba.CelebADataModule
+
+name: celeba
+
+backbone: resnet18
+precompute_embs: true 
+force_recompute: false
+
+# Task label - which CelebA attribute to predict
+task_label: [Attractive]
+
+# all CelebA attributes are binary facial features
+# label_descriptions can be added here if needed
+label_descriptions: null
