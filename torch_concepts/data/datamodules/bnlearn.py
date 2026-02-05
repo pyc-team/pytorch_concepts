@@ -29,7 +29,7 @@ class BnLearnDataModule(ConceptDataModule):
         self,
         seed: int, # seed for data generation
         name: str, # name of the bnlearn DAG
-        root: str,
+        root: str = None,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,

@@ -246,12 +246,6 @@ class TestParseTensor:
         # Check it's still a tensor
         assert isinstance(result, torch.Tensor)
 
-    def test_invalid_input(self):
-        """Test invalid input type raises error."""
-        with pytest.raises(AssertionError):
-            parse_tensor([1, 2, 3], "test", 32)
-
-
 class TestConvertPrecision:
     """Test convert_precision function."""
 

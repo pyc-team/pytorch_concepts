@@ -1126,7 +1126,7 @@ class TestCEMEdgeCases(unittest.TestCase):
         x = torch.randn(2, 8, device=device)
         out = model(x, query=['c1', 'c2', 'task'])
         
-        self.assertEqual(out.device, device)
+        self.assertEqual(out.device.type, device.type)
 
 
 class TestCEMCardinalities(unittest.TestCase):

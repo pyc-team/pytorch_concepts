@@ -77,6 +77,8 @@ class ConceptDataset(Dataset):
         # Set info
         self.name = name if name is not None else self.__class__.__name__
         self.precision = precision
+        self.embs_precomputed = False  # whether input_data 
+                                       # contains precomputed embeddings
 
         if concepts is None:
             raise ValueError("Concepts must be provided for ConceptDataset.")

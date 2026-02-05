@@ -1,0 +1,22 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.celeba.CelebADataModule
+
+name: celeba
+
+# backbone handling and embedding precomputation
+backbone: facebook/dinov2-base
+precompute_embs: true 
+force_recompute: false
+
+# Task label - which CelebA attribute to predict
+default_task_names: [Attractive]
+
+# splitter
+splitter: 
+  _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+# all CelebA attributes are binary facial features
+label_descriptions: null
