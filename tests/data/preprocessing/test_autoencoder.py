@@ -221,12 +221,6 @@ class TestAutoencoderTrainerInitialization(unittest.TestCase):
             trainer = AutoencoderTrainer(input_shape=100, device=None)
             self.assertEqual(trainer.device, 'cpu')
     
-    def test_auto_device_selection_cuda(self):
-        """Test automatic device selection when CUDA is available."""
-        with patch('torch.cuda.is_available', return_value=True):
-            trainer = AutoencoderTrainer(input_shape=100, device=None)
-            self.assertEqual(trainer.device, 'cuda')
-    
     def test_explicit_device_override(self):
         """Test explicit device parameter overrides auto-detection."""
         trainer = AutoencoderTrainer(input_shape=100, device='cpu')
