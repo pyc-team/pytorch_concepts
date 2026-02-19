@@ -12,14 +12,23 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 
 ## How to Contribute
 
-1. **Fork the repository** - Create your own fork of the PyC repository on GitHub.
-2. **Use the** `dev` **branch** - Write and test your contributions locally on the `dev` branch.
-3. **Create a new branch** - Make a new branch for your specific contribution.
-4. **Make your changes** - Implement your changes with clear, descriptive commit messages.
-5. **Use Gitmoji** - Add emojis to your commit messages using [Gitmoji](https://gitmoji.dev/) for better clarity.
-6. **Write documentation and tests** - Ensure your contributions include appropriate documentation and tests.
-7. **Run all tests** - Make sure all tests pass before submitting your pull request.
-8. **Submit a Pull Request** - Open a PR to the `main` branch describing your changes.
+1. **Fork the repository** — Create your own fork of the [PyC repository](https://github.com/pyc-team/pytorch_concepts) on GitHub.
+
+2. **Create your branch from `dev`** — Clone your fork and create a new branch based on the upstream `dev` branch to track the latest changes:
+
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
+   cd pytorch_concepts
+   git remote add upstream https://github.com/pyc-team/pytorch_concepts.git
+   git fetch upstream
+   git checkout -b my-feature upstream/dev
+   ```
+
+3. **Make your changes** — Implement your changes locally with clear, descriptive commit messages. Use [Gitmoji](https://gitmoji.dev/) for better clarity (e.g., `✨ Add new feature`).
+
+4. **Write documentation & tests** — Update docstrings and `.rst` files, add unit tests, and verify all tests pass locally.
+
+5. **Submit a Pull Request** — Push your branch and open a PR to the `dev` branch.
 
 ## Development Setup
 
@@ -30,17 +39,15 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 
 ### Installation
 
-Install PyC and its dependencies:
+For development, you may want to install PyC in editable mode and have the complete conda environment with all dependencies to test all functionalities:
 
 ```bash
-pip install --pre pytorch-concepts
-```
-
-For development, you may want to install in editable mode:
-
-```bash
-git clone https://github.com/pyc-team/pytorch_concepts.git
+git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
 cd pytorch_concepts
+# install and activate conda environment (use environment_silicon for Apple Silicon chips)
+conda env create -f conceptarium/environment.yaml
+conda activate conceptarium
+# install your local pyc
 pip install -e .
 ```
 
@@ -59,21 +66,13 @@ When reporting issues, please include:
 
 Please follow these guidelines when contributing code:
 
-- **PEP 8** - Follow [PEP 8](https://pep8.org/) style guidelines for Python code.
-- **Type hints** - Use type hints where appropriate to improve code clarity.
-- **Docstrings** - Write clear docstrings for all public functions and classes.
-- **Tests** - Write tests for new features and bug fixes when possible.
-- **Documentation** - Update documentation to reflect your changes.
-
-## Pull Request Process
-
-1. Ensure your code follows the style guidelines above.
-2. Update the documentation if you've made changes to the API.
-3. Add tests for new functionality.
-4. Make sure all tests pass locally.
-5. Write a clear PR description explaining what changes you made and why.
-6. Link any related issues in your PR description.
-7. Wait for review from the maintainers.
+| Guideline | Description |
+|-----------|-------------|
+| **PEP 8** | Follow [PEP 8](https://pep8.org/) style guidelines for Python code. |
+| **Type hints** | Use type hints where appropriate to improve code clarity. |
+| **Docstrings** | Write clear docstrings for all public functions and classes. |
+| **Tests** | Write tests for new features and bug fixes. |
+| **Documentation** | Update documentation to reflect your changes. |
 
 ## Thank You!
 
@@ -84,3 +83,8 @@ Thanks to all our contributors! 🧡
 <a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" alt="Contributors" />
 </a>
+
+### External Contributors
+
+- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
+- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).
