@@ -238,6 +238,7 @@ class Backbone(nn.Module):
         self._is_huggingface = _is_huggingface_model(name)
         self._model = None
         self._processor = None
+        self._out_features = None
         self._load_model()
 
     def _load_model(self) -> None:
@@ -246,14 +247,23 @@ class Backbone(nn.Module):
         For HuggingFace models, loads via transformers library.
         For torchvision models, loads pretrained weights and removes
         classification head to create a feature extractor.
+
+        Also computes the output feature dimension via a dummy forward pass.
         """
         if self._is_huggingface:
             self._model, self._processor = _load_huggingface_model(self.name, self._device)
+            # Get output size from model config
+            self._out_features = self._model.config.hidden_size
         else:
             self._model, self._processor = _load_torchvision_model(self.name, self._device)
             # Cache ToTensor transform for PIL image conversion
             from torchvision import transforms
             self._to_tensor = transforms.ToTensor()
+            # Compute output size with dummy forward pass
+            with torch.no_grad():
+                dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
+                dummy_output = self._model(dummy_input)
+                self._out_features = dummy_output.shape[-1]
 
     @property
     def device(self) -> torch.device:
@@ -265,6 +275,18 @@ class Backbone(nn.Module):
             The device (e.g., cpu, cuda:0).
         """
         return self._device
+
+    @property
+    def out_features(self) -> int:
+        """The output embedding dimension of the backbone.
+
+        Returns
+        -------
+        int
+            The size of the output embedding (e.g., 2048 for ResNet50,
+            768 for DINOv2-base).
+        """
+        return self._out_features
 
     @property
     def processor(self):
@@ -312,19 +334,20 @@ class Backbone(nn.Module):
         x : torch.Tensor or list
             Input data. Format depends on model type:
 
-            - **torchvision**: Tensor of shape (B, C, H, W) or list of PIL Images
+            - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
             - **HuggingFace**: List of PIL Images or preprocessed tensors
 
         Returns
         -------
         torch.Tensor
-            Embeddings of shape (B, embedding_dim), where embedding_dim
-            depends on the model (e.g., 2048 for ResNet50, 768 for DINOv2-base).
+            Embeddings of shape (B, embedding_dim) or (embedding_dim,) for single images,
+            where embedding_dim depends on the model (e.g., 2048 for ResNet50, 768 for DINOv2-base).
 
         Notes
         -----
         For HuggingFace models, the CLS token embedding is returned.
         For torchvision models, the output of the average pooling layer is used.
+        Single images (3D tensors) are automatically batched and the result is squeezed.
         """
         if self._is_huggingface:
             inputs = self._processor(images=x, return_tensors="pt")
@@ -335,8 +358,16 @@ class Backbone(nn.Module):
             if isinstance(x, list):
                 x = torch.stack([self._to_tensor(img) for img in x])
             x = x.to(self._device)
+            # Handle single image (3D tensor) by adding batch dimension
+            squeeze_output = False
+            if x.dim() == 3:
+                x = x.unsqueeze(0)
+                squeeze_output = True
             x = self._processor(x)
-            return self._model(x)
+            out = self._model(x)
+            if squeeze_output:
+                out = out.squeeze(0)
+            return out
 
     def __repr__(self) -> str:
         """Return string representation of the Backbone.
