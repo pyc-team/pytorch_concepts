@@ -788,7 +788,7 @@ Detailed Guides
    **Available Models**
    
    - **ConceptBottleneckModel**: Standard CBM with joint training
-   - **ConceptBottleneckModel_Joint**: Explicit joint training variant
+   - **ConceptEmbeddingModel**: expressive concept-based model with embeddings
    - **BlackBox**: Non-interpretable baseline for comparison
    
    **Special Cases**

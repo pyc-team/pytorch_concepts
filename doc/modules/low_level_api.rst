@@ -69,7 +69,7 @@ as input any concept variables, it is an encoder layer.
 
 .. code-block:: python
 
- pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3)
+ pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=3)
 
 As another example, a layer named ``HyperlinearConceptExogenousToConcept`` is a hyper-network layer that
 takes as input both ``Concepts`` and ``Exogenous`` representations and produces a
@@ -81,7 +81,7 @@ takes as input both ``Concepts`` and ``Exogenous`` representations and produces 
     in_concepts=10,
     in_exogenous=7,
     embedding_size=24,
-    out_features=3
+    out_concepts=3
  )
 
 As a final example, graph learners are a special layers that learn relationships between concepts.
@@ -104,8 +104,8 @@ A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3),
-       'predictor': pyc.nn.LinearConceptToConcept(in_concepts=3, out_features=2),
+       'encoder': pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=3),
+       'predictor': pyc.nn.LinearConceptToConcept(in_concepts=3, out_concepts=2),
    })
 
 Inference
@@ -135,7 +135,7 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     int_policy = pyc.nn.UniformPolicy(out_features=3)
+     int_policy = pyc.nn.UniformPolicy(out_concepts=3)
 
   When a forward pass is performed within an intervention context, the intervened layer behaves differently with a cascading effect on all subsequent layers:
 

@@ -101,18 +101,18 @@ Here's a minimal example using the low-Level API:
    model = torch.nn.ModuleDict({
        'encoder': pyc.nn.LinearLatentToConcept(
            in_latent=64,
-           out_features=10
+           out_concepts=5
        ),
        'predictor': pyc.nn.LinearConceptToConcept(
-           in_concepts=10,
-           out_features=5
+           in_concepts=5,
+           out_concepts=1
        ),
    })
 
    # Forward pass
    x = torch.randn(32, 64)
-   concepts = model['encoder'](input=x)
-   predictions = model['predictor'](endogenous=concepts)
+   concepts = model['encoder'](latent=x)
+   predictions = model['predictor'](concepts=concepts)
 
 For complete examples with training, interventions, and evaluation, see the individual API guides above.
 

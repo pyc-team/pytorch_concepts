@@ -80,7 +80,7 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
         super().__init__(
             in_concepts=in_concepts,
             in_exogenous=in_exogenous,
-            out_concepts=-1,
+            out_concepts=-1, # determined by the number of exogenous variables
             activation=activation,
         )
         self.hidden_size = hidden_size

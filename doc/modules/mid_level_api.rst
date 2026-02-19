@@ -40,19 +40,19 @@ At this API level, models are represented as probabilistic models where:
 
   .. code-block:: python
 
-     concepts = pyc.EndogenousVariable(
+     concepts = pyc.ConceptVariable(
         concepts=["c1", "c2", "c3"],
         parents=[],
         distribution=torch.distributions.RelaxedBernoulli
      )
 
-- ``ParametricCPD`` objects represent conditional probability distributions (CPDs) between variables in the probabilistic model and are parameterized by |pyc_logo| PyC layers. For instance we can define a list of three parametric CPDs for the above concepts as:
+- ``ParametricCPD`` objects represent conditional probability distributions (CPDs) between variables in the probabilistic model and are parameterized by |pyc_logo| PyC layers. For instance we can define a parametric CPD for the above concepts as:
 
   .. code-block:: python
 
      concept_cpd = pyc.nn.ParametricCPD(
         concepts=["c1", "c2", "c3"],
-        parametrization=pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3)
+        parametrization=pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=1)
      )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
@@ -84,7 +84,7 @@ Structural Equation Models
 
 |pyc_logo| PyC can be used to design Structural Equation Models (SEMs), where:
 
-- ``ExogenousVariable`` and ``EndogenousVariable`` objects represent random variables in the SEM. Variables are defined by their name, parents, and distribution type. For example, in this guide we define variables as:
+- ``ExogenousVariable`` and ``ConceptVariable`` objects represent random variables in the SEM. Variables are defined by their name, parents, and distribution type. For example, in this guide we define variables as:
 
   .. code-block:: python
 
@@ -93,7 +93,7 @@ Structural Equation Models
          parents=[],
          distribution=RelaxedBernoulli
      )
-     genotype_var = EndogenousVariable(
+     genotype_var = ConceptVariable(
          "genotype",
          parents=["exogenous"],
          distribution=RelaxedBernoulli
@@ -138,7 +138,7 @@ For example, to set ``smoking`` to 0 (prevent smoking) and query the effect on d
    )
 
    with intervention(
-      policies=UniformPolicy(out_features=1),
+      policies=UniformPolicy(out_concepts=1),
       strategies=smoking_strategy_0,
       target_concepts=["smoking"]
    ):
