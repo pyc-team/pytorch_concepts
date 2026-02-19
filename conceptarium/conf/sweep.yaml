@@ -26,7 +26,7 @@ model:
     n_layers: 3
     activation: leaky_relu
     dropout: 0.
-  # exogenous_size: 4  # for embedding models
+  # embedding_size: 4  # for embedding models
 
 metrics:
   summary_metrics: true

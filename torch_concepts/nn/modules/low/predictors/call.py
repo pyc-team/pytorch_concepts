@@ -4,7 +4,7 @@ from ..base.layer import BasePredictor
 from typing import Callable
 
 
-class CallableCC(BasePredictor):
+class CallableConceptToConcept(BasePredictor):
     """
     A predictor that applies a custom callable function to concept representations.
 
@@ -16,10 +16,10 @@ class CallableCC(BasePredictor):
     The module can be used to write custom layers for standard Structural Causal Models (SCMs).
 
     Args:
-        func: Callable function that takes concept probabilities and returns task predictions.
-              Should accept a tensor of shape (batch_size, n_concepts) and return
-              a tensor of shape (batch_size, out_features).
-        in_activation: Activation function to apply to input endogenous before passing to func.
+        func: Callable function that takes concept probabilities and returns predictions.
+              Should accept a tensor of shape (batch_size, in_concepts) and return
+              a tensor of shape (batch_size, out_concepts).
+        activation: Activation function to apply to input concepts before passing to func.
                       Default is identity (lambda x: x).
         use_bias: Whether to add learnable stochastic bias to the output. Default is True.
         init_bias_mean: Initial value for the bias mean parameter. Default is 0.0.
@@ -28,12 +28,12 @@ class CallableCC(BasePredictor):
 
     Examples:
         >>> import torch
-        >>> from torch_concepts.nn import CallableCC
+        >>> from torch_concepts.nn import CallableConceptToConcept
         >>>
         >>> # Generate sample data
         >>> batch_size = 32
         >>> n_concepts = 3
-        >>> endogenous = torch.randn(batch_size, n_concepts)
+        >>> concepts = torch.randn(batch_size, n_concepts)
         >>>
         >>> # Define a polynomial function with fixed weights for 3 inputs, 2 outputs
         >>> def quadratic_predictor(probs):
@@ -42,11 +42,11 @@ class CallableCC(BasePredictor):
         ...     output2 = 2.0*c0 - 1.0*c1**2 + 0.5*c2**3
         ...     return torch.cat([output1, output2], dim=1)
         >>>
-        >>> predictor = CallableCC(
+        >>> predictor = CallableConceptToConcept(
         ...     func=quadratic_predictor,
         ...     use_bias=True
         ... )
-        >>> predictions = predictor(endogenous)
+        >>> predictions = predictor(concepts)
         >>> print(predictions.shape)  # torch.Size([32, 2])
 
         References
@@ -56,16 +56,16 @@ class CallableCC(BasePredictor):
     def __init__(
         self,
         func: Callable,
-        in_activation: Callable = lambda x: x,
-        use_bias : bool = True,
+        activation: Callable = lambda x: x,
+        use_bias: bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
         min_std: float = 1e-6
     ):
         super().__init__(
-            in_features_endogenous=-1,
-            out_features=-1,
-            in_activation=in_activation,
+            in_concepts=-1,
+            out_concepts=-1,
+            activation=activation,
         )
         self.use_bias = use_bias
         self.min_std = float(min_std)
@@ -95,18 +95,29 @@ class CallableCC(BasePredictor):
 
     def forward(
             self,
-            endogenous: torch.Tensor,
+            concepts: torch.Tensor,
             *args,
             **kwargs
     ) -> torch.Tensor:
-        in_probs = self.in_activation(endogenous)
-        out_endogenous = self.func(in_probs, *args, **kwargs)
+        """
+        Forward pass through the predictor.
+
+        Args:
+            concepts: Input concept logits of shape (batch_size, in_concepts).
+            *args: Additional positional arguments passed to the callable function.
+            **kwargs: Additional keyword arguments passed to the callable function.
+
+        Returns:
+            torch.Tensor: Output predictions of shape (batch_size, out_concepts).
+        """
+        in_probs = self.activation(concepts)
+        output = self.func(in_probs, *args, **kwargs)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable
-            eps = torch.randn_like(out_endogenous)              # ~ N(0,1)
-            std = self._bias_std().to(out_endogenous.dtype).to(out_endogenous.device)  # scalar -> broadcast
-            mean = self.bias_mean.to(out_endogenous.dtype).to(out_endogenous.device)   # scalar -> broadcast
-            out_endogenous = out_endogenous + mean + std * eps
+            eps = torch.randn_like(output)              # ~ N(0,1)
+            std = self._bias_std().to(output.dtype).to(output.device)  # scalar -> broadcast
+            mean = self.bias_mean.to(output.dtype).to(output.device)   # scalar -> broadcast
+            output = output + mean + std * eps
 
-        return out_endogenous
+        return output

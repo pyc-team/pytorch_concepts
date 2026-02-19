@@ -6,27 +6,27 @@ from typing import Callable
 from ....functional import prune_linear_layer
 
 
-class HyperLinearCUC(BasePredictor):
+class HyperlinearConceptExogenousToConcept(BasePredictor):
     """
     Hypernetwork-based linear predictor for concept-based models.
 
-    This predictor uses a hypernetwork to generate per-sample weights from
-    exogenous features, enabling sample-adaptive predictions. It also supports
-    stochastic biases with learnable mean and standard deviation.
+    This predictor uses a (nonlinear) hypernetwork to generate per-sample weights 
+    from exogenous features, which are then used in a linear layer. 
+    It also supports stochastic biases with learnable mean and standard deviation.
 
     Attributes:
-        in_features_endogenous (int): Number of input concept endogenous.
-        in_features_exogenous (int): Number of exogenous features.
-        embedding_size (int): Hidden size of the hypernetwork.
-        out_features (int): Number of output features.
+        in_concepts (int): Number of input concept representations.
+        in_exogenous (int): Number of exogenous features.
+        hidden_size (int): Hidden size of the hypernetwork.
+        out_concepts (int): Number of output concept representations.
         use_bias (bool): Whether to use stochastic bias.
         hypernet (nn.Module): Hypernetwork that generates weights.
 
     Args:
-        in_features_endogenous: Number of input concept endogenous.
-        in_features_exogenous: Number of exogenous input features.
-        embedding_size: Hidden dimension of hypernetwork.
-        in_activation: Activation function for concepts (default: identity).
+        in_concepts: Number of input concept representations.
+        in_exogenous: Number of exogenous input features.
+        hidden_size: Hidden dimension of hypernetwork.
+        activation: Activation function for hypernetwork output (default: identity).
         use_bias: Whether to add stochastic bias (default: True).
         init_bias_mean: Initial mean for bias distribution (default: 0.0).
         init_bias_std: Initial std for bias distribution (default: 0.01).
@@ -34,71 +34,67 @@ class HyperLinearCUC(BasePredictor):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import HyperLinearCUC
+        >>> from torch_concepts.nn import HyperlinearConceptExogenousToConcept
         >>>
         >>> # Create hypernetwork predictor
-        >>> predictor = HyperLinearCUC(
-        ...     in_features_endogenous=10,      # 10 concepts
-        ...     in_features_exogenous=128,   # 128-dim context features
-        ...     embedding_size=64,           # Hidden dim of hypernet
+        >>> predictor = HyperlinearConceptExogenousToConcept(
+        ...     in_concepts=10,      # 10 concepts satates
+        ...     in_exogenous=128,    # 128-dim exogenous features
+        ...     hidden_size=64,   # Hidden dim of hypernet
         ...     use_bias=True
         ... )
         >>>
         >>> # Generate random inputs
-        >>> concept_endogenous = torch.randn(4, 10)   # batch_size=4, n_concepts=10
-        >>> exogenous = torch.randn(4, 3, 128)         # batch_size=4, n_tasks=3, exogenous_dim=128
+        >>> concepts = torch.randn(4, 10)   # batch_size=4, n_concepts=10
+        >>> exogenous = torch.randn(4, 3, 128)        # batch_size=4, n_tasks=3, exogenous_dim=128
         >>>
-        >>> # Forward pass - generates per-sample weights via hypernetwork
-        >>> task_endogenous = predictor(endogenous=concept_endogenous, exogenous=exogenous)
-        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
-        >>>
-        >>> # The hypernetwork generates different weights for each sample
-        >>> # This enables sample-adaptive predictions
+        >>> # Forward pass
+        >>> output = predictor(concepts=concepts, exogenous=exogenous)
+        >>> print(output.shape)  # torch.Size([4, 3])
         >>>
         >>> # Example without bias
-        >>> predictor_no_bias = HyperLinearCUC(
-        ...     in_features_endogenous=10,
-        ...     in_features_exogenous=128,
-        ...     embedding_size=64,
+        >>> predictor_no_bias = HyperlinearConceptExogenousToConcept(
+        ...     in_concepts=10,
+        ...     in_exogenous=128,
+        ...     hidden_size=64,
         ...     use_bias=False
         ... )
         >>>
-        >>> task_endogenous = predictor_no_bias(endogenous=concept_endogenous, exogenous=exogenous)
-        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
+        >>> output = predictor_no_bias(concepts=concepts, exogenous=exogenous)
+        >>> print(output.shape)  # torch.Size([4, 3])
 
     References:
         Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024. https://arxiv.org/abs/2407.15527
     """
     def __init__(
         self,
-        in_features_endogenous: int,
-        in_features_exogenous: int,
-        embedding_size: int,
-        in_activation: Callable = lambda x: x,
+        in_concepts: int,
+        in_exogenous: int,
+        hidden_size: int,
+        activation: Callable = lambda x: x,
         use_bias : bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
         min_std: float = 1e-6
     ):
-        in_features_exogenous = in_features_exogenous
         super().__init__(
-            in_features_endogenous=in_features_endogenous,
-            in_features_exogenous=in_features_exogenous,
-            out_features=-1,
-            in_activation=in_activation,
+            in_concepts=in_concepts,
+            in_exogenous=in_exogenous,
+            out_concepts=-1,
+            activation=activation,
         )
-        self.embedding_size = embedding_size
+        self.hidden_size = hidden_size
         self.use_bias = use_bias
         self.min_std = min_std
         self.init_bias_mean = init_bias_mean
         self.init_bias_std = init_bias_std
 
         self.hypernet = torch.nn.Sequential(
-            torch.nn.Linear(in_features_exogenous, embedding_size),
+            torch.nn.Linear(in_exogenous, hidden_size),
             torch.nn.LeakyReLU(),
             torch.nn.Linear(
-                embedding_size,
-                in_features_endogenous
+                hidden_size,
+                in_concepts
             ),
         )
 
@@ -120,32 +116,32 @@ class HyperLinearCUC(BasePredictor):
 
     def forward(
             self,
-            endogenous: torch.Tensor,
+            concepts: torch.Tensor,
             exogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Forward pass through hypernetwork predictor.
 
         Args:
-            endogenous: Concept endogenous of shape (batch_size, n_concepts).
-            exogenous: Exogenous features of shape (batch_size, exog_dim).
+            concepts: Concept representations of shape (batch_size, in_concepts).
+            exogenous: Exogenous features of shape (batch_size, out_concepts, in_exogenous).
 
         Returns:
-            torch.Tensor: Task predictions of shape (batch_size, out_features).
+            torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
         weights = self.hypernet(exogenous)
 
-        in_probs = self.in_activation(endogenous)
-        out_endogenous = torch.einsum('bc,byc->by', in_probs, weights)
+        in_probs = self.activation(concepts)
+        out_concepts = torch.einsum('bc,byc->by', in_probs, weights)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable
-            eps = torch.randn_like(out_endogenous)              # ~ N(0,1)
-            std = self._bias_std().to(out_endogenous.dtype).to(out_endogenous.device)  # scalar -> broadcast
-            mean = self.bias_mean.to(out_endogenous.dtype).to(out_endogenous.device)   # scalar -> broadcast
-            out_endogenous = out_endogenous + mean + std * eps
+            eps = torch.randn_like(out_concepts)              # ~ N(0,1)
+            std = self._bias_std().to(out_concepts.dtype).to(out_concepts.device)  # scalar -> broadcast
+            mean = self.bias_mean.to(out_concepts.dtype).to(out_concepts.device)   # scalar -> broadcast
+            out_concepts = out_concepts + mean + std * eps
 
-        return out_endogenous
+        return out_concepts
 
     def prune(self, mask: torch.Tensor):
         """
@@ -154,5 +150,5 @@ class HyperLinearCUC(BasePredictor):
         Args:
             mask: Binary mask of shape (n_concepts,) indicating which concepts to keep.
         """
-        self.in_features_endogenous = mask.int().sum().item()
+        self.in_concepts = mask.int().sum().item()
         self.hypernet[-1] = prune_linear_layer(self.hypernet[-1], mask, dim=1)

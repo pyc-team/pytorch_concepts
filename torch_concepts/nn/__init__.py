@@ -19,16 +19,16 @@ from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.exogenous import LinearZU
-from .modules.low.encoders.linear import LinearZC, LinearUC
-from .modules.low.encoders.stochastic import StochasticZC
-from .modules.low.encoders.selector import SelectorZU
+from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
+from .modules.low.encoders.exogenous import LinearLatentToExogenous
+from .modules.low.encoders.stochastic import StochasticLatentToConcept
+from .modules.low.encoders.selector import SelectorLatentToExogenous
 
 # Predictors
-from .modules.low.predictors.linear import LinearCC
-from .modules.low.predictors.exogenous import MixCUC
-from .modules.low.predictors.hypernet import HyperLinearCUC
-from .modules.low.predictors.call import CallableCC
+from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept
+from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
+from .modules.low.predictors.call import CallableConceptToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
@@ -93,25 +93,25 @@ __all__ = [
     "LazyConstructor",
     
     # Exogenous encoder classes
-    "LinearZU",
+    "LinearLatentToExogenous",
 
     # Encoder classes
-    "LinearZC",
-    "LinearUC",
-    "StochasticZC",
+    "LinearLatentToConcept",
+    "LinearExogenousToConcept",
+    "StochasticLatentToConcept",
 
     # Predictor classes
-    "LinearCC",
-    "MixCUC",
-    "HyperLinearCUC",
-    "CallableCC",
+    "LinearConceptToConcept",
+    "MixConceptExogegnousToConcept",
+    "HyperlinearConceptExogenousToConcept",
+    "CallableConceptToConcept",
 
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
 
-    "SelectorZU",
+    "SelectorLatentToExogenous",
 
     # COSMO
     "WANDAGraphLearner",

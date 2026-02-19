@@ -7,7 +7,7 @@ _target_: "torch_concepts.nn.ConceptEmbeddingModel"
 
 task_names: ${dataset.default_task_names}
 
-exogenous_size: 4
+embedding_size: 8
 
 inference: 
   _target_: "torch_concepts.nn.DeterministicInference"

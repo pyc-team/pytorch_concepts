@@ -111,7 +111,7 @@ Detailed Guides
        from torch_concepts import EndogenousVariable, ExogenousVariable
        from torch_concepts.nn import ParametricCPD, ProbabilisticModel
        from torch_concepts.nn import AncestralSamplingInference
-       from torch_concepts.nn import CallableCC, UniformPolicy, DoIntervention, intervention
+       from torch_concepts.nn import CallableConceptToConcept, UniformPolicy, DoIntervention, intervention
        from torch_concepts.nn.functional import cace_score
 
     **Create Sample Data**
@@ -167,7 +167,7 @@ Detailed Guides
 
     ParametricCPDs define the structural equations (causal mechanisms) between variables.
     We can use |pyc_logo| PyC or |pytorch_logo| PyTorch modules to parameterize these CPDs.
-    More specifically, |pyc_logo| PyC provides ``CallableCC`` to define structural equations using arbitrary callables.
+    More specifically, |pyc_logo| PyC provides ``CallableConceptToConcept`` to define structural equations using arbitrary callables.
 
     .. code-block:: python
 
@@ -189,7 +189,7 @@ Detailed Guides
        # CPD for smoking (depends on genotype)
        smoking_cpd = ParametricCPD(
            ["smoking"],
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: (x > 0.5).float(),
                use_bias=False
            )
@@ -198,7 +198,7 @@ Detailed Guides
        # CPD for tar (depends on genotype and smoking)
        tar_cpd = ParametricCPD(
            "tar",
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: torch.logical_or(x[:, 0] > 0.5, x[:, 1] > 0.5).float().unsqueeze(-1),
                use_bias=False
            )
@@ -207,7 +207,7 @@ Detailed Guides
        # CPD for cancer (depends on tar)
        cancer_cpd = ParametricCPD(
            "cancer",
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: x,
                use_bias=False
            )

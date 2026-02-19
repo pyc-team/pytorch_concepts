@@ -36,8 +36,8 @@ from torch import nn
 from torch_concepts import Annotations
 from torch_concepts.nn import (
     BipartiteModel, 
-    LinearZC, 
-    LinearCC, 
+    LinearLatentToConcept, 
+    LinearConceptToConcept, 
     LazyConstructor,
     BaseInference
 )
@@ -89,8 +89,8 @@ class YourModel(BaseModel):
             task_names=task_names,
             input_size=self.encoder_out_features,
             annotations=annotations,
-            encoder=LazyConstructor(LinearZC),
-            predictor=LazyConstructor(LinearCC)
+            encoder=LazyConstructor(LinearLatentToConcept),
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         self.pgm = model.pgm
         
@@ -144,13 +144,13 @@ class YourModel(BaseModel):
 For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
-from torch_concepts import Variable, InputVariable
+from torch_concepts import Variable, LatentVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
     ProbabilisticGraphicalModel,
-    LinearZC,
-    LinearCC,
+    LinearLatentToConcept,
+    LinearConceptToConcept,
     BaseInference
 )
 
@@ -186,7 +186,7 @@ class YourModel_ParametricCPDs(BaseModel):
         )
 
         # Step 1: Define embedding variable (latent representation from encoder)
-        embedding = InputVariable(
+        embedding = LatentVariable(
             "embedding",
             parents=[],
             distribution=Delta,
@@ -220,8 +220,8 @@ class YourModel_ParametricCPDs(BaseModel):
         concept_encoders = ParametricCPD(
             concept_names,
             parametrization=[
-                LinearZC(
-                    in_features=embedding.size,
+                LinearLatentToConcept(
+                    in_latent=embedding.size,
                     out_features=c.size
                 ) for c in concepts
             ]
@@ -231,8 +231,8 @@ class YourModel_ParametricCPDs(BaseModel):
         task_predictors = ParametricCPD(
             task_names,
             parametrization=[
-                LinearCC(
-                    in_features_endogenous=sum([c.size for c in concepts]),
+                LinearConceptToConcept(
+                    in_concepts=sum([c.size for c in concepts]),
                     out_features=t.size
                 ) for t in tasks
             ]
@@ -298,19 +298,19 @@ Represent computational modules (neural network layers):
 
 ```python
 # Single factor
-encoder = ParametricCPD("smoking", parametrization=LinearZC(...))
+encoder = ParametricCPD("smoking", parametrization=LinearLatentToConcept(...))
 
 # Multiple CPDs
 encoders = ParametricCPD(['age', 'gender'], 
-                 parametrization=[LinearZC(...), LinearZC(...)])
+                 parametrization=[LinearLatentToConcept(...), LinearLatentToConcept(...)])
 ```
 
 #### LazyConstructor
 Utility for automatically instantiating modules for multiple concepts:
 
 ```python
-# Creates one LinearZC per concept
-encoder = LazyConstructor(LinearZC)
+# Creates one LinearLatentToConcept per concept
+encoder = LazyConstructor(LinearLatentToConcept)
 ```
 
 #### Inference
@@ -324,25 +324,25 @@ Controls how information flows through the model:
 #### Encoders (Embedding/Exogenous → Logits)
 ```python
 from torch_concepts.nn import (
-    LinearZC,      # Linear encoder from embedding
-    LinearUC,     # Linear encoder from exogenous
-    LinearZU,             # Creates exogenous representations
+    LinearLatentToConcept,      # Linear encoder from embedding
+    LinearExogenousToConcept,     # Linear encoder from exogenous
+    LinearLatentToExogenous,             # Creates exogenous representations
 )
 ```
 
 #### Predictors (Logits → Logits)
 ```python
 from torch_concepts.nn import (
-    LinearCC,           # Linear predictor
-    HyperLinearCUC,    # Hypernetwork-based predictor
-    MixCUC,    # Mix of endogenous and exogenous
+    LinearConceptToConcept,           # Linear predictor
+    HyperlinearConceptExogenousToConcept,    # Hypernetwork-based predictor
+    MixConceptExogegnousToConcept,    # Mix of endogenous and exogenous
 )
 ```
 
 #### Special Layers
 ```python
 from torch_concepts.nn import (
-    SelectorZU,          # Memory-augmented selection
+    SelectorLatentToExogenous,          # Memory-augmented selection
     WANDAGraphLearner,       # Learn concept graph structure
 )
 ```

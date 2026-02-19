@@ -36,7 +36,7 @@ class BipartiteModel(GraphModel):
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor, LinearCC
+        >>> from torch_concepts.nn import BipartiteModel, LazyConstructor, LinearConceptToConcept
         >>> from torch.distributions import Bernoulli
         >>>
         >>> # Define concepts and tasks
@@ -58,7 +58,7 @@ class BipartiteModel(GraphModel):
         ...     input_size=784,
         ...     annotations=annotations,
         ...     encoder=LazyConstructor(torch.nn.Linear),
-        ...     predictor=LazyConstructor(LinearCC)
+        ...     predictor=LazyConstructor(LinearConceptToConcept)
         ... )
         >>>
         >>> # Generate random input

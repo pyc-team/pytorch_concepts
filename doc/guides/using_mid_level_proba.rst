@@ -43,7 +43,7 @@ At this API level, models are represented as probabilistic models where:
 
      concept_cpd = pyc.nn.ParametricCPD(
         concepts=["c1", "c2", "c3"],
-        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3)
+        parametrization=pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3)
      )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
@@ -104,7 +104,7 @@ Detailed Guides
     .. code-block:: python
 
        # Define input variable
-       input_var = pyc.InputVariable(
+       input_var = pyc.LatentVariable(
            concepts=["input"],
            parents=[],
        )
@@ -139,8 +139,8 @@ Detailed Guides
        # ParametricCPD for concepts (from input)
        concept_cpd = pyc.nn.ParametricCPD(
            concepts=["round", "smooth", "bright"],
-           parametrization=pyc.nn.LinearZC(
-               in_features=input_dim,
+           parametrization=pyc.nn.LinearLatentToConcept(
+               in_latent=input_dim,
                out_features=1
            )
        )
@@ -148,8 +148,8 @@ Detailed Guides
        # ParametricCPD for tasks (from concepts)
        task_cpd = pyc.nn.ParametricCPD(
            concepts=["class_A", "class_B"],
-           parametrization=pyc.nn.LinearCC(
-               in_features_endogenous=3,
+           parametrization=pyc.nn.LinearConceptToConcept(
+               in_concepts=3,
                out_features=1
            )
        )

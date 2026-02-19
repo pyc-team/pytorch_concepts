@@ -52,7 +52,7 @@ At this API level, models are represented as probabilistic models where:
 
      concept_cpd = pyc.nn.ParametricCPD(
         concepts=["c1", "c2", "c3"],
-        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3)
+        parametrization=pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3)
      )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:

@@ -12,23 +12,23 @@ class UniformPolicy(BaseConceptLayer):
     no concept is preferred over others.
 
     Attributes:
-        out_features (int): Number of output features.
+        out_concepts (int): Number of output concepts.
 
     Args:
-        out_features: Number of output concept features.
+        out_concepts: Number of output concepts.
 
     Example:
         >>> import torch
         >>> from torch_concepts.nn import UniformPolicy
         >>>
         >>> # Create uniform policy
-        >>> policy = UniformPolicy(out_features=10)
+        >>> policy = UniformPolicy(out_concepts=10)
         >>>
-        >>> # Generate random concept endogenous
-        >>> endogenous = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> # Generate random concepts
+        >>> concepts = torch.randn(4, 10)  # batch_size=4, n_concepts=10
         >>>
         >>> # Apply policy - returns zeros (uniform priority)
-        >>> scores = policy(endogenous)
+        >>> scores = policy(concepts)
         >>> print(scores.shape)  # torch.Size([4, 10])
         >>> print(torch.all(scores == 0.0))  # True
         >>>
@@ -40,23 +40,23 @@ class UniformPolicy(BaseConceptLayer):
 
     def __init__(
         self,
-        out_features: int,
+        out_concepts: int,
     ):
         super().__init__(
-            out_features=out_features,
+            out_concepts=out_concepts,
         )
 
     def forward(
         self,
-        endogenous: torch.Tensor
+        concepts: torch.Tensor
     ) -> torch.Tensor:
         """
         Generate uniform (zero) intervention scores.
 
         Args:
-            endogenous: Input concept endogenous of shape (batch_size, n_concepts).
+            concepts: Input concepts of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Zeros tensor of same shape as input.
         """
-        return torch.zeros_like(endogenous)
+        return torch.zeros_like(concepts)

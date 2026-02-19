@@ -1,15 +1,19 @@
 from typing import List, Optional, Union, Mapping
 from torch import nn
 import torch
-
 from .....annotations import Annotations
 
-from ....modules.mid.constructors.bipartite import BipartiteModel
-from ....modules.low.encoders.linear import LinearZC
-from ....modules.low.predictors.linear import LinearCC
-from ....modules.low.lazy import LazyConstructor
-from ....modules.low.base.inference import BaseInference
-from ....modules.mid.inference.forward import DeterministicInference
+from ...mid.inference.forward import DeterministicInference
+from ...mid.constructors.bipartite import BipartiteModel
+from ...mid.models.variable import LatentVariable, ConceptVariable
+from ...mid.models.cpd import ParametricCPD
+from ...mid.models.probabilistic_model import ProbabilisticModel
+
+
+from ...low.encoders.linear import LinearLatentToConcept
+from ...low.predictors.linear import LinearConceptToConcept
+from ...low.lazy import LazyConstructor
+from ...low.base.inference import BaseInference
 
 from ..base.model import BaseModel
 from ..learners import JointLearner #, IndependentLearner
@@ -68,8 +72,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
             task_names=task_names,
             input_size=self.latent_size,
             annotations=annotations,
-            encoder=LazyConstructor(LinearZC),
-            predictor=LazyConstructor(LinearCC)
+            encoder=LazyConstructor(LinearLatentToConcept),
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
 
         self.inference = inference(self.model.probabilistic_model)
@@ -134,8 +138,68 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
         # return: endogenous
         return {'preds': forward_out,
                 'target': target}
-    
-# TODO:
+
+
+# TODO: check if mid-level implementation matches wrapping with constructor# class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
+
+#     def __init__(
+#         self,
+#         input_size: int,
+#         annotations: Annotations,
+#         task_names: Union[List[str], str],
+#         variable_distributions: Optional[Mapping] = None,
+#         inference: Optional[BaseInference] = DeterministicInference,
+#         loss: Optional[nn.Module] = None,
+#         metrics: Optional[Mapping] = None,
+#         **kwargs
+#     ):
+#         super().__init__(
+#             input_size=input_size,
+#             annotations=annotations,
+#             variable_distributions=variable_distributions,
+#             loss=loss,
+#             metrics=metrics,
+#             **kwargs
+#         )
+
+#         # the initial latent embedding is provided by the BaseModel initialization
+#         latent_var = LatentVariable('input', parents=[], size=self.latent_size)
+#         latent_cpd = ParametricCPD('input', parametrization=nn.Identity())
+
+#         # concepts are endogenous variables with latent as parent
+#         concept_names = [var for var in self.concept_names if var not in task_names]
+#         concept_dist = [self.concept_annotations.metadata[name]['distribution'] 
+#                         for name in concept_names]
+#         concept_size = [self.concept_annotations.cardinalities[self.concept_annotations.get_index(name)] 
+#                         for name in concept_names]
+#         concepts = ConceptVariable(concept_names, 
+#                                       parents=["input"], 
+#                                       distribution=concept_dist, 
+#                                       size=concept_size)
+#         concepts_cpd = ParametricCPD(concept_names, 
+#                                      parametrization=LazyConstructor(LinearLatentToConcept))
+        
+#         # tasks are endogenous variables with concepts as parents
+#         task_dist = [self.concept_annotations.metadata[name]['distribution']
+#                      for name in task_names]
+#         tasks = ConceptVariable(task_names, 
+#                                    parents=concept_names, 
+#                                    distribution=task_dist)
+#         tasks_cpd = ParametricCPD(task_names, 
+#                                   parametrization=LazyConstructor(LinearConceptToConcept))
+        
+#         # probabilistic graphical model
+#         self.pgm = ProbabilisticModel(
+#             variables=[latent_var, *concepts, *tasks], 
+#             parametric_cpds=[latent_cpd, *concepts_cpd, *tasks_cpd]
+#         )
+
+#         self.inference = inference(self.pgm)
+
+
+
+# TODO: implement Independent learner
+
 # class ConceptBottleneckModel_Independent(BaseModel, IndependentLearner):
 #     def __init__(
 #         self,
@@ -162,8 +226,8 @@ class ConceptBottleneckModel_Joint(BaseModel, JointLearner):
 #             task_names=task_names,
 #             input_size=self.latent_size,
 #             annotations=annotations,
-#             encoder=LazyConstructor(LinearZC),
-#             predictor=LazyConstructor(LinearCC)
+#             encoder=LazyConstructor(LinearLatentToConcept),
+#             predictor=LazyConstructor(LinearConceptToConcept)
 #         )
 
 #         self.inference = inference(self.model.probabilistic_model)

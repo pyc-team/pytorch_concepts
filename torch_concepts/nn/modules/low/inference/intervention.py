@@ -115,8 +115,8 @@ class RewiringIntervention(BaseIntervention):
                 self.orig = orig
                 self.register_buffer("mask", mask_.clone())
 
-            def forward(self, **kwargs) -> torch.Tensor:
-                y = self.orig(**kwargs)  # [B, F]
+            def forward(self, *args, **kwargs) -> torch.Tensor:
+                y = self.orig(*args, **kwargs)  # [B, F]
                 assert y.dim() == 2, (f"RewiringIntervention expects 2-D tensors [Batch, N_concepts]. "
                                       f"Got shape: {y.shape}")
                 t = parent._make_target(y)  # [B, F]
@@ -318,17 +318,16 @@ class _InterventionWrapper(nn.Module):
         else:
             self.forward_to_check = original.forward
 
-    def _build_mask(self, policy_endogenous: torch.Tensor) -> torch.Tensor:
-        B, F = policy_endogenous.shape
-        device = policy_endogenous.device
-        dtype = policy_endogenous.dtype
+    def _build_mask(self, policy_scores: torch.Tensor) -> torch.Tensor:
+        B, F = policy_scores.shape
+        device = policy_scores.device
+        dtype = policy_scores.dtype
 
         sel_idx = torch.tensor(self.subset, device=device, dtype=torch.long) if self.subset is not None else torch.arange(F, device=device, dtype=torch.long)
         if len(sel_idx) == 0:
-            return torch.ones_like(policy_endogenous)
-
+            return torch.ones_like(policy_scores)
         K = sel_idx.numel()
-        sel = policy_endogenous.index_select(dim=1, index=sel_idx)  # [B, K]
+        sel = policy_scores.index_select(dim=1, index=sel_idx)  # [B, K]
 
         if K == 1:
             # Edge case: single selected column.
@@ -341,7 +340,7 @@ class _InterventionWrapper(nn.Module):
             # STE proxy (optional; keeps gradients flowing on the selected col)
             row_max = sel.max(dim=1, keepdim=True).values + self.eps
             soft_sel = torch.log1p(sel) / torch.log1p(row_max)  # [B,1]
-            soft_proxy = torch.ones_like(policy_endogenous)
+            soft_proxy = torch.ones_like(policy_scores)
             soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
             mask = (mask - soft_proxy).detach() + soft_proxy
             return mask
@@ -359,29 +358,29 @@ class _InterventionWrapper(nn.Module):
         # STE proxy (unchanged)
         row_max = sel.max(dim=1, keepdim=True).values + 1e-12
         soft_sel = torch.log1p(sel) / torch.log1p(row_max)
-        soft_proxy = torch.ones_like(policy_endogenous)
+        soft_proxy = torch.ones_like(policy_scores)
         soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
         mask = (mask - soft_proxy).detach() + soft_proxy
         return mask
 
-    def forward(self, **kwargs) -> torch.Tensor:
-        y = self.original(**kwargs)
-        endogenous = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
-        mask = self._build_mask(endogenous)  # 1 keep, 0 replace
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+        y = self.original(*args, **kwargs)
+        policy_scores = self.policy(y)          # [B,F], 0 = most uncertain, +inf = most certain
+        mask = self._build_mask(policy_scores)  # 1 keep, 0 replace
 
         # 3) proxy that returns the cached y instead of recomputing
         class _CachedOutput(nn.Module):
             def __init__(self, y_cached: torch.Tensor):
                 super().__init__()
                 self.y_cached = y_cached        # keep graph-connected tensor; do NOT detach
-            def forward(self, **kwargs) -> torch.Tensor:
+            def forward(self) -> torch.Tensor:
                 return self.y_cached
 
         cached = _CachedOutput(y)
 
         # 4) use existing strategy API; no changes to GroundTruthIntervention
         replacer = self.strategy.query(cached, mask)
-        return replacer(**kwargs)
+        return replacer()
 
 # ---------------- global policy wrapper ----------------
 
@@ -390,7 +389,7 @@ class _GlobalPolicyState:
     Shared state for coordinating global policy across multiple wrappers.
 
     This state object is shared among all wrappers when global_policy=True.
-    It collects policy endogenous from all layers, computes a global mask once,
+    It collects policy concepts from all layers, computes a global mask once,
     then distributes slices to each wrapper.
 
     This implementation works with sequential, threaded, and CUDA stream execution.
@@ -399,48 +398,47 @@ class _GlobalPolicyState:
         self.n_wrappers = n_wrappers
         self.quantile = float(quantile)
         self.eps = eps
-        # Store endogenous and outputs indexed by wrapper_id
-        self.endogenous_cache: Dict[int, torch.Tensor] = {}
+        # Store policy scores and outputs indexed by wrapper_id
+        self.scores_cache: Dict[int, torch.Tensor] = {}
         self.outputs_cache: Dict[int, torch.Tensor] = {}
         self.global_mask: Optional[torch.Tensor] = None
         self.batch_size: Optional[int] = None
 
     def reset(self):
         """Reset state for a new forward pass."""
-        self.endogenous_cache.clear()
+        self.scores_cache.clear()
         self.outputs_cache.clear()
         self.global_mask = None
         self.batch_size = None
 
-    def register(self, wrapper_id: int, endogenous: torch.Tensor, output: torch.Tensor):
-        """Register endogenous and output from a wrapper."""
+    def register(self, wrapper_id: int, policy_scores: torch.Tensor, output: torch.Tensor):
+        """Register policy scores and output from a wrapper."""
         # Detect new batch by checking batch size change
-        if self.batch_size is not None and endogenous.shape[0] != self.batch_size:
+        if self.batch_size is not None and policy_scores.shape[0] != self.batch_size:
             self.reset()
-        self.batch_size = endogenous.shape[0]
-
-        self.endogenous_cache[wrapper_id] = endogenous
+        self.batch_size = policy_scores.shape[0]
+        self.scores_cache[wrapper_id] = policy_scores
         self.outputs_cache[wrapper_id] = output
 
     def is_ready(self) -> bool:
-        """Check if all wrappers have registered their endogenous."""
-        return len(self.endogenous_cache) == self.n_wrappers
+        """Check if all wrappers have registered their scores."""
+        return len(self.scores_cache) == self.n_wrappers
 
     def compute_global_mask(self):
-        """Compute the global mask once all endogenous are collected."""
+        """Compute the global mask once all scores are collected."""
         if self.global_mask is not None:
             return  # Already computed
 
         if not self.is_ready():
             raise RuntimeError(
-                f"Cannot compute global mask: only {len(self.endogenous_cache)}/{self.n_wrappers} wrappers registered"
+                f"Cannot compute global mask: only {len(self.scores_cache)}/{self.n_wrappers} wrappers registered"
             )
 
-        # Concatenate all endogenous in wrapper_id order
-        all_endogenous = torch.cat([self.endogenous_cache[i] for i in range(self.n_wrappers)], dim=1)
-        B, F_total = all_endogenous.shape
-        device = all_endogenous.device
-        dtype = all_endogenous.dtype
+        # Concatenate all scores in wrapper_id order
+        all_scores = torch.cat([self.scores_cache[i] for i in range(self.n_wrappers)], dim=1)
+        B, F_total = all_scores.shape
+        device = all_scores.device
+        dtype = all_scores.dtype
 
         if F_total == 0:
             self.global_mask = torch.ones((B, 0), device=device, dtype=dtype)
@@ -463,19 +461,19 @@ class _GlobalPolicyState:
             self.global_mask = torch.zeros((B, F_total), device=device, dtype=dtype)
             return
 
-        # Find the threshold: intervene on the top num_to_intervene concepts by policy endogenous
+        # Find the threshold: intervene on the top num_to_intervene concepts by policy scores
         # kthvalue(k) returns the k-th smallest value, so for top-k we use (F_total - num_to_intervene + 1)
         k = F_total - num_to_intervene + 1
-        thr, _ = torch.kthvalue(all_endogenous, k, dim=1, keepdim=True)  # [B,1]
+        thr, _ = torch.kthvalue(all_scores, k, dim=1, keepdim=True)  # [B,1]
 
         # mask=1 means keep (don't intervene), mask=0 means replace (do intervene)
-        # Intervene on concepts with endogenous >= threshold (top-k by policy score)
+        # Intervene on concepts with scores >= threshold (top-k by policy score)
         # So those get mask=0, others get mask=1
-        mask_hard = (all_endogenous < thr).to(dtype)  # [B, F_total] - 1 where we keep, 0 where we intervene
+        mask_hard = (all_scores < thr).to(dtype)  # [B, F_total] - 1 where we keep, 0 where we intervene
 
         # STE proxy
-        row_max = all_endogenous.max(dim=1, keepdim=True).values + self.eps
-        soft_proxy = torch.log1p(all_endogenous) / torch.log1p(row_max)
+        row_max = all_scores.max(dim=1, keepdim=True).values + self.eps
+        soft_proxy = torch.log1p(all_scores) / torch.log1p(row_max)
         self.global_mask = (mask_hard - soft_proxy).detach() + soft_proxy
 
     def get_mask_slice(self, wrapper_id: int) -> torch.Tensor:
@@ -495,8 +493,8 @@ class _GlobalPolicyInterventionWrapper(nn.Module):
     Intervention wrapper that uses a shared global state for coordinated masking.
 
     This wrapper defers intervention application until all wrappers in the level
-    have computed their policy endogenous. During forward pass, it only collects
-    endogenous and returns the original output. The actual intervention is applied
+    have computed their policy concepts. During forward pass, it only collects
+    concepts and returns the original output. The actual intervention is applied
     via apply_intervention() after all wrappers are ready.
     """
     def __init__(
@@ -524,18 +522,18 @@ class _GlobalPolicyInterventionWrapper(nn.Module):
 
     def forward(self, **kwargs) -> torch.Tensor:
         """
-        Forward pass that collects policy endogenous but does NOT apply intervention.
+        Forward pass that collects policy scores but does NOT apply intervention.
 
         Returns the original output. Intervention is applied later via apply_intervention().
         """
         # Get output from original module
         y = self.original(**kwargs)
 
-        # Compute policy endogenous
-        endogenous = self.policy(y)  # [B, F_i]
+        # Compute policy scores
+        policy_scores = self.policy(y)  # [B, F_i]
 
         # Register with shared state
-        self.shared_state.register(self.wrapper_id, endogenous, y)
+        self.shared_state.register(self.wrapper_id, policy_scores, y)
 
         # Always return original output - intervention applied later
         return y
@@ -554,7 +552,7 @@ class _GlobalPolicyInterventionWrapper(nn.Module):
         """
         if not self.shared_state.is_ready():
             raise RuntimeError(
-                f"Cannot apply intervention: only {len(self.shared_state.endogenous_cache)}/{self.shared_state.n_wrappers} wrappers registered"
+                f"Cannot apply intervention: only {len(self.shared_state.scores_cache)}/{self.shared_state.n_wrappers} wrappers registered"
             )
 
         # Compute global mask if not already computed
@@ -619,10 +617,10 @@ def intervention(
         >>>
         >>> # Create a simple model
         >>> class SimplePGM(torch.nn.Module):
-        ...     def __init__(self, in_features, out_features):
+        ...     def __init__(self, in_latent, out_concepts):
         ...         super().__init__()
-        ...         self.encoder = torch.nn.Linear(in_features, 3)
-        ...         self.predictor = torch.nn.Linear(3, out_features)
+        ...         self.encoder = torch.nn.Linear(in_latent, 3)
+        ...         self.predictor = torch.nn.Linear(3, out_concepts)
         ...     def forward(self, x):
         ...         c = torch.sigmoid(self.encoder(x))
         ...         y = self.predictor(c)
@@ -634,7 +632,7 @@ def intervention(
         >>> strategy = DoIntervention(model, torch.FloatTensor([1.0, 0.0, 1.0]))
         >>>
         >>> # Create policy (random selection)
-        >>> policy = RandomPolicy(out_features=3)
+        >>> policy = RandomPolicy(out_concepts=3)
         >>>
         >>> # Apply intervention on specific concept indices
         >>> x = torch.randn(4, 10)

@@ -19,9 +19,9 @@ Overview of Data Representations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 In |pyc_logo| PyC, we distinguish between three types of data representations:
 
-- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
-- **Exogenous**: Representations that are direct causes of endogenous variables
-- **Endogenous**: Representations of observable quantities of interest
+- **Latent**: High-dimensional (input) representations where exogenous and concept (endogenous) information is entangled
+- **Exogenous**: Representations that are direct causes of concept variables
+- **Concepts**: Representations of observable quantities of interest
 
 
 Layer Types
@@ -52,23 +52,23 @@ where:
   - ``C``: Endogenous
 
 
-For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
+For instance, a layer named ``LinearLatentToConcept`` is a linear layer that takes as input an
 ``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
 as input any endogenous variables, it is an encoder layer.
 
 .. code-block:: python
 
- pyc.nn.LinearZC(in_features=10, out_features=3)
+ pyc.nn.LinearLatentToConcept(in_latent=10, out_features=3)
 
-As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
+As another example, a layer named ``HyperlinearConceptExogenousToConcept`` is a hyper-network layer that
 takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
 ``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
 
 .. code-block:: python
 
- pyc.nn.HyperLinearCUC(
-    in_features_endogenous=10,
-    in_features_exogenous=7,
+ pyc.nn.HyperlinearConceptExogenousToConcept(
+    in_concepts=10,
+    in_exogenous=7,
     embedding_size=24,
     out_features=3
  )
@@ -129,12 +129,12 @@ Detailed Guides
 
        # Create model using ModuleDict
        model = torch.nn.ModuleDict({
-           'encoder': pyc.nn.LinearZC(
-               in_features=input_dim,
+           'encoder': pyc.nn.LinearLatentToConcept(
+               in_latent=input_dim,
                out_features=n_concepts
            ),
-           'predictor': pyc.nn.LinearCC(
-               in_features_endogenous=n_concepts,
+           'predictor': pyc.nn.LinearConceptToConcept(
+               in_concepts=n_concepts,
                out_features=n_tasks
            ),
        })
@@ -245,7 +245,7 @@ Detailed Guides
 
     .. code-block:: python
 
-       from torch_concepts.nn import LinearZC, SelectorZU, HyperLinearCUC
+       from torch_concepts.nn import LinearLatentToConcept, SelectorLatentToExogenous, HyperlinearConceptExogenousToConcept
 
        memory_size = 7
        exogenous_size = 16
@@ -253,19 +253,19 @@ Detailed Guides
 
        # Create model using ModuleDict
        model = torch.nn.ModuleDict({
-           'encoder': LinearZC(
-               in_features=input_dim,
+           'encoder': LinearLatentToConcept(
+               in_latent=input_dim,
                out_features=n_concepts
            ),
-           'selector': SelectorZU(
-               in_features=input_dim,
+           'selector': SelectorLatentToExogenous(
+               in_latent=input_dim,
                memory_size=memory_size,
                exogenous_size=exogenous_size,
                out_features=n_tasks
            ),
-           'predictor': HyperLinearCUC(
-               in_features_endogenous=n_concepts,
-               in_features_exogenous=exogenous_size,
+           'predictor': HyperlinearConceptExogenousToConcept(
+               in_concepts=n_concepts,
+               in_exogenous=exogenous_size,
                embedding_size=embedding_size,
            )
        })

@@ -99,12 +99,12 @@ Here's a minimal example using the low-Level API:
 
    # Create a concept bottleneck model
    model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearZC(
-           in_features=64,
+       'encoder': pyc.nn.LinearLatentToConcept(
+           in_latent=64,
            out_features=10
        ),
-       'predictor': pyc.nn.LinearCC(
-           in_features_endogenous=10,
+       'predictor': pyc.nn.LinearConceptToConcept(
+           in_concepts=10,
            out_features=5
        ),
    })

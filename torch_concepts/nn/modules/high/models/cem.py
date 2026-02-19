@@ -6,9 +6,9 @@ from .....annotations import Annotations
 from .....data.utils import ensure_list
 
 from ....modules.mid.constructors.bipartite import BipartiteModel
-from ....modules.low.encoders.exogenous import LinearZU
-from ....modules.low.encoders.linear import LinearUC
-from ....modules.low.predictors.exogenous import MixCUC
+from ....modules.low.encoders.exogenous import LinearLatentToExogenous
+from ....modules.low.encoders.linear import LinearExogenousToConcept
+from ....modules.low.predictors.exogenous import MixConceptExogegnousToConcept
 from ....modules.low.lazy import LazyConstructor
 from ....modules.low.base.inference import BaseInference
 from ....modules.mid.inference.forward import DeterministicInference
@@ -23,7 +23,7 @@ class ConceptEmbeddingModel_Joint(BaseModel, JointLearner):
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
-        exogenous_size: int = 16,
+        embedding_size: int = 16,
         variable_distributions: Optional[Mapping] = None,
         inference: Optional[BaseInference] = DeterministicInference,
         loss: Optional[nn.Module] = None,
@@ -51,9 +51,9 @@ class ConceptEmbeddingModel_Joint(BaseModel, JointLearner):
             task_names=task_names,
             input_size=self.latent_size,
             annotations=annotations,
-            source_exogenous=LazyConstructor(LinearZU, exogenous_size=exogenous_size),
-            encoder=LazyConstructor(LinearUC, n_exogenous_per_concept=1),
-            predictor=LazyConstructor(MixCUC, cardinalities=cardinalities),
+            source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=embedding_size),
+            encoder=LazyConstructor(LinearExogenousToConcept, n_exogenous_per_concept=1),
+            predictor=LazyConstructor(MixConceptExogegnousToConcept, cardinalities=cardinalities),
             use_source_exogenous=True
         )
 
