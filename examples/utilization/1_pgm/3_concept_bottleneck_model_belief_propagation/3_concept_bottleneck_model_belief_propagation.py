@@ -2,10 +2,10 @@ import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import torch
 from torch.distributions import RelaxedBernoulli, Normal, RelaxedOneHotCategorical
-from torch_concepts import EndogenousVariable, ExogenousVariable
+from torch_concepts import ConceptVariable, ExogenousVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import ParametricCPD, ProbabilisticModel, AncestralSamplingInference, \
-    CallableCC, UniformPolicy, DoIntervention, intervention
+    CallableConceptToConcept, UniformPolicy, DoIntervention, intervention
 from torch_concepts.nn.functional import cace_score
 from bp_with_conditional import BPInference
 
@@ -38,9 +38,9 @@ def main():
 
     # Variable setup
     emb = ExogenousVariable("emb", parents=[], size=2, distribution=Delta)
-    a = EndogenousVariable("a", parents=["emb"], distribution=RelaxedBernoulli)
-    b = EndogenousVariable("b", parents=["emb"], size=3, distribution=RelaxedOneHotCategorical)
-    c = EndogenousVariable("c", parents=["a", "b"], distribution=RelaxedBernoulli)
+    a = ConceptVariable("a", parents=["emb"], distribution=RelaxedBernoulli)
+    b = ConceptVariable("b", parents=["emb"], size=3, distribution=RelaxedOneHotCategorical)
+    c = ConceptVariable("c", parents=["a", "b"], distribution=RelaxedBernoulli)
 
     # ParametricCPD setup
     emb_cpd = ParametricCPD("emb", parametrization=torch.nn.Identity())

@@ -496,14 +496,14 @@ class BPInference(BaseInference):
         factors = {}
         for var in self.model.variables:
             if var.distribution is RelaxedBernoulli:
-                variables[var.concepts[0]] = 2
+                variables[var.concept] = 2
             elif var.distribution is RelaxedOneHotCategorical:
-                variables[var.concepts[0]] = var.size
+                variables[var.concept] = var.size
             elif var.distribution is Delta:
-                variables[var.concepts[0]] = 1
+                variables[var.concept] = 1
             else:
                 raise NotImplementedError("Distribution for variable unknown.")
-            factors[var.concepts[0]] = [var.concepts[0]] + [c.concepts[0] for c in var.parents] #TODO: check this ordering is correct
+            factors[var.concept] = [var.concept] + [c.concept for c in var.parents] #TODO: check this ordering is correct
 
         self.metadata = build_graph_metadata(variables, factors)
         self.assignments_factors = self.build_assignments(self.metadata, variables, factors)
@@ -556,7 +556,7 @@ class BPInference(BaseInference):
         batch_size = list(observed.values())[0].shape[0]
         factor_eval_list = []
 
-        assert all([v.concepts[0] in embeddings_dict.keys() for v in self.model.variables if v.distribution is Delta]), "All delta variables must have embeddings provided in evidence."
+        assert all([v.concept in embeddings_dict.keys() for v in self.model.variables if v.distribution is Delta]), "All delta variables must have embeddings provided in evidence."
 
         for name_cpd, cpd in self.model.parametric_cpds.items(): # Iterate over factors. TODO: check that this is the right way to get factors
             input = []
@@ -571,7 +571,7 @@ class BPInference(BaseInference):
                 for i, p in enumerate(cpd.variable.parents):
 
                     if p.distribution is Delta:
-                        emb = embeddings_dict[p.concepts[0]] # [B, emb_dim]
+                        emb = embeddings_dict[p.concept] # [B, emb_dim]
                         #repeat for each assignment in the factor
                         emb_exp = emb.unsqueeze(1).expand(-1, num_assignments, -1)  # [B, num_assignments, emb_dim]
                         input.append(emb_exp)
@@ -769,8 +769,9 @@ if __name__ == "__main__":
     # Print comparisons
     # ------------------------
     print("\n=== Unconditional: BP vs Exact ===")
-    for i, (m_bp, m_ex) in enumerate(zip(bp_marginals_uncond, exact_marginals_uncond)):
-        name = md["var_names"][i]
+    for i, name in enumerate(md["var_names"]):
+        m_bp = bp_marginals_uncond[name]
+        m_ex = exact_marginals_uncond[i]
         print(f"\nVariable {name}:")
         print("  BP   (uncond):", m_bp)
         print("  Exact(uncond):", m_ex)
@@ -778,8 +779,9 @@ if __name__ == "__main__":
 
     print("\n=== Conditional on evidence: BP vs Exact ===")
     print("Evidence tensor (per batch, per var):", evidence)
-    for i, (m_bp, m_ex) in enumerate(zip(bp_marginals_cond, exact_marginals_cond)):
-        name = md["var_names"][i]
+    for i, name in enumerate(md["var_names"]):
+        m_bp = bp_marginals_cond[name]
+        m_ex = exact_marginals_cond[i]
         print(f"\nVariable {name}:")
         print("  BP   (cond):", m_bp)
         print("  Exact(cond):", m_ex)

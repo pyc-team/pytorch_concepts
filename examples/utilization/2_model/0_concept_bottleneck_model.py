@@ -2,9 +2,10 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
+from torch_concepts import seed_everything
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import LinearZC, LinearCC, \
+from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor
 
 
@@ -13,6 +14,8 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
+
+    seed_everything(42)
 
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
@@ -38,8 +41,8 @@ def main():
     concept_model = BipartiteModel(task_names,
                                    latent_dims,
                                    annotations,
-                                   LinearZC(10, 1),
-                                   LinearCC(2, 2))
+                                   LinearLatentToConcept(10, 1),
+                                   LinearConceptToConcept(2, 2))
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model.probabilistic_model)
@@ -77,7 +80,7 @@ def main():
 
     emb = encoder(x_train)
 
-    int_policy_c = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
+    int_policy_c = RandomPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
     int_strategy_c = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,

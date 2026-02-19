@@ -5,8 +5,8 @@ from torch.distributions import RelaxedBernoulli
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, LazyConstructor, \
-    LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearCUC, GraphModel, AncestralSamplingInference
+    LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
+    HyperlinearConceptExogenousToConcept, GraphModel, AncestralSamplingInference
 
 
 def main():
@@ -46,10 +46,10 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=12),
-                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=13),
-                                   encoder=LazyConstructor(LinearUC),
-                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=11))
+                                   source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=12),
+                                   internal_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=13),
+                                   encoder=LazyConstructor(LinearExogenousToConcept),
+                                   predictor=LazyConstructor(HyperlinearConceptExogenousToConcept, hidden_size=11))
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, temperature=1.)
@@ -86,7 +86,7 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Task2 Acc: {task2_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+    int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size)
     int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=0)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
@@ -102,7 +102,7 @@ def main():
         print(cy_pred[:5])
         print()
 
-        int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+        int_policy_c1 = RandomPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size)
         int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 0:1])
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,

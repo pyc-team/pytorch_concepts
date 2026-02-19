@@ -12,6 +12,7 @@ The model uses:
 """
 
 import torch
+from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
@@ -22,8 +23,8 @@ from torchmetrics.classification import BinaryAccuracy
 from pytorch_lightning import Trainer
 
 def main():
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+
+    seed_everything(42)
     
     # Generate toy data
     print("=" * 60)

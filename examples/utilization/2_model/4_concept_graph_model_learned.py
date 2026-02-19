@@ -6,8 +6,8 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, LazyConstructor, \
-    LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy, \
-    HyperLinearCUC, GraphModel, WANDAGraphLearner
+    LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
+    HyperlinearConceptExogenousToConcept, GraphModel, WANDAGraphLearner
 
 
 def main():
@@ -54,10 +54,10 @@ def main():
     concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=11),
-                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=7),
-                                   encoder=LazyConstructor(LinearUC),
-                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20))
+                                   source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=11),
+                                   internal_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=7),
+                                   encoder=LazyConstructor(LinearExogenousToConcept),
+                                   predictor=LazyConstructor(HyperlinearConceptExogenousToConcept, hidden_size=20))
 
     # graph learning init
     graph_learner = WANDAGraphLearner(concept_names, task_names)
@@ -118,7 +118,7 @@ def main():
         print("=== Interventions ===")
         intervened_concept = query_concepts[0]
 
-        int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
+        int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
         int_strategy_c1 = DoIntervention(model=concept_model_new.parametric_cpds, constants=-10)
         with intervention(policies=int_policy_c1,
                           strategies=int_strategy_c1,
@@ -129,7 +129,7 @@ def main():
             print(cy_pred[:5])
             print()
 
-            int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
+            int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
             int_strategy_c1 = GroundTruthIntervention(model=concept_model_new.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
             with intervention(policies=int_policy_c1,
                               strategies=int_strategy_c1,

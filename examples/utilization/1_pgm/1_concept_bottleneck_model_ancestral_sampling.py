@@ -2,15 +2,15 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, Variable, InputVariable, EndogenousVariable
+from torch_concepts import Annotations, AxisAnnotation, Variable, LatentVariable, ConceptVariable
 from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import LinearZC, LinearCC, ParametricCPD, ProbabilisticModel, \
+from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, AncestralSamplingInference, LazyConstructor
 
 
 def main():
     latent_dims = 10
-    n_epochs = 1000
+    n_epochs = 10000
     n_samples = 1000
 
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
@@ -24,14 +24,14 @@ def main():
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
     # Variable setup
-    input_var = InputVariable("input", parents=[], size=x_train.shape[1])
-    concepts = EndogenousVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli)
-    tasks = EndogenousVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    input_var = LatentVariable("input", parents=[], size=x_train.shape[1])
+    concepts = ConceptVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli)
+    tasks = ConceptVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Identity())
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearZC))
-    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearCC))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearLatentToConcept))
+    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearConceptToConcept))
 
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
@@ -41,7 +41,7 @@ def main():
     initial_input = {'input': x_train}
     query_concepts = ["c1", "c2", "xor"]
 
-    optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
+    optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.1)
     loss_fn = torch.nn.BCELoss()
     concept_model.train()
     for epoch in range(n_epochs):
@@ -68,7 +68,7 @@ def main():
     print("=== Interventions ===")
     print(cy_pred[:5])
 
-    int_policy_c = RandomPolicy(out_features=concept_model.concept_to_variable["c1"].size, scale=100)
+    int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
     int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,

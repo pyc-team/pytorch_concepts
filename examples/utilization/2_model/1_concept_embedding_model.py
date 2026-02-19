@@ -2,10 +2,11 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
+from torch_concepts import seed_everything
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor, \
-    MixCUC, LinearZU, LinearUC, GroundTruthIntervention, UniformPolicy
+    MixConceptExogegnousToConcept, LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy
 
 
 def main():
@@ -13,6 +14,8 @@ def main():
     n_epochs = 200
     n_samples = 1000
     concept_reg = 0.5
+
+    seed_everything(42)
 
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
@@ -38,9 +41,9 @@ def main():
     concept_model = BipartiteModel(task_names=task_names,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=12),
-                                   encoder=LazyConstructor(LinearUC, n_exogenous_per_concept=1),
-                                   predictor=LazyConstructor(MixCUC, cardinalities=[1, 1]),
+                                   source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=12),
+                                   encoder=LazyConstructor(LinearExogenousToConcept, n_exogenous_per_concept=1),
+                                   predictor=LazyConstructor(MixConceptExogegnousToConcept, cardinalities=[1, 1]),
                                    use_source_exogenous=True)
 
     # Inference Initialization
@@ -76,7 +79,7 @@ def main():
 
     print("=== Interventions ===")
 
-    int_policy_c1 = UniformPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size)
+    int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size)
     int_strategy_c1 = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
@@ -90,7 +93,7 @@ def main():
         print(cy_pred[:5])
         print()
 
-        int_policy_c1 = RandomPolicy(out_features=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
+        int_policy_c1 = RandomPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
         int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
         int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
         with intervention(policies=[int_policy_c1, int_policy_c1],

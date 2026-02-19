@@ -16,14 +16,15 @@ from torch.distributions import Bernoulli
 from torchmetrics.classification import BinaryAccuracy
 from pytorch_lightning import Trainer
 
+from torch_concepts import seed_everything
 from torch_concepts import GroupConfig
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 
 def main():
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+
+    seed_everything(42)
     
     # Generate toy data
     print("=" * 60)
