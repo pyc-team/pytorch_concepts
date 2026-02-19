@@ -18,8 +18,12 @@ latent_encoder_kwargs:
 # =============================================================
 variable_distributions:
   _target_: "torch_concepts.GroupConfig"
-  binary: "torch.distributions.RelaxedBernoulli"
-  categorical: "torch.distributions.RelaxedOneHotCategorical"
+  binary:   
+    _target_: "hydra.utils.get_class"
+    path: "torch.distributions.RelaxedBernoulli"
+  categorical: 
+    _target_: "hydra.utils.get_class"
+    path: "torch.distributions.RelaxedOneHotCategorical"
   # TODO: handle kwargs
   # continuous: 
     # ... not supported yet
