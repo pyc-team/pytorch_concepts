@@ -10,7 +10,7 @@ from typing import Any
 from .annotations import Annotations, AxisAnnotation
 from .nn.modules.utils import GroupConfig
 from .nn.modules.mid.constructors.concept_graph import ConceptGraph
-from .nn.modules.mid.models.variable import Variable, InputVariable, ExogenousVariable, EndogenousVariable
+from .nn.modules.mid.models.variable import Variable, LatentVariable, InputVariable, ExogenousVariable, ConceptVariable, EndogenousVariable
 from .utils import seed_everything
 from . import nn, distributions
 from . import data
@@ -34,9 +34,11 @@ __all__ = [
 
     # Variables
     "Variable",
-    "InputVariable",
+    "LatentVariable",
+    "InputVariable",  # Backward compatibility alias
     "ExogenousVariable",
-    "EndogenousVariable",
+    "ConceptVariable",
+    "EndogenousVariable",  # Backward compatibility alias
 
     "seed_everything",
 

@@ -10,54 +10,8 @@ from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type
 
 from torch_concepts.nn import LazyConstructor
-from .variable import Variable, ExogenousVariable, EndogenousVariable, InputVariable
+from .variable import Variable, ExogenousVariable, ConceptVariable, LatentVariable
 from .cpd import ParametricCPD
-
-
-def _reinitialize_with_new_param(instance, key, new_value):
-    """
-    Create a new instance with one parameter changed.
-
-    Creates a new instance of the same class, retaining all current initialization
-    parameters except the one specified by 'key', which gets 'new_value'.
-
-    Args:
-        instance: The instance to recreate with modified parameters.
-        key: The parameter name to change.
-        new_value: The new value for the specified parameter.
-
-    Returns:
-        A new instance with the modified parameter.
-    """
-    cls = instance.__class__
-
-    # 1. Get current state (attributes) and create a dictionary of arguments
-    # 2. Update the specific parameter
-    # 3. Create a new instance
-
-    sig = inspect.signature(cls.__init__)
-    params = sig.parameters
-    allowed = {
-        name for name, p in params.items()
-        if name != "self" and p.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        )
-    }
-
-    new_dict = {}
-    for k in allowed:
-        if k == key:
-            new_dict[k] = new_value
-        else:
-            if k == 'bias':
-                new_dict[k] = False if instance.bias is None else True
-            else:
-                new_dict[k] = getattr(instance, k, None)
-
-    new_instance = cls(**new_dict)
-
-    return new_instance
 
 
 class ProbabilisticModel(nn.Module):
@@ -80,22 +34,22 @@ class ProbabilisticModel(nn.Module):
 
     Example:
         >>> import torch
-        >>> from torch_concepts import InputVariable, EndogenousVariable
+        >>> from torch_concepts import LatentVariable, ConceptVariable
         >>> from torch_concepts.nn import ProbabilisticModel
         >>> from torch_concepts.nn import ParametricCPD
-        >>> from torch_concepts.nn import LinearZC
-        >>> from torch_concepts.nn import LinearCC
+        >>> from torch_concepts.nn import LinearLatentToConcept
+        >>> from torch_concepts.nn import LinearConceptToConcept
         >>> from torch_concepts.distributions import Delta
         >>>
         >>> # Define variables
-        >>> emb_var = InputVariable(concepts='input', parents=[], distribution=Delta, size=32)
-        >>> c1_var = EndogenousVariable(concepts='c1', parents=[emb_var], distribution=Delta, size=1)
-        >>> c2_var = EndogenousVariable(concepts='c2', parents=[c1_var], distribution=Delta, size=1)
+        >>> emb_var = LatentVariable(concepts='input', parents=[], distribution=Delta, size=32)
+        >>> c1_var = ConceptVariable(concepts='c1', parents=[emb_var], distribution=Delta, size=1)
+        >>> c2_var = ConceptVariable(concepts='c2', parents=[c1_var], distribution=Delta, size=1)
         >>>
         >>> # Define CPDs (neural network modules)
         >>> backbone = torch.nn.Linear(in_features=128, out_features=32)
-        >>> encoder = LinearZC(in_features=32, out_features=1)
-        >>> predictor = LinearCC(in_features_endogenous=1, out_features=1)
+        >>> encoder = LinearLatentToConcept(in_latent=32, out_features=1)
+        >>> predictor = LinearConceptToConcept(in_concepts=1, out_features=1)
         >>>
         >>> parametric_cpds = [
         ...     ParametricCPD(concepts='input', parametrization=backbone),
@@ -134,75 +88,61 @@ class ProbabilisticModel(nn.Module):
         Args:
             input_parametric_cpds: List of ParametricCPD objects to initialize.
         """
-        new_variables = []
-        temp_concept_to_variable: Dict[str, Variable] = {}
-
-        # ---- Variable splitting (unchanged) ----
-        for var in self.variables:
-            if len(var.concepts) > 1:
-                for concept in var.concepts:
-                    atomic_var = var[[concept]]
-                    atomic_var.parents = var.parents
-                    atomic_var.metadata = var.metadata.copy()
-                    new_variables.append(atomic_var)
-                    temp_concept_to_variable[concept] = atomic_var
-            else:
-                new_variables.append(var)
-                temp_concept_to_variable[var.concepts[0]] = var
-
-        self.variables = new_variables
-        self.concept_to_variable = temp_concept_to_variable
+        # Build concept_to_variable mapping (each Variable has exactly one concept)
+        self.concept_to_variable: Dict[str, Variable] = {
+            var.concept: var for var in self.variables
+        }
 
         # ---- ParametricCPD modules: fill only self.parametric_cpds (ModuleDict) ----
         for parametric_cpd in input_parametric_cpds:
-            for concept in parametric_cpd.concepts:
-                # Link the parametric_cpd to its variable
-                if concept in self.concept_to_variable:
-                    parametric_cpd.variable = self.concept_to_variable[concept]
-                    parametric_cpd.parents = self.concept_to_variable[concept].parents
+            concept = parametric_cpd.concept
+            # Link the parametric_cpd to its variable
+            if concept in self.concept_to_variable:
+                parametric_cpd.variable = self.concept_to_variable[concept]
+                parametric_cpd.parents = self.concept_to_variable[concept].parents
 
-                if isinstance(parametric_cpd.parametrization, LazyConstructor):
-                    # parametric_cpd.parents is a list of Variable objects (or strings)
-                    # We need to get the actual Variable objects to compute in_features
-                    parent_vars = []
-                    for parent_ref in parametric_cpd.parents:
-                        if isinstance(parent_ref, str):
-                            # Parent is a concept name string
-                            parent_vars.append(self.concept_to_variable[parent_ref])
-                        elif hasattr(parent_ref, 'concepts'):
-                            # Parent is a Variable object, use its concept name to look up
-                            parent_concept = parent_ref.concepts[0]
-                            parent_vars.append(self.concept_to_variable[parent_concept])
-                        else:
-                            raise ValueError(f"Unknown parent type: {type(parent_ref)}")
-                    in_features_endogenous = in_features_exogenous = in_features = 0
-                    for pv in parent_vars:
-                        if isinstance(pv, ExogenousVariable):
-                            in_features_exogenous = pv.size
-                        elif isinstance(pv, EndogenousVariable):
-                            in_features_endogenous += pv.size
-                        else:
-                            in_features += pv.size
-
-                    if isinstance(parametric_cpd.variable, ExogenousVariable):
-                        out_features = 1
+            if isinstance(parametric_cpd.parametrization, LazyConstructor):
+                # parametric_cpd.parents is a list of Variable objects (or strings)
+                # We need to get the actual Variable objects to compute in_features
+                parent_vars = []
+                for parent_ref in parametric_cpd.parents:
+                    if isinstance(parent_ref, str):
+                        # Parent is a concept name string
+                        parent_vars.append(self.concept_to_variable[parent_ref])
+                    elif hasattr(parent_ref, 'concept'):
+                        # Parent is a Variable object, use its concept name to look up
+                        parent_concept = parent_ref.concept
+                        parent_vars.append(self.concept_to_variable[parent_concept])
                     else:
-                        out_features = self.concept_to_variable[concept].size
+                        raise ValueError(f"Unknown parent type: {type(parent_ref)}")
+                in_concepts = in_exogenous = in_latent = 0
+                for pv in parent_vars:
+                    if isinstance(pv, ExogenousVariable):
+                        in_exogenous = pv.size
+                    elif isinstance(pv, ConceptVariable):
+                        in_concepts += pv.size
+                    else:
+                        in_latent += pv.size
 
-                    initialized_layer = parametric_cpd.parametrization.build(
-                        in_features=in_features,
-                        in_features_endogenous=in_features_endogenous,
-                        in_features_exogenous=in_features_exogenous,
-                        out_features=out_features,
-                    )
-                    new_parametrization = ParametricCPD(concepts=[concept], parametrization=initialized_layer)
-                    # Copy parents and variable from old CPD to new CPD
-                    new_parametrization.parents = parametric_cpd.parents
-                    new_parametrization.variable = parametric_cpd.variable
+                if isinstance(parametric_cpd.variable, ExogenousVariable):
+                    out_concepts = 1
                 else:
-                    new_parametrization = parametric_cpd
+                    out_concepts = self.concept_to_variable[concept].size
 
-                self.parametric_cpds[concept] = new_parametrization
+                initialized_layer = parametric_cpd.parametrization.build(
+                    in_latent=in_latent,
+                    in_concepts=in_concepts,
+                    in_exogenous=in_exogenous,
+                    out_concepts=out_concepts,
+                )
+                new_parametrization = ParametricCPD(concepts=concept, parametrization=initialized_layer)
+                # Copy parents and variable from old CPD to new CPD
+                new_parametrization.parents = parametric_cpd.parents
+                new_parametrization.variable = parametric_cpd.variable
+            else:
+                new_parametrization = parametric_cpd
+
+            self.parametric_cpds[concept] = new_parametrization
 
         # ---- Parent resolution (unchanged) ----
         for var in self.variables:
@@ -276,7 +216,7 @@ class ProbabilisticModel(nn.Module):
         else:
             parametrization = module
 
-        f = ParametricCPD(concepts=[concept], parametrization=parametrization)
+        f = ParametricCPD(concepts=concept, parametrization=parametrization)
         target_var = self.concept_to_variable[concept]
         f.variable = target_var
         f.parents = target_var.parents

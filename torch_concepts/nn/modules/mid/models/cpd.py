@@ -31,8 +31,8 @@ class ParametricCPD(nn.Module):
 
     Attributes
     ----------
-    concepts : List[str]
-        List of concept names associated with this CPD.
+    concept : str
+        The concept name associated with this CPD.
     module : nn.Module
         The neural network module used to compute probabilities.
     variable : Optional[Variable]
@@ -80,32 +80,50 @@ class ParametricCPD(nn.Module):
     """
     def __new__(cls, concepts: Union[str, List[str]],
                 parametrization: Union[nn.Module, List[nn.Module]]):
+        """
+        Create new ParametricCPD instance(s).
 
+        If concepts is a string, returns a single ParametricCPD instance.
+        If concepts is a list, returns a list of ParametricCPD instances (one per concept).
+
+        Args:
+            concepts: Single concept name (str) or list of concept names.
+            parametrization: Neural network module or list of modules.
+
+        Returns:
+            ParametricCPD: Single instance if concepts is str.
+            List[ParametricCPD]: List of instances if concepts is list.
+
+        Raises:
+            ValueError: If concepts is str but parametrization is a list.
+            ValueError: If list lengths don't match when concepts is a list.
+        """
         if isinstance(concepts, str):
-            assert not isinstance(parametrization, list)
+            # Single concept: parametrization must NOT be a list
+            if isinstance(parametrization, list):
+                raise ValueError(
+                    "When 'concepts' is a string, 'parametrization' must be a single module, not a list.")
             return object.__new__(cls)
 
+        # concepts is a list -> return list of ParametricCPDs
         n_concepts = len(concepts)
 
-        # If single concept in list, treat as single ParametricCPD
-        if n_concepts == 1:
-            assert not isinstance(parametrization, list), "For single concept, modules must be a single nn.Module."
-            return object.__new__(cls)
-
-        # Standardize module: single value -> list of N values
+        # Standardize parametrization: single value -> list of N values
         if not isinstance(parametrization, list):
             module_list = [parametrization] * n_concepts
         else:
             module_list = parametrization
 
         if len(module_list) != n_concepts:
-            raise ValueError("If concepts list has length N > 1, module must either be a single value or a list of length N.")
+            raise ValueError(
+                f"If concepts is a list of length {n_concepts}, parametrization must either be "
+                f"a single module or a list of length {n_concepts}.")
 
         new_cpd = []
         for i in range(n_concepts):
             instance = object.__new__(cls)
             instance.__init__(
-                concepts=[concepts[i]],
+                concepts=concepts[i],  # Pass as string to create single CPD
                 parametrization=copy.deepcopy(module_list[i])
             )
             new_cpd.append(instance)
@@ -115,10 +133,7 @@ class ParametricCPD(nn.Module):
                  parametrization: Union[nn.Module, List[nn.Module]]):
         super().__init__()
 
-        if isinstance(concepts, str):
-            concepts = [concepts]
-
-        self.concepts = concepts
+        self.concept = concepts
         self.parametrization = parametrization
         self.variable: Optional[Variable] = None
         self.parents: List[Variable] = []
@@ -295,4 +310,4 @@ class ParametricCPD(nn.Module):
         return potential_table
 
     def __repr__(self):
-        return f"ParametricCPD(concepts={self.concepts}, parametrization={self.parametrization.__class__.__name__})"
+        return f"ParametricCPD(concept='{self.concept}', parametrization={self.parametrization.__class__.__name__})"

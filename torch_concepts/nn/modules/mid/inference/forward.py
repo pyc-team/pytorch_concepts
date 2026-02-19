@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
-from ..models.variable import Variable, EndogenousVariable
+from ..models.variable import Variable, ConceptVariable, EndogenousVariable
 from ...low.base.graph import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
@@ -47,7 +47,7 @@ class ForwardInference(BaseInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import InputVariable, EndogenousVariable
+        >>> from torch_concepts import LatentVariable, ConceptVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import ForwardInference, ParametricCPD, ProbabilisticModel
         >>>
@@ -55,9 +55,9 @@ class ForwardInference(BaseInference):
         >>> # Where A is a root concept and B depends on A
         >>>
         >>> # Define variables
-        >>> input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        >>> var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> input_var = LatentVariable('input', parents=[], distribution=Delta, size=10)
+        >>> var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        >>> var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs (modules that compute each variable)
         >>> from torch.nn import Identity, Linear
@@ -75,12 +75,12 @@ class ForwardInference(BaseInference):
         >>> inference = ForwardInference(pgm)
         >>>
         >>> # Check topological order
-        >>> print([v.concepts[0] for v in inference.sorted_variables])
+        >>> print([v.concept for v in inference.sorted_variables])
         >>> # ['input', 'A', 'B']
         >>>
         >>> # Check levels (for parallel computation)
         >>> for i, level in enumerate(inference.levels):
-        ...     print(f"Level {i}: {[v.concepts[0] for v in level]}")
+        ...     print(f"Level {i}: {[v.concept for v in level]}")
         >>> # Level 0: ['input']
         >>> # Level 1: ['A']
         >>> # Level 2: ['B']
@@ -89,7 +89,7 @@ class ForwardInference(BaseInference):
         super().__init__()
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
-        self.concept_map = {var.concepts[0]: var for var in probabilistic_model.variables}
+        self.concept_map = {var.concept: var for var in probabilistic_model.variables}
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -130,13 +130,13 @@ class ForwardInference(BaseInference):
             - sorted_variables: List of all variables in topological order
             - levels: List of lists, each containing variables at the same depth
         """
-        in_degree = {var.concepts[0]: 0 for var in self.probabilistic_model.variables}
-        adj = {var.concepts[0]: [] for var in self.probabilistic_model.variables}
+        in_degree = {var.concept: 0 for var in self.probabilistic_model.variables}
+        adj = {var.concept: [] for var in self.probabilistic_model.variables}
 
         for var in self.probabilistic_model.variables:
-            child_name = var.concepts[0]
+            child_name = var.concept
             for parent_var in var.parents:
-                parent_name = parent_var.concepts[0]
+                parent_name = parent_var.concept
                 adj[parent_name].append(child_name)
                 in_degree[child_name] += 1
 
@@ -155,7 +155,7 @@ class ForwardInference(BaseInference):
             for var in current_level:
                 sorted_variables.append(var)
 
-                for neighbour_name in adj[var.concepts[0]]:
+                for neighbour_name in adj[var.concept]:
                     in_degree[neighbour_name] -= 1
                     if in_degree[neighbour_name] == 0:
                         next_level.append(self.concept_map[neighbour_name])
@@ -186,7 +186,7 @@ class ForwardInference(BaseInference):
             ValueError: If root variable is missing from external_inputs.
             RuntimeError: If parent variable hasn't been computed yet.
         """
-        concept_name = var.concepts[0]
+        concept_name = var.concept
         parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
 
         if parametric_cpd is None:
@@ -203,25 +203,25 @@ class ForwardInference(BaseInference):
 
         # 2. Child nodes (has parents)
         else:
-            parent_endogenous = []
+            parent_concepts = []
             parent_input = []
             for parent_var in var.parents:
-                parent_name = parent_var.concepts[0]
+                parent_name = parent_var.concept
                 if parent_name not in results:
                     # Should not happen with correct topological sort
                     raise RuntimeError(f"Parent data missing: Cannot compute {concept_name} because parent {parent_name} has not been computed yet.")
 
-                if isinstance(parent_var, EndogenousVariable):
-                    # For probabilistic parents, pass endogenous
+                if isinstance(parent_var, ConceptVariable):
+                    # For probabilistic parents, pass concepts
                     weight = 1
                     if self.graph_learner is not None:
                         weight = self.graph_learner.weighted_adj[self.row_labels2id[parent_name], self.col_labels2id[concept_name]]
-                    parent_endogenous.append(results[parent_name] * weight)
+                    parent_concepts.append(results[parent_name] * weight)
                 else:
                     # For continuous parents, pass latent features
                     parent_input.append(results[parent_name])
 
-            parent_kwargs = self.get_parent_kwargs(parametric_cpd, parent_input, parent_endogenous)
+            parent_kwargs = self.get_parent_kwargs(parametric_cpd, parent_input, parent_concepts)
             output_tensor = parametric_cpd.forward(**parent_kwargs)
             if not isinstance(parametric_cpd.parametrization, _InterventionWrapper):
                 output_tensor = self.get_results(output_tensor, var)
@@ -348,7 +348,7 @@ class ForwardInference(BaseInference):
         # Check if any concept in this level has a global policy wrapper
         global_wrappers = []
         for var in level:
-            concept_name = var.concepts[0]
+            concept_name = var.concept
             parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
             if parametric_cpd is not None:
                 if isinstance(parametric_cpd.parametrization, _GlobalPolicyInterventionWrapper):
@@ -403,18 +403,18 @@ class ForwardInference(BaseInference):
 
     def get_parent_kwargs(self, parametric_cpd,
                           parent_input: Union[List[torch.Tensor], torch.Tensor] = None,
-                          parent_endogenous: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+                          parent_concepts: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """
         Prepare keyword arguments for CPD forward pass based on parent outputs.
 
         This method inspects the CPD's forward signature and constructs appropriate
-        kwargs, separating endogenous (from probabilistic parents) and latent features
+        kwargs, separating concepts (from probabilistic parents) and latent features
         (from continuous parents).
 
         Args:
             parametric_cpd: The CPD module to call.
             parent_input: List of continuous parent outputs (latent/exogenous).
-            parent_endogenous: List of probabilistic parent outputs (concept endogenous).
+            parent_concepts: List of probabilistic parent outputs (concept values).
 
         Returns:
             Dictionary of kwargs ready for parametric_cpd.forward(**kwargs).
@@ -435,15 +435,15 @@ class ForwardInference(BaseInference):
                 inspect.Parameter.KEYWORD_ONLY,
             )
         }
-        if allowed not in [{'endogenous'}, {'endogenous', 'input'}, {'endogenous', 'exogenous'}, {'input'}, {'exogenous'}]:
+        if allowed not in [{'concepts'}, {'concepts', 'latent'}, {'concepts', 'exogenous'}, {'latent'}, {'exogenous'}]:
              # standard torch module
-            parent_kwargs[allowed.pop()] = torch.cat(parent_endogenous + parent_input, dim=-1)
+            parent_kwargs[allowed.pop()] = torch.cat(parent_concepts + parent_input, dim=-1)
         else:
-            # this is a PyC layer: separate endogenous and latent inputs
-            if 'endogenous' in allowed:
-                parent_kwargs['endogenous'] = torch.cat(parent_endogenous, dim=-1)
-            if 'input' in allowed:
-                parent_kwargs['input'] = torch.cat(parent_input, dim=-1)
+            # this is a PyC layer: separate concepts and latent inputs
+            if 'concepts' in allowed:
+                parent_kwargs['concepts'] = torch.cat(parent_concepts, dim=-1)
+            if 'latent' in allowed:
+                parent_kwargs['latent'] = torch.cat(parent_input, dim=-1)
             elif 'exogenous' in allowed:
                 parent_kwargs['exogenous'] = torch.cat(parent_input, dim=1)
 
@@ -521,7 +521,7 @@ class ForwardInference(BaseInference):
         """
         if hasattr(self, "_unrolled_query_vars"):
             return self._unrolled_query_vars
-        return set(var.concepts[0] for var in self.probabilistic_model.variables)
+        return set(var.concept for var in self.probabilistic_model.variables)
 
     def unrolled_probabilistic_model(self) -> ProbabilisticModel:
         """
@@ -559,13 +559,13 @@ class ForwardInference(BaseInference):
         # children_map[parent_name] -> set(child_name)
         children_map: Dict[str, Set[str]] = defaultdict(set)
         for var in self.probabilistic_model.variables:
-            child_name = var.concepts[0]
+            child_name = var.concept
             for parent in var.parents:
-                parent_name = parent.concepts[0]
+                parent_name = parent.concept
                 children_map[parent_name].add(child_name)
 
         # All variable names in the ProbabilisticModel
-        all_names: Set[str] = {var.concepts[0] for var in self.probabilistic_model.variables}
+        all_names: Set[str] = {var.concept for var in self.probabilistic_model.variables}
 
         # --- 1) Determine which side we keep for each row/col pair (using adjacency) ---
         # Root CPD (in adjacency sense) = column with no incoming edges
@@ -621,12 +621,12 @@ class ForwardInference(BaseInference):
 
         # --- 3) Rewrite parents using keep_names, rename_map, and adjacency gating ---
         for var in self.probabilistic_model.variables:
-            child_name = var.concepts[0]
+            child_name = var.concept
             new_parents: List[Variable] = []
             seen: Set[str] = set()
 
             for parent in var.parents:
-                parent_orig = parent.concepts[0]
+                parent_orig = parent.concept
 
                 # 3a) Adjacency gating: if adj defines this edge and it's zero, drop it
                 keep_edge = True
@@ -666,7 +666,7 @@ class ForwardInference(BaseInference):
         seen_var_names: Set[str] = set()
 
         for var in self.sorted_variables:
-            name = var.concepts[0]
+            name = var.concept
             if name in keep_names and name not in seen_var_names:
                 new_variables.append(var)
                 seen_var_names.add(name)
@@ -677,10 +677,10 @@ class ForwardInference(BaseInference):
 
         repeats = [self.probabilistic_model.concept_to_variable[p].size for p in row_labels]
         for var in new_variables:
-            parametric_cpd = self.probabilistic_model.parametric_cpds[var.concepts[0]]
+            parametric_cpd = self.probabilistic_model.parametric_cpds[var.concept]
             if parametric_cpd is not None and parametric_cpd not in seen_parametric_cpds:
-                if parametric_cpd.concepts[0] in rename_map.values() and parametric_cpd.concepts[0] in col_labels:
-                    col_id = self.col_labels2id[parametric_cpd.concepts[0]]
+                if parametric_cpd.concept in rename_map.values() and parametric_cpd.concept in col_labels:
+                    col_id = self.col_labels2id[parametric_cpd.concept]
                     mask = adj[:, col_id] != 0
                     mask_without_self_loop = torch.cat((mask[:col_id], mask[col_id + 1:]))
                     rep = repeats[:col_id] + repeats[col_id + 1:]
@@ -690,7 +690,7 @@ class ForwardInference(BaseInference):
                 seen_parametric_cpds.add(parametric_cpd)
 
         # --- 6) Update available_query_vars to reflect the unrolled graph ---
-        self._unrolled_query_vars = set(v.concepts[0] for v in new_variables)
+        self._unrolled_query_vars = set(v.concept for v in new_variables)
 
         return ProbabilisticModel(new_variables, new_parametric_cpds)
 
@@ -700,7 +700,7 @@ class DeterministicInference(ForwardInference):
     Deterministic forward inference for probabilistic graphical models.
 
     This inference engine performs deterministic (maximum likelihood) inference by
-    returning raw endogenous/outputs from CPDs without sampling. It's useful for
+    returning raw logits/outputs from CPDs without sampling. It's useful for
     prediction tasks where you want the most likely values rather than samples
     from the distribution.
 
@@ -710,20 +710,20 @@ class DeterministicInference(ForwardInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import InputVariable, EndogenousVariable
+        >>> from torch_concepts import LatentVariable, ConceptVariable
         >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel, LinearCC
+        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel, LinearConceptToConcept
         >>>
         >>> # Create a simple PGM: latent -> A -> B
-        >>> input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        >>> var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> input_var = LatentVariable('input', parents=[], distribution=Delta, size=10)
+        >>> var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        >>> var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs
         >>> from torch.nn import Identity, Linear
         >>> cpd_emb = ParametricCPD('input', parametrization=Identity())
         >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=LinearCC(1, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
@@ -734,20 +734,20 @@ class DeterministicInference(ForwardInference):
         >>> # Create deterministic inference engine
         >>> inference = DeterministicInference(pgm)
         >>>
-        >>> # Perform inference - returns endogenous, not samples
+        >>> # Perform inference - returns logits, not samples
         >>> x = torch.randn(4, 10)  # batch_size=4, latent_size=10
         >>> results = inference.predict({'input': x})
         >>>
-        >>> # Results contain raw endogenous for Bernoulli variables
-        >>> print(results['A'].shape)  # torch.Size([4, 1]) - endogenous, not {0,1}
-        >>> print(results['B'].shape)  # torch.Size([4, 1]) - endogenous, not {0,1}
+        >>> # Results contain raw logits for Bernoulli variables
+        >>> print(results['A'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
+        >>> print(results['B'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
         >>>
-        >>> # Query specific concepts - returns concatenated endogenous
+        >>> # Query specific concepts - returns concatenated logits
         >>> output = inference.query(['B', 'A'], evidence={'input': x})
         >>> print(output.shape)  # torch.Size([4, 2])
         >>> # output contains [logit_B, logit_A] for each sample
         >>>
-        >>> # Convert endogenous to probabilities if needed
+        >>> # Convert logits to probabilities if needed
         >>> prob_A = torch.sigmoid(results['A'])
         >>> print(prob_A.shape)  # torch.Size([4, 1])
         >>>
@@ -791,22 +791,22 @@ class AncestralSamplingInference(ForwardInference):
     Example:
         >>> import torch
         >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import InputVariable
+        >>> from torch_concepts import LatentVariable
         >>> from torch_concepts.distributions import Delta
         >>> from torch_concepts.nn import AncestralSamplingInference, ParametricCPD, ProbabilisticModel
-        >>> from torch_concepts import EndogenousVariable
-        >>> from torch_concepts.nn import LinearCC
+        >>> from torch_concepts import ConceptVariable
+        >>> from torch_concepts.nn import LinearConceptToConcept
         >>>
         >>> # Create a simple PGM: embedding -> A -> B
-        >>> embedding_var = InputVariable('embedding', parents=[], distribution=Delta, size=10)
-        >>> var_A = EndogenousVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
-        >>> var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        >>> embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
+        >>> var_A = ConceptVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
+        >>> var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         >>>
         >>> # Define CPDs
         >>> from torch.nn import Identity, Linear
         >>> cpd_emb = ParametricCPD('embedding', parametrization=Identity())
         >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=LinearCC(1, 1))
+        >>> cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
         >>>
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
@@ -840,7 +840,7 @@ class AncestralSamplingInference(ForwardInference):
         >>>
         >>> # With relaxed distributions (requires temperature)
         >>> from torch.distributions import RelaxedBernoulli
-        >>> var_A_relaxed = InputVariable('A', parents=['embedding'],
+        >>> var_A_relaxed = LatentVariable('A', parents=['embedding'],
         ...                               distribution=RelaxedBernoulli, size=1)
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A_relaxed, var_B],
