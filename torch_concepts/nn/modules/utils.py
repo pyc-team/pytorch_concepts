@@ -274,7 +274,7 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
     
     Creates index mappings to slice tensors by concept type. Returns indices at two levels:
     1. Concept-level indices: Position in concept list (e.g., concept 0, 1, 2...)
-    2. Logit-level indices: Position in flattened endogenous tensor (accounting for cardinality)
+    2. Logit-level indices: Position in flattened logits tensor (accounting for cardinality)
     
     These precomputed indices avoid repeated computation during training.
     
@@ -289,9 +289,9 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
             - 'binary_idx': List of concept-level indices for binary concepts
             - 'categorical_idx': List of concept-level indices for categorical concepts
             - 'continuous_idx': List of concept-level indices for continuous concepts
-            - 'binary_endogenous_idx': List of logit-level indices for binary concepts
-            - 'categorical_endogenous_idx': List of logit-level indices for categorical concepts
-            - 'continuous_endogenous_idx': List of logit-level indices for continuous concepts
+            - 'binary_logits_idx': List of logit-level indices for binary concepts
+            - 'categorical_logits_idx': List of logit-level indices for categorical concepts
+            - 'continuous_logits_idx': List of logit-level indices for continuous concepts
 
     Example:
         >>> from torch_concepts import Annotations, AxisAnnotation
@@ -306,7 +306,7 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
         ...     },
         ... )})
         >>> groups = get_concept_groups(annotations.get_axis_annotation(1))
-        >>> groups['binary_endogenous_idx']  # Extract endogenous of binary concepts
+        >>> groups['binary_logits_idx']  # Extract logits of binary concepts
         >>> groups['binary_idx']  # Extract labels of binary concepts
     """
     cardinalities = annotations.cardinalities
@@ -328,24 +328,24 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
     binary_idx = [annotations.get_index(label) for label in binary_labels]
     categorical_idx = [annotations.get_index(label) for label in categorical_labels]
 
-    # Pre-compute cumulative indices for endogenous-level(e.g., logits-level (endogenous) slicing
+    # Pre-compute cumulative indices for logit-level slicing
     # cumulative_indices[i] gives the starting position of concept i in the flattened tensor
     # cumulative_indices[i+1] gives the ending position (exclusive)
     cum_idx = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
 
-    # Endogenous (logit-level) indices: position in flattened tensor (accounting for cardinality)
+    # Logit-level indices: position in flattened tensor (accounting for cardinality)
     # These are the actual indices in the output tensor where each concept's logits appear
-    binary_endogenous_idx = []
+    binary_logits_idx = []
     for concept_idx in binary_idx:
-        binary_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
+        binary_logits_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
-    categorical_endogenous_idx = []
+    categorical_logits_idx = []
     for concept_idx in categorical_idx:
-        categorical_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
+        categorical_logits_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
-    continuous_endogenous_idx = []
+    continuous_logits_idx = []
     for concept_idx in continuous_idx:
-        continuous_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
+        continuous_logits_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
     
     return {
         'binary_labels': binary_labels,
@@ -354,9 +354,9 @@ def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
         'binary_idx': binary_idx,
         'categorical_idx': categorical_idx,
         'continuous_idx': continuous_idx,
-        'binary_endogenous_idx': binary_endogenous_idx,
-        'categorical_endogenous_idx': categorical_endogenous_idx,
-        'continuous_endogenous_idx': continuous_endogenous_idx,
+        'binary_logits_idx': binary_logits_idx,
+        'categorical_logits_idx': categorical_logits_idx,
+        'continuous_logits_idx': continuous_logits_idx,
     }
 
 

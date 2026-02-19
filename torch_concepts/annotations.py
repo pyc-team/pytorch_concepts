@@ -219,8 +219,8 @@ class AxisAnnotation:
         else:
             return len(self.labels)
 
-    def get_endogenous_idx(self, labels: List[str]) -> List[int]:
-        """Get endogenous (logit-level) indices for a list of concept labels.
+    def get_logits_idx(self, labels: List[str]) -> List[int]:
+        """Get logit-level indices for a list of concept labels.
         
         This method returns the flattened tensor indices where the logits/values
         for the specified concepts appear, accounting for each concept's cardinality.
@@ -229,7 +229,7 @@ class AxisAnnotation:
             labels: List of concept label names to get indices for.
             
         Returns:
-            List of endogenous indices in the flattened tensor, in the order 
+            List of logit indices in the flattened tensor, in the order 
             corresponding to the input labels.
             
         Raises:
@@ -242,10 +242,10 @@ class AxisAnnotation:
             ...     labels=['color', 'shape', 'size'],
             ...     cardinalities=[3, 2, 1]
             ... )
-            >>> axis.get_endogenous_idx(['color', 'size'])
+            >>> axis.get_logits_idx(['color', 'size'])
             [0, 1, 2, 5]  # color takes positions 0-2, size takes position 5
         """
-        endogenous_indices = []
+        logits_indices = []
         cum_idx = [0] + list(torch.cumsum(torch.tensor(self.cardinalities), dim=0).tolist())
         
         for label in labels:
@@ -255,12 +255,17 @@ class AxisAnnotation:
             except ValueError:
                 raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
             
-            # Get the range of endogenous indices for this concept
+            # Get the range of logit indices for this concept
             start_idx = cum_idx[concept_idx]
             end_idx = cum_idx[concept_idx + 1]
-            endogenous_indices.extend(range(start_idx, end_idx))
+            logits_indices.extend(range(start_idx, end_idx))
         
-        return endogenous_indices
+        return logits_indices
+
+    # Backward compatibility alias
+    def get_endogenous_idx(self, labels: List[str]) -> List[int]:
+        """Alias for get_logits_idx (deprecated, use get_logits_idx instead)."""
+        return self.get_logits_idx(labels)
 
     def to_dict(self) -> Dict[str, Any]:
         """

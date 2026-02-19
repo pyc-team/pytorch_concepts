@@ -16,15 +16,15 @@ def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks
     cumulative_indices = [0] + list(torch.cumsum(torch.tensor(annotations.cardinalities), dim=0).tolist())
 
     # Logit-level indices: position in flattened tensor (accounting for cardinality)
-    concepts_endogenous = []
+    concepts_logits = []
     for idx in concepts_idxs:
-        concepts_endogenous.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
+        concepts_logits.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
 
-    tasks_endogenous = []
+    tasks_logits = []
     for idx in tasks_idxs:
-        tasks_endogenous.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
+        tasks_logits.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
     
-    return concepts_idxs, tasks_idxs, concepts_endogenous, tasks_endogenous
+    return concepts_idxs, tasks_idxs, concepts_logits, tasks_logits
 
 class ConceptLoss(nn.Module):
     """
@@ -106,7 +106,7 @@ class ConceptLoss(nn.Module):
         and sums them to get the total loss.
         
         Args:
-            input (torch.Tensor): Model predictions in endogenous space (logits).
+            input (torch.Tensor): Model predictions (logits).
             target (torch.Tensor): Ground truth labels/values.
             
         Returns:
@@ -116,28 +116,28 @@ class ConceptLoss(nn.Module):
         
         # Binary concepts
         if self.fn_collection.get('binary'):
-            binary_endogenous = input[:, self.groups['binary_endogenous_idx']]
+            binary_logits = input[:, self.groups['binary_logits_idx']]
             binary_targets = target[:, self.groups['binary_idx']].float()
-            total_loss += self.fn_collection['binary'](binary_endogenous, binary_targets)
+            total_loss += self.fn_collection['binary'](binary_logits, binary_targets)
         
         # Categorical concepts
         if self.fn_collection.get('categorical'):
             split_tuple = torch.split(
-                input[:, self.groups['categorical_endogenous_idx']], 
+                input[:, self.groups['categorical_logits_idx']], 
                 [self.cardinalities[i] for i in self.groups['categorical_idx']], 
                 dim=1
             )
-            padded_endogenous = [
+            padded_logits = [
                 nn.functional.pad(
-                    endogenous, 
-                    (0, self.max_card - endogenous.shape[1]), 
+                    logits, 
+                    (0, self.max_card - logits.shape[1]), 
                     value=float('-inf')
-                ) for endogenous in split_tuple
+                ) for logits in split_tuple
             ]
-            cat_endogenous = torch.cat(padded_endogenous, dim=0)
+            cat_logits = torch.cat(padded_logits, dim=0)
             cat_targets = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
             
-            total_loss += self.fn_collection['categorical'](cat_endogenous, cat_targets)
+            total_loss += self.fn_collection['categorical'](cat_logits, cat_targets)
         
         # Continuous concepts
         if self.fn_collection.get('continuous'):
@@ -201,7 +201,7 @@ class WeightedConceptLoss(nn.Module):
         """Compute weighted loss for concepts and tasks.
         
         Args:
-            input (torch.Tensor): Model predictions in endogenous space (logits).
+            input (torch.Tensor): Model predictions (logits).
             target (torch.Tensor): Ground truth labels/values.
         
         Returns:

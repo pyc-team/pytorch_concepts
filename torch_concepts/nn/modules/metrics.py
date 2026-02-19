@@ -51,7 +51,7 @@ Example:
         )
 
         # During training
-        predictions = torch.randn(32, 5)  # 2 binary + 3 categorical (endogenous space)
+        predictions = torch.randn(32, 5)  # 2 binary + 3 categorical (logits space)
         targets = torch.cat([
             torch.randint(0, 2, (32, 2)),  # binary concepts
             torch.randint(0, 3, (32, 1))   # categorical concept
@@ -179,7 +179,7 @@ class ConceptMetrics(nn.Module):
             )
             
             # Simulate training batch
-            predictions = torch.randn(32, 2)  # endogenous predictions
+            predictions = torch.randn(32, 2)  # logits predictions
             targets = torch.randint(0, 2, (32, 2))  # binary targets
             
             # Update metrics
@@ -524,12 +524,12 @@ class ConceptMetrics(nn.Module):
         on concept types. For summary metrics, it aggregates all concepts of each type.
         For per-concept metrics, it extracts individual concept predictions.
         
-        The preds tensor should be in the endogenous space (after applying the concept
+        The preds tensor should be in the logits space (before applying the concept
         distributions' transformations), and the target tensor should contain the
         ground truth concept values.
         
         Args:
-            preds (torch.Tensor): Model predictions in endogenous space. Shape depends
+            preds (torch.Tensor): Model predictions as logits. Shape depends
                 on concept types:
                 
                 - Binary concepts: (batch_size, n_binary_concepts)
@@ -567,7 +567,7 @@ class ConceptMetrics(nn.Module):
             **Mixed concept types**::
                 
                 # 2 binary + 1 categorical (3 classes)
-                # Endogenous space: 2 binary + 3 categorical = 5 dims
+                # Logits space: 2 binary + 3 categorical = 5 dims
                 predictions = torch.randn(32, 5)
                 targets = torch.cat([
                     torch.randint(0, 2, (32, 2)),  # binary targets
@@ -595,26 +595,26 @@ class ConceptMetrics(nn.Module):
             # Update summary metrics
             if self.summary_metrics:
                 if 'SUMMARY-binary_' in key and self.groups['binary_labels']:
-                    binary_pred = preds[:, self.groups['binary_endogenous_idx']]
+                    binary_pred = preds[:, self.groups['binary_logits_idx']]
                     binary_target = target[:, self.groups['binary_idx']].float()
                     metric_collection[key].update(binary_pred, binary_target)
                     continue
                 
                 elif 'SUMMARY-categorical_' in key and self.groups['categorical_labels']:
-                    # Pad and stack categorical endogenous
+                    # Pad and stack categorical logits
                     split_tuple = torch.split(
-                        preds[:, self.groups['categorical_endogenous_idx']], 
+                        preds[:, self.groups['categorical_logits_idx']], 
                         [self.cardinalities[i] for i in self.groups['categorical_idx']], 
                         dim=1
                     )
-                    padded_endogenous = [
+                    padded_logits = [
                         nn.functional.pad(
-                            endogenous, 
-                            (0, self.max_card - endogenous.shape[1]), 
+                            logits, 
+                            (0, self.max_card - logits.shape[1]), 
                             value=float('-inf')
-                        ) for endogenous in split_tuple
+                        ) for logits in split_tuple
                     ]
-                    cat_pred = torch.cat(padded_endogenous, dim=0)
+                    cat_pred = torch.cat(padded_logits, dim=0)
                     cat_target = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
                     metric_collection[key].update(cat_pred, cat_target)
                     continue
@@ -630,24 +630,24 @@ class ConceptMetrics(nn.Module):
                 if concept_name not in self.concept_names:
                     concept_name = key_noprefix.split('_')[0]
                 
-                endogenous_idx = self.concept_annotations.get_endogenous_idx([concept_name])
+                logits_idx = self.concept_annotations.get_logits_idx([concept_name])
                 c_idx = self.concept_annotations.get_index(concept_name)
                 c_type = self.types[c_idx]
                 card = self.cardinalities[c_idx]
                 
                 if c_type == 'discrete' and card == 1:
                     metric_collection[key].update(
-                        preds[:, endogenous_idx], 
+                        preds[:, logits_idx], 
                         target[:, c_idx:c_idx+1].float()
                     )
                 elif c_type == 'discrete' and card > 1:
                     metric_collection[key].update(
-                        preds[:, endogenous_idx], 
+                        preds[:, logits_idx], 
                         target[:, c_idx].long()
                     )
                 elif c_type == 'continuous':
                     metric_collection[key].update(
-                        preds[:, endogenous_idx], 
+                        preds[:, logits_idx], 
                         target[:, c_idx:c_idx+1]
                     )
                 else:
