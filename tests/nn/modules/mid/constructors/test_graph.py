@@ -8,7 +8,7 @@ import torch
 import pandas as pd
 from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts import ConceptGraph
-from torch_concepts.nn import BipartiteModel, LinearCC
+from torch_concepts.nn import BipartiteModel, LinearConceptToConcept
 from torch_concepts.nn import GraphModel
 from torch_concepts.nn import LazyConstructor
 from torch.distributions import Bernoulli
@@ -44,7 +44,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         self.assertIsNotNone(model)
         self.assertTrue(self.graph.is_dag())
@@ -56,7 +56,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         # A and B have no parents (root nodes)
         # C and D have parents (internal nodes)
@@ -74,7 +74,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         order = model.graph_order
         # Check that parents come before children
@@ -107,7 +107,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         self.assertEqual(len(model.root_nodes), 1)
         self.assertIn('A', model.root_nodes)
@@ -136,7 +136,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         # Should have 2 root nodes (A and C)
         self.assertEqual(len(model.root_nodes), 2)
@@ -166,7 +166,7 @@ class TestGraphModel(unittest.TestCase):
             input_size=784,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         # A is the only root
         self.assertEqual(len(model.root_nodes), 1)

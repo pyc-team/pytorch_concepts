@@ -36,8 +36,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         parent references.
         """
         # Create parent and child variables
-        parent = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
         
         # Create CPDs with LazyConstructor
         parent_cpd = ParametricCPD(
@@ -58,7 +58,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Store original parent reference
         original_parents = child_cpd.parents
         self.assertEqual(len(original_parents), 1)
-        self.assertEqual(original_parents[0].concepts, ['parent'])
+        self.assertEqual(original_parents[0].concept, 'parent')
         
         # Create model (this will trigger lazy initialization)
         model = ProbabilisticModel(
@@ -85,13 +85,13 @@ class TestCPDParentPreservation(unittest.TestCase):
         # After build, check that parents are still present
         self.assertEqual(len(child_cpd_from_model.parents), 1,
                         "Child CPD should still have 1 parent after lazy initialization")
-        self.assertEqual(child_cpd_from_model.parents[0].concepts, ['parent'],
+        self.assertEqual(child_cpd_from_model.parents[0].concept, 'parent',
                         "Child CPD parent should still reference the parent variable")
 
     def test_cpd_variable_preserved_after_lazy_build(self):
         """Test that variable reference is preserved when LazyConstructor builds the CPD."""
         # Create variable
-        var = Variable(concepts=['test_var'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='test_var', parents=[], distribution=Bernoulli, size=1)
         
         # Create CPD with LazyConstructor
         cpd = ParametricCPD(
@@ -105,7 +105,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Store original variable reference
         original_variable = cpd.variable
         self.assertIsNotNone(original_variable)
-        self.assertEqual(original_variable.concepts, ['test_var'])
+        self.assertEqual(original_variable.concept, 'test_var')
         
         # Create model
         model = ProbabilisticModel(
@@ -128,16 +128,16 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Check that variable reference is preserved
         self.assertIsNotNone(cpd_from_model.variable,
                             "CPD should still have variable reference after lazy initialization")
-        self.assertEqual(cpd_from_model.variable.concepts, ['test_var'],
+        self.assertEqual(cpd_from_model.variable.concept, 'test_var',
                         "CPD variable should still reference the correct variable")
 
     def test_multiple_parents_preserved(self):
         """Test that multiple parent references are all preserved."""
         # Create parent variables
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Bernoulli, size=1)
-        parent3 = Variable(concepts=['p3'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent1, parent2, parent3], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
+        parent2 = Variable(concepts='p2', parents=[], distribution=Bernoulli, size=1)
+        parent3 = Variable(concepts='p3', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent1, parent2, parent3], distribution=Bernoulli, size=1)
         
         # Create CPDs
         p1_cpd = ParametricCPD(concepts='p1', parametrization=LazyConstructor(nn.Linear, out_features=1))
@@ -176,7 +176,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Check all parents are preserved
         self.assertEqual(len(child_cpd_from_model.parents), 3,
                         "Child CPD should have 3 parents after lazy initialization")
-        parent_concepts = [p.concepts[0] for p in child_cpd_from_model.parents]
+        parent_concepts = [p.concept for p in child_cpd_from_model.parents]
         self.assertIn('p1', parent_concepts)
         self.assertIn('p2', parent_concepts)
         self.assertIn('p3', parent_concepts)
@@ -188,10 +188,10 @@ class TestCPDParentPreservation(unittest.TestCase):
         Each CPD should maintain its parent references after lazy initialization.
         """
         # Create hierarchical variables
-        var_a = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        var_b = Variable(concepts=['B'], parents=[var_a], distribution=Bernoulli, size=1)
-        var_c = Variable(concepts=['C'], parents=[var_b], distribution=Bernoulli, size=1)
-        var_d = Variable(concepts=['D'], parents=[var_c], distribution=Bernoulli, size=1)
+        var_a = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', parents=[var_a], distribution=Bernoulli, size=1)
+        var_c = Variable(concepts='C', parents=[var_b], distribution=Bernoulli, size=1)
+        var_d = Variable(concepts='D', parents=[var_c], distribution=Bernoulli, size=1)
         
         # Create CPDs with lazy constructors
         cpd_a = ParametricCPD(concepts='A', parametrization=LazyConstructor(nn.Linear, out_features=1))
@@ -237,7 +237,7 @@ class TestCPDParentPreservation(unittest.TestCase):
             self.assertEqual(len(cpd.parents), expected_parent_count,
                             f"CPD {concept_name} should have {expected_parent_count} parents")
             if expected_parent_name:
-                self.assertEqual(cpd.parents[0].concepts[0], expected_parent_name,
+                self.assertEqual(cpd.parents[0].concept, expected_parent_name,
                                 f"CPD {concept_name} parent should be {expected_parent_name}")
 
     def test_categorical_variables_parents_preserved(self):
@@ -247,8 +247,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         calculations that depend on parent references.
         """
         # Create parent with higher cardinality
-        parent = Variable(concepts=['parent'], parents=[], distribution=Categorical, size=5)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Categorical, size=5)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
         
         # Create CPDs
         parent_cpd = ParametricCPD(
@@ -301,8 +301,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         This is a control test to ensure the fix doesn't break non-lazy CPDs.
         """
         # Create variables
-        parent = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
         
         # Create CPDs with non-lazy parametrization
         parent_cpd = ParametricCPD(
@@ -332,7 +332,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Check that parents are preserved (no build needed)
         self.assertEqual(len(child_cpd_from_model.parents), 1,
                         "Child CPD should have 1 parent (non-lazy case)")
-        self.assertEqual(child_cpd_from_model.parents[0].concepts, ['parent'],
+        self.assertEqual(child_cpd_from_model.parents[0].concept, 'parent',
                         "Child CPD parent should reference parent variable")
 
 
@@ -346,9 +346,9 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         This calculation depends on having correct parent references.
         """
         # Create parents with different sizes
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Categorical, size=3)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Categorical, size=5)
-        child = Variable(concepts=['child'], parents=[parent1, parent2], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', parents=[], distribution=Categorical, size=3)
+        parent2 = Variable(concepts='p2', parents=[], distribution=Categorical, size=5)
+        child = Variable(concepts='child', parents=[parent1, parent2], distribution=Bernoulli, size=1)
         
         # Create CPDs
         p1_cpd = ParametricCPD(concepts='p1', parametrization=LazyConstructor(nn.Linear, out_features=3))
@@ -398,8 +398,8 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         that doesn't actually run a forward pass, just verifies parent preservation.
         """
         # Create simple parent-child structure
-        parent = Variable(concepts=['parent'], parents=[], distribution=Categorical, size=4)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Categorical, size=4)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
         
         # Create CPDs with lazy constructors
         parent_cpd = ParametricCPD(

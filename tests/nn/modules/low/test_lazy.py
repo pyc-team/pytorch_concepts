@@ -133,10 +133,10 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
 
         module = lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         self.assertIsInstance(module, nn.Linear)
@@ -148,10 +148,10 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
 
         module = lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=10,
-            in_features=8,
-            in_features_exogenous=2
+            out_concepts=5,
+            in_concepts=10,
+            in_latent=8,
+            in_exogenous=2
         )
 
         self.assertEqual(module.in_features, 8)  # 10 + 8 + 2
@@ -162,10 +162,10 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
 
         module = lazy_constructor.build(
-            out_features=3,
-            in_features_endogenous=None,
-            in_features=15,
-            in_features_exogenous=None
+            out_concepts=3,
+            in_concepts=None,
+            in_latent=15,
+            in_exogenous=None
         )
 
         self.assertEqual(module.in_features, 15)
@@ -182,10 +182,10 @@ class TestLazyConstructor(unittest.TestCase):
         """Test forward pass after building."""
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         x = torch.randn(2, 10)
@@ -197,19 +197,19 @@ class TestLazyConstructor(unittest.TestCase):
         """Test forward with additional arguments."""
         # Create a custom module that accepts extra args
         class CustomModule(nn.Module):
-            def __init__(self, in_features, out_features):
+            def __init__(self, in_latent, out_concepts):
                 super().__init__()
-                self.linear = nn.Linear(in_features, out_features)
+                self.linear = nn.Linear(in_latent, out_concepts)
 
             def forward(self, x, scale=1.0):
                 return self.linear(x) * scale
 
         lazy_constructor = LazyConstructor(CustomModule)
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         x = torch.randn(2, 10)
@@ -223,18 +223,18 @@ class TestLazyConstructor(unittest.TestCase):
 
         # First build
         module1 = lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         # Second build
         module2 = lazy_constructor.build(
-            out_features=3,
-            in_features_endogenous=None,
-            in_features=8,
-            in_features_exogenous=None
+            out_concepts=3,
+            in_concepts=None,
+            in_latent=8,
+            in_exogenous=None
         )
 
         # Should be different modules
@@ -246,10 +246,10 @@ class TestLazyConstructor(unittest.TestCase):
         lazy_constructor = LazyConstructor(nn.Linear)
 
         returned = lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         self.assertIs(returned, lazy_constructor.module)
@@ -265,20 +265,20 @@ class TestLazyConstructor(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             lazy_constructor.build(
-                out_features=5,
-                in_features_endogenous=10,
-                in_features=None,
-                in_features_exogenous=None
+                out_concepts=5,
+                in_concepts=10,
+                in_latent=None,
+                in_exogenous=None
             )
 
     def test_gradient_flow(self):
         """Test that gradients flow through lazy_constructor."""
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         x = torch.randn(2, 10, requires_grad=True)
@@ -292,10 +292,10 @@ class TestLazyConstructor(unittest.TestCase):
         """Test that module parameters are accessible."""
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         params = list(lazy_constructor.parameters())
@@ -305,10 +305,10 @@ class TestLazyConstructor(unittest.TestCase):
         """Test training/eval mode switching."""
         lazy_constructor = LazyConstructor(nn.Linear)
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         # Should start in training mode
@@ -339,10 +339,10 @@ class TestLazyConstructorWithComplexModules(unittest.TestCase):
         # This test verifies that lazy_constructor handles this gracefully
         try:
             lazy_constructor.build(
-                out_features=5,
-                in_features_endogenous=10,
-                in_features=None,
-                in_features_exogenous=None
+                out_concepts=5,
+                in_concepts=10,
+                in_latent=None,
+                in_exogenous=None
             )
             # If it builds, test forward
             x = torch.randn(2, 10)
@@ -355,9 +355,9 @@ class TestLazyConstructorWithComplexModules(unittest.TestCase):
     def test_with_custom_module(self):
         """Test with custom module class."""
         class CustomLayer(nn.Module):
-            def __init__(self, in_features, out_features, activation='relu'):
+            def __init__(self, in_latent, out_concepts, activation='relu'):
                 super().__init__()
-                self.linear = nn.Linear(in_features, out_features)
+                self.linear = nn.Linear(in_latent, out_concepts)
                 self.activation = activation
 
             def forward(self, x):
@@ -368,10 +368,10 @@ class TestLazyConstructorWithComplexModules(unittest.TestCase):
 
         lazy_constructor = LazyConstructor(CustomLayer, activation='relu')
         lazy_constructor.build(
-            out_features=5,
-            in_features_endogenous=None,
-            in_features=10,
-            in_features_exogenous=None
+            out_concepts=5,
+            in_concepts=None,
+            in_latent=10,
+            in_exogenous=None
         )
 
         x = torch.randn(2, 10)

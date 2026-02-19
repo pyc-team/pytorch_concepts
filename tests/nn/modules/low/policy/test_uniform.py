@@ -13,19 +13,19 @@ class TestUniformPolicy(unittest.TestCase):
 
     def test_initialization(self):
         """Test uniform policy initialization."""
-        policy = UniformPolicy(out_features=10)
-        self.assertEqual(policy.out_features, 10)
+        policy = UniformPolicy(out_concepts=10)
+        self.assertEqual(policy.out_concepts, 10)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        policy = UniformPolicy(out_features=10)
+        policy = UniformPolicy(out_concepts=10)
         endogenous = torch.randn(4, 10)
         output = policy(endogenous)
         self.assertEqual(output.shape, (4, 10))
 
     def test_uniform_values(self):
         """Test that output is uniform across concepts."""
-        policy = UniformPolicy(out_features=10)
+        policy = UniformPolicy(out_concepts=10)
         endogenous = torch.randn(4, 10)
         output = policy(endogenous)
 
@@ -36,7 +36,7 @@ class TestUniformPolicy(unittest.TestCase):
 
     def test_different_inputs_same_output(self):
         """Test that different inputs produce same uniform output."""
-        policy = UniformPolicy(out_features=5)
+        policy = UniformPolicy(out_concepts=5)
 
         endogenous1 = torch.randn(2, 5)
         endogenous2 = torch.randn(2, 5)

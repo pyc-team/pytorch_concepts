@@ -14,9 +14,9 @@ concepts only receive their own exogenous variables.
 import unittest
 import torch
 from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn import BipartiteModel, LinearCC
+from torch_concepts.nn import BipartiteModel, LinearConceptToConcept
 from torch_concepts.nn import LazyConstructor
-from torch_concepts.nn.modules.low.encoders.exogenous import LinearZU
+from torch_concepts.nn.modules.low.encoders.exogenous import LinearLatentToExogenous
 from torch.distributions import Bernoulli, Categorical
 
 
@@ -55,15 +55,15 @@ class TestExogenousPrefixMatching(unittest.TestCase):
             input_size=100,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC),
-            source_exogenous=LazyConstructor(LinearZU, exogenous_size=16),
+            predictor=LazyConstructor(LinearConceptToConcept),
+            source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=16),
             use_source_exogenous=True
         )
         
         # Check that variables were created with correct parent counts
-        car_vars = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Car']
-        carcost_vars = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'CarCost']
-        driver_vars = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Driver']
+        car_vars = [v for v in model.probabilistic_model.variables if v.concept == 'Car']
+        carcost_vars = [v for v in model.probabilistic_model.variables if v.concept == 'CarCost']
+        driver_vars = [v for v in model.probabilistic_model.variables if v.concept == 'Driver']
         
         self.assertEqual(len(car_vars), 1)
         self.assertEqual(len(carcost_vars), 1)
@@ -83,14 +83,14 @@ class TestExogenousPrefixMatching(unittest.TestCase):
                         f"Driver should have 3 exogenous parent variables, got {len(driver_var.parents)}")
         
         # Verify parent names start with correct prefix (not substrings of other concepts)
-        car_parent_names = [p if isinstance(p, str) else p.concepts[0] for p in car_var.parents]
+        car_parent_names = [p if isinstance(p, str) else p.concept for p in car_var.parents]
         for name in car_parent_names:
             self.assertTrue(name.startswith('exog_Car_state_'),
                           f"Car parent {name} should start with 'exog_Car_state_'")
             self.assertFalse(name.startswith('exog_CarCost_state_'),
                            f"Car should not have CarCost exogenous variable: {name}")
         
-        carcost_parent_names = [p if isinstance(p, str) else p.concepts[0] for p in carcost_var.parents]
+        carcost_parent_names = [p if isinstance(p, str) else p.concept for p in carcost_var.parents]
         for name in carcost_parent_names:
             self.assertTrue(name.startswith('exog_CarCost_state_'),
                           f"CarCost parent {name} should start with 'exog_CarCost_state_'")
@@ -123,22 +123,22 @@ class TestExogenousPrefixMatching(unittest.TestCase):
             input_size=50,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC),
-            source_exogenous=LazyConstructor(LinearZU, exogenous_size=16),
+            predictor=LazyConstructor(LinearConceptToConcept),
+            source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=16),
             use_source_exogenous=True
         )
         
         # Check each concept has only its own exogenous variables
-        a_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'A'][0]
-        ab_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'AB'][0]
-        abc_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'ABC'][0]
+        a_var = [v for v in model.probabilistic_model.variables if v.concept == 'A'][0]
+        ab_var = [v for v in model.probabilistic_model.variables if v.concept == 'AB'][0]
+        abc_var = [v for v in model.probabilistic_model.variables if v.concept == 'ABC'][0]
         
         self.assertEqual(len(a_var.parents), 2, "A should have 2 exogenous variables")
         self.assertEqual(len(ab_var.parents), 3, "AB should have 3 exogenous variables")
         self.assertEqual(len(abc_var.parents), 4, "ABC should have 4 exogenous variables")
         
         # Verify exact prefix matching - A should not get AB or ABC variables
-        a_parent_names = [p if isinstance(p, str) else p.concepts[0] for p in a_var.parents]
+        a_parent_names = [p if isinstance(p, str) else p.concept for p in a_var.parents]
         for name in a_parent_names:
             self.assertTrue(name.startswith('exog_A_state_'),
                           f"A parent should start with 'exog_A_state_', got {name}")
@@ -174,13 +174,13 @@ class TestExogenousPrefixMatching(unittest.TestCase):
             input_size=60,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC),
-            source_exogenous=LazyConstructor(LinearZU, exogenous_size=16),
+            predictor=LazyConstructor(LinearConceptToConcept),
+            source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=16),
             use_source_exogenous=True
         )
         
-        age_group_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Age_Group'][0]
-        age_group_risk_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Age_Group_Risk'][0]
+        age_group_var = [v for v in model.probabilistic_model.variables if v.concept == 'Age_Group'][0]
+        age_group_risk_var = [v for v in model.probabilistic_model.variables if v.concept == 'Age_Group_Risk'][0]
         
         self.assertEqual(len(age_group_var.parents), 3,
                         "Age_Group should have 3 exogenous variables")
@@ -188,7 +188,7 @@ class TestExogenousPrefixMatching(unittest.TestCase):
                         "Age_Group_Risk should have 5 exogenous variables")
         
         # Verify Age_Group doesn't get Age_Group_Risk's exogenous variables
-        age_group_parent_names = [p if isinstance(p, str) else p.concepts[0] for p in age_group_var.parents]
+        age_group_parent_names = [p if isinstance(p, str) else p.concept for p in age_group_var.parents]
         for name in age_group_parent_names:
             self.assertTrue(name.startswith('exog_Age_Group_state_'),
                           f"Age_Group parent should start with 'exog_Age_Group_state_', got {name}")
@@ -224,15 +224,15 @@ class TestExogenousPrefixMatching(unittest.TestCase):
             input_size=70,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC),
-            source_exogenous=LazyConstructor(LinearZU, exogenous_size=16),
+            predictor=LazyConstructor(LinearConceptToConcept),
+            source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=16),
             use_source_exogenous=True
         )
         
         # Check that root concepts have correct exogenous parents
-        other_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Other'][0]
-        othercar_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'OtherCar'][0]
-        othercarcost_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'OtherCarCost'][0]
+        other_var = [v for v in model.probabilistic_model.variables if v.concept == 'Other'][0]
+        othercar_var = [v for v in model.probabilistic_model.variables if v.concept == 'OtherCar'][0]
+        othercarcost_var = [v for v in model.probabilistic_model.variables if v.concept == 'OtherCarCost'][0]
         
         self.assertEqual(len(other_var.parents), 2,
                         "Other should have 2 exogenous variables")
@@ -242,7 +242,7 @@ class TestExogenousPrefixMatching(unittest.TestCase):
                         "OtherCarCost should have 4 exogenous variables")
         
         # Verify OtherCar doesn't get OtherCarCost's exogenous (the original bug!)
-        othercar_parent_names = [p if isinstance(p, str) else p.concepts[0] for p in othercar_var.parents]
+        othercar_parent_names = [p if isinstance(p, str) else p.concept for p in othercar_var.parents]
         for name in othercar_parent_names:
             self.assertTrue(name.startswith('exog_OtherCar_state_'),
                           f"OtherCar parent should start with 'exog_OtherCar_state_', got {name}")
@@ -277,19 +277,19 @@ class TestExogenousPrefixMatching(unittest.TestCase):
             input_size=80,
             annotations=annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC),
+            predictor=LazyConstructor(LinearConceptToConcept),
             use_source_exogenous=False
         )
         
         # Encoders should not have exogenous parents when source_exogenous=False
-        car_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'Car'][0]
-        carcost_var = [v for v in model.probabilistic_model.variables if v.concepts[0] == 'CarCost'][0]
+        car_var = [v for v in model.probabilistic_model.variables if v.concept == 'Car'][0]
+        carcost_var = [v for v in model.probabilistic_model.variables if v.concept == 'CarCost'][0]
 
         # Without source exogenous, root concepts should only have 'input' as parent, no exogenous variables
         self.assertEqual(len(car_var.parents), 1,
                         "Car should have 1 parent (input) when use_source_exogenous=False")
-        self.assertEqual(type(car_var.parents[0]).__name__, 'InputVariable',
-                        "Car's only parent should be InputVariable")
+        self.assertEqual(type(car_var.parents[0]).__name__, 'LatentVariable',
+                        "Car's only parent should be LatentVariable")
         
         # Verify no exogenous variables exist
         exog_vars = [v for v in model.probabilistic_model.variables if hasattr(v, 'name') and v.name.startswith('exog_')]

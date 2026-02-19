@@ -5,90 +5,90 @@ Tests all predictor modules (linear, embedding, hypernet).
 """
 import unittest
 import torch
-from torch_concepts.nn import HyperLinearCUC
+from torch_concepts.nn import HyperlinearConceptExogenousToConcept
 
 
-class TestHyperLinearCUC(unittest.TestCase):
-    """Test HyperLinearCUC."""
+class TestHyperlinearConceptExogenousToConcept(unittest.TestCase):
+    """Test HyperlinearConceptExogenousToConcept."""
 
     def test_initialization(self):
         """Test hypernetwork predictor initialization."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=10,
-            in_features_exogenous=128,
-            embedding_size=64
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=10,
+            in_exogenous=128,
+            hidden_size=64
         )
-        self.assertEqual(predictor.in_features_endogenous, 10)
-        self.assertEqual(predictor.in_features_exogenous, 128)
-        self.assertEqual(predictor.embedding_size, 64)
+        self.assertEqual(predictor.in_concepts, 10)
+        self.assertEqual(predictor.in_exogenous, 128)
+        self.assertEqual(predictor.hidden_size, 64)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=10,
-            in_features_exogenous=128,
-            embedding_size=64
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=10,
+            in_exogenous=128,
+            hidden_size=64
         )
-        concept_endogenous = torch.randn(4, 10)
+        concepts = torch.randn(4, 10)
         exogenous = torch.randn(4, 3, 128)
-        output = predictor(endogenous=concept_endogenous, exogenous=exogenous)
+        output = predictor(concepts=concepts, exogenous=exogenous)
         self.assertEqual(output.shape, (4, 3))
 
     def test_without_bias(self):
         """Test hypernetwork without bias."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=10,
-            in_features_exogenous=128,
-            embedding_size=64,
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=10,
+            in_exogenous=128,
+            hidden_size=64,
             use_bias=False
         )
-        concept_endogenous = torch.randn(4, 10)
+        concepts = torch.randn(4, 10)
         exogenous = torch.randn(4, 3, 128)
-        output = predictor(endogenous=concept_endogenous, exogenous=exogenous)
+        output = predictor(concepts=concepts, exogenous=exogenous)
         self.assertEqual(output.shape, (4, 3))
 
     def test_gradient_flow(self):
         """Test gradient flow through hypernetwork."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=8,
-            in_features_exogenous=64,
-            embedding_size=32
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=8,
+            in_exogenous=64,
+            hidden_size=32
         )
-        concept_endogenous = torch.randn(2, 8, requires_grad=True)
+        concepts = torch.randn(2, 8, requires_grad=True)
         exogenous = torch.randn(2, 2, 64, requires_grad=True)
-        output = predictor(endogenous=concept_endogenous, exogenous=exogenous)
+        output = predictor(concepts=concepts, exogenous=exogenous)
         loss = output.sum()
         loss.backward()
-        self.assertIsNotNone(concept_endogenous.grad)
+        self.assertIsNotNone(concepts.grad)
         self.assertIsNotNone(exogenous.grad)
 
     def test_custom_activation(self):
         """Test with custom activation."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=10,
-            in_features_exogenous=128,
-            embedding_size=64,
-            in_activation=torch.sigmoid
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=10,
+            in_exogenous=128,
+            hidden_size=64,
+            activation=torch.sigmoid
         )
-        concept_endogenous = torch.randn(2, 10)
+        concepts = torch.randn(2, 10)
         exogenous = torch.randn(2, 3, 128)
-        output = predictor(endogenous=concept_endogenous, exogenous=exogenous)
+        output = predictor(concepts=concepts, exogenous=exogenous)
         self.assertEqual(output.shape, (2, 3))
 
     def test_sample_adaptive_weights(self):
         """Test that different samples get different weights."""
-        predictor = HyperLinearCUC(
-            in_features_endogenous=5,
-            in_features_exogenous=32,
-            embedding_size=16
+        predictor = HyperlinearConceptExogenousToConcept(
+            in_concepts=5,
+            in_exogenous=32,
+            hidden_size=16
         )
         # Different exogenous features should produce different predictions
-        concept_endogenous = torch.ones(2, 5)  # Same concepts
+        concepts = torch.ones(2, 5)  # Same concepts
         exogenous1 = torch.randn(1, 1, 32)
         exogenous2 = torch.randn(1, 1, 32)
 
-        output1 = predictor(endogenous=concept_endogenous[:1], exogenous=exogenous1)
-        output2 = predictor(endogenous=concept_endogenous[:1], exogenous=exogenous2)
+        output1 = predictor(concepts=concepts[:1], exogenous=exogenous1)
+        output2 = predictor(concepts=concepts[:1], exogenous=exogenous2)
 
         # Different exogenous should produce different outputs
         self.assertFalse(torch.allclose(output1, output2))

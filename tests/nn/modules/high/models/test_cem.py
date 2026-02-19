@@ -74,7 +74,7 @@ class TestCEMInitialization(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names=['task1'],
-            exogenous_size=32
+            embedding_size=32
         )
         
         self.assertIsInstance(model.model, nn.Module)
@@ -315,7 +315,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=10,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         self.assertIsInstance(model, ConceptEmbeddingModel)
@@ -342,7 +342,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=12,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=20
+            embedding_size=20
         )
         
         self.assertIsInstance(model, ConceptEmbeddingModel)
@@ -369,7 +369,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=15,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=24
+            embedding_size=24
         )
         
         self.assertIsInstance(model, ConceptEmbeddingModel)
@@ -395,7 +395,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=10,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         x = torch.randn(8, 10)
@@ -426,7 +426,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=12,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=20
+            embedding_size=20
         )
         
         x = torch.randn(6, 12)
@@ -458,7 +458,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=15,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=24
+            embedding_size=24
         )
         
         x = torch.randn(10, 15)
@@ -490,7 +490,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=10,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         x = torch.randn(4, 10)
@@ -520,7 +520,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=12,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=20
+            embedding_size=20
         )
         
         x = torch.randn(5, 12)
@@ -552,7 +552,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=15,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=24
+            embedding_size=24
         )
         
         x = torch.randn(7, 15)
@@ -589,7 +589,7 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 input_size=8,
                 annotations=self.ann,
                 task_names=['task'],
-                exogenous_size=exogenous_size
+                embedding_size=exogenous_size
             )
             
             x = torch.randn(2, 8)
@@ -605,7 +605,7 @@ class TestCEMExogenousVariables(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         # Model should have bipartite structure with exogenous
@@ -862,7 +862,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         self.assertIsNotNone(model)
@@ -887,7 +887,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         x = torch.randn(4, 8)
@@ -915,7 +915,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         self.assertIsNotNone(model)
@@ -940,7 +940,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         x = torch.randn(4, 8)
@@ -969,7 +969,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         self.assertIsNotNone(model)
@@ -995,7 +995,7 @@ class TestCEMConceptTypes(unittest.TestCase):
             input_size=8,
             annotations=ann,
             task_names=['task'],
-            exogenous_size=16
+            embedding_size=16
         )
         
         x = torch.randn(4, 8)

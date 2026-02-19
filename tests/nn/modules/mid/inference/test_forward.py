@@ -2,7 +2,7 @@ import unittest
 import pytest
 from torch_concepts.nn.modules.low.inference.intervention import _GlobalPolicyInterventionWrapper
 from torch.distributions import Normal
-from torch_concepts.nn.modules.low.predictors.linear import LinearCC
+from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 from torch.nn import Linear, Identity
 from copy import deepcopy
 import torch
@@ -10,8 +10,8 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, Annotations, AxisAnnotation, ConceptGraph
-from torch_concepts.nn import AncestralSamplingInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearZU, \
-    LinearUC, HyperLinearCUC
+from torch_concepts.nn import AncestralSamplingInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
+    LinearExogenousToConcept, HyperlinearConceptExogenousToConcept
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
@@ -335,14 +335,14 @@ class TestForwardInferenceGetParentKwargs:
     """Test get_parent_kwargs method."""
 
     def test_get_parent_kwargs_with_endogenous_only(self):
-        """Test get_parent_kwargs with only endogenous parents."""
+        """Test get_parent_kwargs with only concept parents."""
         input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
         var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
         var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
@@ -351,25 +351,25 @@ class TestForwardInferenceGetParentKwargs:
 
         inference = SimpleForwardInference(model)
 
-        parent_endogenous = [torch.randn(4, 1)]
-        kwargs = inference.get_parent_kwargs(cpd_B, [], parent_endogenous)
+        parent_concepts = [torch.randn(4, 1)]
+        kwargs = inference.get_parent_kwargs(cpd_B, [], parent_concepts)
 
-        assert 'endogenous' in kwargs
-        assert kwargs['endogenous'].shape == (4, 1)
+        assert 'concepts' in kwargs
+        assert kwargs['concepts'].shape == (4, 1)
 
     def test_get_parent_kwargs_with_input_and_endogenous(self):
-        """Test get_parent_kwargs with both input and endogenous parents."""
-        from torch_concepts.nn.modules.low.predictors.linear import LinearCC
+        """Test get_parent_kwargs with both latent and concept parents."""
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 
-        # Create a module that accepts both input and endogenous
+        # Create a module that accepts both latent and concepts
         class CustomLinear(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.linear_input = nn.Linear(10, 5)
-                self.linear_endo = nn.Linear(1, 5)
+                self.linear_latent = nn.Linear(10, 5)
+                self.linear_concepts = nn.Linear(1, 5)
 
-            def forward(self, input, endogenous):
-                return self.linear_input(input) + self.linear_endo(endogenous)
+            def forward(self, latent, concepts):
+                return self.linear_latent(latent) + self.linear_concepts(concepts)
 
         input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
         var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
@@ -386,12 +386,12 @@ class TestForwardInferenceGetParentKwargs:
 
         inference = SimpleForwardInference(model)
 
-        parent_input = [torch.randn(4, 10)]
-        parent_endogenous = [torch.randn(4, 1)]
-        kwargs = inference.get_parent_kwargs(cpd_B, parent_input, parent_endogenous)
+        parent_latent = [torch.randn(4, 10)]
+        parent_concepts = [torch.randn(4, 1)]
+        kwargs = inference.get_parent_kwargs(cpd_B, parent_latent, parent_concepts)
 
-        assert 'input' in kwargs
-        assert 'endogenous' in kwargs
+        assert 'latent' in kwargs
+        assert 'concepts' in kwargs
 
 
 class TestForwardInferenceCycleDetection:
@@ -404,9 +404,9 @@ class TestForwardInferenceCycleDetection:
         var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
         var_C = EndogenousVariable('C', parents=['B'], distribution=Bernoulli, size=1)
 
-        cpd_A = ParametricCPD('A', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
-        cpd_B = ParametricCPD('B', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        cpd_A = ParametricCPD('A', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[var_A, var_B, var_C],
@@ -430,7 +430,7 @@ class TestForwardInferenceComplexHierarchy:
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
         cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=2, out_features=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
@@ -462,9 +462,9 @@ class TestForwardInferenceComplexHierarchy:
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
-        cpd_D = ParametricCPD('D', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
@@ -559,9 +559,9 @@ class TestForwardInferenceBasic:
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        # Use LinearCC for endogenous-only parents
-        cpd_B = ParametricCPD('B', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        # Use LinearConceptToConcept for endogenous-only parents
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
@@ -572,10 +572,10 @@ class TestForwardInferenceBasic:
 
         # Check topological order
         assert len(inference.sorted_variables) == 4
-        assert inference.sorted_variables[0].concepts[0] == 'input'
-        assert inference.sorted_variables[1].concepts[0] == 'A'
-        assert inference.sorted_variables[2].concepts[0] == 'B'
-        assert inference.sorted_variables[3].concepts[0] == 'C'
+        assert inference.sorted_variables[0].concept == 'input'
+        assert inference.sorted_variables[1].concept == 'A'
+        assert inference.sorted_variables[2].concept == 'B'
+        assert inference.sorted_variables[3].concept == 'C'
 
         # Check levels
         assert len(inference.levels) == 4
@@ -614,8 +614,8 @@ class TestForwardInferenceBasic:
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
         cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        # Use LinearCC for multiple endogenous parents
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=2, out_features=1))
+        # Use LinearConceptToConcept for multiple endogenous parents
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
@@ -672,8 +672,8 @@ class TestForwardInferencePredict:
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        # Use LinearCC for endogenous parent
-        cpd_B = ParametricCPD('B', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        # Use LinearConceptToConcept for endogenous parent
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
@@ -874,9 +874,9 @@ class TestForwardInferenceEdgeCases:
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
         cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        # Use LinearCC for multiple endogenous parents
-        cpd_C = ParametricCPD('C', parametrization=LinearCC(in_features_endogenous=2, out_features=1))
-        cpd_D = ParametricCPD('D', parametrization=LinearCC(in_features_endogenous=1, out_features=1))
+        # Use LinearConceptToConcept for multiple endogenous parents
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
@@ -943,7 +943,7 @@ class TestForwardInference(unittest.TestCase):
         inference = SimpleForwardInference(pgm)
 
         # Check topological order
-        sorted_names = [v.concepts[0] for v in inference.sorted_variables]
+        sorted_names = [v.concept for v in inference.sorted_variables]
         self.assertEqual(sorted_names, ['input', 'A', 'B'])
 
     def test_levels_computation(self):
@@ -1281,10 +1281,10 @@ class TestForwardInference(unittest.TestCase):
         concept_model = GraphModel(model_graph=model_graph,
                                    input_size=latent_dims,
                                    annotations=annotations,
-                                   source_exogenous=LazyConstructor(LinearZU, exogenous_size=11),
-                                   internal_exogenous=LazyConstructor(LinearZU, exogenous_size=7),
-                                   encoder=LazyConstructor(LinearUC),
-                                   predictor=LazyConstructor(HyperLinearCUC, embedding_size=20))
+                                   source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=11),
+                                   internal_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=7),
+                                   encoder=LazyConstructor(LinearExogenousToConcept),
+                                   predictor=LazyConstructor(HyperlinearConceptExogenousToConcept, hidden_size=20))
 
         # graph learning init
         graph_learner = WANDAGraphLearner(concept_names, task_names)

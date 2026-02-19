@@ -11,7 +11,6 @@ from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.mid.models.probabilistic_model import (
-    _reinitialize_with_new_param,
     ProbabilisticModel,
 )
 
@@ -26,23 +25,23 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_add_single_variable(self):
         """Test adding a single variable."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         model = ProbabilisticModel(variables=[var], parametric_cpds=[])
         self.assertEqual(len(model.variables), 1)
 
     def test_add_multiple_variables(self):
         """Test adding multiple variables."""
         vars_list = [
-            Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['B'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['C'], parents=[], distribution=Bernoulli, size=1)
+            Variable(concepts='A', parents=[], distribution=Bernoulli, size=1),
+            Variable(concepts='B', parents=[], distribution=Bernoulli, size=1),
+            Variable(concepts='C', parents=[], distribution=Bernoulli, size=1)
         ]
         model = ProbabilisticModel(variables=vars_list, parametric_cpds=[])
         self.assertEqual(len(model.variables), 3)
 
     def test_add_cpds(self):
         """Test adding cpds to model."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
 
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
@@ -50,7 +49,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_variables_and_cpds_linkage(self):
         """Test that variables and cpds are properly linked."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
 
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
@@ -58,8 +57,8 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_hierarchical_structure(self):
         """Test hierarchical variable structure."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
 
         parent_cpd = ParametricCPD(concepts='parent', parametrization=nn.Linear(10, 1))
         child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(1, 1))
@@ -73,16 +72,16 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_multiple_parents(self):
         """Test variable with multiple parents."""
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent1, parent2], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
+        parent2 = Variable(concepts='p2', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent1, parent2], distribution=Bernoulli, size=1)
 
         model = ProbabilisticModel(variables=[parent1, parent2, child], parametric_cpds=[])
         self.assertEqual(len(model.variables), 3)
 
     def test_categorical_variable(self):
         """Test with categorical variables."""
-        var = Variable(concepts=['color'], parents=[], distribution=Categorical, size=3)
+        var = Variable(concepts='color', parents=[], distribution=Categorical, size=3)
         cpd = ParametricCPD(concepts='color', parametrization=nn.Linear(10, 3))
 
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
@@ -90,7 +89,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_delta_distribution(self):
         """Test with Delta (deterministic) distribution."""
-        var = Variable(concepts=['feature'], parents=[], distribution=Delta, size=1)
+        var = Variable(concepts='feature', parents=[], distribution=Delta, size=1)
         cpd = ParametricCPD(concepts='feature', parametrization=nn.Linear(10, 1))
 
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
@@ -99,8 +98,8 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_concept_to_variable_mapping(self):
         """Test concept name to variable mapping."""
         vars_list = [
-            Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['B'], parents=[], distribution=Categorical, size=3)
+            Variable(concepts='A', parents=[], distribution=Bernoulli, size=1),
+            Variable(concepts='B', parents=[], distribution=Categorical, size=3)
         ]
         model = ProbabilisticModel(variables=vars_list, parametric_cpds=[])
         # Model should create mapping from concept names to variables
@@ -108,17 +107,17 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_get_module_of_concept(self):
         """Test get_module_of_concept method."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
 
         module = model.get_module_of_concept('A')
         self.assertIsNotNone(module)
-        self.assertEqual(module.concepts, ['A'])
+        self.assertEqual(module.concept, 'A')
 
     def test_get_module_of_nonexistent_concept(self):
         """Test get_module_of_concept with non-existent concept."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
         model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
 
@@ -127,9 +126,9 @@ class TestProbabilisticModel(unittest.TestCase):
 
     def test_multiple_parent_combinations(self):
         """Test cpd with multiple parents."""
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent1, parent2], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
+        parent2 = Variable(concepts='p2', parents=[], distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', parents=[parent1, parent2], distribution=Bernoulli, size=1)
 
         p1_cpd = ParametricCPD(concepts='p1', parametrization=nn.Linear(10, 1))
         p2_cpd = ParametricCPD(concepts='p2', parametrization=nn.Linear(10, 1))
@@ -148,7 +147,7 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
     def test_cpd_output_matches_variable_size(self):
         """Test that cpd output size matches variable size."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
 
         x = torch.randn(4, 10)
@@ -157,8 +156,8 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
     def test_parent_child_feature_matching(self):
         """Test that child input features match parent output features."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Categorical, size=3)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', parents=[], distribution=Categorical, size=3)
+        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
 
         child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(3, 1))
 
@@ -168,10 +167,10 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
     def test_complex_hierarchy(self):
         """Test complex hierarchical structure."""
-        var_a = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        var_b = Variable(concepts=['B'], parents=[var_a], distribution=Bernoulli, size=1)
-        var_c = Variable(concepts=['C'], parents=[var_a], distribution=Bernoulli, size=1)
-        var_d = Variable(concepts=['D'], parents=[var_b, var_c], distribution=Bernoulli, size=1)
+        var_a = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', parents=[var_a], distribution=Bernoulli, size=1)
+        var_c = Variable(concepts='C', parents=[var_a], distribution=Bernoulli, size=1)
+        var_d = Variable(concepts='D', parents=[var_b, var_c], distribution=Bernoulli, size=1)
 
         cpd_a = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
         cpd_b = ParametricCPD(concepts='B', parametrization=nn.Linear(1, 1))
@@ -187,9 +186,9 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
     def test_mixed_distributions(self):
         """Test model with mixed distribution types."""
-        var_delta = Variable(concepts=['emb'], parents=[], distribution=Delta, size=10)
-        var_bern = Variable(concepts=['binary'], parents=[var_delta], distribution=Bernoulli, size=1)
-        var_cat = Variable(concepts=['multi'], parents=[var_delta], distribution=Categorical, size=3)
+        var_delta = Variable(concepts='emb', parents=[], distribution=Delta, size=10)
+        var_bern = Variable(concepts='binary', parents=[var_delta], distribution=Bernoulli, size=1)
+        var_cat = Variable(concepts='multi', parents=[var_delta], distribution=Categorical, size=3)
 
         cpd_delta = ParametricCPD(concepts='emb', parametrization=nn.Identity())
         cpd_bern = ParametricCPD(concepts='binary', parametrization=nn.Linear(10, 1))
@@ -200,14 +199,6 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
             parametric_cpds=[cpd_delta, cpd_bern, cpd_cat]
         )
         self.assertEqual(len(model.variables), 3)
-
-
-def test_reinitialize_parametric_cpd_parametrization_changed():
-    orig = ParametricCPD(concepts='a', parametrization=nn.Linear(3, 1))
-    new_param = nn.Linear(5, 1)
-    new = _reinitialize_with_new_param(orig, 'parametrization', new_param)
-    assert isinstance(new, ParametricCPD)
-    assert new.parametrization.in_features == 5
 
 
 def test_probabilistic_model_no_parents_build_cpt_and_potential_delta():
@@ -251,13 +242,13 @@ def test_probabilistic_model_with_parent_bernolli_and_helpers():
 
     # get_by_distribution
     bern_vars = model.get_by_distribution(Bernoulli)
-    assert any(v.concepts[0] == 'p' for v in bern_vars)
-    assert any(v.concepts[0] == 'c' for v in bern_vars)
+    assert any(v.concept == 'p' for v in bern_vars)
+    assert any(v.concept == 'c' for v in bern_vars)
 
     # get_variable_parents resolves string parent to Variable
     parents_of_c = model.get_variable_parents('c')
     assert len(parents_of_c) == 1
-    assert parents_of_c[0].concepts[0] == 'p'
+    assert parents_of_c[0].concept == 'p'
 
     # get_module_of_concept returns the ParametricCPD module
     mod_c = model.get_module_of_concept('c')

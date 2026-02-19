@@ -27,7 +27,7 @@ class TestVariable(unittest.TestCase):
             distribution=Bernoulli,
             size=1
         )
-        self.assertEqual(var.concepts, ['color'])
+        self.assertEqual(var.concept, 'color')
         self.assertEqual(var.distribution, Bernoulli)
 
     def test_multiple_concepts_initialization(self):
@@ -39,14 +39,14 @@ class TestVariable(unittest.TestCase):
             size=1
         )
         self.assertEqual(len(vars_list), 3)
-        self.assertEqual(vars_list[0].concepts, ['A'])
-        self.assertEqual(vars_list[1].concepts, ['B'])
-        self.assertEqual(vars_list[2].concepts, ['C'])
+        self.assertEqual(vars_list[0].concept, 'A')
+        self.assertEqual(vars_list[1].concept, 'B')
+        self.assertEqual(vars_list[2].concept, 'C')
 
     def test_variable_with_delta_distribution(self):
         """Test variable with Delta distribution."""
         var = Variable(
-            concepts=['feature'],
+            concepts='feature',
             parents=[],
             distribution=Delta,
             size=1
@@ -56,7 +56,7 @@ class TestVariable(unittest.TestCase):
     def test_variable_with_categorical_distribution(self):
         """Test variable with Categorical distribution."""
         var = Variable(
-            concepts=['color'],
+            concepts='color',
             parents=[],
             distribution=Categorical,
             size=3
@@ -67,7 +67,7 @@ class TestVariable(unittest.TestCase):
     def test_variable_with_normal_distribution(self):
         """Test variable with Normal distribution."""
         var = Variable(
-            concepts=['continuous'],
+            concepts='continuous',
             parents=[],
             distribution=Normal,
             size=1
@@ -77,13 +77,13 @@ class TestVariable(unittest.TestCase):
     def test_variable_with_parents(self):
         """Test variable with parent variables."""
         parent_var = Variable(
-            concepts=['parent'],
+            concepts='parent',
             parents=[],
             distribution=Bernoulli,
             size=1
         )
         child_var = Variable(
-            concepts=['child'],
+            concepts='child',
             parents=[parent_var],
             distribution=Bernoulli,
             size=1
@@ -93,19 +93,19 @@ class TestVariable(unittest.TestCase):
 
     def test_variable_out_features(self):
         """Test out_features property."""
-        var_binary = Variable(concepts=['binary'], parents=[], distribution=Bernoulli, size=1)
+        var_binary = Variable(concepts='binary', parents=[], distribution=Bernoulli, size=1)
         self.assertEqual(var_binary.out_features, 1)
 
-        var_cat = Variable(concepts=['category'], parents=[], distribution=Categorical, size=5)
+        var_cat = Variable(concepts='category', parents=[], distribution=Categorical, size=5)
         self.assertEqual(var_cat.out_features, 5)
 
     def test_variable_in_features(self):
         """Test in_features property with parents."""
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Categorical, size=3)
+        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
+        parent2 = Variable(concepts='p2', parents=[], distribution=Categorical, size=3)
 
         child = Variable(
-            concepts=['child'],
+            concepts='child',
             parents=[parent1, parent2],
             distribution=Bernoulli,
             size=1
@@ -116,7 +116,7 @@ class TestVariable(unittest.TestCase):
         """Test variable with metadata."""
         metadata = {'description': 'test variable', 'importance': 0.8}
         var = Variable(
-            concepts=['test'],
+            concepts='test',
             parents=[],
             distribution=Bernoulli,
             size=1,
@@ -183,9 +183,9 @@ class TestVariableMultiConceptCreation:
         )
         assert isinstance(vars_list, list)
         assert len(vars_list) == 3
-        assert vars_list[0].concepts == ['a']
-        assert vars_list[1].concepts == ['b']
-        assert vars_list[2].concepts == ['c']
+        assert vars_list[0].concept == 'a'
+        assert vars_list[1].concept == 'b'
+        assert vars_list[2].concept == 'c'
 
     def test_multi_concept_with_distribution_list(self):
         """Test multi-concept with per-concept distributions."""
@@ -271,7 +271,7 @@ class TestVariableOutFeatures:
 
     def test_out_features_categorical(self):
         """Test out_features for Categorical distribution."""
-        var = Variable(concepts=['c'], parents=[], distribution=Categorical, size=5)
+        var = Variable(concepts='c', parents=[], distribution=Categorical, size=5)
         assert var.out_features == 5
 
     def test_out_features_normal(self):
@@ -279,12 +279,10 @@ class TestVariableOutFeatures:
         var = Variable(concepts='n', parents=[], distribution=Normal, size=4)
         assert var.out_features == 4
 
-    def test_out_features_cached(self):
-        """Test that out_features is cached after first call."""
+    def test_out_features_equals_size(self):
+        """Test that out_features is always equal to size."""
         var = Variable(concepts='x', parents=[], distribution=Delta, size=2)
-        _ = var.out_features
-        assert var._out_features == 2
-        # Second call should use cached value
+        assert var.out_features == var.size
         assert var.out_features == 2
 
 
@@ -315,42 +313,6 @@ class TestVariableInFeatures:
         var = Variable(concepts='c', parents=['not_a_variable'], distribution=Delta, size=1)
         with pytest.raises(TypeError, match="is not a Variable object"):
             _ = var.in_features
-
-
-class TestVariableSlicing:
-    """Test Variable.__getitem__ slicing."""
-
-    def test_slice_single_concept_by_string(self):
-        """Test slicing to get single concept by string."""
-        vars_list = Variable(concepts=['a', 'b', 'c'], parents=[], distribution=Delta, size=2)
-        var_a = vars_list[0]
-        sliced = var_a['a']
-        assert sliced.concepts == ['a']
-        assert sliced.size == 2
-
-    def test_slice_single_concept_by_list(self):
-        """Test slicing by list with single concept."""
-        # When creating multiple concepts, Variable returns a list
-        # So we need to slice the individual Variable, not the list
-        vars_list = Variable(concepts=['a', 'b'], parents=[], distribution=Delta, size=2)
-        # vars_list is actually a list of 2 Variables when multiple concepts
-        # Take the first one and slice it
-        var_a = vars_list[0]  # This is Variable with concept 'a'
-        sliced = var_a[['a']]
-        assert sliced.concepts == ['a']
-
-    def test_slice_concept_not_found_raises_error(self):
-        """Test that slicing non-existent concept raises error."""
-        var = Variable(concepts='x', parents=[], distribution=Delta, size=1)
-        with pytest.raises(ValueError, match="not found in variable"):
-            var['y']
-
-    def test_slice_categorical_multiple_concepts_raises_error(self):
-        """Test that slicing Categorical into multiple concepts raises error."""
-        var = Variable(concepts=['cat'], parents=[], distribution=Categorical, size=3)
-        # This should work fine for single concept
-        sliced = var['cat']
-        assert sliced.concepts == ['cat']
 
 
 class TestVariableRepr:
@@ -389,7 +351,7 @@ class TestEndogenousVariable:
             distribution=Bernoulli,
             size=1
         )
-        assert var.metadata['variable_type'] == 'endogenous'
+        assert var.metadata['variable_type'] == 'concept'
         assert var.distribution is Bernoulli
 
     def test_endogenous_variable_preserves_custom_metadata(self):
@@ -401,7 +363,7 @@ class TestEndogenousVariable:
             size=1,
             metadata={'custom': 'data'}
         )
-        assert var.metadata['variable_type'] == 'endogenous'
+        assert var.metadata['variable_type'] == 'concept'
         assert var.metadata['custom'] == 'data'
 
 
@@ -436,17 +398,39 @@ class TestExogenousVariable:
 class TestVariableEdgeCases:
     """Test edge cases and special scenarios."""
 
-    def test_single_concept_with_list_distribution(self):
-        """Test single concept with distribution as list."""
-        var = Variable(
+    def test_single_concept_with_list_distribution_raises_error(self):
+        """Test that single concept (str) with distribution as list raises error."""
+        with pytest.raises(ValueError, match="must be a single value, not a list"):
+            Variable(
+                concepts='x',
+                parents=[],
+                distribution=[Delta],
+                size=1
+            )
+
+    def test_single_concept_with_list_size_raises_error(self):
+        """Test that single concept (str) with size as list raises error."""
+        with pytest.raises(ValueError, match="must be a single value, not a list"):
+            Variable(
+                concepts='x',
+                parents=[],
+                distribution=Delta,
+                size=[2]
+            )
+
+    def test_single_concept_in_list_returns_list(self):
+        """Test that single concept in list returns list with one Variable."""
+        vars_list = Variable(
             concepts=['x'],
             parents=[],
-            distribution=[Delta],
-            size=[2]
+            distribution=Delta,
+            size=2
         )
-        assert var.concepts == ['x']
-        assert var.distribution is Delta
-        assert var.size == 2
+        assert isinstance(vars_list, list)
+        assert len(vars_list) == 1
+        assert vars_list[0].concept == 'x'
+        assert vars_list[0].distribution is Delta
+        assert vars_list[0].size == 2
 
     def test_relaxed_bernoulli_out_features(self):
         """Test out_features with RelaxedBernoulli."""
@@ -458,23 +442,8 @@ class TestVariableEdgeCases:
         )
         assert var.out_features == 1
 
-    def test_variable_with_metadata_copy_on_slice(self):
-        """Test that metadata is copied when slicing."""
-        # Create a single variable with multiple concepts
-        # For this test, we need a single Variable object, not a list
-        # Use string concept to ensure single Variable
-        var = Variable(
-            concepts='ab',  # Single string = single Variable
-            parents=[],
-            distribution=Delta,
-            size=1,
-            metadata={'original': True}
-        )
-        sliced = var[['ab']]  # Slice by concept list
-        assert sliced.metadata['original'] is True
-        # Note: Since this is slicing the same concept,
-        # the metadata is copied in the new Variable instance
-
 
 if __name__ == '__main__':
-    unittest.main()
+    # Use pytest to run all tests (including non-unittest classes)
+    import sys
+    sys.exit(pytest.main([__file__, '-v', '-s']))
