@@ -58,7 +58,10 @@ def main():
     # =========================================================================
     print("\n1. Loading CelebA dataset...")
     
-    # CelebADataset will automatically download if not present
+    # CelebADataset will try to automatically download the raw data if not present
+    # in the root directory. If this fails, please manually download the required files
+    # ["img_align_celeba.zip", "list_attr_celeba.txt", "list_eval_partition.txt"]
+    # and place them in the target root directory.
     # Note: CelebA is a large dataset (~1.4GB for images)
     dataset = CelebADataset(root='./data/celeba')
 
