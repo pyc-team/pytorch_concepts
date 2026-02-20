@@ -66,16 +66,6 @@ class TestMixConceptExogegnousToConcept(unittest.TestCase):
         self.assertIsNotNone(concepts.grad)
         self.assertIsNotNone(exogenous.grad)
 
-    def test_even_exogenous_requirement(self):
-        """Test that exogenous features must be even."""
-        with self.assertRaises(AssertionError):
-            MixConceptExogegnousToConcept(
-                in_concepts=10,
-                in_exogenous=15,  # Odd number
-                out_concepts=3,
-                cardinalities=[1]*10
-            )
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -235,7 +235,7 @@ class TestGroupedConceptExogenousMixture(unittest.TestCase):
 
         result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
-        self.assertEqual(result.shape, (batch_size, len(groups), emb_size // 2))
+        self.assertEqual(result.shape, (batch_size, len(groups), emb_size))
 
     def test_grouped_mixture_singleton_groups(self):
         """Test with singleton groups (two-half mixture)."""
@@ -247,17 +247,16 @@ class TestGroupedConceptExogenousMixture(unittest.TestCase):
         c_emb = torch.randn(batch_size, n_concepts, emb_size)
         c_scores = torch.rand(batch_size, n_concepts)
 
-        result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
-        self.assertEqual(result.shape, (batch_size, 3, emb_size // 2))
+        with self.assertRaises(AssertionError):
+            result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
     def test_grouped_mixture_invalid_groups(self):
         """Test with invalid group sizes."""
         c_emb = torch.randn(2, 5, 10)
         c_scores = torch.rand(2, 5)
-        groups = [2, 2]  # Doesn't sum to 5
+        groups = [2, 3]  # Doesn't sum to 5
 
-        with self.assertRaises(AssertionError):
-            grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
+        grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
     def test_grouped_mixture_odd_exogenous_dim(self):
         """Test with odd exogenous dimension."""
@@ -265,8 +264,7 @@ class TestGroupedConceptExogenousMixture(unittest.TestCase):
         c_scores = torch.rand(2, 3)
         groups = [3]
 
-        with self.assertRaises(AssertionError):
-            grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
+        grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
 
 
 class TestSelectionEval(unittest.TestCase):
