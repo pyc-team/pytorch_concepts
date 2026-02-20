@@ -74,18 +74,16 @@ class TestLinearExogenousToConcept(unittest.TestCase):
         """Test encoder initialization."""
         encoder = LinearExogenousToConcept(
             in_exogenous=16,
-            n_exogenous_per_concept=2
         )
-        self.assertEqual(encoder.n_exogenous_per_concept, 2)
+        self.assertEqual(encoder.in_exogenous, 16)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
         encoder = LinearExogenousToConcept(
             in_exogenous=8,
-            n_exogenous_per_concept=2
         )
         # Input shape: (batch, concepts, in_latent * n_exogenous_per_concept)
-        exog = torch.randn(4, 5, 16)  # 8 * 2 = 16
+        exog = torch.randn(4, 5, 8)
         output = encoder(exog)
         self.assertEqual(output.shape, (4, 5))
 
@@ -93,7 +91,6 @@ class TestLinearExogenousToConcept(unittest.TestCase):
         """Test with single exogenous per concept."""
         encoder = LinearExogenousToConcept(
             in_exogenous=10,
-            n_exogenous_per_concept=1
         )
         exog = torch.randn(3, 4, 10)
         output = encoder(exog)
@@ -103,9 +100,8 @@ class TestLinearExogenousToConcept(unittest.TestCase):
         """Test gradient flow."""
         encoder = LinearExogenousToConcept(
             in_exogenous=8,
-            n_exogenous_per_concept=2
         )
-        exog = torch.randn(2, 3, 16, requires_grad=True)
+        exog = torch.randn(2, 3, 8, requires_grad=True)
         output = encoder(exog)
         loss = output.sum()
         loss.backward()

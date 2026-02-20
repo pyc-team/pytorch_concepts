@@ -30,6 +30,17 @@ def main():
     task_idx = list(dataset.graph.edge_index[1].unique().numpy())
     c_train = dataset.concepts[:, concept_idx]
     y_train = dataset.concepts[:, task_idx]
+    c_new = torch.randint(0, 5, size=(len(c_train), 1))
+    c_new_one_hot = torch.nn.functional.one_hot(c_new.squeeze(), 5).float()
+    c_train = torch.cat([
+        c_new_one_hot,
+        c_train[:, 0].unsqueeze(-1),
+        1-c_train[:, 0].unsqueeze(-1),
+        c_train[:, 1].unsqueeze(-1),
+        c_new_one_hot,
+        c_train[:, 0].unsqueeze(-1),
+        c_train[:, 1].unsqueeze(-1),
+    ], dim=1)
 
     # Get dimensions
     n_features = x_train.shape[1]
@@ -56,7 +67,7 @@ def main():
         in_concepts=n_concepts,
         in_exogenous=exogenous_size,
         out_concepts=n_tasks,
-        cardinalities=[1, 1]
+        cardinalities=[5, 2, 1, 5, 1, 1]
     )
     model = ModuleDict(
         {"latent_encoder": latent_encoder,
