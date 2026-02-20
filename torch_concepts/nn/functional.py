@@ -42,6 +42,74 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
     return concept_names
 
 
+def replace_expand_cols(c_emb: torch.Tensor, idx, c_emb_split: torch.Tensor):
+    """
+    Works for:
+      c_emb: [B, D]        with c_emb_split: [B, m, k]
+      c_emb: [B, D, E]     with c_emb_split: [B, m, k, E]
+
+    idx:         (m,) indices in D to replace (any order)
+    c_emb_split: replacement blocks in SAME order as idx
+    returns:     [B, D - m + m*k] or [B, D - m + m*k, E]
+    """
+    if c_emb.dim() not in (2, 3):
+        raise ValueError(f"c_emb must be 2D or 3D, got shape {tuple(c_emb.shape)}")
+
+    B, D = c_emb.shape[:2]
+    tail_shape = c_emb.shape[2:]              # () for 2D, (E,) for 3D
+
+    idx = torch.as_tensor(idx, device=c_emb.device, dtype=torch.long)
+    idx_sorted, perm = idx.sort()
+    m = idx.numel()
+
+    # infer k from c_emb_split
+    if c_emb.dim() == 2:
+        # c_emb_split: [B, m, k]
+        k = c_emb_split.size(2)
+        c_emb_split_flat = c_emb_split[:, perm, :].reshape(B, m * k)              # [B, m*k]
+    else:
+        # c_emb_split: [B, m, k, E]
+        k = c_emb_split.size(2)
+        c_emb_split_flat = c_emb_split[:, perm, :, :].reshape(B, m * k, *tail_shape)  # [B, m*k, E]
+
+    # counts per original column: 1 for kept, k for replaced
+    counts = torch.ones(D, device=c_emb.device, dtype=torch.long)
+    counts[idx_sorted] = k
+    L = int(counts.sum().item())
+
+    # output position -> original D index
+    orig = torch.arange(D, device=c_emb.device).repeat_interleave(counts)  # [L]
+
+    # offset within expanded block
+    start = torch.cumsum(counts, 0) - counts                               # [D]
+    off = torch.arange(L, device=c_emb.device) - start[orig]               # [L]
+
+    # map original column -> replacement block id (0..m-1), or -1 if not replaced
+    col2block = torch.full((D,), -1, device=c_emb.device, dtype=torch.long)
+    col2block[idx_sorted] = torch.arange(m, device=c_emb.device)
+
+    is_rep = col2block[orig] >= 0
+    rep_col = col2block[orig] * k + off                                    # invalid where ~is_rep
+    rep_col_safe = torch.where(is_rep, rep_col, rep_col.new_zeros(rep_col.shape))
+
+    if c_emb.dim() == 2:
+        # gather originals
+        out = c_emb.gather(1, orig.view(1, L).expand(B, L))                 # [B, L]
+        # gather replacements (safe)
+        rep = c_emb_split_flat.gather(1, rep_col_safe.view(1, L).expand(B, L))
+        # overwrite
+        out[:, is_rep] = rep[:, is_rep]
+        return out
+    else:
+        # gather originals
+        out = c_emb.gather(1, orig.view(1, L, 1).expand(B, L, *tail_shape)) # [B, L, E]
+        # gather replacements (safe)
+        rep = c_emb_split_flat.gather(1, rep_col_safe.view(1, L, 1).expand(B, L, *tail_shape))
+        # overwrite
+        out[:, is_rep, :] = rep[:, is_rep, :]
+        return out
+
+
 def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
                                       c_scores: torch.Tensor,
                                       groups: list[int]) -> torch.Tensor:
@@ -94,11 +162,8 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
-    assert D % 2 == 0, f"exogenous dim must be even (two halves). Current dim: {D}"
-    E = D // 2
+    assert torch.all(torch.tensor(groups) > 1), f"All group sizes must be greater than 1. Current group_sizes: {groups}"
 
-    # Split concept exogenous into two halves
-    emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
     # Build group ids per concept: [0,0,...,0, 1,1,...,1, ...]
@@ -107,14 +172,12 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     gs = torch.as_tensor(groups, device=device)
     group_id = torch.repeat_interleave(torch.arange(G, device=device), gs)  # [C]
 
-    # For singleton groups, do the two-half mixture; otherwise use emb_a weighted by the score
-    is_singleton_concept = (gs == 1)[group_id].view(1, C, 1)               # [1, C, 1], bool
-    eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
-                      s * emb_a)                                           # multi: weight base embedding
+    # Weight base embedding by concept scores: [B, C, emb_size]
+    eff = s * c_emb
 
     # Sum weighted exogenous within each group (no loops)
-    out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
-    index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
+    out = torch.zeros(B, G, D, device=device, dtype=eff.dtype)
+    index = group_id.view(1, C, 1).expand(B, C, D)                         # [B, C, E]
     out = out.scatter_add(1, index, eff)                                   # [B, G, E]
     return out
 

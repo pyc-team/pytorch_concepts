@@ -1,7 +1,7 @@
 import torch
 
 from ..base.layer import BasePredictor
-from ....functional import grouped_concept_exogenous_mixture
+from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
 from typing import List, Callable
 
 
@@ -80,19 +80,28 @@ class MixConceptExogegnousToConcept(BasePredictor):
             out_concepts=out_concepts,
             activation=activation,
         )
-        assert in_exogenous % 2 == 0, "in_exogenous must be divisible by 2."
         if cardinalities is None:
             # assume all binary
             self.cardinalities = [1] * in_concepts
-            predictor_in_features = in_exogenous * in_concepts
         else:
             self.cardinalities = cardinalities
             assert sum(self.cardinalities) == in_concepts
-            predictor_in_features = (in_exogenous // 2) * len(self.cardinalities)
 
+        # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
+        self.cardinalities_expanded = torch.tensor(cardinalities)
+        cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
+        start_positions = cumsum - self.cardinalities_expanded
+        self.mask_cardinality_1 = start_positions[self.cardinalities_expanded == 1]
+        self.cardinalities_expanded[self.cardinalities_expanded == 1] = 2
+
+        self.bernoulli_to_categorical_exogenous_splitter = torch.nn.Sequential(
+            torch.nn.Linear(in_exogenous, in_exogenous*2),
+            torch.nn.LeakyReLU(),
+            torch.nn.Unflatten(-1, (-1, in_exogenous)),
+        )
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
-                predictor_in_features,
+                in_exogenous * len(self.cardinalities),
                 out_concepts
             ),
             torch.nn.Unflatten(-1, (out_concepts,)),
@@ -114,5 +123,20 @@ class MixConceptExogegnousToConcept(BasePredictor):
             torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
         in_probs = self.activation(concepts)
-        c_mix = grouped_concept_exogenous_mixture(exogenous, in_probs, groups=self.cardinalities)
+
+        # For concepts with cardinality 1, split the Bernoulli probability into a categorical distribution
+        if len(self.mask_cardinality_1) > 0:
+            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
+            in_probs_split = torch.cat([
+                in_probs[:, self.mask_cardinality_1[:, None]],
+                1-in_probs[:, self.mask_cardinality_1[:, None]],
+            ], dim=-1)
+            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
+            in_probs = replace_expand_cols(in_probs, self.mask_cardinality_1, in_probs_split)
+
+        c_mix = grouped_concept_exogenous_mixture(
+            exogenous,
+            in_probs,
+            groups=list(self.cardinalities_expanded),
+        )
         return self.predictor(c_mix.flatten(start_dim=1))

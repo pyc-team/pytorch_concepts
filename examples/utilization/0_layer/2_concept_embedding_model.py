@@ -19,7 +19,7 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    exogenous_size = 8
+    exogenous_size = 7
     
     seed_everything(42)
 
@@ -30,7 +30,7 @@ def main():
     task_idx = list(dataset.graph.edge_index[1].unique().numpy())
     c_train = dataset.concepts[:, concept_idx]
     y_train = dataset.concepts[:, task_idx]
-    
+
     # Get dimensions
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
@@ -50,14 +50,13 @@ def main():
     # Concept encoder: exogenous -> concepts
     c_encoder = LinearExogenousToConcept(
         in_exogenous=exogenous_size,
-        n_exogenous_per_concept=1
     )
     # Predictor: concepts + exogenous -> tasks
     y_predictor = MixConceptExogegnousToConcept(
         in_concepts=n_concepts,
         in_exogenous=exogenous_size,
         out_concepts=n_tasks,
-        cardinalities=[1,1]
+        cardinalities=[1, 1]
     )
     model = ModuleDict(
         {"latent_encoder": latent_encoder,
