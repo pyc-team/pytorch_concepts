@@ -107,26 +107,23 @@ class LinearExogenousToConcept(BaseEncoder):
 
     Attributes:
         in_exogenous (int): Number of exogenous input features.
-        n_exogenous_per_concept (int): Number of exogenous vars per concept.
         encoder (nn.Sequential): The encoding network.
 
     Args:
         in_exogenous: Number of exogenous input features.
-        n_exogenous_per_concept: Number of exogenous variables per concept (default: 1).
 
     Example:
         >>> import torch
         >>> from torch_concepts.nn import LinearExogenousToConcept
         >>>
-        >>> # Create encoder with 2 exogenous vars per concept
+        >>> # Create encoder of 5 exogenous vars (one per concept)
         >>> encoder = LinearExogenousToConcept(
         ...     in_exogenous=5,
-        ...     n_exogenous_per_concept=2
         ... )
         >>>
         >>> # Forward pass with exogenous variables
-        >>> # Expected input shape: (batch, out_concepts, in_exogenous * n_exogenous_per_concept)
-        >>> exog_vars = torch.randn(4, 3, 10)  # batch=4, concepts=3, exog_features=5*2
+        >>> # Expected input shape: (batch, out_concepts, in_exogenous)
+        >>> exog_vars = torch.randn(4, 3, 5)  # batch=4, concepts=3, exog_features=5
         >>> concepts = encoder(exog_vars)
         >>> print(concepts.shape)
         torch.Size([4, 3])
@@ -138,24 +135,20 @@ class LinearExogenousToConcept(BaseEncoder):
     def __init__(
         self,
         in_exogenous: int,
-        n_exogenous_per_concept: int = 1
     ):
         """
         Initialize the exogenous encoder.
 
         Args:
             in_exogenous: Number of exogenous input features.
-            n_exogenous_per_concept: Number of exogenous variables per concept.
         """
-        self.n_exogenous_per_concept = n_exogenous_per_concept
-        exogenous_tot = in_exogenous * n_exogenous_per_concept
         super().__init__(
-            in_exogenous=exogenous_tot,
+            in_exogenous=in_exogenous,
             out_concepts=-1,
         )
         self.encoder = torch.nn.Sequential(
             torch.nn.Linear(
-                exogenous_tot,
+                in_exogenous,
                 1
             ),
             torch.nn.Flatten(),
@@ -170,7 +163,7 @@ class LinearExogenousToConcept(BaseEncoder):
 
         Args:
             exogenous: Exogenous variables of shape
-                (batch_size, concepts, in_exogenous * n_exogenous_per_concept).
+                (batch_size, concepts, in_exogenous).
 
         Returns:
             torch.Tensor: Concept representations of shape 

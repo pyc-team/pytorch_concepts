@@ -52,7 +52,7 @@ class ConceptEmbeddingModel_Joint(BaseModel, JointLearner):
             input_size=self.latent_size,
             annotations=annotations,
             source_exogenous=LazyConstructor(LinearLatentToExogenous, out_exogenous=embedding_size),
-            encoder=LazyConstructor(LinearExogenousToConcept, n_exogenous_per_concept=1),
+            encoder=LazyConstructor(LinearExogenousToConcept),
             predictor=LazyConstructor(MixConceptExogegnousToConcept, cardinalities=cardinalities),
             use_source_exogenous=True
         )
