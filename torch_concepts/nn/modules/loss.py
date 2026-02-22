@@ -6,23 +6,18 @@ from torch import nn
 from ...nn.modules.utils import GroupConfig
 from ...annotations import Annotations, AxisAnnotation
 from ...utils import instantiate_from_string
-from ...nn.modules.utils import check_collection, get_concept_groups
+from ...nn.modules.utils import check_collection
 
 
 def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks: List[str]):
-    # Concept-level indices: position in concept list
+    """Get concept and task indices at both concept-level and logit-level."""
+    # Concept-level indices
     concepts_idxs = [annotations.get_index(name) for name in concepts]
     tasks_idxs = [annotations.get_index(name) for name in tasks]
-    cumulative_indices = [0] + list(torch.cumsum(torch.tensor(annotations.cardinalities), dim=0).tolist())
-
-    # Logit-level indices: position in flattened tensor (accounting for cardinality)
-    concepts_logits = []
-    for idx in concepts_idxs:
-        concepts_logits.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
-
-    tasks_logits = []
-    for idx in tasks_idxs:
-        tasks_logits.extend(range(cumulative_indices[idx], cumulative_indices[idx + 1]))
+    
+    # Logit-level indices using cached get_slice
+    concepts_logits = annotations.get_slice(concepts)
+    tasks_logits = annotations.get_slice(tasks)
     
     return concepts_idxs, tasks_idxs, concepts_logits, tasks_logits
 
@@ -74,15 +69,19 @@ class ConceptLoss(nn.Module):
         super().__init__()
         annotations = annotations.get_axis_annotation(axis=1)
         self.fn_collection = check_collection(annotations, fn_collection, 'loss')
-        self.groups = get_concept_groups(annotations)
+        
+        # Use cached type_groups from AxisAnnotation
+        self.groups = annotations.type_groups
         self.cardinalities = annotations.cardinalities
 
         # For categorical loss, precompute max cardinality for padding
         if self.fn_collection.get('categorical'):
-            self.max_card = max([self.cardinalities[i] for i in self.groups['categorical_idx']])
+            cat_idx = self.groups['categorical']['concept_idx']
+            self.max_card = max([self.cardinalities[i] for i in cat_idx])
 
         if self.fn_collection.get('continuous'):
-            self.max_dim = max([self.cardinalities[i] for i in self.groups['continuous_idx']])
+            cont_idx = self.groups['continuous']['concept_idx']
+            self.max_dim = max([self.cardinalities[i] for i in cont_idx])
 
     def __repr__(self) -> str:
         types = ['binary', 'categorical', 'continuous']
@@ -115,16 +114,16 @@ class ConceptLoss(nn.Module):
         total_loss = 0.0
         
         # Binary concepts
-        if self.fn_collection.get('binary'):
-            binary_logits = input[:, self.groups['binary_logits_idx']]
-            binary_targets = target[:, self.groups['binary_idx']].float()
+        if self.fn_collection.get('binary'): 
+            binary_logits = input[:, self.groups['binary']['logits_idx']]
+            binary_targets = target[:, self.groups['binary']['concept_idx']].float()
             total_loss += self.fn_collection['binary'](binary_logits, binary_targets)
         
         # Categorical concepts
         if self.fn_collection.get('categorical'):
             split_tuple = torch.split(
-                input[:, self.groups['categorical_logits_idx']], 
-                [self.cardinalities[i] for i in self.groups['categorical_idx']], 
+                input[:, self.groups['categorical']['logits_idx']], 
+                [self.cardinalities[i] for i in self.groups['categorical']['concept_idx']], 
                 dim=1
             )
             padded_logits = [
@@ -135,7 +134,7 @@ class ConceptLoss(nn.Module):
                 ) for logits in split_tuple
             ]
             cat_logits = torch.cat(padded_logits, dim=0)
-            cat_targets = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
+            cat_targets = target[:, self.groups['categorical']['concept_idx']].T.reshape(-1).long()
             
             total_loss += self.fn_collection['categorical'](cat_logits, cat_targets)
         

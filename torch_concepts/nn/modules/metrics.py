@@ -75,7 +75,7 @@ from yaml import warnings
 
 from ...annotations import Annotations, AxisAnnotation
 from ...nn.modules.utils import GroupConfig
-from ...nn.modules.utils import check_collection, get_concept_groups
+from ...nn.modules.utils import check_collection
 
 
 class ConceptMetrics(nn.Module):
@@ -320,14 +320,14 @@ class ConceptMetrics(nn.Module):
         self.metadata = annotations.metadata
         self.types = [self.metadata[name]['type'] for name in self.concept_names]
         
-        # Get concept groups
-        self.groups = get_concept_groups(annotations)
+        # Use cached type_groups from AxisAnnotation
+        self.groups = annotations.type_groups
         
         # Validate that continuous concepts are not used
-        if self.groups['continuous_labels']:
+        if self.groups['continuous']['labels']:
             raise NotImplementedError(
                 f"Continuous concepts are not yet supported. "
-                f"Found continuous concepts: {self.groups['continuous_labels']}."
+                f"Found continuous concepts: {self.groups['continuous']['labels']}."
             )
         
         # Validate and filter metrics configuration
@@ -336,7 +336,7 @@ class ConceptMetrics(nn.Module):
         # Pre-compute max cardinality for categorical concepts
         if self.fn_collection.get('categorical'):
             self.max_card = max([self.cardinalities[i] 
-                                for i in self.groups['categorical_idx']])
+                                for i in self.groups['categorical']['concept_idx']])
         
         # Setup metric collections
         self._setup_metric_collections()
@@ -594,17 +594,18 @@ class ConceptMetrics(nn.Module):
         for key in metric_collection:
             # Update summary metrics
             if self.summary_metrics:
-                if 'SUMMARY-binary_' in key and self.groups['binary_labels']:
-                    binary_pred = preds[:, self.groups['binary_logits_idx']]
-                    binary_target = target[:, self.groups['binary_idx']].float()
+                if 'SUMMARY-binary_' in key and self.groups['binary']['labels']:
+                    binary_pred = preds[:, self.groups['binary']['logits_idx']]
+                    binary_target = target[:, self.groups['binary']['concept_idx']].float()
                     metric_collection[key].update(binary_pred, binary_target)
                     continue
                 
-                elif 'SUMMARY-categorical_' in key and self.groups['categorical_labels']:
+                elif 'SUMMARY-categorical_' in key and self.groups['categorical']['labels']:
                     # Pad and stack categorical logits
+                    cat_concept_idx = self.groups['categorical']['concept_idx']
                     split_tuple = torch.split(
-                        preds[:, self.groups['categorical_logits_idx']], 
-                        [self.cardinalities[i] for i in self.groups['categorical_idx']], 
+                        preds[:, self.groups['categorical']['logits_idx']], 
+                        [self.cardinalities[i] for i in cat_concept_idx], 
                         dim=1
                     )
                     padded_logits = [
@@ -615,11 +616,11 @@ class ConceptMetrics(nn.Module):
                         ) for logits in split_tuple
                     ]
                     cat_pred = torch.cat(padded_logits, dim=0)
-                    cat_target = target[:, self.groups['categorical_idx']].T.reshape(-1).long()
+                    cat_target = target[:, cat_concept_idx].T.reshape(-1).long()
                     metric_collection[key].update(cat_pred, cat_target)
                     continue
                 
-                elif 'SUMMARY-continuous_' in key and self.groups['continuous_labels']:
+                elif 'SUMMARY-continuous_' in key and self.groups['continuous']['labels']:
                     raise NotImplementedError("Continuous concepts not yet implemented.")
             
             # Update per-concept metrics
@@ -630,24 +631,25 @@ class ConceptMetrics(nn.Module):
                 if concept_name not in self.concept_names:
                     concept_name = key_noprefix.split('_')[0]
                 
-                logits_idx = self.concept_annotations.get_logits_idx([concept_name])
+                # Use get_slice for single concept - returns slice object
+                logits_slice = self.concept_annotations.get_slice(concept_name)
                 c_idx = self.concept_annotations.get_index(concept_name)
                 c_type = self.types[c_idx]
                 card = self.cardinalities[c_idx]
                 
                 if c_type == 'discrete' and card == 1:
                     metric_collection[key].update(
-                        preds[:, logits_idx], 
+                        preds[:, logits_slice], 
                         target[:, c_idx:c_idx+1].float()
                     )
                 elif c_type == 'discrete' and card > 1:
                     metric_collection[key].update(
-                        preds[:, logits_idx], 
+                        preds[:, logits_slice], 
                         target[:, c_idx].long()
                     )
                 elif c_type == 'continuous':
                     metric_collection[key].update(
-                        preds[:, logits_idx], 
+                        preds[:, logits_slice], 
                         target[:, c_idx:c_idx+1]
                     )
                 else:

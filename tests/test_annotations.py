@@ -1182,5 +1182,349 @@ class TestAnnotationsExtended:
         assert 5 not in annotations
 
 
+class TestAxisAnnotationCachedUtilities(unittest.TestCase):
+    """Test suite for AxisAnnotation cached index utilities."""
+
+    def setUp(self):
+        """Set up test fixtures with various concept configurations."""
+        import torch
+        self.torch = torch
+        
+        # Mixed types: binary, categorical, continuous
+        self.mixed_axis = AxisAnnotation(
+            labels=['is_big', 'color', 'shape', 'temperature'],
+            cardinalities=[1, 3, 2, 1],
+            metadata={
+                'is_big': {'type': 'discrete'},
+                'color': {'type': 'discrete'},
+                'shape': {'type': 'discrete'},
+                'temperature': {'type': 'continuous'}
+            }
+        )
+        
+        # All binary
+        self.binary_axis = AxisAnnotation(
+            labels=['a', 'b', 'c'],
+            cardinalities=[1, 1, 1],
+            metadata={
+                'a': {'type': 'discrete'},
+                'b': {'type': 'discrete'},
+                'c': {'type': 'discrete'}
+            }
+        )
+        
+        # All categorical
+        self.categorical_axis = AxisAnnotation(
+            labels=['x', 'y'],
+            cardinalities=[3, 4],
+            metadata={
+                'x': {'type': 'discrete'},
+                'y': {'type': 'discrete'}
+            }
+        )
+
+    # =========================================================================
+    # cumulative_cardinalities tests
+    # =========================================================================
+    
+    def test_cumulative_cardinalities_mixed(self):
+        """Test cumulative_cardinalities with mixed cardinalities."""
+        cum = self.mixed_axis.cumulative_cardinalities
+        # [1, 3, 2, 1] -> [0, 1, 4, 6, 7]
+        self.assertEqual(cum, [0, 1, 4, 6, 7])
+        self.assertEqual(len(cum), len(self.mixed_axis.labels) + 1)
+
+    def test_cumulative_cardinalities_binary(self):
+        """Test cumulative_cardinalities with all binary concepts."""
+        cum = self.binary_axis.cumulative_cardinalities
+        # [1, 1, 1] -> [0, 1, 2, 3]
+        self.assertEqual(cum, [0, 1, 2, 3])
+
+    def test_cumulative_cardinalities_categorical(self):
+        """Test cumulative_cardinalities with categorical concepts."""
+        cum = self.categorical_axis.cumulative_cardinalities
+        # [3, 4] -> [0, 3, 7]
+        self.assertEqual(cum, [0, 3, 7])
+
+    def test_cumulative_cardinalities_is_cached(self):
+        """Test that cumulative_cardinalities is cached (same object returned)."""
+        first_call = self.mixed_axis.cumulative_cardinalities
+        second_call = self.mixed_axis.cumulative_cardinalities
+        self.assertIs(first_call, second_call)
+
+    # =========================================================================
+    # concept_slices tests
+    # =========================================================================
+    
+    def test_concept_slices_mixed(self):
+        """Test concept_slices returns correct slice objects."""
+        slices = self.mixed_axis.concept_slices
+        
+        self.assertEqual(slices['is_big'], slice(0, 1))
+        self.assertEqual(slices['color'], slice(1, 4))
+        self.assertEqual(slices['shape'], slice(4, 6))
+        self.assertEqual(slices['temperature'], slice(6, 7))
+
+    def test_concept_slices_all_keys_present(self):
+        """Test all concept labels are keys in concept_slices."""
+        slices = self.mixed_axis.concept_slices
+        for label in self.mixed_axis.labels:
+            self.assertIn(label, slices)
+
+    def test_concept_slices_tensor_indexing(self):
+        """Test concept_slices can be used for tensor indexing."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()  # [[0,1,2,3,4,5,6]]
+        slices = self.mixed_axis.concept_slices
+        
+        color_logits = tensor[:, slices['color']]
+        self.assertTrue(self.torch.equal(color_logits, self.torch.tensor([[1., 2., 3.]])))
+
+    def test_concept_slices_is_cached(self):
+        """Test that concept_slices is cached."""
+        first_call = self.mixed_axis.concept_slices
+        second_call = self.mixed_axis.concept_slices
+        self.assertIs(first_call, second_call)
+
+    # =========================================================================
+    # type_groups tests
+    # =========================================================================
+    
+    def test_type_groups_structure(self):
+        """Test type_groups returns correct structure."""
+        groups = self.mixed_axis.type_groups
+        
+        # Should have all three keys
+        self.assertIn('binary', groups)
+        self.assertIn('categorical', groups)
+        self.assertIn('continuous', groups)
+        
+        # Each group should have labels, concept_idx, logits_idx
+        for group_type in ['binary', 'categorical', 'continuous']:
+            self.assertIn('labels', groups[group_type])
+            self.assertIn('concept_idx', groups[group_type])
+            self.assertIn('logits_idx', groups[group_type])
+
+    def test_type_groups_mixed_labels(self):
+        """Test type_groups correctly categorizes labels."""
+        groups = self.mixed_axis.type_groups
+        
+        self.assertEqual(groups['binary']['labels'], ['is_big'])
+        self.assertEqual(groups['categorical']['labels'], ['color', 'shape'])
+        self.assertEqual(groups['continuous']['labels'], ['temperature'])
+
+    def test_type_groups_mixed_concept_idx(self):
+        """Test type_groups returns correct concept-level indices."""
+        groups = self.mixed_axis.type_groups
+        
+        # is_big is at index 0
+        self.assertEqual(groups['binary']['concept_idx'], [0])
+        # color at 1, shape at 2
+        self.assertEqual(groups['categorical']['concept_idx'], [1, 2])
+        # temperature at 3
+        self.assertEqual(groups['continuous']['concept_idx'], [3])
+
+    def test_type_groups_mixed_logits_idx(self):
+        """Test type_groups returns correct logit-level indices."""
+        groups = self.mixed_axis.type_groups
+        
+        # is_big: positions 0
+        self.assertEqual(groups['binary']['logits_idx'], [0])
+        # color: 1,2,3; shape: 4,5
+        self.assertEqual(groups['categorical']['logits_idx'], [1, 2, 3, 4, 5])
+        # temperature: 6
+        self.assertEqual(groups['continuous']['logits_idx'], [6])
+
+    def test_type_groups_all_binary(self):
+        """Test type_groups with all binary concepts."""
+        groups = self.binary_axis.type_groups
+        
+        self.assertEqual(groups['binary']['labels'], ['a', 'b', 'c'])
+        self.assertEqual(groups['categorical']['labels'], [])
+        self.assertEqual(groups['continuous']['labels'], [])
+        self.assertEqual(groups['binary']['logits_idx'], [0, 1, 2])
+
+    def test_type_groups_all_categorical(self):
+        """Test type_groups with all categorical concepts."""
+        groups = self.categorical_axis.type_groups
+        
+        self.assertEqual(groups['binary']['labels'], [])
+        self.assertEqual(groups['categorical']['labels'], ['x', 'y'])
+        self.assertEqual(groups['categorical']['logits_idx'], [0, 1, 2, 3, 4, 5, 6])
+
+    def test_type_groups_is_cached(self):
+        """Test that type_groups is cached."""
+        first_call = self.mixed_axis.type_groups
+        second_call = self.mixed_axis.type_groups
+        self.assertIs(first_call, second_call)
+
+    # =========================================================================
+    # get_slice tests
+    # =========================================================================
+    
+    def test_get_slice_single_concept_returns_slice(self):
+        """Test get_slice with single concept returns slice object."""
+        result = self.mixed_axis.get_slice('color')
+        self.assertIsInstance(result, slice)
+        self.assertEqual(result, slice(1, 4))
+
+    def test_get_slice_multiple_concepts_returns_list(self):
+        """Test get_slice with multiple concepts returns list of indices."""
+        result = self.mixed_axis.get_slice(['is_big', 'temperature'])
+        self.assertIsInstance(result, list)
+        self.assertEqual(result, [0, 6])
+
+    def test_get_slice_non_contiguous_concepts(self):
+        """Test get_slice with non-contiguous concepts."""
+        result = self.mixed_axis.get_slice(['color', 'temperature'])
+        self.assertEqual(result, [1, 2, 3, 6])
+
+    def test_get_slice_order_matters(self):
+        """Test get_slice respects input order for multiple concepts."""
+        result1 = self.mixed_axis.get_slice(['is_big', 'color'])
+        result2 = self.mixed_axis.get_slice(['color', 'is_big'])
+        
+        self.assertEqual(result1, [0, 1, 2, 3])
+        self.assertEqual(result2, [1, 2, 3, 0])
+
+    def test_get_slice_single_invalid_label(self):
+        """Test get_slice raises error for invalid single label."""
+        with self.assertRaises(ValueError) as context:
+            self.mixed_axis.get_slice('nonexistent')
+        self.assertIn('not found', str(context.exception))
+
+    def test_get_slice_list_invalid_label(self):
+        """Test get_slice raises error for invalid label in list."""
+        with self.assertRaises(ValueError) as context:
+            self.mixed_axis.get_slice(['is_big', 'nonexistent'])
+        self.assertIn('not found', str(context.exception))
+
+    def test_get_slice_empty_list(self):
+        """Test get_slice with empty list returns empty list."""
+        result = self.mixed_axis.get_slice([])
+        self.assertEqual(result, [])
+
+    def test_get_slice_tensor_indexing_single(self):
+        """Test get_slice result can be used for tensor indexing (single)."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        s = self.mixed_axis.get_slice('shape')
+        result = tensor[:, s]
+        self.assertTrue(self.torch.equal(result, self.torch.tensor([[4., 5.]])))
+
+    def test_get_slice_tensor_indexing_multiple(self):
+        """Test get_slice result can be used for tensor indexing (multiple)."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        idx = self.mixed_axis.get_slice(['is_big', 'temperature'])
+        result = tensor[:, idx]
+        self.assertTrue(self.torch.equal(result, self.torch.tensor([[0., 6.]])))
+
+    # =========================================================================
+    # slice_tensor tests
+    # =========================================================================
+    
+    def test_slice_tensor_basic(self):
+        """Test slice_tensor extracts correct columns."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        result = self.mixed_axis.slice_tensor(tensor, ['color'])
+        self.assertTrue(self.torch.equal(result, self.torch.tensor([[1., 2., 3.]])))
+
+    def test_slice_tensor_multiple(self):
+        """Test slice_tensor with multiple concepts."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        result = self.mixed_axis.slice_tensor(tensor, ['is_big', 'temperature'])
+        self.assertTrue(self.torch.equal(result, self.torch.tensor([[0., 6.]])))
+
+    def test_slice_tensor_reorder(self):
+        """Test slice_tensor reorders columns."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        result = self.mixed_axis.slice_tensor(tensor, ['temperature', 'is_big'])
+        self.assertTrue(self.torch.equal(result, self.torch.tensor([[6., 0.]])))
+
+    def test_slice_tensor_all_concepts_same_order(self):
+        """Test slice_tensor with all concepts in original order."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        result = self.mixed_axis.slice_tensor(tensor, self.mixed_axis.labels)
+        self.assertTrue(self.torch.equal(result, tensor))
+
+    def test_slice_tensor_all_concepts_reversed(self):
+        """Test slice_tensor with all concepts in reversed order."""
+        tensor = self.torch.arange(7).unsqueeze(0).float()
+        reversed_labels = list(reversed(self.mixed_axis.labels))
+        result = self.mixed_axis.slice_tensor(tensor, reversed_labels)
+        expected = self.torch.tensor([[6., 4., 5., 1., 2., 3., 0.]])
+        self.assertTrue(self.torch.equal(result, expected))
+
+    def test_slice_tensor_batch_dimension(self):
+        """Test slice_tensor preserves batch dimension."""
+        tensor = self.torch.arange(14).reshape(2, 7).float()
+        result = self.mixed_axis.slice_tensor(tensor, ['color'])
+        self.assertEqual(result.shape, (2, 3))
+        self.assertTrue(self.torch.equal(result[0], self.torch.tensor([1., 2., 3.])))
+        self.assertTrue(self.torch.equal(result[1], self.torch.tensor([8., 9., 10.])))
+
+    # =========================================================================
+    # get_logits_idx backward compatibility tests
+    # =========================================================================
+    
+    def test_get_logits_idx_is_alias_for_get_slice(self):
+        """Test get_logits_idx works as alias for get_slice with list."""
+        result1 = self.mixed_axis.get_logits_idx(['color', 'shape'])
+        result2 = self.mixed_axis.get_slice(['color', 'shape'])
+        self.assertEqual(result1, result2)
+
+    def test_get_logits_idx_single_concept_list(self):
+        """Test get_logits_idx with single-element list."""
+        result = self.mixed_axis.get_logits_idx(['temperature'])
+        self.assertEqual(result, [6])
+
+    # =========================================================================
+    # Edge cases
+    # =========================================================================
+    
+    def test_single_concept_axis(self):
+        """Test utilities work with single concept axis."""
+        axis = AxisAnnotation(
+            labels=['only_one'],
+            cardinalities=[5],
+            metadata={'only_one': {'type': 'discrete'}}
+        )
+        
+        self.assertEqual(axis.cumulative_cardinalities, [0, 5])
+        self.assertEqual(axis.concept_slices, {'only_one': slice(0, 5)})
+        self.assertEqual(axis.type_groups['categorical']['labels'], ['only_one'])
+        self.assertEqual(axis.get_slice('only_one'), slice(0, 5))
+
+    def test_large_cardinalities(self):
+        """Test utilities work with large cardinalities."""
+        axis = AxisAnnotation(
+            labels=['big_concept'],
+            cardinalities=[1000],
+            metadata={'big_concept': {'type': 'discrete'}}
+        )
+        
+        self.assertEqual(axis.cumulative_cardinalities, [0, 1000])
+        self.assertEqual(axis.get_slice('big_concept'), slice(0, 1000))
+
+    def test_many_concepts(self):
+        """Test utilities work with many concepts."""
+        n = 50
+        labels = [f'c{i}' for i in range(n)]
+        cardinalities = [(i % 5) + 1 for i in range(n)]  # 1-5 cardinality
+        metadata = {label: {'type': 'discrete'} for label in labels}
+        
+        axis = AxisAnnotation(
+            labels=labels,
+            cardinalities=cardinalities,
+            metadata=metadata
+        )
+        
+        cum = axis.cumulative_cardinalities
+        self.assertEqual(len(cum), n + 1)
+        self.assertEqual(cum[0], 0)
+        self.assertEqual(cum[-1], sum(cardinalities))
+        
+        slices = axis.concept_slices
+        self.assertEqual(len(slices), n)
+
+
 if __name__ == '__main__':
     unittest.main()
