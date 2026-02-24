@@ -197,11 +197,25 @@ class AxisAnnotation:
 
         return self.labels[idx]
 
+    @cached_property
+    def label_to_index(self) -> Dict[str, int]:
+        """Precomputed mapping from concept name to concept-level index.
+        
+        Provides O(1) lookup for concept indices, useful for efficient
+        concept extraction operations.
+        
+        Example:
+            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'])
+            >>> axis.label_to_index['shape']
+            1
+        """
+        return {name: i for i, name in enumerate(self.labels)}
+    
     def get_index(self, label: str) -> int:
         """Get index of a label in this axis."""
         try:
-            return self.labels.index(label)
-        except ValueError:
+            return self.label_to_index[label]
+        except KeyError:
             raise ValueError(f"Label {label!r} not found in labels {self.labels}")
 
     def get_label(self, idx: int) -> str:
