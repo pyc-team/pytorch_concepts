@@ -7,7 +7,7 @@ _target_: torch_concepts.data.datamodules.celeba.CelebADataModule
 name: celeba
 
 # backbone handling and embedding precomputation
-backbone: facebook/dinov2-base
+backbone: resnet50 # facebook/dinov2-base
 precompute_embs: true 
 force_recompute: false
 
