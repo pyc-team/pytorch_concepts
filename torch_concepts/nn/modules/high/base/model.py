@@ -33,6 +33,7 @@ from .....annotations import Annotations
 from ...low.dense_layers import MLP
 from .....typing import BackboneType
 from .....utils import add_distribution_to_annotations
+from ...utils import with_training_mode
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -179,16 +180,46 @@ class BaseModel(nn.Module, ABC):
     torch_concepts.annotations.Annotations : Concept annotation container
     """
 
+    def __new__(cls, *args, training: str = None, **kwargs):
+        """Create instance with appropriate learner mixin based on training mode.
+        
+        This method dynamically creates a combined class that includes the appropriate
+        learner mixin (JointLearner, IndependentLearner, SequentialLearner) based on
+        the training parameter.
+        
+        Parameters
+        ----------
+        training : str, optional
+            Training mode: 'joint', 'independent', 'sequential', or None.
+            If None, returns a pure PyTorch module without Lightning integration.
+        
+        Returns
+        -------
+        BaseModel
+            Instance of the combined class with learner mixin.
+        """
+        combined_class = with_training_mode(cls, training)
+        instance = object.__new__(combined_class)
+        instance._training_mode = training
+        return instance
+
     def __init__(
         self,
         input_size: int,
         annotations: Annotations,
+        training: str = None,  # Consumed by __new__, included for signature
         variable_distributions: Optional[Mapping] = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
         latent_encoder_kwargs: Optional[Dict] = None,
+        loss: Optional[nn.Module] = None,
+        metrics: Optional[Mapping] = None,
         **kwargs
     ) -> None:
+        # Only pass loss/metrics to super if training mode is set (learner mixin present)
+        if getattr(self, '_training_mode', None) is not None:
+            kwargs['loss'] = loss
+            kwargs['metrics'] = metrics
         super().__init__(**kwargs)
 
         if annotations is not None:

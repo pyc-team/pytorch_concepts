@@ -339,3 +339,59 @@ def indices_to_mask(
     target[:, c_idxs] = c_vals
 
     return mask, target
+
+
+
+# =============================================================================
+# Training mode utilities (reusable for other models)
+# =============================================================================
+
+from .high.learners import JointLearner, IndependentLearner, SequentialLearner
+
+LEARNER_MAP = {
+    'joint': JointLearner,
+    'independent': IndependentLearner,
+    'sequential': SequentialLearner,
+}
+
+_CLASS_CACHE = {}
+
+
+def with_training_mode(cls, training: str = None):
+    """Create a combined class with the appropriate learner mixin.
+    
+    This utility can be used by any model class to support dynamic
+    training mode selection via a `training` parameter.
+    
+    Parameters
+    ----------
+    cls : type
+        The base model class.
+    training : str, optional
+        Training mode: 'joint', 'independent', 'sequential', or None.
+        If None, returns the original class (pure PyTorch module).
+    
+    Returns
+    -------
+    type
+        Combined class with learner mixin, or original class if training is None.
+    """
+    # No training mode = pure PyTorch module (no learner mixin)
+    if training is None:
+        return cls
+    
+    if training not in LEARNER_MAP:
+        raise ValueError(
+            f"Unknown training mode: '{training}'. "
+            f"Expected one of: {list(LEARNER_MAP.keys())} or None"
+        )
+    
+    cache_key = (cls, training)
+    if cache_key not in _CLASS_CACHE:
+        learner_class = LEARNER_MAP[training]
+        _CLASS_CACHE[cache_key] = type(
+            f'{cls.__name__}_{training.capitalize()}',
+            (cls, learner_class),
+            {}
+        )
+    return _CLASS_CACHE[cache_key]

@@ -3,35 +3,30 @@ from ..base.learner import BaseLearner
 
 
 class JointLearner(BaseLearner):
+    """Joint training learner for concept-based models.
+    
+    Trains all concepts and tasks simultaneously in a single forward pass.
+    This is the simplest training mode where all parameters are optimized
+    together with respect to the same loss.
     """
-    Joint training engine for concept-based models.
-
-    Extends BaseLearner to support joint training of all concepts and tasks.
-
-    Example:
-        >>> from torch_concepts.nn.modules.high.learners.joint import JointLearner
-        >>> learner = JointLearner(loss=None, metrics=None)
-    """
-    def __init__(self,**kwargs):
+    
+    def __init__(self, **kwargs):
         super(JointLearner, self).__init__(**kwargs)
 
-    @abstractmethod
-    def forward(self, x, query, *args, **kwargs):
-        """Model forward method to be implemented by subclasses.
-        """
-        pass
-    
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
         
-        Performs forward pass, loss computation, and metric logging.
-        
-        Args:
-            batch (dict): Batch dictionary from dataloader.
-            step (str): One of 'train', 'val', or 'test'.
+        Parameters
+        ----------
+        batch : dict
+            Batch dictionary with 'inputs' and 'concepts' keys.
+        step : str
+            One of 'train', 'val', or 'test'.
             
-        Returns:
-            torch.Tensor: Scalar loss value.
+        Returns
+        -------
+        torch.Tensor
+            Scalar loss value.
         """
         inputs, concepts, transforms = self.unpack_batch(batch)
         batch_size = batch['inputs']['x'].size(0)

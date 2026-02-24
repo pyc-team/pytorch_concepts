@@ -1,6 +1,6 @@
 defaults:
   - dataset: asia
-  - model: cbm_joint
+  - model: cbm
   - loss: standard
   - metrics: standard
   - _self_

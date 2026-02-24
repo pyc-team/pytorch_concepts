@@ -11,22 +11,24 @@ hydra:
       seed: 42
       dataset: asia  # asia / sachs / insurance
       model: cbm  # cbm / cem
+      model.training: joint  # joint / independent / sequential
       loss: weighted
-      loss.concept_weight: 8
+      loss.concept_weight: 10
       loss.task_weight: 1
 
 dataset:
-  batch_size: 4096
+  batch_size: 2048
+  # concept_subset: ['Attractive', 'Bald', 'Big_Nose', 'Black_Hair']  # for celeba
 
 model:
   optim_kwargs:
     lr: 0.01
   latent_encoder_kwargs:
     hidden_size: 128
-    n_layers: 3
+    n_layers: 1
     activation: leaky_relu
     dropout: 0.
-  # embedding_size: 4  # for embedding models
+  # embedding_size: 8  # for embedding models
 
 metrics:
   summary_metrics: true
@@ -34,8 +36,8 @@ metrics:
 
 trainer:
   # logger: wandb
-  max_epochs: 2000
-  patience: 50
+  max_epochs: 200
+  patience: 20
 
 matmul_precision: medium
 
