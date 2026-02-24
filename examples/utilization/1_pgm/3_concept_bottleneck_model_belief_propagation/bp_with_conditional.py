@@ -651,6 +651,16 @@ class BPInference(BaseInference):
 
         return bp_marginals
 
+    # TODO: to check
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """Convert ground truth to one-hot format for belief propagation."""
+        if cardinality > 1:
+            return torch.nn.functional.one_hot(
+                value.long(), num_classes=cardinality
+            ).float()
+        else:
+            return value.unsqueeze(-1).float()
+
 
 
 

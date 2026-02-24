@@ -1,5 +1,5 @@
 import inspect
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import torch
@@ -14,7 +14,7 @@ from ..models.probabilistic_model import ProbabilisticModel
 from ...low.base.inference import BaseInference
 
 
-class ForwardInference(BaseInference):
+class ForwardInference(BaseInference, ABC):
     """
     Forward inference engine for probabilistic models.
 
@@ -72,7 +72,9 @@ class ForwardInference(BaseInference):
         ... )
         >>>
         >>> # Create forward inference engine
-        >>> inference = ForwardInference(pgm)
+        >>> # Note: ForwardInference is abstract; use DeterministicInference or AncestralSamplingInference
+        >>> from torch_concepts.nn import DeterministicInference
+        >>> inference = DeterministicInference(pgm)
         >>>
         >>> # Check topological order
         >>> print([v.concept for v in inference.sorted_variables])
@@ -175,7 +177,8 @@ class ForwardInference(BaseInference):
 
         Args:
             var: The variable to compute.
-            external_inputs: Dictionary of external input tensors for root variables.
+            external_inputs: Dictionary of external input tensors for root variables,
+                or evidence tensors for non-root variables (used directly as output).
             results: Dictionary of already computed variable outputs.
 
         Returns:
@@ -187,6 +190,12 @@ class ForwardInference(BaseInference):
             RuntimeError: If parent variable hasn't been computed yet.
         """
         concept_name = var.concept
+        
+        # If evidence is provided for a non-root variable, use it directly as output
+        # (Root nodes still pass their input through the CPD)
+        if var.parents and concept_name in external_inputs:
+            return concept_name, external_inputs[concept_name]
+        
         parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
 
         if parametric_cpd is None:
@@ -768,6 +777,32 @@ class DeterministicInference(ForwardInference):
         """
         return results
 
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """
+        Convert ground truth to logits for deterministic inference.
+        
+        Parameters
+        ----------
+        value : torch.Tensor
+            Ground truth value tensor. Shape: (batch_size,).
+        cardinality : int
+            Number of classes (1 for binary, >1 for categorical).
+            
+        Returns
+        -------
+        torch.Tensor
+            Logits tensor. Shape: (batch_size, cardinality).
+        """
+        # TODO: currently assumes discrete, to be extended to continuous 
+        if cardinality > 1:
+            one_hot = torch.nn.functional.one_hot(
+                value.long(), num_classes=cardinality
+            ).float()
+        else:
+            one_hot = value.unsqueeze(-1)
+        
+        return torch.logit(one_hot.clamp(1e-7, 1-1e-7))
+
 
 class AncestralSamplingInference(ForwardInference):
     """
@@ -840,7 +875,7 @@ class AncestralSamplingInference(ForwardInference):
         >>>
         >>> # With relaxed distributions (requires temperature)
         >>> from torch.distributions import RelaxedBernoulli
-        >>> var_A_relaxed = LatentVariable('A', parents=['embedding'],
+        >>> var_A_relaxed = ConceptVariable('A', parents=['embedding'],
         ...                               distribution=RelaxedBernoulli, size=1)
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A_relaxed, var_B],
@@ -861,6 +896,34 @@ class AncestralSamplingInference(ForwardInference):
         super().__init__(probabilistic_model, graph_learner)
         self.dist_kwargs = dist_kwargs
         self.log_probs = log_probs
+
+    # TODO: currently assumes discrete, to be extended to continuous 
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """
+        Convert ground truth to raw states for ancestral sampling.
+        
+        For sampling inference, evidence should be in the same format as samples:
+        - Binary: (batch_size, 1) with values 0.0 or 1.0
+        - Categorical: (batch_size, cardinality) one-hot encoded
+        
+        Parameters
+        ----------
+        value : torch.Tensor
+            Ground truth value tensor. Shape: (batch_size,).
+        cardinality : int
+            Number of classes (1 for binary, >1 for categorical).
+            
+        Returns
+        -------
+        torch.Tensor
+            State tensor in sample format.
+        """
+        if cardinality > 1:
+            return torch.nn.functional.one_hot(
+                value.long(), num_classes=cardinality
+            ).float()
+        else:
+            return value.unsqueeze(-1).float()
 
     def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
         """

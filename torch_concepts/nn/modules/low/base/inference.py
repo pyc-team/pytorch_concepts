@@ -90,6 +90,32 @@ class BaseInference(torch.nn.Module):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """
+        Convert ground truth value to evidence format expected by this inference.
+        
+        Different inference types expect evidence in different formats:
+        - Deterministic/Forward inference: logits
+        - Ancestral sampling: raw states (0/1 for binary, class indices for categorical)
+        
+        This method must be implemented by subclasses.
+        
+        Parameters
+        ----------
+        value : torch.Tensor
+            Ground truth value tensor. Shape: (batch_size,) containing class indices
+            (0/1 for binary, 0..K-1 for K-class categorical).
+        cardinality : int
+            Number of classes (1 for binary, >1 for categorical).
+            
+        Returns
+        -------
+        torch.Tensor
+            Evidence tensor in the format expected by this inference.
+        """
+        raise NotImplementedError
+
 
 class BaseIntervention(BaseInference, ABC):
     """

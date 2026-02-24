@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, Annotations, AxisAnnotation, ConceptGraph
-from torch_concepts.nn import AncestralSamplingInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
+from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
     LinearExogenousToConcept, HyperlinearConceptExogenousToConcept
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
@@ -32,6 +32,15 @@ class SimpleForwardInference(ForwardInference):
             return results
         else:
             return results
+
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """Convert ground truth to sample format (same as AncestralSamplingInference)."""
+        if cardinality > 1:
+            return torch.nn.functional.one_hot(
+                value.long(), num_classes=cardinality
+            ).float()
+        else:
+            return value.unsqueeze(-1).float()
 
 class TestForwardInferenceQuery:
     """Test query functionality of ForwardInference."""
@@ -1307,6 +1316,215 @@ class TestForwardInference(unittest.TestCase):
         cy_pred_after_unrolling = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
 
         self.assertTrue(cy_pred_after_unrolling.shape == c_train_one_hot.shape)
+
+
+class TestDeterministicInference(unittest.TestCase):
+    """Unit tests for DeterministicInference class."""
+    
+    def setUp(self):
+        """Set up test fixtures with a simple PGM."""
+        # Create simple PGM: input -> A -> B
+        from torch_concepts import LatentVariable, ConceptVariable
+        
+        self.input_var = LatentVariable('input', parents=[], distribution=Delta, size=10)
+        self.var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        self.var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        
+        # Define CPDs
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
+        
+        self.pgm = ProbabilisticModel(
+            variables=[self.input_var, self.var_A, self.var_B],
+            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+        )
+        
+        self.inference = DeterministicInference(self.pgm)
+        self.batch_size = 4
+        self.x = torch.randn(self.batch_size, 10)
+    
+    # --- Test get_results ---
+    
+    def test_get_results_returns_raw_output(self):
+        """Test that get_results returns raw output without sampling."""
+        # Create some test logits
+        logits = torch.randn(self.batch_size, 1)
+        
+        result = self.inference.get_results(logits, self.var_A)
+        
+        # Should return the same tensor (no sampling)
+        torch.testing.assert_close(result, logits)
+    
+    def test_get_results_preserves_gradients(self):
+        """Test that get_results preserves gradient flow."""
+        logits = torch.randn(self.batch_size, 1, requires_grad=True)
+        
+        result = self.inference.get_results(logits, self.var_A)
+        
+        # Should still require grad
+        self.assertTrue(result.requires_grad)
+        
+        # Gradient should flow through
+        loss = result.sum()
+        loss.backward()
+        self.assertIsNotNone(logits.grad)
+    
+    def test_get_results_with_different_shapes(self):
+        """Test get_results works with various tensor shapes."""
+        # Single feature
+        result1 = self.inference.get_results(torch.randn(4, 1), self.var_A)
+        self.assertEqual(result1.shape, (4, 1))
+        
+        # Multiple features
+        result2 = self.inference.get_results(torch.randn(4, 5), self.var_A)
+        self.assertEqual(result2.shape, (4, 5))
+        
+        # Larger batch
+        result3 = self.inference.get_results(torch.randn(32, 3), self.var_A)
+        self.assertEqual(result3.shape, (32, 3))
+    
+    # --- Test ground_truth_to_evidence (binary) ---
+    
+    def test_ground_truth_to_evidence_binary(self):
+        """Test ground_truth_to_evidence for binary (cardinality=1) concepts."""
+        # Binary ground truth: 0 or 1
+        gt = torch.tensor([0., 1., 0., 1.])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
+        
+        # Should return logits
+        self.assertEqual(evidence.shape, (4, 1))
+        
+        # 0 -> negative logit, 1 -> positive logit
+        self.assertTrue(evidence[0, 0] < 0)  # 0 -> large negative logit
+        self.assertTrue(evidence[1, 0] > 0)  # 1 -> large positive logit
+    
+    def test_ground_truth_to_evidence_binary_extreme_values(self):
+        """Test that binary evidence uses clamping to avoid inf logits."""
+        gt = torch.tensor([0., 1., 0., 1.])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
+        
+        # Should not have inf values due to clamping
+        self.assertFalse(torch.isinf(evidence).any())
+        self.assertFalse(torch.isnan(evidence).any())
+    
+    def test_ground_truth_to_evidence_binary_recovers_probs(self):
+        """Test that sigmoid of evidence recovers ~original values."""
+        gt = torch.tensor([0., 1., 0., 1.])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
+        recovered = torch.sigmoid(evidence).squeeze()
+        
+        # Should be close to 0 and 1 (within clamping tolerance)
+        self.assertTrue(recovered[0] < 0.01)  # ~0
+        self.assertTrue(recovered[1] > 0.99)  # ~1
+    
+    # --- Test ground_truth_to_evidence (categorical) ---
+    
+    def test_ground_truth_to_evidence_categorical(self):
+        """Test ground_truth_to_evidence for categorical (cardinality>1) concepts."""
+        # Categorical ground truth: class indices
+        gt = torch.tensor([0, 1, 2, 0])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
+        
+        # Should return logits with shape (batch, cardinality)
+        self.assertEqual(evidence.shape, (4, 3))
+    
+    def test_ground_truth_to_evidence_categorical_correct_class(self):
+        """Test that categorical evidence has highest logit for correct class."""
+        gt = torch.tensor([0, 1, 2, 1])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
+        
+        # Argmax of each row should match ground truth
+        predicted_classes = evidence.argmax(dim=1)
+        torch.testing.assert_close(predicted_classes, gt)
+    
+    def test_ground_truth_to_evidence_categorical_no_inf_nan(self):
+        """Test that categorical evidence has no inf/nan values."""
+        gt = torch.tensor([0, 1, 2, 3, 4])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=5)
+        
+        self.assertFalse(torch.isinf(evidence).any())
+        self.assertFalse(torch.isnan(evidence).any())
+    
+    def test_ground_truth_to_evidence_categorical_softmax_recovers_onehot(self):
+        """Test that softmax of evidence recovers ~one-hot encoding."""
+        gt = torch.tensor([0, 2, 1])
+        
+        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
+        recovered = torch.softmax(evidence, dim=1)
+        
+        # Should be close to one-hot
+        expected = torch.nn.functional.one_hot(gt, num_classes=3).float()
+        torch.testing.assert_close(recovered, expected, atol=0.02, rtol=0.02)
+    
+    # --- Integration tests with inference ---
+    
+    def test_deterministic_prediction_returns_logits(self):
+        """Test that DeterministicInference.predict returns logits, not samples."""
+        results = self.inference.predict({'input': self.x})
+        
+        # Results should be tensors (not samples)
+        self.assertIn('A', results)
+        self.assertIn('B', results)
+        
+        # Should have continuous values (logits), not just 0/1
+        self.assertEqual(results['A'].shape, (self.batch_size, 1))
+        self.assertEqual(results['B'].shape, (self.batch_size, 1))
+        
+        # Logits should be continuous real values
+        unique_A = results['A'].unique()
+        # More than 2 unique values means continuous, not binary
+        self.assertGreater(len(unique_A), 2)
+    
+    def test_deterministic_query_returns_logits(self):
+        """Test that DeterministicInference.query returns concatenated logits."""
+        output = self.inference.query(['A', 'B'], evidence={'input': self.x})
+        
+        # Should have shape (batch, 2) for two concepts
+        self.assertEqual(output.shape, (self.batch_size, 2))
+        
+        # Values should be continuous logits
+        unique_vals = output.unique()
+        self.assertGreater(len(unique_vals), 2)
+    
+    def test_deterministic_gradient_flow(self):
+        """Test that gradients flow through deterministic inference."""
+        x = self.x.clone().requires_grad_(True)
+        
+        output = self.inference.query(['A', 'B'], evidence={'input': x})
+        loss = output.sum()
+        loss.backward()
+        
+        # Gradient should reach input
+        self.assertIsNotNone(x.grad)
+        self.assertFalse(torch.all(x.grad == 0))
+    
+    def test_deterministic_vs_sampling_difference(self):
+        """Test that deterministic inference differs from ancestral sampling."""
+        sampling_inference = AncestralSamplingInference(self.pgm)
+        
+        # Fix seed for reproducibility
+        torch.manual_seed(42)
+        
+        det_output = self.inference.query(['A'], evidence={'input': self.x})
+        samp_output = sampling_inference.query(['A'], evidence={'input': self.x})
+        
+        # Deterministic returns logits, sampling returns samples
+        # Deterministic values should be continuous
+        det_unique = det_output.unique()
+        self.assertGreater(len(det_unique), 2)  # More than binary
+        
+        # Sampling from Bernoulli returns binary (0/1)
+        samp_unique = samp_output.unique()
+        # Sampling should give samples in [0, 1] range
+        self.assertTrue(torch.all(samp_output >= 0))
+        self.assertTrue(torch.all(samp_output <= 1))
 
 
 if __name__ == "__main__":
