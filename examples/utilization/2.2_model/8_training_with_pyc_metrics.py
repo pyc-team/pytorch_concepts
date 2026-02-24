@@ -85,6 +85,7 @@ def main():
         variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        training='joint',
         loss=loss_fn,
         metrics=metrics,
         optim_class=torch.optim.AdamW,
@@ -108,7 +109,7 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x_batch, query=query)
+        endogenous = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
     print(f"Output endogenous shape: {endogenous.shape}")

@@ -65,7 +65,8 @@ def main():
         variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # Specify loss and optimizer to abilitate training with lightning
+        # Specify loss and optimizer for Lightning training
+        training='joint',  # Enable Lightning training mode
         loss=torch.nn.BCEWithLogitsLoss(),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.02}
@@ -88,7 +89,7 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x_batch, query=query)
+        endogenous = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
     print(f"Output endogenous shape: {endogenous.shape}")
@@ -121,7 +122,7 @@ def main():
     with torch.no_grad():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
-            endogenous = model(batch['inputs']['x'], query=query)
+            endogenous = model(x=batch['inputs']['x'], query=query)
             c_pred = endogenous[:, :n_concepts]
             y_pred = endogenous[:, n_concepts:]
 

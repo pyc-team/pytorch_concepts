@@ -233,7 +233,7 @@ class TestBlackBoxForward(unittest.TestCase):
         
         x = torch.randn(2, 8)
         out1 = model(x)
-        out2 = model(x, query=['c1', 'task'])
+        out2 = model(query=['c1', 'task'], x=x)
         
         # Query shouldn't change output shape or values
         self.assertEqual(out1.shape, out2.shape)

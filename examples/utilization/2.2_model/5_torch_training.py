@@ -88,7 +88,7 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x_batch, query=query)
+        endogenous = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
     print(f"Output endogenous shape: {endogenous.shape}")
@@ -112,7 +112,7 @@ def main():
         target = torch.cat([c_train, y_train], dim=1)
 
         # Forward pass - query all variables (concepts + tasks)
-        endogenous = model(x_train, query=query)
+        endogenous = model(x=x_train, query=query)
         
         # Compute loss on all outputs
         loss = loss_fn(endogenous, target)
@@ -132,7 +132,7 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        endogenous = model(x_train, query=query)
+        endogenous = model(x=x_train, query=query)
         c_pred = endogenous[:, :n_concepts]
         y_pred = endogenous[:, n_concepts:]
         

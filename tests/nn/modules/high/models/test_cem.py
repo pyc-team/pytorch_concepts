@@ -18,9 +18,9 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 from torch_concepts.nn.modules.high.models.cem import (
-    ConceptEmbeddingModel,
-    ConceptEmbeddingModel_Joint
+    ConceptEmbeddingModel
 )
+from torch_concepts.nn.modules.high.learners import JointLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn.modules.mid.inference.forward import (
     DeterministicInference,
@@ -155,23 +155,30 @@ class TestCEMInitialization(unittest.TestCase):
         
         self.assertIsInstance(model.inference, AncestralSamplingInference)
     
-    def test_init_alias_class(self):
-        """Test that ConceptEmbeddingModel alias works correctly."""
-        model1 = ConceptEmbeddingModel(
+    def test_factory_default_is_pytorch(self):
+        """Test that default training=None creates pure PyTorch model."""
+        model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task1']
         )
         
-        model2 = ConceptEmbeddingModel_Joint(
+        # Default is pure PyTorch (no learner mixin)
+        self.assertFalse(isinstance(model, JointLearner))
+        self.assertIsNone(model._training_mode)
+    
+    def test_factory_joint_training(self):
+        """Test that training='joint' creates Lightning model."""
+        model = ConceptEmbeddingModel(
+            training='joint',
             input_size=8,
             annotations=self.ann,
             task_names=['task1']
         )
         
-        # Both should be instances of the base class
-        self.assertIsInstance(model1, ConceptEmbeddingModel_Joint)
-        self.assertIsInstance(model2, ConceptEmbeddingModel_Joint)
+        # Should have JointLearner mixin
+        self.assertIsInstance(model, JointLearner)
+        self.assertEqual(model._training_mode, 'joint')
 
 
 class TestCEMForward(unittest.TestCase):
@@ -202,7 +209,7 @@ class TestCEMForward(unittest.TestCase):
         """Test basic forward pass."""
         x = torch.randn(2, 8)
         query = ['color', 'shape', 'size']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         
         # Output shape: batch_size x sum(cardinalities for queried variables)
         self.assertEqual(out.shape[0], 2)
@@ -212,7 +219,7 @@ class TestCEMForward(unittest.TestCase):
         """Test forward with all concepts and tasks."""
         x = torch.randn(4, 8)
         query = ['color', 'shape', 'size', 'task1']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 4)
         self.assertEqual(out.shape[1], 3 + 2 + 1 + 1)
@@ -221,7 +228,7 @@ class TestCEMForward(unittest.TestCase):
         """Test forward with single concept."""
         x = torch.randn(2, 8)
         query = ['color']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 3)
@@ -230,7 +237,7 @@ class TestCEMForward(unittest.TestCase):
         """Test forward with only task variables."""
         x = torch.randn(2, 8)
         query = ['task1']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 1)
@@ -247,7 +254,7 @@ class TestCEMForward(unittest.TestCase):
         
         x = torch.randn(2, 100)  # Raw input size (before backbone)
         query = ['color', 'shape']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 3 + 2)
@@ -257,7 +264,7 @@ class TestCEMForward(unittest.TestCase):
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             query = ['color', 'shape']
-            out = self.model(x, query=query)
+            out = self.model(query=query, x=x)
             
             self.assertEqual(out.shape[0], batch_size)
             self.assertEqual(out.shape[1], 3 + 2)
@@ -275,8 +282,8 @@ class TestCEMForward(unittest.TestCase):
         query = ['color', 'shape']
         
         # Multiple forwards should give same result (deterministic)
-        out1 = model(x, query=query)
-        out2 = model(x, query=query)
+        out1 = model(query=query, x=x)
+        out2 = model(query=query, x=x)
         
         self.assertTrue(torch.allclose(out1, out2))
     
@@ -287,7 +294,7 @@ class TestCEMForward(unittest.TestCase):
         query = ['color', 'shape']
         
         with torch.no_grad():
-            out = self.model(x, query=query)
+            out = self.model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 3 + 2)
@@ -400,7 +407,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         
         x = torch.randn(8, 10)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # All binary: 1 + 1 + 1 + 1 = 4
         self.assertEqual(out.shape, (8, 4))
@@ -431,7 +438,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         
         x = torch.randn(6, 12)
         query = ['color', 'shape', 'material', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # All categorical: 5 + 4 + 3 + 2 = 14
         self.assertEqual(out.shape, (6, 14))
@@ -463,7 +470,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         
         x = torch.randn(10, 15)
         query = ['binary1', 'categorical1', 'binary2', 'categorical2', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Mixed: 1 + 4 + 1 + 3 + 1 = 10
         self.assertEqual(out.shape, (10, 10))
@@ -496,7 +503,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         x = torch.randn(4, 10)
         # Query only some concepts
         query = ['c1', 'c3', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Only queried: 1 + 1 + 1 = 3
         self.assertEqual(out.shape, (4, 3))
@@ -526,7 +533,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         x = torch.randn(5, 12)
         # Query only some concepts
         query = ['color', 'size']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Only queried: 5 + 3 = 8
         self.assertEqual(out.shape, (5, 8))
@@ -558,7 +565,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         x = torch.randn(7, 15)
         # Query mix of binary and categorical
         query = ['b1', 'cat1', 'cat2']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Mixed query: 1 + 4 + 3 = 8
         self.assertEqual(out.shape, (7, 8))
@@ -594,7 +601,7 @@ class TestCEMExogenousVariables(unittest.TestCase):
             
             x = torch.randn(2, 8)
             query = ['c1', 'c2', 'c3']
-            out = model(x, query=query)
+            out = model(query=query, x=x)
             
             self.assertEqual(out.shape[0], 2)
             self.assertEqual(out.shape[1], 2 + 3 + 1)
@@ -639,7 +646,7 @@ class TestCEMFilterMethods(unittest.TestCase):
         """Test filter_output_for_loss returns correct format."""
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         target = torch.randint(0, 2, out.shape).float()
         
         filtered = self.model.filter_output_for_loss(out, target)
@@ -654,7 +661,7 @@ class TestCEMFilterMethods(unittest.TestCase):
         """Test filter_output_for_metrics returns correct format."""
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
-        out = self.model(x, query=query)
+        out = self.model(query=query, x=x)
         target = torch.randint(0, 2, out.shape).float()
         
         filtered = self.model.filter_output_for_metrics(out, target)
@@ -684,15 +691,16 @@ class TestCEMTraining(unittest.TestCase):
         })
     
     def test_manual_training_mode(self):
-        """Test manual PyTorch training (no loss in model)."""
+        """Test manual PyTorch training (no training mode specified)."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        # No loss configured (loss is None)
-        self.assertIsNone(model.loss)
+        # No training mode specified = pure PyTorch module (no loss attribute)
+        self.assertIsNone(model._training_mode)
+        self.assertFalse(hasattr(model, 'loss') and model.loss is not None)
         
         # Can train manually
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -702,7 +710,7 @@ class TestCEMTraining(unittest.TestCase):
         y = torch.randint(0, 2, (4, 3)).float()
         
         model.train()
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         loss = loss_fn(out, y)
         
         self.assertTrue(loss.requires_grad)
@@ -716,7 +724,7 @@ class TestCEMTraining(unittest.TestCase):
         )
         
         x = torch.randn(4, 8, requires_grad=True)
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         loss = out.sum()
         loss.backward()
         
@@ -739,7 +747,7 @@ class TestCEMTraining(unittest.TestCase):
         y = torch.randint(0, 2, (8, 3)).float()
         
         optimizer.zero_grad()
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         loss = loss_fn(out, y)
         loss.backward()
         optimizer.step()
@@ -765,7 +773,7 @@ class TestCEMTraining(unittest.TestCase):
         y = torch.randn(8, 3)
         
         optimizer.zero_grad()
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         loss = loss_fn(out, y)
         loss.backward()
         optimizer.step()
@@ -819,7 +827,7 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
         
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'c3', 'task1', 'task2']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 2 + 3 + 1 + 1 + 2)
@@ -834,7 +842,7 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
         
         x = torch.randn(2, 8)
         query = ['c1', 'task1']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 2 + 1)
@@ -891,7 +899,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         )
         
         x = torch.randn(4, 8)
-        out = model(x, query=['c1', 'c2', 'c3', 'task'])
+        out = model(query=['c1', 'c2', 'c3', 'task'], x=x)
         
         self.assertEqual(out.shape[0], 4)
         self.assertEqual(out.shape[1], 4)  # 3 binary concepts + 1 binary task
@@ -944,7 +952,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         )
         
         x = torch.randn(4, 8)
-        out = model(x, query=['color', 'shape', 'size', 'task'])
+        out = model(query=['color', 'shape', 'size', 'task'], x=x)
         
         self.assertEqual(out.shape[0], 4)
         self.assertEqual(out.shape[1], 3 + 4 + 5 + 2)  # Sum of all cardinalities
@@ -999,7 +1007,7 @@ class TestCEMConceptTypes(unittest.TestCase):
         )
         
         x = torch.randn(4, 8)
-        out = model(x, query=['is_red', 'shape', 'has_texture', 'size', 'task'])
+        out = model(query=['is_red', 'shape', 'has_texture', 'size', 'task'], x=x)
         
         self.assertEqual(out.shape[0], 4)
         self.assertEqual(out.shape[1], 1 + 3 + 1 + 4 + 2)  # Sum of all cardinalities = 11
@@ -1042,7 +1050,7 @@ class TestCEMEdgeCases(unittest.TestCase):
         )
         
         x = torch.randn(2, 8)
-        out = model(x, query=['c1', 'task'])
+        out = model(query=['c1', 'task'], x=x)
         
         self.assertEqual(out.shape, (2, 2))
     
@@ -1068,7 +1076,7 @@ class TestCEMEdgeCases(unittest.TestCase):
         )
         
         x = torch.randn(2, 8)
-        out = model(x, query=['c1', 'c2', 'c3', 'task'])
+        out = model(query=['c1', 'c2', 'c3', 'task'], x=x)
         
         self.assertEqual(out.shape, (2, 4))
     
@@ -1093,7 +1101,7 @@ class TestCEMEdgeCases(unittest.TestCase):
         )
         
         x = torch.randn(2, 8)
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         
         self.assertEqual(out.shape, (2, 3 + 4 + 5))
     
@@ -1124,7 +1132,7 @@ class TestCEMEdgeCases(unittest.TestCase):
         model = model.to(device)
         
         x = torch.randn(2, 8, device=device)
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         
         self.assertEqual(out.device.type, device.type)
 
@@ -1195,11 +1203,82 @@ class TestCEMComparison(unittest.TestCase):
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
         
-        cem_out = cem(x, query=query)
-        cbm_out = cbm(x, query=query)
+        cem_out = cem(query=query, x=x)
+        cbm_out = cbm(query=query, x=x)
         
         # Outputs should have same shape
         self.assertEqual(cem_out.shape, cbm_out.shape)
+
+
+class TestCEMIndependentLearner(unittest.TestCase):
+    """Test CEM with independent training mode."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Simple annotation structure - CEM will create exogenous internally
+        self.ann = Annotations({
+            1: AxisAnnotation(
+                labels=['c1', 'c2', 'task'],
+                cardinalities=[1, 1, 1],
+                metadata={
+                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
+                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                }
+            )
+        })
+        
+        self.batch_size = 4
+        self.input_size = 8
+        self.x = torch.randn(self.batch_size, self.input_size)
+        self.c = torch.randint(0, 2, (self.batch_size, 3)).float()
+        
+        self.batch = {
+            'inputs': {'x': self.x},
+            'concepts': {'c': self.c}
+        }
+    
+    def test_cem_independent_training_step(self):
+        """Test CEM independent learner training step works."""
+        model = ConceptEmbeddingModel(
+            input_size=self.input_size,
+            annotations=self.ann,
+            task_names=['task'],
+            training='independent',
+            loss=nn.BCEWithLogitsLoss()
+        )
+        model.train()
+        
+        loss = model.training_step(self.batch)
+        
+        self.assertIsNotNone(loss)
+        self.assertTrue(loss.requires_grad)
+    
+    def test_cem_identifies_input_dependent_exogenous(self):
+        """Test that CEM correctly identifies input-dependent exogenous."""
+        model = ConceptEmbeddingModel(
+            input_size=self.input_size,
+            annotations=self.ann,
+            task_names=['task'],
+            training='independent'
+        )
+        
+        # CEM should have identified exogenous that depend only on input
+        self.assertTrue(hasattr(model, 'input_dependent_exogenous'))
+        self.assertIsInstance(model.input_dependent_exogenous, list)
+        
+        # CEM should have exogenous variables (one per concept state)
+        self.assertTrue(
+            len(model.input_dependent_exogenous) > 0,
+            "CEM should have input-dependent exogenous variables"
+        )
+        
+        # All identified exogenous should start with 'exog_'
+        for exog_name in model.input_dependent_exogenous:
+            self.assertTrue(
+                exog_name.startswith('exog_'),
+                f"Expected exogenous name to start with 'exog_', got '{exog_name}'"
+            )
 
 
 if __name__ == '__main__':

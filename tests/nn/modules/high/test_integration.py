@@ -63,7 +63,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         # Forward pass
         x = torch.randn(8, 16)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Create targets matching output shape
         target = torch.cat([
@@ -98,7 +98,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         # Forward pass
         x = torch.randn(8, 16)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Create targets
         target = torch.cat([
@@ -152,7 +152,7 @@ class TestHighLevelIntegration(unittest.TestCase):
             optimizer.zero_grad()
             
             # Forward
-            out = model(x, query=query)
+            out = model(query=query, x=x)
             
             # Loss
             filtered_loss = model.filter_output_for_loss(out, target.float())
@@ -181,8 +181,8 @@ class TestAnnotationsWithComponents(unittest.TestCase):
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'c2': {'type': 'discrete', 'distribution': Bernoulli}
                 }
             )
         })
@@ -296,7 +296,7 @@ class TestTwoTrainingModes(unittest.TestCase):
         y = torch.randint(0, 2, (4, 3)).float()
         
         optimizer.zero_grad()
-        out = model(x, query=['c1', 'c2', 'task'])
+        out = model(query=['c1', 'c2', 'task'], x=x)
         loss = loss_fn(out, y)
         loss.backward()
         optimizer.step()
@@ -305,15 +305,16 @@ class TestTwoTrainingModes(unittest.TestCase):
     
     def test_models_are_compatible_across_modes(self):
         """Test that model architecture is same regardless of training mode."""
-        # Manual mode
+        # Manual mode (pure PyTorch)
         model1 = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        # Lightning mode
+        # Lightning mode (with training='joint')
         model2 = ConceptBottleneckModel(
+            training='joint',
             input_size=8,
             annotations=self.ann,
             task_names=['task'],
@@ -331,8 +332,8 @@ class TestTwoTrainingModes(unittest.TestCase):
         query = ['c1', 'c2', 'task']
         
         with torch.no_grad():
-            out1 = model1(x, query=query)
-            out2 = model2(x, query=query)
+            out1 = model1(query=query, x=x)
+            out2 = model2(query=query, x=x)
         
         self.assertEqual(out1.shape, out2.shape)
 
@@ -380,7 +381,7 @@ class TestDistributionHandling(unittest.TestCase):
         # Forward pass
         x = torch.randn(8, 16)
         query = ['binary1', 'cat1', 'binary2', 'cat2']
-        out = model(x, query=query)
+        out = model(query=query, x=x)
         
         # Verify output shape
         expected_shape = (8, 1 + 3 + 1 + 4)  # sum of cardinalities
