@@ -426,12 +426,12 @@ def _complete(
         y = torch.sigmoid(torch.FloatTensor(y)).squeeze(-1)
         y = (y >= 0.5) * 1.0
     else:
-        y = torch.argmax(torch.FloatTensor(y), dim=-1)
+        y = torch.argmax(torch.FloatTensor(y), dim=-1).float()
 
     u = c[:, :n_concepts]
     X = torch.FloatTensor(X)
     u = torch.FloatTensor(u)
-    y = torch.FloatTensor(y)
+    # y is already a FloatTensor at this point
 
     uy = torch.cat([u, y.unsqueeze(-1)], dim=-1)
     uy_names = [f'C{i}' for i in range(n_concepts)] + ['y']
