@@ -42,11 +42,14 @@ optim_kwargs:
 # =============================================================
 # Scheduler settings
 # =============================================================
-# scheduler_class: 
-#   _target_: "hydra.utils.get_class"
-#   path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
-# scheduler_kwargs:
-#   factor: 0.2
+scheduler_class: 
+  _target_: "hydra.utils.get_class"
+  path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
+scheduler_kwargs:
+  factor: 0.5
+  min_lr: 0.001
+  patience: 10
+  monitor: "val_loss"
 
 
 # TODO: implement this
