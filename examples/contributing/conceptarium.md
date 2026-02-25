@@ -71,7 +71,7 @@ python run_experiment.py \
 
 ### Example: Custom CBM Variant
 
-`conceptarium/conf/model/cbm_with_intervention.yaml`:
+`conceptarium/conf/model/cbm_special.yaml`:
 
 ```yaml
 defaults:
@@ -80,16 +80,12 @@ defaults:
   - metrics: _default
   - _self_
 
-_target_: torch_concepts.nn.InterventionalCBM
+_target_: torch_concepts.nn.SpecialCBM
 
 task_names: ${dataset.default_task_names}
 
 # CBM-specific parameters
-intervention_policy:
-  _target_: torch_concepts.nn.RandomInterventionPolicy
-  intervention_prob: 0.25
-
-concept_bottleneck_type: "sequential"  # or "joint"
+special_parameter: 0.1
 
 # Use per-concept metrics to track intervention effects
 perconcept_metrics: true

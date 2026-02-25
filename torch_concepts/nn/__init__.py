@@ -50,7 +50,6 @@ from .modules.high.models.cem import ConceptEmbeddingModel
 # Learners (high-level)
 from .modules.high.learners.joint import JointLearner
 from .modules.high.learners.independent import IndependentLearner
-from .modules.high.learners.sequential import SequentialLearner
 
 # Models (mid-level)
 from .modules.mid.models.cpd import ParametricCPD
@@ -133,7 +132,6 @@ __all__ = [
     # Learners (high-level)
     "JointLearner",
     "IndependentLearner",
-    "SequentialLearner",
 
     # Models (mid-level)
     "ParametricCPD",

@@ -35,7 +35,7 @@ class BaseBipartiteModel(BaseModel):
         Names of task variables (subset of annotation labels).
     training : str, optional
         Training mode. If None (default), works as pure PyTorch module.
-        Options: 'joint', 'independent', 'sequential'.
+        Options: 'joint', 'independent'.
     variable_distributions : Mapping, optional
         Distribution classes for each concept if not in annotations.
     inference : BaseInference, optional

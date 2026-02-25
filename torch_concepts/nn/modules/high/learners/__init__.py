@@ -4,5 +4,5 @@ from .independent import IndependentLearner
 
 __all__: list[str] = [
     "JointLearner",
-    "IndependentLearner",
+    "IndependentLearner"
 ]

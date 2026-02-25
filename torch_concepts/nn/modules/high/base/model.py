@@ -184,13 +184,13 @@ class BaseModel(nn.Module, ABC):
         """Create instance with appropriate learner mixin based on training mode.
         
         This method dynamically creates a combined class that includes the appropriate
-        learner mixin (JointLearner, IndependentLearner, SequentialLearner) based on
+        learner mixin (JointLearner, IndependentLearner) based on
         the training parameter.
         
         Parameters
         ----------
         training : str, optional
-            Training mode: 'joint', 'independent', 'sequential', or None.
+            Training mode: 'joint', 'independent', or None.
             If None, returns a pure PyTorch module without Lightning integration.
         
         Returns

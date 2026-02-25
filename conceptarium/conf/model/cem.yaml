@@ -6,7 +6,7 @@ _target_: "torch_concepts.nn.ConceptEmbeddingModel"
 
 task_names: ${dataset.default_task_names}
 
-training: "joint" # "joint", "sequential", "independent"
+training: "joint" # "joint", "independent"
 
 embedding_size: 8
 

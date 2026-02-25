@@ -4,7 +4,7 @@ Comprehensive tests for Concept Bottleneck Model (CBM).
 Tests cover:
 - Model initialization with various configurations
 - Forward pass and output shapes
-- Training modes (joint, independent, sequential)
+- Training modes (joint, independent)
 - Backbone integration
 - Distribution handling
 - Filter methods
@@ -384,18 +384,6 @@ class TestCBMFactory(unittest.TestCase):
         self.assertEqual(model._training_mode, 'independent')
         self.assertIn('Independent', model.__class__.__name__)
     
-    def test_factory_sequential_mode(self):
-        """Test factory creates sequential training model."""
-        model = ConceptBottleneckModel(
-            training='sequential',
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-        
-        self.assertEqual(model._training_mode, 'sequential')
-        self.assertIn('Sequential', model.__class__.__name__)
-    
     def test_factory_default_is_pytorch(self):
         """Test default is pure PyTorch module (no training mode)."""
         model = ConceptBottleneckModel(
@@ -467,7 +455,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
     
     def test_forward_same_output_all_modes(self):
         """Test all training modes produce same forward output shape."""
-        for mode in ['joint', 'independent', 'sequential']:
+        for mode in ['joint', 'independent']:
             model = ConceptBottleneckModel(
                 training=mode,
                 input_size=8,
@@ -565,59 +553,6 @@ class TestTrainingModes(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x=x, query=['c1', 'c2', 'task'])
         self.assertEqual(out.shape, (2, 3))
-    
-    def test_sequential_mode_works(self):
-        """Test ConceptBottleneckModel with sequential training."""
-        model = ConceptBottleneckModel(training='sequential', **self.kwargs)
-        
-        self.assertEqual(model._training_mode, 'sequential')
-        x = torch.randn(2, 8)
-        out = model(x=x, query=['c1', 'c2', 'task'])
-        self.assertEqual(out.shape, (2, 3))
-
-
-class TestSequentialTrainingPhases(unittest.TestCase):
-    """Test sequential training phase management."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
-                }
-            )
-        })
-        self.model = ConceptBottleneckModel(
-            training='sequential',
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-    
-    def test_default_phase_is_encoder(self):
-        """Test default training phase is encoder."""
-        self.assertEqual(self.model.training_phase, 'encoder')
-    
-    def test_set_training_phase_predictor(self):
-        """Test switching to predictor phase."""
-        self.model.set_training_phase('predictor')
-        self.assertEqual(self.model.training_phase, 'predictor')
-    
-    def test_set_training_phase_encoder(self):
-        """Test switching back to encoder phase."""
-        self.model.set_training_phase('predictor')
-        self.model.set_training_phase('encoder')
-        self.assertEqual(self.model.training_phase, 'encoder')
-    
-    def test_invalid_phase_raises(self):
-        """Test invalid phase raises ValueError."""
-        with self.assertRaises(ValueError):
-            self.model.set_training_phase('invalid')
 
 
 class TestLearnerIntegration(unittest.TestCase):
@@ -674,28 +609,6 @@ class TestLearnerIntegration(unittest.TestCase):
         self.assertIsNotNone(loss)
         self.assertTrue(loss.requires_grad)
     
-    def test_sequential_training_step_encoder(self):
-        """Test sequential learner encoder phase training step."""
-        model = self._make_model('sequential')
-        model.set_training_phase('encoder')
-        model.train()
-        
-        loss = model.training_step(self.batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
-    def test_sequential_training_step_predictor(self):
-        """Test sequential learner predictor phase training step."""
-        model = self._make_model('sequential')
-        model.set_training_phase('predictor')
-        model.train()
-        
-        loss = model.training_step(self.batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
     def test_configure_optimizers_joint(self):
         """Test optimizer configuration for joint mode."""
         model = self._make_model('joint')
@@ -704,20 +617,6 @@ class TestLearnerIntegration(unittest.TestCase):
         
         self.assertIn('optimizer', config)
         self.assertIsInstance(config['optimizer'], torch.optim.Adam)
-    
-    def test_configure_optimizers_sequential(self):
-        """Test optimizer configuration for sequential mode."""
-        model = self._make_model('sequential')
-        
-        # Encoder phase
-        model.set_training_phase('encoder')
-        config = model.configure_optimizers()
-        self.assertIn('optimizer', config)
-        
-        # Predictor phase
-        model.set_training_phase('predictor')
-        config = model.configure_optimizers()
-        self.assertIn('optimizer', config)
 
 
 if __name__ == '__main__':

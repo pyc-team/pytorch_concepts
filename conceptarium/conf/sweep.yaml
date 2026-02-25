@@ -11,7 +11,7 @@ hydra:
       seed: 42
       dataset: asia  # asia / sachs / insurance
       model: cbm  # cbm / cem
-      model.training: joint  # joint / independent / sequential
+      model.training: joint  # joint / independent
       loss: weighted
       loss.concept_weight: 10
       loss.task_weight: 1

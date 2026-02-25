@@ -346,12 +346,11 @@ def indices_to_mask(
 # Training mode utilities (reusable for other models)
 # =============================================================================
 
-from .high.learners import JointLearner, IndependentLearner, SequentialLearner
+from .high.learners import JointLearner, IndependentLearner
 
 LEARNER_MAP = {
     'joint': JointLearner,
-    'independent': IndependentLearner,
-    'sequential': SequentialLearner,
+    'independent': IndependentLearner
 }
 
 _CLASS_CACHE = {}
@@ -368,7 +367,7 @@ def with_training_mode(cls, training: str = None):
     cls : type
         The base model class.
     training : str, optional
-        Training mode: 'joint', 'independent', 'sequential', or None.
+        Training mode: 'joint', 'independent', or None.
         If None, returns the original class (pure PyTorch module).
     
     Returns

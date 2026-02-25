@@ -1,7 +1,7 @@
 """Unified Concept Bottleneck Model with multiple training modes.
 
 This module provides a single ConceptBottleneckModel class that supports
-joint, independent, and sequential training through a `training` argument.
+joint and independent training through a `training` argument.
 """
 
 from typing import List, Optional, Union, Mapping
@@ -31,8 +31,6 @@ class ConceptBottleneckModel(BaseBipartiteModel):
         - 'joint': Train all concepts simultaneously (standard CBM).
         - 'independent': Train level-by-level with ground truth from 
           previous levels during training, cascade during validation.
-        - 'sequential': Two-phase training - encoder first, then freeze 
-          encoder and train predictor.
     input_size : int
         Dimensionality of input features (after backbone if used).
     annotations : Annotations
@@ -69,9 +67,9 @@ class ConceptBottleneckModel(BaseBipartiteModel):
     ...     loss=my_loss
     ... )
     
-    >>> # Lightning with sequential training
+    >>> # Lightning with independent training
     >>> model = ConceptBottleneckModel(
-    ...     training='sequential',
+    ...     training='independent',
     ...     input_size=8,
     ...     annotations=ann,
     ...     task_names=['task']

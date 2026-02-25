@@ -2,12 +2,11 @@
 Example: Comparing Different Training Modes
 
 This example demonstrates how to train a ConceptBottleneckModel with different
-training modes: joint, independent, and sequential.
+training modes: joint and independent.
 
 Training modes:
 - 'joint': Train all concepts and tasks simultaneously (standard CBM)
 - 'independent': Train level-by-level with ground truth from previous levels
-- 'sequential': Two-phase training - encoder first, then freeze and train predictor
 """
 
 import torch
@@ -142,31 +141,6 @@ def main():
     trainer_independent = Trainer(max_epochs=100)
     trainer_independent.fit(model_independent, datamodule=datamodule)
     evaluate(model_independent, datamodule, n_concepts, query)
-
-    # =========================================================================
-    # SEQUENTIAL TRAINING
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Training mode: SEQUENTIAL")
-    print("=" * 60)
-
-    model_sequential = ConceptBottleneckModel(
-        input_size=n_features,
-        annotations=annotations,
-        variable_distributions=variable_distributions,
-        task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # lightning kwargs
-        training='sequential',
-        loss=loss,
-        optim_class=optim,
-        optim_kwargs=optim_kwargs
-    )
-    print(f"Model type: {type(model_sequential).__name__}")
-
-    trainer_sequential = Trainer(max_epochs=100)
-    trainer_sequential.fit(model_sequential, datamodule=datamodule)
-    evaluate(model_sequential, datamodule, n_concepts, query)
 
 
 if __name__ == "__main__":
