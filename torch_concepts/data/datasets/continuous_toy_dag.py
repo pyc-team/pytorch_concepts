@@ -431,18 +431,18 @@ class ToyFunctionDAGDataset(ConceptDataset):
         # Save
         logger.info(f"Saving dataset to {self.root_dir}")
         torch.save(embeddings, self.processed_paths[0])
-        concepts.to_hdf(self.processed_paths[1], key="concepts", mode="w")
+        concepts.to_pickle(self.processed_paths[1])
         torch.save(annotations, self.processed_paths[2])
-        graph.to_hdf(self.processed_paths[3], key="graph", mode="w")
+        graph.to_pickle(self.processed_paths[3])
     
     def load_raw(self):
         self.maybe_build()
         
         logger.info(f"Loading dataset from {self.root_dir}")
         embeddings = torch.load(self.processed_paths[0], weights_only=False)
-        concepts = pd.read_hdf(self.processed_paths[1], "concepts")
+        concepts = pd.read_pickle(self.processed_paths[1])
         annotations = torch.load(self.processed_paths[2], weights_only=False)
-        graph = pd.read_hdf(self.processed_paths[3], "graph")
+        graph = pd.read_pickle(self.processed_paths[3])
         
         return embeddings, concepts, annotations, graph
     
