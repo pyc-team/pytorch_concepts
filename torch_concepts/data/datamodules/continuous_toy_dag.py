@@ -7,7 +7,6 @@ from ..datasets import ToyFunctionDAGDataset
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
 
-
 class ToyFunctionDAGDataModule(ConceptDataModule):
     """DataModule for function-based DAG synthetic datasets.
     
