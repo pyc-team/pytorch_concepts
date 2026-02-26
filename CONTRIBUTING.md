@@ -32,11 +32,6 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 
 ## Development Setup
 
-### Prerequisites
-
-- Python 3.9 or higher
-- PyTorch (latest stable version)
-
 ### Installation
 
 For development, you may want to install PyC in editable mode and have the complete conda environment with all dependencies to test all functionalities:
