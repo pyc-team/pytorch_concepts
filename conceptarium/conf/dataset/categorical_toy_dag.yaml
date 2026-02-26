@@ -1,0 +1,81 @@
+defaults:
+  - _commons
+  - _self_
+
+# Target class for Hydra instantiation
+_target_: torch_concepts.data.datamodules.categorical_toy_dag.ToyDAGDataModule
+
+# Random seed (inherited from global config)
+seed: ${seed}
+
+# ===== DAG Structure Configuration =====
+# Car Starting Scenario: engine and wheels determine if car starts
+
+# List of all variable names in the DAG
+variables: ['engine', 'wheels', 'car_start']
+
+# Cardinality of each variable (number of possible values)
+# For binary variables: 2 (state 0 = broken/doesn't start, state 1 = working/starts)
+cardinalities:
+  engine: 2      # 0=broken, 1=working
+  wheels: 2      # 0=broken, 1=working
+  car_start: 2   # 0=doesn't start, 1=starts
+
+# DAG structure as list of [parent, child] edges
+# Both engine and wheels influence whether the car starts
+dag:
+  - ['engine', 'car_start']
+  - ['wheels', 'car_start']
+
+# Conditional probability tables (CPTs)
+# Format: child_variable:
+#           "parent1=value1,parent2=value2": [prob_child_0, prob_child_1, ...]
+conditional_probs:
+  car_start:  # CPT for car_start given engine and wheels
+    "engine=0,wheels=0": [0.95, 0.05]  # Both broken: 95% won't start, 5% starts
+    "engine=0,wheels=1": [0.90, 0.10]  # Engine broken: 90% won't start, 10% starts
+    "engine=1,wheels=0": [0.85, 0.15]  # Wheels broken: 85% won't start, 15% starts
+    "engine=1,wheels=1": [0.05, 0.95]  # Both working: 5% won't start, 95% starts
+
+# ===== Dataset Configuration =====
+
+# Number of samples to generate
+n_gen: 10000
+
+# Target variable name (optional, used for metadata and visualization)
+target_variable: 'car_start'
+
+# Latent variables (optional): variables used for embedding generation but hidden from concepts
+# These variables are included in the DAG and used by the autoencoder but not exposed as concepts
+latent_variables: []
+
+# Subset of concepts to use (null = use all non-latent variables)
+concept_subset: null
+
+# ===== Autoencoder Configuration =====
+
+# Configuration for autoencoder-based embedding extraction
+autoencoder_kwargs:
+  latent_dim: 16          # Dimension of learned embeddings (smaller for 3 variables)
+  noise: 0.0              # Noise level (0.0 to 1.0) for regularization
+  epochs: 1000            # Training epochs (reduced for smaller dataset)
+  batch_size: 512         # Batch size for training
+  lr: 0.001               # Learning rate
+  patience: 50            # Early stopping patience
+
+# ===== Backbone Configuration =====
+# Optional: Use a pre-trained backbone instead of autoencoder
+backbone: null
+precompute_embs: false
+force_recompute: false
+
+# ===== Concept Descriptions =====
+# Human-readable descriptions for each variable
+label_descriptions:
+  engine: "Engine status (0=broken, 1=working)"
+  wheels: "Wheels status (0=broken, 1=working)"
+  car_start: "Whether the car starts (0=doesn't start, 1=starts)"
+
+# ===== Task Configuration =====
+# Default task names (concepts treated as targets by certain models like CBMs)
+default_task_names: ['car_start']
