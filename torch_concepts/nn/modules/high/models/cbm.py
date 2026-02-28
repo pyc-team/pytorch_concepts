@@ -4,16 +4,18 @@ This module provides a single ConceptBottleneckModel class that supports
 joint and independent training through a `training` argument.
 """
 
-from typing import List, Optional, Union, Mapping
-from torch import nn
+from typing import List, Optional, Union
 
 from .....annotations import Annotations
-from ...mid.inference.forward import DeterministicInference
-from ...mid.constructors.bipartite import BipartiteModel
+
+from ...low.base.inference import BaseInference
 from ...low.encoders.linear import LinearLatentToConcept
 from ...low.predictors.linear import LinearConceptToConcept
 from ...low.lazy import LazyConstructor
-from ...low.base.inference import BaseInference
+
+from ...mid.inference.deterministic import DeterministicInference
+from ...mid.constructors.bipartite import BipartiteModel
+
 from ..base.bipartite import BaseBipartiteModel
 
 
@@ -21,36 +23,45 @@ class ConceptBottleneckModel(BaseBipartiteModel):
     """Concept Bottleneck Model with configurable training mode.
     
     A unified CBM class that works as a pure PyTorch module by default,
-    or as a Lightning module when a training mode is specified.
+    or as a Lightning module when lightning=True.
     
     Parameters
     ----------
-    training : str, optional
-        Training mode. If None (default), the model works as a pure PyTorch
-        module callable. If specified, enables Lightning training:
-        - 'joint': Train all concepts simultaneously (standard CBM).
-        - 'independent': Train level-by-level with ground truth from 
-          previous levels during training, cascade during validation.
     input_size : int
         Dimensionality of input features (after backbone if used).
     annotations : Annotations
         Concept annotations with labels, cardinalities, and distributions.
     task_names : Union[List[str], str]
         Names of task variables (subset of annotation labels).
+    lightning : bool, default False
+        If True, adds Lightning training capabilities.
+        If False (default), works as pure PyTorch module.
+    inference : BaseInference, optional
+        Inference engine class for evaluation. Defaults to DeterministicInference.
+    train_inference : BaseInference, optional
+        Inference engine class for training.
+        Defaults to DeterministicInference.
     variable_distributions : Mapping, optional
         Distribution classes for each concept if not in annotations.
-    inference : BaseInference, optional
-        Inference engine class. Defaults to DeterministicInference.
-    loss : nn.Module, optional
-        Loss function for Lightning training.
-    metrics : Mapping, optional
-        Metrics for Lightning training.
     **kwargs
-        Additional arguments passed to BaseModel.
+        Additional arguments passed to BaseBipartiteModel, including:
+        
+        - **backbone** : Feature extraction module (e.g., ResNet)
+        - **latent_encoder** : Custom encoder for latent space
+        - **latent_encoder_kwargs** : Arguments for latent encoder
+        
+        Lightning Training (when lightning=True):
+        
+        - **loss** : Loss function (nn.Module)
+        - **metrics** : ConceptMetrics or dict of MetricCollections
+        - **optim_class** : Optimizer class (e.g., torch.optim.Adam)
+        - **optim_kwargs** : Optimizer arguments (e.g., {'lr': 0.001})
+        - **scheduler_class** : LR scheduler class
+        - **scheduler_kwargs** : Scheduler arguments
     
     Examples
     --------
-    >>> # Pure PyTorch module (no training mode)
+    >>> # Pure PyTorch module (default)
     >>> model = ConceptBottleneckModel(
     ...     input_size=8,
     ...     annotations=ann,
@@ -58,21 +69,15 @@ class ConceptBottleneckModel(BaseBipartiteModel):
     ... )
     >>> out = model(x, query=['c1', 'task'])  # Direct forward pass
     
-    >>> # Lightning with joint training
+    >>> # Lightning training enabled
     >>> model = ConceptBottleneckModel(
-    ...     training='joint',
+    ...     lightning=True,
     ...     input_size=8,
     ...     annotations=ann,
     ...     task_names=['task'],
-    ...     loss=my_loss
-    ... )
-    
-    >>> # Lightning with independent training
-    >>> model = ConceptBottleneckModel(
-    ...     training='independent',
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task']
+    ...     loss=my_loss,
+    ...     optim_class=torch.optim.Adam,
+    ...     optim_kwargs={'lr': 0.001}
     ... )
     """
     
@@ -81,22 +86,18 @@ class ConceptBottleneckModel(BaseBipartiteModel):
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
-        training: str = None,  # Consumed by __new__, included for signature
-        variable_distributions: Optional[Mapping] = None,
         inference: Optional[BaseInference] = DeterministicInference,
-        loss: Optional[nn.Module] = None,
-        metrics: Optional[Mapping] = None,
+        inference_kwargs: Optional[dict] = None,
+        train_inference: Optional[BaseInference] = DeterministicInference,
+        train_inference_kwargs: Optional[dict] = None,
+        lightning: bool = False, # wrap the Torch model with Lightning capabilities
         **kwargs
     ):
         super().__init__(
             input_size=input_size,
             annotations=annotations,
             task_names=task_names,
-            training=training,
-            variable_distributions=variable_distributions,
-            inference=inference,
-            loss=loss,
-            metrics=metrics,
+            lightning=lightning,
             **kwargs
         )
         
@@ -108,7 +109,13 @@ class ConceptBottleneckModel(BaseBipartiteModel):
             encoder=LazyConstructor(LinearLatentToConcept),
             predictor=LazyConstructor(LinearConceptToConcept)
         )
+
+        self.eval_inference = inference(
+            self.model.probabilistic_model, 
+            **(inference_kwargs or {})
+        )
+        self.train_inference = train_inference(
+            self.model.probabilistic_model, 
+            **(train_inference_kwargs or {})
+        )
         
-        # Initialize inference engine and graph levels
-        self.inference = inference(self.model.probabilistic_model)
-        self._init_graph_levels()

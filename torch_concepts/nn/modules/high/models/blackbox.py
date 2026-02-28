@@ -7,11 +7,9 @@ from .....annotations import Annotations
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
-from ..learners import JointLearner
 
 
-
-class BlackBox(BaseModel, JointLearner):
+class BlackBox(BaseModel):
     """
     BlackBox model.
 
@@ -22,11 +20,7 @@ class BlackBox(BaseModel, JointLearner):
     Args:
         input_size (int): Dimensionality of input features.
         annotations (Annotations): Annotation object for output variables.
-        loss (nn.Module, optional): Loss function for training.
-        metrics (Mapping, optional): Metrics for evaluation.
-        backbone (nn.Module, optional): Feature extraction module.
-        latent_encoder (nn.Module, optional): Latent encoder module.
-        latent_encoder_kwargs (dict, optional): Arguments for latent encoder.
+        lightning (bool, optional): Enable Lightning training. Default False.
         **kwargs: Additional arguments for BaseModel.
 
     Example:
@@ -38,17 +32,14 @@ class BlackBox(BaseModel, JointLearner):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
-        loss: Optional[nn.Module] = None,
-        metrics: Optional[Mapping] = None,
-        inference: bool = False,
+        lightning: bool = False,
         **kwargs
     ) -> None:
         super().__init__(
             input_size=input_size,
             annotations=annotations,
             variable_distributions=variable_distributions,
-            loss=loss,
-            metrics=metrics,
+            lightning=lightning,
             **kwargs
         )
         output_size = sum(self.concept_annotations.cardinalities)
@@ -57,7 +48,22 @@ class BlackBox(BaseModel, JointLearner):
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
+                ground_truth: torch.Tensor = None,
+                **kwargs
         ) -> torch.Tensor:
+        """Forward pass through the BlackBox model.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor.
+        query : List[str], optional
+            Concept names to query (ignored for BlackBox).
+        ground_truth : torch.Tensor, optional
+            Ignored for BlackBox.
+        **kwargs
+            Additional arguments (ignored).
+        """
         features = self.maybe_apply_backbone(x)
         endogenous = self.latent_encoder(features)
         output = self.linear(endogenous)
@@ -73,8 +79,6 @@ class BlackBox(BaseModel, JointLearner):
         Returns:
             Dict with 'input' and 'target' for loss computation.
         """
-        # forward_out: endogenous
-        # return: endogenous
         return {'input': forward_out,
                 'target': target}
 
@@ -86,16 +90,13 @@ class BlackBox(BaseModel, JointLearner):
             target: Ground truth labels.
 
         Returns:
-            Dict with 'input' and 'target' for metric computation.
+            Dict with 'preds' and 'target' for metric computation.
         """
-        # forward_out: endogenous
-        # return: endogenous
         return {'preds': forward_out,
                 'target': target}
-    
 
 
-class BlackBoxTaskOnly(BaseModel, JointLearner):
+class BlackBoxTaskOnly(BaseModel):
     """
     BlackBox model.
 
@@ -106,16 +107,13 @@ class BlackBoxTaskOnly(BaseModel, JointLearner):
     Args:
         input_size (int): Dimensionality of input features.
         annotations (Annotations): Annotation object for output variables.
+        task_names (Union[List[str], str]): Task names to predict.
         variable_distributions (Mapping, optional): Distributions of variables.
-        loss (nn.Module, optional): Loss function for training.
-        metrics (Mapping, optional): Metrics for evaluation.
-        backbone (nn.Module, optional): Feature extraction module.
-        latent_encoder (nn.Module, optional): Latent encoder module.
-        latent_encoder_kwargs (dict, optional): Arguments for latent encoder.
+        lightning (bool, optional): Enable Lightning training. Default False.
         **kwargs: Additional arguments for BaseModel.
 
     Example:
-        >>> model = BlackBox(input_size=8, annotations=ann)
+        >>> model = BlackBoxTaskOnly(input_size=8, annotations=ann, task_names=['task'])
         >>> out = model(torch.randn(2, 8))
     """
     def __init__(
@@ -124,17 +122,14 @@ class BlackBoxTaskOnly(BaseModel, JointLearner):
         annotations: Annotations,
         task_names: Union[List[str], str],
         variable_distributions: Optional[Mapping] = None,
-        loss: Optional[nn.Module] = None,
-        metrics: Optional[Mapping] = None,
-        inference: bool = False,
+        lightning: bool = False,
         **kwargs
     ) -> None:
         super().__init__(
             input_size=input_size,
             annotations=annotations,
             variable_distributions=variable_distributions,
-            loss=loss,
-            metrics=metrics,
+            lightning=lightning,
             **kwargs
         )
         # extract only task output size
@@ -154,7 +149,22 @@ class BlackBoxTaskOnly(BaseModel, JointLearner):
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
+                ground_truth: torch.Tensor = None,
+                **kwargs
         ) -> torch.Tensor:
+        """Forward pass through the BlackBoxTaskOnly model.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor.
+        query : List[str], optional
+            Concept names to query (ignored for BlackBox).
+        ground_truth : torch.Tensor, optional
+            Ignored for BlackBox.
+        **kwargs
+            Additional arguments (ignored).
+        """
         features = self.maybe_apply_backbone(x)
         endogenous = self.latent_encoder(features)
         output = self.linear(endogenous)

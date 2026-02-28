@@ -4,28 +4,28 @@ This module defines the abstract BaseModel class that serves as the foundation
 for all concept-based models in the library. It handles backbone integration,
 encoder setup, and provides hooks for data preprocessing.
 
-BaseModel supports two training modes:
+BaseModel supports two usage modes:
 
-1. **Standard PyTorch Training** (Manual Loop):
-   - Initialize model without loss parameter
+1. **Standard PyTorch Module** (training=False, default):
+   - Works as a regular nn.Module
    - Manually define optimizer, loss function, training loop
    - Full control over forward pass, loss computation, optimization
    - Ideal for custom training procedures
 
-2. **PyTorch Lightning Training** (Automatic):
+2. **PyTorch Lightning Module** (lightning=True):
    - Initialize model with loss, optim_class, optim_kwargs parameters
    - Use Lightning Trainer for automatic training/validation/testing
-   - Inherits training logic from Learner classes (JointLearner, IndependentLearner)
+   - Inherits training logic from BaseLearner
    - Ideal for rapid experimentation with standard procedures
 
 See Also
 --------
-torch_concepts.nn.modules.high.learners.JointLearner : Lightning training logic
+torch_concepts.nn.modules.high.base.learner.BaseLearner : Lightning training logic
 torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete implementation
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Mapping, Dict
+from typing import List, Any, Optional, Mapping, Dict
 import torch
 import torch.nn as nn
 
@@ -35,6 +35,9 @@ from .....typing import BackboneType
 from .....utils import add_distribution_to_annotations
 from ...utils import with_training_mode
 
+from ...mid.models.variable import ExogenousVariable, ConceptVariable
+
+
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
 
@@ -42,17 +45,17 @@ class BaseModel(nn.Module, ABC):
     and encoders for latent representations. All concrete model implementations 
     should inherit from this class.
 
-    BaseModel is flexible and supports two distinct training paradigms:
+    BaseModel supports two usage modes controlled by the `lightning` parameter:
 
-    **Mode 1: Standard PyTorch Training (Manual Loop)**
+    **Mode 1: Standard PyTorch Module (lightning=False, default)**
     
-    Initialize model without loss/optimizer parameters for full manual control.
+    Initialize model without lightning=True for full manual control.
     You define the training loop, optimizer, and loss function externally.
     
-    **Mode 2: PyTorch Lightning Training (Automatic)**
+    **Mode 2: PyTorch Lightning Module (lightning=True)**
     
-    Initialize model with loss, optim_class, and optim_kwargs for automatic training
-    via PyTorch Lightning Trainer. The model inherits training logic from Learner classes.
+    Initialize model with lightning=True, loss, optim_class, and optim_kwargs 
+    for automatic training via PyTorch Lightning Trainer.
 
     Parameters
     ----------
@@ -63,6 +66,9 @@ class BaseModel(nn.Module, ABC):
         Concept annotations containing variable names, cardinalities, and optional
         distribution metadata. Distributions specify how the model represents each
         concept (e.g., Bernoulli for binary, Categorical for multi-class).
+    lightning : bool, default False
+        If True, adds Lightning training capabilities (BaseLearner mixin).
+        If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
         Dictionary mapping concept names to torch.distributions classes (e.g.,
         ``{'c1': Bernoulli, 'c2': Categorical}``). Required if annotations lack
@@ -82,6 +88,23 @@ class BaseModel(nn.Module, ABC):
         - 'n_layers' (int): Number of hidden layers
         - 'activation' (str): Activation function name
         If None, uses nn.Identity (no encoding). Defaults to None.
+    
+    Lightning Training Parameters (only used when lightning=True)
+    -------------------------------------------------------------
+    loss : nn.Module, optional
+        Loss function for training. Should accept 'input' and 'target' kwargs.
+        Common choices: nn.BCEWithLogitsLoss, nn.CrossEntropyLoss, TypedLoss.
+    metrics : ConceptMetrics or dict, optional
+        Metrics for evaluation. Can be a ConceptMetrics object or dict with keys
+        'train_metrics', 'val_metrics', 'test_metrics' mapping to MetricCollections.
+    optim_class : torch.optim.Optimizer, optional
+        Optimizer class (not instance). E.g., torch.optim.Adam, torch.optim.AdamW.
+    optim_kwargs : dict, optional
+        Keyword arguments for optimizer. E.g., {'lr': 0.001, 'weight_decay': 1e-4}.
+    scheduler_class : torch.optim.lr_scheduler._LRScheduler, optional
+        Learning rate scheduler class. E.g., StepLR, CosineAnnealingLR.
+    scheduler_kwargs : dict, optional
+        Keyword arguments for scheduler. Include 'monitor' key for ReduceLROnPlateau.
     **kwargs
         Additional arguments passed to nn.Module superclass.
 
@@ -111,8 +134,8 @@ class BaseModel(nn.Module, ABC):
       If not, variable_distributions is required and will be added to annotations.
     - Subclasses must implement ``forward()``, ``filter_output_for_loss()``,
       and ``filter_output_for_metrics()`` methods.
-    - For Lightning training, subclasses typically inherit from both BaseModel
-      and a Learner class (e.g., JointLearner) via multiple inheritance.
+    - For Lightning training, set lightning=True. The BaseLearner mixin is
+      automatically added via ``__new__``.
     - The latent_size attribute is critical for downstream concept encoders
       to determine input dimensionality.
 
@@ -176,50 +199,43 @@ class BaseModel(nn.Module, ABC):
     See Also
     --------
     torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete CBM implementation
-    torch_concepts.nn.modules.high.learners.JointLearner : Lightning training logic for joint models
+    torch_concepts.nn.modules.high.base.learner.BaseLearner : Lightning training logic
     torch_concepts.annotations.Annotations : Concept annotation container
     """
 
-    def __new__(cls, *args, training: str = None, **kwargs):
-        """Create instance with appropriate learner mixin based on training mode.
+    def __new__(cls, *args, lightning: bool = False, **kwargs):
+        """Create instance with BaseLearner mixin for Lightning training.
         
-        This method dynamically creates a combined class that includes the appropriate
-        learner mixin (JointLearner, IndependentLearner) based on
-        the training parameter.
+        This method dynamically creates a combined class that includes
+        BaseLearner when lightning=True.
         
         Parameters
         ----------
-        training : str, optional
-            Training mode: 'joint', 'independent', or None.
-            If None, returns a pure PyTorch module without Lightning integration.
+        lightning : bool, default False
+            If True, adds BaseLearner mixin for Lightning training.
+            If False, returns a pure PyTorch module without Lightning integration.
         
         Returns
         -------
         BaseModel
-            Instance of the combined class with learner mixin.
+            Instance of the combined class with BaseLearner mixin.
         """
-        combined_class = with_training_mode(cls, training)
+        combined_class = with_training_mode(cls, lightning)
         instance = object.__new__(combined_class)
-        instance._training_mode = training
+        instance._lightning_enabled = lightning
         return instance
 
     def __init__(
         self,
         input_size: int,
         annotations: Annotations,
-        training: str = None,  # Consumed by __new__, included for signature
         variable_distributions: Optional[Mapping] = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
         latent_encoder_kwargs: Optional[Dict] = None,
-        loss: Optional[nn.Module] = None,
-        metrics: Optional[Mapping] = None,
+        lightning: bool = False,  # Consumed by __new__, included for signature
         **kwargs
     ) -> None:
-        # Only pass loss/metrics to super if training mode is set (learner mixin present)
-        if getattr(self, '_training_mode', None) is not None:
-            kwargs['loss'] = loss
-            kwargs['metrics'] = metrics
         super().__init__(**kwargs)
 
         if annotations is not None:
@@ -255,6 +271,39 @@ class BaseModel(nn.Module, ABC):
             self._latent_encoder = nn.Identity()
 
         self.latent_size = latent_encoder_kwargs.get('hidden_size') if latent_encoder_kwargs else input_size
+
+    @property
+    def inference(self):
+        """Return the active inference engine based on train/eval mode.
+
+        When ``self.training`` is True (after ``.train()``), returns
+        ``self.train_inference``.  When False (after ``.eval()``),
+        returns ``self.eval_inference``.  This mirrors PyTorch and
+        Lightning conventions so that calling ``.train()`` / ``.eval()``
+        automatically selects the correct engine.
+
+        Returns
+        -------
+        BaseInference
+            The currently active inference engine.
+        """
+        if self.training and self.train_inference is not None:
+            return self.train_inference
+        return self.eval_inference
+
+    def _finalize(self):
+        if not hasattr(self, 'model') or self.model is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.model in __init__"
+            )
+        if not hasattr(self, 'eval_inference') or self.eval_inference is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.eval_inference in __init__"
+            )
+        if self._lightning_enabled and not hasattr(self, 'train_inference'):
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.train_inference in __init__ when lightning=True"
+            )
 
     def __repr__(self):
         backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
@@ -301,7 +350,53 @@ class BaseModel(nn.Module, ABC):
     #     return self._encoder
 
     @abstractmethod
-    def filter_output_for_loss(self, forward_out, target):
+    def forward(
+        self,
+        query: List[str],
+        x: torch.Tensor = None,
+        evidence: Dict[str, torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Unified forward pass.
+        
+        This method defines the forward pass for the model.  The active
+        inference engine is selected automatically based on whether the
+        model is in train or eval mode (see the ``inference`` property).
+        Calling ``.train()`` activates ``train_inference``; calling
+        ``.eval()`` activates ``eval_inference``.
+
+        Parameters
+        ----------
+        query : List[str]
+            List of concept names to query.
+        x : torch.Tensor, optional
+            Raw input tensor. Shape: (batch_size, input_size).
+            If provided, backbone and latent encoder are applied. If None, assumes
+            inputs are pre-computed features.
+        evidence : Dict[str, torch.Tensor], optional
+            Optional dictionary of evidence tensors for concepts. Keys are concept names,
+            values are tensors with shape (batch_size, concept_dim). Used for interventions
+            or when providing observed concept values.
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor containing predictions for the queried concepts.
+
+        Notes
+        -----
+        - The inference engine is chosen via PyTorch's built-in train/eval
+          flag (``self.training``).  ``model.train()`` selects
+          ``train_inference``; ``model.eval()`` selects
+          ``eval_inference``.  Lightning toggles this automatically.
+        - The forward pass should process the input `x` through the backbone and latent encoder
+          if `x` is provided, and then pass the resulting latent representation as evidence to the inference engine.
+        - The `evidence` dictionary allows for flexible input of observed concept values, which can be used for interventions or when some concepts are observed during inference.
+        - This method is called automatically during Lightning training in the `shared_step()` method of Learner classes, and can also be called directly for manual PyTorch training.
+        """
+        pass
+
+    @abstractmethod
+    def filter_output_for_loss(self, forward_out, target) -> Dict[str, Any]:
         """Filter model outputs before passing to loss function.
 
         Override this method in your model to customize what outputs are passed to the loss.
@@ -349,7 +444,7 @@ class BaseModel(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def filter_output_for_metrics(self, forward_out, target):
+    def filter_output_for_metrics(self, forward_out, target) -> Dict[str, Any]:
         """Filter model outputs before passing to metric computation.
 
         Override this method in your model to customize what outputs are passed to the metrics.
@@ -371,7 +466,7 @@ class BaseModel(nn.Module, ABC):
     def maybe_apply_backbone(
         self,
         x: torch.Tensor,
-        backbone_args: Optional[Mapping[str, Any]] = None,
+        backbone_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> torch.Tensor:
         """Apply the backbone to ``x`` unless features are pre-computed.
 
@@ -396,4 +491,4 @@ class BaseModel(nn.Module, ABC):
                 f"instance of type {type(self.backbone).__name__}."
             )
 
-        return self.backbone(x, **backbone_args if backbone_args else {})
+        return self.backbone(x, **backbone_kwargs if backbone_kwargs else {})

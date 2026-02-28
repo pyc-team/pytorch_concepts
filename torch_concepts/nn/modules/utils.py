@@ -346,51 +346,44 @@ def indices_to_mask(
 # Training mode utilities (reusable for other models)
 # =============================================================================
 
-from .high.learners import JointLearner, IndependentLearner
-
-LEARNER_MAP = {
-    'joint': JointLearner,
-    'independent': IndependentLearner
-}
+from .high.base.learner import BaseLearner
 
 _CLASS_CACHE = {}
 
 
-def with_training_mode(cls, training: str = None):
-    """Create a combined class with the appropriate learner mixin.
+def with_training_mode(cls, lightning: bool = False):
+    """Create a combined class with BaseLearner mixin for Lightning training.
     
-    This utility can be used by any model class to support dynamic
-    training mode selection via a `training` parameter.
+    This utility adds the BaseLearner mixin to any model class when
+    lightning=True.  The BaseLearner provides the Lightning training
+    loop.  Inference engine selection (train vs eval) is handled
+    automatically by the ``inference`` property on BaseModel, which
+    returns ``train_inference`` or ``eval_inference`` depending on
+    the module's train/eval mode (toggled by ``.train()``/``.eval()``).
     
     Parameters
     ----------
     cls : type
         The base model class.
-    training : str, optional
-        Training mode: 'joint', 'independent', or None.
-        If None, returns the original class (pure PyTorch module).
+    lightning : bool, default False
+        If True, adds BaseLearner mixin for Lightning training.
+        If False, returns the original class (pure PyTorch module).
     
     Returns
     -------
     type
-        Combined class with learner mixin, or original class if training is None.
+        Combined class with BaseLearner mixin, or original class if lightning is False.
     """
     # No training mode = pure PyTorch module (no learner mixin)
-    if training is None:
+    if not lightning:
         return cls
     
-    if training not in LEARNER_MAP:
-        raise ValueError(
-            f"Unknown training mode: '{training}'. "
-            f"Expected one of: {list(LEARNER_MAP.keys())} or None"
-        )
-    
-    cache_key = (cls, training)
+    # Add BaseLearner mixin for Lightning training
+    cache_key = (cls, True)
     if cache_key not in _CLASS_CACHE:
-        learner_class = LEARNER_MAP[training]
         _CLASS_CACHE[cache_key] = type(
-            f'{cls.__name__}_{training.capitalize()}',
-            (cls, learner_class),
+            f'{cls.__name__}_Module',
+            (cls, BaseLearner),
             {}
         )
     return _CLASS_CACHE[cache_key]

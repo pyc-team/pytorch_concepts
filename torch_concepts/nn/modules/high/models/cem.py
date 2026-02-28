@@ -1,20 +1,24 @@
-"""Unified Concept Embedding Model with multiple training modes.
+"""Concept Embedding Model (CEM)
 
-This module provides a single ConceptEmbeddingModel class that supports
-joint and independent training through a `training` argument.
+    References:
+        Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
+        Accuracy-Explainability Trade-Off", NeurIPS 2022.
+        https://arxiv.org/abs/2209.09056
 """
 
-from typing import List, Optional, Union, Mapping
-from torch import nn
+from typing import List, Optional, Union
 
 from .....annotations import Annotations
-from ...mid.inference.forward import DeterministicInference
-from ...mid.constructors.bipartite import BipartiteModel
+
+from ...low.base.inference import BaseInference
 from ...low.encoders.exogenous import LinearLatentToExogenous
 from ...low.encoders.linear import LinearExogenousToConcept
 from ...low.predictors.exogenous import MixConceptExogegnousToConcept
 from ...low.lazy import LazyConstructor
-from ...low.base.inference import BaseInference
+
+from ...mid.inference.deterministic import DeterministicInference
+from ...mid.constructors.bipartite import BipartiteModel
+
 from ..base.bipartite import BaseBipartiteModel
 
 
@@ -22,19 +26,13 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
     """Concept Embedding Model with configurable training mode.
     
     A unified CEM class that works as a pure PyTorch module by default,
-    or as a Lightning module when a training mode is specified.
+    or as a Lightning module when lightning=True.
     
     The CEM extends the CBM by learning concept embeddings, allowing for
     richer representations of concepts through embedding vectors.
     
     Parameters
     ----------
-    training : str, optional
-        Training mode. If None (default), the model works as a pure PyTorch
-        module callable. If specified, enables Lightning training:
-        - 'joint': Train all concepts simultaneously (standard CEM).
-        - 'independent': Train level-by-level with ground truth from 
-          previous levels during training, cascade during validation.
     input_size : int
         Dimensionality of input features (after backbone if used).
     annotations : Annotations
@@ -43,20 +41,35 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
         Names of task variables (subset of annotation labels).
     embedding_size : int, optional
         Dimensionality of concept embeddings. Defaults to 16.
+    lightning : bool, default False
+        If True, adds Lightning training capabilities.
+        If False (default), works as pure PyTorch module.
+    inference : BaseInference, optional
+        Inference engine class for evaluation. Defaults to DeterministicInference.
+    train_inference : BaseInference, optional
+        Inference engine class for training. Only used when lightning=True.
+        Defaults to DeterministicInference.
     variable_distributions : Mapping, optional
         Distribution classes for each concept if not in annotations.
-    inference : BaseInference, optional
-        Inference engine class. Defaults to DeterministicInference.
-    loss : nn.Module, optional
-        Loss function for Lightning training.
-    metrics : Mapping, optional
-        Metrics for Lightning training.
     **kwargs
-        Additional arguments passed to BaseModel.
+        Additional arguments passed to BaseBipartiteModel, including:
+        
+        - **backbone** : Feature extraction module (e.g., ResNet)
+        - **latent_encoder** : Custom encoder for latent space
+        - **latent_encoder_kwargs** : Arguments for latent encoder
+        
+        Lightning Training (when lightning=True):
+        
+        - **loss** : Loss function (nn.Module)
+        - **metrics** : ConceptMetrics or dict of MetricCollections
+        - **optim_class** : Optimizer class (e.g., torch.optim.Adam)
+        - **optim_kwargs** : Optimizer arguments (e.g., {'lr': 0.001})
+        - **scheduler_class** : LR scheduler class
+        - **scheduler_kwargs** : Scheduler arguments
     
     Examples
     --------
-    >>> # Pure PyTorch module (no training mode)
+    >>> # Pure PyTorch module (default)
     >>> model = ConceptEmbeddingModel(
     ...     input_size=8,
     ...     annotations=ann,
@@ -65,22 +78,16 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
     ... )
     >>> out = model(x, query=['c1', 'task'])  # Direct forward pass
     
-    >>> # Lightning with joint training
+    >>> # Lightning training enabled
     >>> model = ConceptEmbeddingModel(
-    ...     training='joint',
+    ...     lightning=True,
     ...     input_size=8,
     ...     annotations=ann,
     ...     task_names=['task'],
     ...     embedding_size=16,
-    ...     loss=my_loss
-    ... )
-    
-    >>> # Lightning with independent training
-    >>> model = ConceptEmbeddingModel(
-    ...     training='independent',
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task']
+    ...     loss=my_loss,
+    ...     optim_class=torch.optim.Adam,
+    ...     optim_kwargs={'lr': 0.001}
     ... )
     """
     
@@ -89,23 +96,19 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
-        training: str = None,  # Consumed by __new__, included for signature
         embedding_size: int = 16,
-        variable_distributions: Optional[Mapping] = None,
         inference: Optional[BaseInference] = DeterministicInference,
-        loss: Optional[nn.Module] = None,
-        metrics: Optional[Mapping] = None,
+        inference_kwargs: Optional[dict] = None,
+        train_inference: Optional[BaseInference] = DeterministicInference,
+        train_inference_kwargs: Optional[dict] = None,
+        lightning: bool = False,
         **kwargs
     ):
         super().__init__(
             input_size=input_size,
             annotations=annotations,
             task_names=task_names,
-            training=training,
-            variable_distributions=variable_distributions,
-            inference=inference,
-            loss=loss,
-            metrics=metrics,
+            lightning=lightning,
             **kwargs
         )
         
@@ -125,6 +128,11 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
             use_source_exogenous=True
         )
 
-        # Initialize inference engine and graph levels
-        self.inference = inference(self.model.probabilistic_model)
-        self._init_graph_levels()
+        self.eval_inference = inference(
+            self.model.probabilistic_model, 
+            **(inference_kwargs or {})
+        )
+        self.train_inference = train_inference(
+            self.model.probabilistic_model, 
+            **(train_inference_kwargs or {})
+        )
