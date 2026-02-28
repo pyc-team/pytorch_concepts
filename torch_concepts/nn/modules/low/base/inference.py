@@ -68,6 +68,58 @@ class BaseInference(torch.nn.Module):
         """
         return self.query(x, *args, **kwargs)
 
+    def _validate_evidence(self, evidence) -> None:
+        """
+        Validate that evidence contains the required 'input' key.
+        
+        Call this at the beginning of every ``query`` implementation
+        that receives an evidence dictionary.
+        
+        Args:
+            evidence: Evidence dictionary to validate.
+            
+        Raises:
+            AssertionError: If evidence is a dict but missing the 'input' key.
+        """
+        if isinstance(evidence, dict):
+            assert 'input' in evidence, (
+                "Evidence must contain an 'input' key with the input tensor. "
+                f"Got keys: {list(evidence.keys())}"
+            )
+    
+    def prepare_forward_kwargs(self, batch, **kwargs) -> dict:
+        """Return extra keyword arguments for :meth:`query` given the current batch.
+
+        The high-level learner calls this method before each forward pass and
+        spreads the returned dict into the ``forward()`` → ``query()`` call
+        chain.  The default implementation returns an empty dict, meaning no
+        extra arguments are passed.
+
+        Subclasses that need additional data (e.g. ground-truth labels for
+        independent training) should override this method and pull what they
+        need from *batch* or *kwargs*.  This keeps ``BaseLearner`` completely
+        agnostic to inference-specific requirements — no ``if`` statements,
+        no code changes when new inference engines are added.
+
+        Parameters
+        ----------
+        batch : dict
+            The raw batch dictionary from the dataloader.  Typically contains
+            ``'inputs'`` and ``'concepts'`` keys (and optionally ``'transforms'``).
+        **kwargs
+            Additional learner-known context, for example:
+
+            * ``step`` – one of ``'train'``, ``'val'``, ``'test'``.
+            * ``epoch`` – current epoch number.
+
+        Returns
+        -------
+        dict
+            Extra kwargs to pass through ``forward()`` into ``query()``.
+            Default: ``{}``.
+        """
+        return {}
+
     @abstractmethod
     def query(self,
               *args,
