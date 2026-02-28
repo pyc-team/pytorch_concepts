@@ -11,7 +11,9 @@ hydra:
       seed: 42
       dataset: asia  # asia / sachs / insurance
       model: cbm  # cbm / cem
-      model.training: joint  # joint / independent
+      model.train_inference._target_:
+        torch_concepts.nn.DeterministicInference,
+        # torch_concepts.nn.IndependentInference
       loss: weighted
       loss.concept_weight: 10
       loss.task_weight: 1

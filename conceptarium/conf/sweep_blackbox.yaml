@@ -8,12 +8,12 @@ hydra:
   sweeper:
     params:
       seed: 42
-      dataset: insurance
+      dataset: asia
       model: blackbox
       loss: standard
 
 dataset:
-  batch_size: 4096
+  batch_size: 2048
 
 model:
   optim_kwargs:
@@ -30,8 +30,8 @@ metrics:
 
 trainer:
   # logger: wandb
-  max_epochs: 2000
-  patience: 50
+  max_epochs: 200
+  patience: 20
 
 matmul_precision: medium
 
