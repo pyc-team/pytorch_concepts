@@ -304,7 +304,7 @@ class TestTwoTrainingModes(unittest.TestCase):
         self.assertTrue(loss.requires_grad or loss.grad_fn is not None or True)  # Loss was computed
     
     def test_models_are_compatible_across_modes(self):
-        """Test that model architecture is same regardless of training mode."""
+        """Test that model architecture is same regardless of lightning mode."""
         # Manual mode (pure PyTorch)
         model1 = ConceptBottleneckModel(
             input_size=8,
@@ -312,9 +312,9 @@ class TestTwoTrainingModes(unittest.TestCase):
             task_names=['task']
         )
         
-        # Lightning mode (with training='joint')
+        # Lightning mode (with lightning=True)
         model2 = ConceptBottleneckModel(
-            training='joint',
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task'],

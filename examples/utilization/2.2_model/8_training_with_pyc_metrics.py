@@ -1,14 +1,13 @@
 """
-Example: Testing ConceptBottleneckModel_Joint Initialization
+Example: Using ConceptMetrics with ConceptBottleneckModel
 
-This example demonstrates how to initialize and test a ConceptBottleneckModel_Joint,
-which is the high-level API for joint training of concepts and tasks.
+This example demonstrates how to use ConceptMetrics with ConceptBottleneckModel
+for flexible per-concept-type metrics tracking.
 
 The model uses:
 - BipartiteModel as the underlying structure (concepts -> tasks)
-- Joint training (concepts and tasks trained simultaneously)
-- Annotations for concept metadata
-- Flexible loss functions and metrics
+- Lightning training with lightning=True
+- ConceptMetrics for type-aware metric computation
 """
 
 import torch
@@ -85,7 +84,7 @@ def main():
         variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        training='joint',
+        lightning=True,
         loss=loss_fn,
         metrics=metrics,
         optim_class=torch.optim.AdamW,

@@ -1,7 +1,7 @@
 import torch
 from torch.distributions import RelaxedBernoulli, Normal
 
-from torch_concepts import ConceptVariable, ExogenousVariable
+from torch_concepts import ConceptVariable, LatentVariable
 from torch_concepts.nn import ParametricCPD, ProbabilisticModel, AncestralSamplingInference, \
     CallableConceptToConcept, UniformPolicy, DoIntervention, intervention
 from torch_concepts.nn.functional import cace_score
@@ -11,8 +11,8 @@ def main():
     n_samples = 1000
 
     # Variable setup
-    exogenous_var = ExogenousVariable("exogenous", parents=[], distribution=RelaxedBernoulli)
-    genotype_var = ConceptVariable("genotype", parents=["exogenous"], distribution=RelaxedBernoulli)
+    latent_var = LatentVariable("input", parents=[], distribution=RelaxedBernoulli)
+    genotype_var = ConceptVariable("genotype", parents=["input"], distribution=RelaxedBernoulli)
     smoking_var = ConceptVariable("smoking", parents=["genotype"], distribution=RelaxedBernoulli)
     tar_var = ConceptVariable("tar", parents=["genotype", "smoking"], distribution=RelaxedBernoulli)
     cancer_var = ConceptVariable("cancer", parents=["tar"], distribution=RelaxedBernoulli)
@@ -29,12 +29,12 @@ def main():
                                                        use_bias=False))
     cancer_cpd = ParametricCPD("cancer",
                                parametrization=CallableConceptToConcept(lambda x: x, use_bias=False))
-    concept_model = ProbabilisticModel(variables=[exogenous_var, genotype_var, smoking_var, tar_var, cancer_var],
+    concept_model = ProbabilisticModel(variables=[latent_var, genotype_var, smoking_var, tar_var, cancer_var],
                                        parametric_cpds=[exogenous_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, temperature=1.0, log_probs=False)
-    initial_input = {'exogenous': torch.randn((n_samples, 1))}
+    initial_input = {'input': torch.randn((n_samples, 1))}
     query_concepts = ["genotype", "smoking", "tar", "cancer"]
 
     results = inference_engine.query(query_concepts, evidence=initial_input)
@@ -50,7 +50,7 @@ def main():
 
     # Original predictions (observational)
     original_results = inference_engine.query(
-        query_concepts=["genotype", "smoking", "tar", "cancer"],
+        ["genotype", "smoking", "tar", "cancer"],
         evidence=initial_input
     )
 
@@ -65,7 +65,7 @@ def main():
             target_concepts=["smoking"]
     ):
         intervened_results = inference_engine.query(
-            query_concepts=["genotype", "smoking", "tar", "cancer"],
+            ["genotype", "smoking", "tar", "cancer"],
             evidence=initial_input
         )
         cancer_do_smoking_0 = intervened_results[:, 3]
@@ -81,7 +81,7 @@ def main():
             target_concepts=["smoking"]
     ):
         intervened_results = inference_engine.query(
-            query_concepts=["genotype", "smoking", "tar", "cancer"],
+            ["genotype", "smoking", "tar", "cancer"],
             evidence=initial_input
         )
         cancer_do_smoking_1 = intervened_results[:, 3]

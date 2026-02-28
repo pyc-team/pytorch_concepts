@@ -1,17 +1,33 @@
 """
-Example: Comparing Different Training Modes
+Example: Using Different Inference Engines for Training vs Evaluation
 
-This example demonstrates how to train a ConceptBottleneckModel with different
-training modes: joint and independent.
+This example demonstrates how to train a ConceptBottleneckModel with 
+different inference engines during training and evaluation.
 
-Training modes:
-- 'joint': Train all concepts and tasks simultaneously (standard CBM)
-- 'independent': Train level-by-level with ground truth from previous levels
+Key concepts:
+- `eval_inference`: Used during validation/testing (model.eval())
+- `train_inference`: Used during training (model.train())
+
+The active inference engine is selected automatically via PyTorch's
+built-in train/eval mode.  Calling `model.train()` activates
+`train_inference`; calling `model.eval()` activates
+`eval_inference`.  Lightning toggles this automatically.
+
+Current inference options:
+- DeterministicInference: Returns logits directly (standard behavior)
+- AncestralSamplingInference: Samples from distributions
+
+Note: Independent training (where each level uses ground truth from previous levels)
+can be implemented by creating a custom train_inference that uses evidence.
 """
 
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel
+from torch_concepts.nn.modules.mid.inference import (
+    DeterministicInference,
+    IndependentInference
+)
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
@@ -34,6 +50,7 @@ def evaluate(model, datamodule, n_concepts, query):
     with torch.no_grad():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
+            # model.eval() automatically selects eval_inference
             endogenous = model(x=batch['inputs']['x'], query=query)
             c_pred = endogenous[:, :n_concepts]
             y_pred = endogenous[:, n_concepts:]
@@ -92,55 +109,98 @@ def main():
     optim = torch.optim.AdamW
     optim_kwargs = {'lr': 0.1}
 
+    # # =========================================================================
+    # # STANDARD TRAINING (same inference for train and eval)
+    # # =========================================================================
+    # print("\n" + "=" * 60)
+    # print("Example 1: Standard Training (DeterministicInference)")
+    # print("=" * 60)
+
+    # model_standard = ConceptBottleneckModel(
+    #     input_size=n_features,
+    #     annotations=annotations,
+    #     variable_distributions=variable_distributions,
+    #     task_names=['xor'],
+    #     latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+    #     # Inference engines (both default to DeterministicInference)
+    #     inference=DeterministicInference,
+    #     train_inference=DeterministicInference,
+    #     # Lightning kwargs
+    #     lightning=True,
+    #     loss=loss,
+    #     optim_class=optim,
+    #     optim_kwargs=optim_kwargs
+    # )
+    # print(f"Model type: {type(model_standard).__name__}")
+    # print(f"Inference (eval): {model_standard.eval_inference.__class__.__name__}")
+    # print(f"Training inference: {model_standard.train_inference.__class__.__name__}")
+
+    # trainer_standard = Trainer(max_epochs=100)
+    # trainer_standard.fit(model_standard, datamodule=datamodule)
+    # evaluate(model_standard, datamodule, n_concepts, query)
+
     # =========================================================================
-    # JOINT TRAINING
+    # DIFFERENT TRAINING MODE: INDEPENDENT TRAINING
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Training mode: JOINT")
+    print("Example 2: Sampling During Training")
     print("=" * 60)
+    print("Uses IndependentInference for training")
+    print("Uses DeterministicInference for evaluation")
 
-    model_joint = ConceptBottleneckModel(
+    model_sampling = ConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # lightning kwargs
-        training='joint',
+        # Different inference for train vs eval
+        inference=DeterministicInference,        # Eval: deterministic
+        train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
+        # Lightning kwargs
+        lightning=True,
         loss=loss,
         optim_class=optim,
         optim_kwargs=optim_kwargs
     )
-    print(f"Model type: {type(model_joint).__name__}")
+    print(f"Model type: {type(model_sampling).__name__}")
+    print(f"Eval inference: {model_sampling.eval_inference.__class__.__name__}")
+    print(f"Training inference: {model_sampling.train_inference.__class__.__name__}")
 
-    trainer_joint = Trainer(max_epochs=100)
-    trainer_joint.fit(model_joint, datamodule=datamodule)
-    evaluate(model_joint, datamodule, n_concepts, query)
+    trainer_sampling = Trainer(max_epochs=100)
+    trainer_sampling.fit(model_sampling, datamodule=datamodule)
+    evaluate(model_sampling, datamodule, n_concepts, query)
 
     # =========================================================================
-    # INDEPENDENT TRAINING
+    # CEM WITH INDEPENDENT TRAINING (handles exogenous variables)
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Training mode: INDEPENDENT")
+    print("Example 3: CEM with Independent Training")
     print("=" * 60)
+    print("Tests exogenous variable handling in IndependentInference")
 
-    model_independent = ConceptBottleneckModel(
+    model_cem = ConceptEmbeddingModel(
         input_size=n_features,
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
+        embedding_size=4,
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # lightning kwargs
-        training='independent',
+        # Different inference for train vs eval
+        inference=DeterministicInference,        # Eval: deterministic
+        train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
+        lightning=True,
         loss=loss,
         optim_class=optim,
         optim_kwargs=optim_kwargs
     )
-    print(f"Model type: {type(model_independent).__name__}")
+    print(f"Model type: {type(model_cem).__name__}")
+    print(f"Eval inference: {model_cem.eval_inference.__class__.__name__}")
+    print(f"Training inference: {model_cem.train_inference.__class__.__name__}")
 
-    trainer_independent = Trainer(max_epochs=100)
-    trainer_independent.fit(model_independent, datamodule=datamodule)
-    evaluate(model_independent, datamodule, n_concepts, query)
+    trainer_cem = Trainer(max_epochs=100)
+    trainer_cem.fit(model_cem, datamodule=datamodule)
+    evaluate(model_cem, datamodule, n_concepts, query)
 
 
 if __name__ == "__main__":
