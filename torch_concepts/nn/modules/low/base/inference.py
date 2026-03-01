@@ -109,7 +109,7 @@ class BaseInference(torch.nn.Module):
         **kwargs
             Additional learner-known context, for example:
 
-            * ``step`` – one of ``'train'``, ``'val'``, ``'test'``.
+            * ``annotations`` – the concept annotations object, if available.
             * ``epoch`` – current epoch number.
 
         Returns
