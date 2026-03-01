@@ -202,6 +202,33 @@ class BaseLearner(pl.LightningModule):
         transforms = batch.get('transforms', {})
         return inputs, concepts, transforms
 
+    def _get_inference_kwargs(self, batch: dict) -> dict:
+        """Get extra kwargs from the inference engine for the forward pass.
+        
+        The inference engine can request additional data (e.g., ground truth
+        for independent training) via its ``prepare_forward_kwargs`` method.
+        Models without inference engines (e.g., BlackBox) return empty dict.
+        
+        Parameters
+        ----------
+        batch : dict
+            The raw batch dictionary from the dataloader.
+            
+        Returns
+        -------
+        dict
+            Extra kwargs to pass to ``forward()`` and ``query()``.
+        """
+        inference_engine = getattr(self, 'inference', None)
+        if inference_engine is not None and hasattr(inference_engine, 'prepare_forward_kwargs'):
+            return self.inference.prepare_forward_kwargs(
+                batch, 
+                annotations=getattr(self, 'concept_annotations', None),
+                epoch=getattr(self, 'current_epoch', None)
+            )
+        else:
+            return {}
+
     # TODO: implement input preprocessing with transforms from batch
     # @staticmethod
     # def maybe_apply_preprocessing(preprocess: bool,
@@ -263,15 +290,7 @@ class BaseLearner(pl.LightningModule):
         # --- Model forward ---
         # The inference engine declares what extra kwargs it needs
         # (e.g. IndependentInference requests ground_truth).
-        # Some models (e.g. BlackBox) don't use inference engines.
-        if hasattr(self, 'inference'):
-            inference_kwargs = self.inference.prepare_forward_kwargs(
-                batch, 
-                annotations=getattr(self, 'concept_annotations', None),
-                epoch=getattr(self, 'current_epoch', None)
-            )
-        else:
-            inference_kwargs = {}
+        inference_kwargs = self._get_inference_kwargs(batch)
         
         # TODO: handle different queries than p(C|x) during training
         out = self.forward(
