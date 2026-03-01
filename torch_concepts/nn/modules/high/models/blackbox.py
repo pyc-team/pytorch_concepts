@@ -48,7 +48,7 @@ class BlackBox(BaseModel):
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
-                ground_truth: torch.Tensor = None,
+                evidence: torch.Tensor = None,
                 **kwargs
         ) -> torch.Tensor:
         """Forward pass through the BlackBox model.
@@ -59,8 +59,9 @@ class BlackBox(BaseModel):
             Input tensor.
         query : List[str], optional
             Concept names to query (ignored for BlackBox).
-        ground_truth : torch.Tensor, optional
-            Ignored for BlackBox.
+            Always returns predictions for all concepts in annotations.
+        evidence : torch.Tensor, optional
+            Evidence tensor (ignored for BlackBox).
         **kwargs
             Additional arguments (ignored).
         """
@@ -149,7 +150,7 @@ class BlackBoxTaskOnly(BaseModel):
     def forward(self,
                 x: torch.Tensor,
                 query: List[str] = None,
-                ground_truth: torch.Tensor = None,
+                evidence: torch.Tensor = None,
                 **kwargs
         ) -> torch.Tensor:
         """Forward pass through the BlackBoxTaskOnly model.
@@ -160,8 +161,9 @@ class BlackBoxTaskOnly(BaseModel):
             Input tensor.
         query : List[str], optional
             Concept names to query (ignored for BlackBox).
-        ground_truth : torch.Tensor, optional
-            Ignored for BlackBox.
+            Always returns predictions for specified task_names.
+        evidence : torch.Tensor, optional
+            Evidence tensor (ignored for BlackBox).
         **kwargs
             Additional arguments (ignored).
         """
