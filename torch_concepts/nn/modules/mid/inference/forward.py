@@ -32,7 +32,7 @@ class ForwardInference(BaseInference, ABC):
     Attributes:
         probabilistic_model (ProbabilisticModel): The probabilistic model to perform inference on.
         graph_learner (BaseGraphLearner): Optional graph structure learner.
-        concept_map (Dict[str, Variable]): Maps concept names to Variable objects.
+        variable_map (Dict[str, Variable]): Maps concept names to Variable objects.
         sorted_variables (List[Variable]): Variables in topological order.
         levels (List[List[Variable]]): Variables grouped by topological depth.
 
@@ -96,7 +96,7 @@ class ForwardInference(BaseInference, ABC):
         super().__init__()
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
-        self.concept_map = {var.concept: var for var in probabilistic_model.variables}
+        self.variable_map = {var.concept: var for var in probabilistic_model.variables}
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -156,7 +156,7 @@ class ForwardInference(BaseInference, ABC):
                 in_degree[child_name] += 1
 
         # Nodes with zero inbound edges = level 0
-        queue = [self.concept_map[name] for name, deg in in_degree.items() if deg == 0]
+        queue = [self.variable_map[name] for name, deg in in_degree.items() if deg == 0]
 
         sorted_variables = []
         levels = []
@@ -173,7 +173,7 @@ class ForwardInference(BaseInference, ABC):
                 for neighbour_name in adj[var.concept]:
                     in_degree[neighbour_name] -= 1
                     if in_degree[neighbour_name] == 0:
-                        next_level.append(self.concept_map[neighbour_name])
+                        next_level.append(self.variable_map[neighbour_name])
 
             current_level = next_level
 
@@ -534,7 +534,7 @@ class ForwardInference(BaseInference, ABC):
 
         final_tensor = torch.cat(result_tensors, dim=-1)
 
-        expected_feature_dim = sum(self.concept_map[c].out_features for c in query_concepts)
+        expected_feature_dim = sum(self.variable_map[c].out_features for c in query_concepts)
         if final_tensor.shape[1] != expected_feature_dim:
             raise RuntimeError(
                 f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
@@ -548,7 +548,8 @@ class ForwardInference(BaseInference, ABC):
         query: List[str], 
         evidence: Dict[str, torch.Tensor], 
         debug: bool = False, 
-        device: str = 'auto'
+        device: str = 'auto',
+        **kwargs
     ) -> torch.Tensor:
         """
         Execute forward pass and return only specified concepts concatenated.
@@ -565,6 +566,7 @@ class ForwardInference(BaseInference, ABC):
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
                 - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
                 - 'cpu': Force use of CPU even if CUDA is available
+            **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
             Single tensor containing concatenated predictions for requested concepts,
@@ -733,7 +735,7 @@ class ForwardInference(BaseInference, ABC):
                 if mapped_parent in seen:
                     continue  # avoid duplicates
 
-                new_parents.append(self.concept_map[mapped_parent])
+                new_parents.append(self.variable_map[mapped_parent])
                 seen.add(mapped_parent)
 
             var.parents = new_parents
@@ -810,9 +812,9 @@ class LazyForwardInference(ForwardInference, ABC):
 
         while queue:
             concept_name = queue.pop()
-            if concept_name not in self.concept_map:
+            if concept_name not in self.variable_map:
                 continue
-            var = self.concept_map[concept_name]
+            var = self.variable_map[concept_name]
             for parent_var in var.parents:
                 parent_name = parent_var.concept
                 if parent_name not in needed:
@@ -821,7 +823,14 @@ class LazyForwardInference(ForwardInference, ABC):
 
         return needed
 
-    def query(self, query: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False, device: str = 'auto') -> torch.Tensor:
+    def query(
+        self, 
+        query: List[str], 
+        evidence: Dict[str, torch.Tensor], 
+        debug: bool = False, 
+        device: str = 'auto', 
+        **kwargs
+    ) -> torch.Tensor:
         """
         Execute forward pass on the ancestor tree only and return queried concepts.
 
@@ -834,6 +843,7 @@ class LazyForwardInference(ForwardInference, ABC):
             evidence: Dictionary of {root_concept_name: input_tensor}.
             debug: If True, runs in debug mode (sequential execution).
             device: Device to use for computation.
+            **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
             Single tensor containing concatenated predictions for requested concepts,

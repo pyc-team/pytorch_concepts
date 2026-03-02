@@ -557,8 +557,8 @@ class TestForwardInferenceBasic:
 
         assert len(inference.sorted_variables) == 2
         assert len(inference.levels) == 2
-        assert inference.concept_map['input'] == input_var
-        assert inference.concept_map['A'] == var_A
+        assert inference.variable_map['input'] == input_var
+        assert inference.variable_map['A'] == var_A
 
     def test_initialization_chain_model(self):
         """Test ForwardInference with a chain model: input -> A -> B -> C."""
@@ -1160,8 +1160,8 @@ class TestForwardInference(unittest.TestCase):
         kwargs = inference.get_parent_kwargs(cpd_a, parent_input, parent_endogenous)
         self.assertIsInstance(kwargs, dict)
 
-    def test_concept_map(self):
-        """Test concept_map creation."""
+    def test_variable_map(self):
+        """Test variable_map creation."""
         input_var = Variable('input', parents=[], distribution=Delta, size=10)
         var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
 
@@ -1175,9 +1175,9 @@ class TestForwardInference(unittest.TestCase):
 
         inference = SimpleForwardInference(pgm)
 
-        self.assertIn('input', inference.concept_map)
-        self.assertIn('A', inference.concept_map)
-        self.assertEqual(inference.concept_map['input'], input_var)
+        self.assertIn('input', inference.variable_map)
+        self.assertIn('A', inference.variable_map)
+        self.assertEqual(inference.variable_map['input'], input_var)
 
     def test_categorical_parent(self):
         """Test with categorical parent variable."""
