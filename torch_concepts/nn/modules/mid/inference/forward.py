@@ -3,9 +3,8 @@ from abc import abstractmethod, ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import torch
-from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
-from ..models.variable import Variable, ConceptVariable, EndogenousVariable
+from ..models.variable import Variable, ConceptVariable
 from ...low.base.graph import BaseGraphLearner
 from typing import List, Dict, Union, Tuple, Set
 
@@ -33,7 +32,7 @@ class ForwardInference(BaseInference, ABC):
     Attributes:
         probabilistic_model (ProbabilisticModel): The probabilistic model to perform inference on.
         graph_learner (BaseGraphLearner): Optional graph structure learner.
-        concept_map (Dict[str, Variable]): Maps concept names to Variable objects.
+        variable_map (Dict[str, Variable]): Maps concept names to Variable objects.
         sorted_variables (List[Variable]): Variables in topological order.
         levels (List[List[Variable]]): Variables grouped by topological depth.
 
@@ -87,11 +86,17 @@ class ForwardInference(BaseInference, ABC):
         >>> # Level 1: ['A']
         >>> # Level 2: ['B']
     """
-    def __init__(self, probabilistic_model: ProbabilisticModel, graph_learner: BaseGraphLearner = None, *args, **kwargs):
+    def __init__(
+        self, 
+        probabilistic_model: ProbabilisticModel, 
+        graph_learner: BaseGraphLearner = None, 
+        *args, 
+        **kwargs
+    ):
         super().__init__()
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
-        self.concept_map = {var.concept: var for var in probabilistic_model.variables}
+        self.variable_map = {var.concept: var for var in probabilistic_model.variables}
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -103,8 +108,16 @@ class ForwardInference(BaseInference, ABC):
         if len(self.sorted_variables) != len(self.probabilistic_model.variables):
             raise RuntimeError("The ProbabilisticModel contains cycles and cannot be processed in topological order.")
 
+        # Cache forward-signature parameter names per CPD to avoid
+        # calling inspect.signature() on every forward pass.
+        self._cpd_allowed_params: Dict[str, Set[str]] = {}
+        for var in self.probabilistic_model.variables:
+            cpd = self.probabilistic_model.get_module_of_concept(var.concept)
+            if cpd is not None:
+                self._cpd_allowed_params[var.concept] = self._get_allowed_params(cpd)
+
     @abstractmethod
-    def get_results(self, results: torch.tensor, parent_variable: Variable):
+    def get_results(self, results: torch.tensor, variable: Variable):
         """
         Process the raw output tensor from a CPD.
 
@@ -113,7 +126,7 @@ class ForwardInference(BaseInference, ABC):
 
         Args:
             results: Raw output tensor from the CPD.
-            parent_variable: The variable being computed.
+            variable: The variable being computed.
 
         Returns:
             Processed output tensor.
@@ -143,7 +156,7 @@ class ForwardInference(BaseInference, ABC):
                 in_degree[child_name] += 1
 
         # Nodes with zero inbound edges = level 0
-        queue = [self.concept_map[name] for name, deg in in_degree.items() if deg == 0]
+        queue = [self.variable_map[name] for name, deg in in_degree.items() if deg == 0]
 
         sorted_variables = []
         levels = []
@@ -160,7 +173,7 @@ class ForwardInference(BaseInference, ABC):
                 for neighbour_name in adj[var.concept]:
                     in_degree[neighbour_name] -= 1
                     if in_degree[neighbour_name] == 0:
-                        next_level.append(self.concept_map[neighbour_name])
+                        next_level.append(self.variable_map[neighbour_name])
 
             current_level = next_level
 
@@ -169,7 +182,7 @@ class ForwardInference(BaseInference, ABC):
     def _compute_single_variable(
             self,
             var: Variable,
-            external_inputs: Dict[str, torch.Tensor],
+            evidence: Dict[str, torch.Tensor],
             results: Dict[str, torch.Tensor],
     ) -> Tuple[str, torch.Tensor]:
         """
@@ -177,8 +190,9 @@ class ForwardInference(BaseInference, ABC):
 
         Args:
             var: The variable to compute.
-            external_inputs: Dictionary of external input tensors for root variables,
-                or evidence tensors for non-root variables (used directly as output).
+            evidence: Dictionary of evidence tensors. For root variables this
+                contains the external input; for non-root variables an entry
+                means the value is observed and used directly as output.
             results: Dictionary of already computed variable outputs.
 
         Returns:
@@ -186,15 +200,15 @@ class ForwardInference(BaseInference, ABC):
 
         Raises:
             RuntimeError: If CPD is missing for the variable.
-            ValueError: If root variable is missing from external_inputs.
+            ValueError: If root variable is missing from evidence.
             RuntimeError: If parent variable hasn't been computed yet.
         """
         concept_name = var.concept
         
         # If evidence is provided for a non-root variable, use it directly as output
         # (Root nodes still pass their input through the CPD)
-        if var.parents and concept_name in external_inputs:
-            return concept_name, external_inputs[concept_name]
+        if var.parents and concept_name in evidence:
+            return concept_name, evidence[concept_name]
         
         parametric_cpd = self.probabilistic_model.get_module_of_concept(concept_name)
 
@@ -203,9 +217,9 @@ class ForwardInference(BaseInference, ABC):
 
         # 1. Root nodes (no parents)
         if not var.parents:
-            if concept_name not in external_inputs:
-                raise ValueError(f"Root variable '{concept_name}' requires an external input tensor in the 'external_inputs' dictionary.")
-            input_tensor = external_inputs[concept_name]
+            if concept_name not in evidence:
+                raise ValueError(f"Root variable '{concept_name}' requires an input tensor in the 'evidence' dictionary.")
+            input_tensor = evidence[concept_name]
             parent_kwargs = self.get_parent_kwargs(parametric_cpd, [input_tensor], [])
             output_tensor = parametric_cpd.forward(**parent_kwargs)
             output_tensor = self.get_results(output_tensor, var)
@@ -237,87 +251,82 @@ class ForwardInference(BaseInference, ABC):
 
         return concept_name, output_tensor
 
-    def predict(self, external_inputs: Dict[str, torch.Tensor], debug: bool = False, device: str = 'auto') -> Dict[str, torch.Tensor]:
-        """
-        Perform forward pass prediction across the entire probabilistic model.
-
-        This method processes variables level-by-level, exploiting parallelism within
-        each level. On GPU, uses CUDA streams for parallel computation. On CPU, uses
-        ThreadPoolExecutor.
-
+    def _resolve_device(self, device: str) -> bool:
+        """Resolve device string to use_cuda boolean.
+        
         Args:
-            external_inputs: Dictionary mapping root variable names to input tensors.
-            debug: If True, runs sequentially for easier debugging (disables parallelism).
-            device: Device to use for computation. Options:
-                - 'auto' (default): Automatically detect and use CUDA if available, else CPU
-                - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
-                - 'cpu': Force use of CPU even if CUDA is available
-
+            device: Device specification ('auto', 'cuda', 'gpu', or 'cpu').
+            
         Returns:
-            Dictionary mapping concept names to their output tensors.
-
+            True if CUDA should be used, False otherwise.
+            
         Raises:
-            RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
+            RuntimeError: If CUDA is requested but not available.
+            ValueError: If device string is invalid.
         """
-        # Determine which device to use
         if device == 'auto':
-            use_cuda = torch.cuda.is_available()
+            return torch.cuda.is_available()
         elif device in ['cuda', 'gpu']:
             if not torch.cuda.is_available():
                 raise RuntimeError(f"device='{device}' was specified but CUDA is not available")
-            use_cuda = True
+            return True
         elif device == 'cpu':
-            use_cuda = False
+            return False
         else:
             raise ValueError(f"Invalid device '{device}'. Must be 'auto', 'cuda', 'gpu', or 'cpu'")
 
-        results: Dict[str, torch.Tensor] = {}
+    def _predict_level(
+        self,
+        level: List[Variable],
+        evidence: Dict[str, torch.Tensor],
+        results: Dict[str, torch.Tensor],
+        debug: bool = False,
+        use_cuda: bool = False
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute predictions for a single level.
+        
+        Args:
+            level: List of Variables in this level.
+            evidence: Dictionary mapping variable names to observed/input tensors.
+            results: Dictionary of already computed results (from previous levels).
+            debug: If True, runs sequentially for easier debugging.
+            use_cuda: Whether to use CUDA streams for parallelism.
+            
+        Returns:
+            Dictionary mapping concept names to their output tensors for this level.
+        """
+        level_results = {}
 
-        levels = getattr(self, "levels", None)
-        if levels is None:
-            levels = [self.sorted_variables]
+        # Sequential execution
+        if debug or len(level) <= 1:
+            for var in level:
+                concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+                level_results[concept_name] = output_tensor
+            return level_results
 
-        for level in levels:
+        # Parallel execution
+        level_outputs = []
 
-            # === DEBUG MODE: always run sequentially ===
-            if debug or len(level) <= 1:
-                for var in level:
-                    concept_name, output_tensor = self._compute_single_variable(var, external_inputs, results)
-                    results[concept_name] = output_tensor
-
-                # Apply global policy interventions if needed
-                self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
-                continue
-
-            # === PARALLEL MODE ===
-            level_outputs = []
-
+        if use_cuda:
             # GPU: parallel via CUDA streams
-            if use_cuda:
-                streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
-
-                for var, stream in zip(level, streams):
-                    with torch.cuda.stream(stream):
-                        concept_name, output_tensor = self._compute_single_variable(var, external_inputs, results)
-                        level_outputs.append((concept_name, output_tensor))
-
-                torch.cuda.synchronize()
-
+            streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
+            for var, stream in zip(level, streams):
+                with torch.cuda.stream(stream):
+                    concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+                    level_outputs.append((concept_name, output_tensor))
+            torch.cuda.synchronize()
+        else:
             # CPU: parallel via threads
-            else:
-                with ThreadPoolExecutor(max_workers=len(level)) as executor:
-                    futures = [executor.submit(self._compute_single_variable, var, external_inputs, results) for var in level]
-                    for fut in futures:
-                        level_outputs.append(fut.result())
+            with ThreadPoolExecutor(max_workers=len(level)) as executor:
+                futures = [executor.submit(self._compute_single_variable, var, evidence, results) for var in level]
+                for fut in futures:
+                    level_outputs.append(fut.result())
 
-            # Update results
-            for concept_name, output_tensor in level_outputs:
-                results[concept_name] = output_tensor
+        for concept_name, output_tensor in level_outputs:
+            level_results[concept_name] = output_tensor
 
-            # Apply global policy interventions if needed
-            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
-
-        return results
+        return level_results
 
     def _apply_single_global_intervention(
             self,
@@ -410,15 +419,51 @@ class ForwardInference(BaseInference, ABC):
                 # Reset shared state for next batch/level
                 first_wrapper.shared_state.reset()
 
-    def get_parent_kwargs(self, parametric_cpd,
-                          parent_input: Union[List[torch.Tensor], torch.Tensor] = None,
-                          parent_concepts: Union[List[torch.Tensor], torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+    @staticmethod
+    def _get_allowed_params(parametric_cpd) -> Set[str]:
+        """
+        Extract the set of allowed parameter names from a CPD's forward signature.
+
+        Args:
+            parametric_cpd: The CPD module to inspect.
+
+        Returns:
+            Set of parameter names (excluding 'self').
+        """
+        if isinstance(parametric_cpd.parametrization, (_InterventionWrapper, _GlobalPolicyInterventionWrapper)):
+            forward_to_check = parametric_cpd.parametrization.forward_to_check
+        else:
+            forward_to_check = parametric_cpd.parametrization.forward
+
+        sig = inspect.signature(forward_to_check)
+        return {
+            name for name, p in sig.parameters.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+
+    # Known PyC parameter-name combinations
+    _PYC_PARAM_SETS = [
+        {'concepts'},
+        {'concepts', 'latent'},
+        {'concepts', 'exogenous'},
+        {'latent'},
+        {'exogenous'},
+    ]
+
+    def get_parent_kwargs(
+        self,
+        parametric_cpd,
+        parent_input: Union[List[torch.Tensor], torch.Tensor] = None,
+        parent_concepts: Union[List[torch.Tensor], torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
         """
         Prepare keyword arguments for CPD forward pass based on parent outputs.
 
-        This method inspects the CPD's forward signature and constructs appropriate
-        kwargs, separating concepts (from probabilistic parents) and latent features
-        (from continuous parents).
+        Uses the cached parameter names from ``__init__`` to avoid calling
+        ``inspect.signature`` on every forward pass.
 
         Args:
             parametric_cpd: The CPD module to call.
@@ -426,53 +471,102 @@ class ForwardInference(BaseInference, ABC):
             parent_concepts: List of probabilistic parent outputs (concept values).
 
         Returns:
-            Dictionary of kwargs ready for parametric_cpd.forward(**kwargs).
+            Dictionary of kwargs ready for ``parametric_cpd.forward(**kwargs)``.
         """
-        parent_kwargs = {}
-        if (isinstance(parametric_cpd.parametrization, _InterventionWrapper) or
-                isinstance(parametric_cpd.parametrization, _GlobalPolicyInterventionWrapper)):
-            forward_to_check = parametric_cpd.parametrization.forward_to_check
-        else:
-            forward_to_check = parametric_cpd.parametrization.forward
+        allowed = self._cpd_allowed_params.get(parametric_cpd.concept)
+        if allowed is None:
+            # Fallback for dynamically added CPDs
+            allowed = self._get_allowed_params(parametric_cpd)
 
-        sig = inspect.signature(forward_to_check)
-        params = sig.parameters
-        allowed = {
-            name for name, p in params.items()
-            if name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-        }
-        if allowed not in [{'concepts'}, {'concepts', 'latent'}, {'concepts', 'exogenous'}, {'latent'}, {'exogenous'}]:
-             # standard torch module
-            parent_kwargs[allowed.pop()] = torch.cat(parent_concepts + parent_input, dim=-1)
-        else:
-            # this is a PyC layer: separate concepts and latent inputs
+        parent_kwargs: Dict[str, torch.Tensor] = {}
+
+        if allowed in self._PYC_PARAM_SETS:
+            # PyC layer: separate concepts and latent/exogenous inputs
             if 'concepts' in allowed:
                 parent_kwargs['concepts'] = torch.cat(parent_concepts, dim=-1)
             if 'latent' in allowed:
                 parent_kwargs['latent'] = torch.cat(parent_input, dim=-1)
             elif 'exogenous' in allowed:
+                # Exogenous inputs typically have shape (batch, concepts, features).
+                # When multiple exogenous parents are combined, concatenate along
+                # the concept dimension (dim=1), not the feature dimension.
                 parent_kwargs['exogenous'] = torch.cat(parent_input, dim=1)
+        else:
+            # Standard torch module: concatenate everything into a single tensor
+            combined = torch.cat(parent_concepts + parent_input, dim=-1)
+            # Feed into the first positional parameter
+            first_param = next(iter(allowed))
+            parent_kwargs[first_param] = combined
 
         return parent_kwargs
 
-    def query(self, query_concepts: List[str], evidence: Dict[str, torch.Tensor], debug: bool = False, device: str = 'auto') -> torch.Tensor:
+    def _concatenate_results(
+        self,
+        query_concepts: List[str],
+        all_predictions: Dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Extract and concatenate predictions for queried concepts.
+
+        Args:
+            query_concepts: Ordered list of concept names to return.
+            all_predictions: Dictionary mapping concept names to output tensors.
+
+        Returns:
+            Concatenated tensor (Batch x TotalFeatures).
+
+        Raises:
+            ValueError: If a queried concept is missing from predictions.
+            RuntimeError: If batch sizes or feature dimensions are inconsistent.
+        """
+        result_tensors = []
+        for concept_name in query_concepts:
+            if concept_name not in all_predictions:
+                raise ValueError(
+                    f"Query concept '{concept_name}' was requested but could not be computed. "
+                    f"Available predictions: {list(all_predictions.keys())}"
+                )
+            result_tensors.append(all_predictions[concept_name])
+
+        batch_size = result_tensors[0].shape[0]
+        if any(t.shape[0] != batch_size for t in result_tensors):
+            raise RuntimeError("Batch size mismatch detected in query results before concatenation.")
+
+        final_tensor = torch.cat(result_tensors, dim=-1)
+
+        expected_feature_dim = sum(self.variable_map[c].out_features for c in query_concepts)
+        if final_tensor.shape[1] != expected_feature_dim:
+            raise RuntimeError(
+                f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
+                f"but got {final_tensor.shape[1]}. Check Variable.out_features logic."
+            )
+
+        return final_tensor
+
+    def query(
+        self, 
+        query: List[str], 
+        evidence: Dict[str, torch.Tensor], 
+        debug: bool = False, 
+        device: str = 'auto',
+        **kwargs
+    ) -> torch.Tensor:
         """
         Execute forward pass and return only specified concepts concatenated.
 
-        This method runs full inference via predict() and then extracts and
-        concatenates only the requested concepts in the specified order.
+        This method runs inference level-by-level (exploiting parallelism within
+        each level) and then extracts and concatenates only the requested concepts
+        in the specified order.
 
         Args:
-            query_concepts: List of concept names to retrieve (e.g., ["C", "B", "A"]).
+            query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
             evidence: Dictionary of {root_concept_name: input_tensor}.
             debug: If True, runs in debug mode (sequential execution).
             device: Device to use for computation. Options:
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
                 - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
                 - 'cpu': Force use of CPU even if CUDA is available
+            **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
             Single tensor containing concatenated predictions for requested concepts,
@@ -484,41 +578,20 @@ class ForwardInference(BaseInference, ABC):
             RuntimeError: If concatenation produces unexpected feature dimension.
             RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
         """
-        # 1. Run the full forward pass to get all necessary predictions
-        all_predictions = self.predict(evidence, debug=debug, device=device)
+        # Filter kwargs to only those needed by this inference to save memory
+        kwargs = self._filter_kwargs(kwargs)
+        
+        assert query, "Query list cannot be empty - at least one concept must be requested."
+        self._validate_evidence(evidence)
+        use_cuda = self._resolve_device(device)
+        results: Dict[str, torch.Tensor] = {}
 
-        # 2. Filter and concatenate results
-        result_tensors = []
+        for level in self.levels:
+            level_results = self._predict_level(level, evidence, results, debug=debug, use_cuda=use_cuda)
+            results.update(level_results)
+            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
 
-        for concept_name in query_concepts:
-            if concept_name not in all_predictions:
-                raise ValueError(
-                    f"Query concept '{concept_name}' was requested but could not be computed. "
-                    f"Available predictions: {list(all_predictions.keys())}"
-                )
-            result_tensors.append(all_predictions[concept_name])
-
-        if not result_tensors:
-            return torch.empty(0)  # Return empty tensor if query list was empty
-
-        # 3. Concatenate tensors along the last dimension (features)
-        # Check if batch sizes match before concatenation
-        batch_size = result_tensors[0].shape[0]
-        if any(t.shape[0] != batch_size for t in result_tensors):
-            raise RuntimeError("Batch size mismatch detected in query results before concatenation.")
-
-        # Concatenate results into the final output tensor (Batch x TotalFeatures)
-        final_tensor = torch.cat(result_tensors, dim=-1)
-
-        # 4. Perform final check for expected shape
-        expected_feature_dim = sum(self.concept_map[c].out_features for c in query_concepts)
-        if final_tensor.shape[1] != expected_feature_dim:
-            raise RuntimeError(
-                f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
-                f"but got {final_tensor.shape[1]}. Check Variable.out_features logic."
-            )
-
-        return final_tensor
+        return self._concatenate_results(query, results)
 
     @property
     def available_query_vars(self) -> Set[str]:
@@ -665,7 +738,7 @@ class ForwardInference(BaseInference, ABC):
                 if mapped_parent in seen:
                     continue  # avoid duplicates
 
-                new_parents.append(self.concept_map[mapped_parent])
+                new_parents.append(self.variable_map[mapped_parent])
                 seen.add(mapped_parent)
 
             var.parents = new_parents
@@ -704,262 +777,104 @@ class ForwardInference(BaseInference, ABC):
         return ProbabilisticModel(new_variables, new_parametric_cpds)
 
 
-class DeterministicInference(ForwardInference):
+class LazyForwardInference(ForwardInference, ABC):
     """
-    Deterministic forward inference for probabilistic graphical models.
+    Lazy forward inference that only computes the ancestor tree of queried concepts.
 
-    This inference engine performs deterministic (maximum likelihood) inference by
-    returning raw logits/outputs from CPDs without sampling. It's useful for
-    prediction tasks where you want the most likely values rather than samples
-    from the distribution.
+    This class extends :class:`ForwardInference` by overriding ``query`` to first
+    determine which variables are actually needed (the queried concepts and all
+    their ancestors in the DAG), then only runs inference on that subset.
+    This avoids unnecessary computation of variables that are not in the
+    dependency tree of the query.
 
-    Inherits all functionality from ForwardInference but implements get_results()
-    to return raw outputs without stochastic sampling.
+    All other behaviour (topological sort, parallel execution, interventions,
+    ``predict``, ``get_results``, etc.) is inherited unchanged from
+    :class:`ForwardInference`.
 
     Example:
-        >>> import torch
-        >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import LatentVariable, ConceptVariable
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import DeterministicInference, ParametricCPD, ProbabilisticModel, LinearConceptToConcept
-        >>>
-        >>> # Create a simple PGM: latent -> A -> B
-        >>> input_var = LatentVariable('input', parents=[], distribution=Delta, size=10)
-        >>> var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        >>> var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
-        >>>
-        >>> # Define CPDs
-        >>> from torch.nn import Identity, Linear
-        >>> cpd_emb = ParametricCPD('input', parametrization=Identity())
-        >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
-        >>>
-        >>> # Create probabilistic model
-        >>> pgm = ProbabilisticModel(
-        ...     variables=[input_var, var_A, var_B],
-        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
-        ... )
-        >>>
-        >>> # Create deterministic inference engine
-        >>> inference = DeterministicInference(pgm)
-        >>>
-        >>> # Perform inference - returns logits, not samples
-        >>> x = torch.randn(4, 10)  # batch_size=4, latent_size=10
-        >>> results = inference.predict({'input': x})
-        >>>
-        >>> # Results contain raw logits for Bernoulli variables
-        >>> print(results['A'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
-        >>> print(results['B'].shape)  # torch.Size([4, 1]) - logits, not {0,1}
-        >>>
-        >>> # Query specific concepts - returns concatenated logits
-        >>> output = inference.query(['B', 'A'], evidence={'input': x})
-        >>> print(output.shape)  # torch.Size([4, 2])
-        >>> # output contains [logit_B, logit_A] for each sample
-        >>>
-        >>> # Convert logits to probabilities if needed
-        >>> prob_A = torch.sigmoid(results['A'])
-        >>> print(prob_A.shape)  # torch.Size([4, 1])
-        >>>
-        >>> # Get hard predictions (0 or 1)
-        >>> pred_A = (prob_A > 0.5).float()
-        >>> print(pred_A)  # Binary predictions
+        >>> # Given a model: input -> A -> B, input -> C -> D
+        >>> # Querying only ['B'] will compute: input, A, B
+        >>> # Variable C and D are skipped entirely.
     """
-    def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
+
+    def _get_ancestors(self, query_concepts: List[str]) -> Set[str]:
         """
-        Return raw output without sampling.
+        Get all ancestors (including query concepts) needed to compute the query.
+
+        Traverses the graph backwards from query concepts to find all variables
+        that need to be computed.
 
         Args:
-            results: Raw output tensor from the CPD.
-            parent_variable: The variable being computed (unused in deterministic mode).
+            query_concepts: List of concept names to query.
 
         Returns:
-            torch.Tensor: Raw output tensor (endogenous for probabilistic variables).
+            Set of concept names that need to be computed (query + all ancestors).
         """
-        return results
+        needed = set(query_concepts)
+        queue = list(query_concepts)
 
-    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        while queue:
+            concept_name = queue.pop()
+            if concept_name not in self.variable_map:
+                continue
+            var = self.variable_map[concept_name]
+            for parent_var in var.parents:
+                parent_name = parent_var.concept
+                if parent_name not in needed:
+                    needed.add(parent_name)
+                    queue.append(parent_name)
+
+        return needed
+
+    def query(
+        self, 
+        query: List[str], 
+        evidence: Dict[str, torch.Tensor], 
+        debug: bool = False, 
+        device: str = 'auto', 
+        **kwargs
+    ) -> torch.Tensor:
         """
-        Convert ground truth to logits for deterministic inference.
-        
-        Parameters
-        ----------
-        value : torch.Tensor
-            Ground truth value tensor. Shape: (batch_size,).
-        cardinality : int
-            Number of classes (1 for binary, >1 for categorical).
-            
-        Returns
-        -------
-        torch.Tensor
-            Logits tensor. Shape: (batch_size, cardinality).
-        """
-        # TODO: currently assumes discrete, to be extended to continuous 
-        if cardinality > 1:
-            one_hot = torch.nn.functional.one_hot(
-                value.long(), num_classes=cardinality
-            ).float()
-        else:
-            one_hot = value.unsqueeze(-1)
-        
-        return torch.logit(one_hot.clamp(1e-7, 1-1e-7))
+        Execute forward pass on the ancestor tree only and return queried concepts.
 
-
-class AncestralSamplingInference(ForwardInference):
-    """
-    Ancestral sampling inference for probabilistic graphical models.
-
-    This inference engine performs ancestral (forward) sampling by drawing samples
-    from the distributions defined by each variable. It's useful for generating
-    realistic samples from the model and for tasks requiring stochastic predictions.
-
-    The sampling respects the probabilistic structure:
-    - Samples from Bernoulli distributions using .sample()
-    - Uses reparameterization (.rsample()) for RelaxedBernoulli and RelaxedOneHotCategorical
-    - Supports custom distribution kwargs (e.g., temperature for Gumbel-Softmax)
-
-    Args:
-        probabilistic_model: The probabilistic model to perform inference on.
-        graph_learner: Optional graph learner for weighted adjacency structure.
-        **dist_kwargs: Additional kwargs passed to distribution constructors
-                      (e.g., temperature for relaxed distributions).
-
-    Example:
-        >>> import torch
-        >>> from torch.distributions import Bernoulli
-        >>> from torch_concepts import LatentVariable
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts.nn import AncestralSamplingInference, ParametricCPD, ProbabilisticModel
-        >>> from torch_concepts import ConceptVariable
-        >>> from torch_concepts.nn import LinearConceptToConcept
-        >>>
-        >>> # Create a simple PGM: embedding -> A -> B
-        >>> embedding_var = LatentVariable('embedding', parents=[], distribution=Delta, size=10)
-        >>> var_A = ConceptVariable('A', parents=['embedding'], distribution=Bernoulli, size=1)
-        >>> var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
-        >>>
-        >>> # Define CPDs
-        >>> from torch.nn import Identity, Linear
-        >>> cpd_emb = ParametricCPD('embedding', parametrization=Identity())
-        >>> cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        >>> cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
-        >>>
-        >>> # Create probabilistic model
-        >>> pgm = ProbabilisticModel(
-        ...     variables=[embedding_var, var_A, var_B],
-        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
-        ... )
-        >>>
-        >>> # Create ancestral sampling inference engine
-        >>> inference = AncestralSamplingInference(pgm)
-        >>>
-        >>> # Perform inference - returns samples, not endogenous
-        >>> x = torch.randn(4, 10)  # batch_size=4, embedding_size=10
-        >>> results = inference.predict({'embedding': x})
-        >>>
-        >>> # Results contain binary samples {0, 1} for Bernoulli variables
-        >>> print(results['A'].shape)  # torch.Size([4, 1])
-        >>> print(results['A'].unique())  # tensor([0., 1.]) - actual samples
-        >>> print(results['B'].shape)  # torch.Size([4, 1])
-        >>> print(results['B'].unique())  # tensor([0., 1.]) - actual samples
-        >>>
-        >>> # Query specific concepts - returns concatenated samples
-        >>> samples = inference.query(['B', 'A'], evidence={'embedding': x})
-        >>> print(samples.shape)  # torch.Size([4, 2])
-        >>> # samples contains [sample_B, sample_A] for each instance
-        >>> print(samples)  # All values are 0 or 1
-        >>>
-        >>> # Multiple runs produce different samples (stochastic)
-        >>> samples1 = inference.query(['A'], evidence={'embedding': x})
-        >>> samples2 = inference.query(['A'], evidence={'embedding': x})
-        >>> print(torch.equal(samples1, samples2))  # Usually False (different samples)
-        >>>
-        >>> # With relaxed distributions (requires temperature)
-        >>> from torch.distributions import RelaxedBernoulli
-        >>> var_A_relaxed = ConceptVariable('A', parents=['embedding'],
-        ...                               distribution=RelaxedBernoulli, size=1)
-        >>> pgm = ProbabilisticModel(
-        ...     variables=[embedding_var, var_A_relaxed, var_B],
-        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
-        ... )
-        >>> inference_relaxed = AncestralSamplingInference(pgm, temperature=0.05)
-        >>> # Now uses reparameterization trick (.rsample())
-        >>>
-        >>> # Query returns continuous values in [0, 1] for relaxed distributions
-        >>> relaxed_samples = inference_relaxed.query(['A'], evidence={'embedding': x})
-        >>> # relaxed_samples will be continuous, not binary
-    """
-    def __init__(self,
-                 probabilistic_model: ProbabilisticModel,
-                 graph_learner: BaseGraphLearner = None,
-                 log_probs: bool = True,
-                 **dist_kwargs):
-        super().__init__(probabilistic_model, graph_learner)
-        self.dist_kwargs = dist_kwargs
-        self.log_probs = log_probs
-
-    # TODO: currently assumes discrete, to be extended to continuous 
-    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
-        """
-        Convert ground truth to raw states for ancestral sampling.
-        
-        For sampling inference, evidence should be in the same format as samples:
-        - Binary: (batch_size, 1) with values 0.0 or 1.0
-        - Categorical: (batch_size, cardinality) one-hot encoded
-        
-        Parameters
-        ----------
-        value : torch.Tensor
-            Ground truth value tensor. Shape: (batch_size,).
-        cardinality : int
-            Number of classes (1 for binary, >1 for categorical).
-            
-        Returns
-        -------
-        torch.Tensor
-            State tensor in sample format.
-        """
-        if cardinality > 1:
-            return torch.nn.functional.one_hot(
-                value.long(), num_classes=cardinality
-            ).float()
-        else:
-            return value.unsqueeze(-1).float()
-
-    def get_results(self, results: torch.tensor, parent_variable: Variable) -> torch.Tensor:
-        """
-        Sample from the distribution parameterized by the results.
-
-        This method creates a distribution using the variable's distribution type
-        and the computed endogenous/parameters, then draws a sample.
+        Unlike :meth:`ForwardInference.query` which computes all variables,
+        this method first identifies the minimal set of variables needed
+        (ancestors of the query) and only computes those.
 
         Args:
-            results: Raw output tensor from the CPD (endogenous or parameters).
-            parent_variable: The variable being computed (defines distribution type).
+            query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
+            evidence: Dictionary of {root_concept_name: input_tensor}.
+            debug: If True, runs in debug mode (sequential execution).
+            device: Device to use for computation.
+            **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
-            torch.Tensor: Sampled values from the distribution.
+            Single tensor containing concatenated predictions for requested concepts,
+            ordered as requested (Batch x TotalFeatures).
         """
-        sig = inspect.signature(parent_variable.distribution.__init__)
-        params = sig.parameters
-        allowed = {
-            name for name, p in params.items()
-            if name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-        }
-        # retain only allowed dist kwargs
-        dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
+        # Filter kwargs to only those needed by this inference to save memory
+        kwargs = self._filter_kwargs(kwargs)
+        
+        assert query, "Query list cannot be empty - at least one concept must be requested."
+        self._validate_evidence(evidence)
 
-        if parent_variable.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
-            if self.log_probs:
-                dist_kwargs['logits'] = results
-            else:
-                dist_kwargs['probs'] = results
+        # 1. Find all ancestors needed for the query
+        needed_concepts = self._get_ancestors(query)
 
-            if parent_variable.distribution in [Bernoulli]:
-                return parent_variable.distribution(**dist_kwargs).sample()
-            elif parent_variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
-                return parent_variable.distribution(**dist_kwargs).rsample()
+        # 2. Filter levels to only include needed variables
+        filtered_levels = [
+            [var for var in level if var.concept in needed_concepts]
+            for level in self.levels
+        ]
+        filtered_levels = [lvl for lvl in filtered_levels if lvl]
 
-        return parent_variable.distribution(results, **dist_kwargs).rsample()
+        # 3. Run inference on the filtered subset
+        use_cuda = self._resolve_device(device)
+        results: Dict[str, torch.Tensor] = {}
+
+        for level in filtered_levels:
+            level_results = self._predict_level(level, evidence, results, debug=debug, use_cuda=use_cuda)
+            results.update(level_results)
+            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
+
+        return self._concatenate_results(query, results)

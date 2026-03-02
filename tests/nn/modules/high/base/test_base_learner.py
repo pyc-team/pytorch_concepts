@@ -269,5 +269,150 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         learner.update_and_log_metrics(metrics_args, step='train', batch_size=2)
 
 
+class TestBaseLearnerBatchHandling(unittest.TestCase):
+    """Test batch handling methods (_check_batch, unpack_batch)."""
+
+    def test_check_batch_valid(self):
+        """Test _check_batch with valid batch."""
+        learner = MockLearner(n_concepts=2)
+        batch = {
+            'inputs': {'x': torch.randn(4, 8)},
+            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+        }
+        
+        # Should not raise error
+        learner._check_batch(batch)
+
+    def test_check_batch_missing_inputs(self):
+        """Test _check_batch with missing 'inputs' key."""
+        learner = MockLearner(n_concepts=2)
+        batch = {
+            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+        }
+        
+        with self.assertRaises(KeyError) as context:
+            learner._check_batch(batch)
+        self.assertIn("inputs", str(context.exception))
+
+    def test_check_batch_missing_concepts(self):
+        """Test _check_batch with missing 'concepts' key."""
+        learner = MockLearner(n_concepts=2)
+        batch = {
+            'inputs': {'x': torch.randn(4, 8)}
+        }
+        
+        with self.assertRaises(KeyError) as context:
+            learner._check_batch(batch)
+        self.assertIn("concepts", str(context.exception))
+
+    def test_check_batch_not_dict(self):
+        """Test _check_batch with non-dict batch."""
+        learner = MockLearner(n_concepts=2)
+        batch = [torch.randn(4, 8)]
+        
+        with self.assertRaises(TypeError) as context:
+            learner._check_batch(batch)
+        self.assertIn("dict", str(context.exception))
+
+    def test_unpack_batch_returns_tuple(self):
+        """Test unpack_batch returns (inputs, concepts, transforms)."""
+        learner = MockLearner(n_concepts=2)
+        x = torch.randn(4, 8)
+        c = torch.randint(0, 2, (4, 2)).float()
+        batch = {
+            'inputs': {'x': x},
+            'concepts': {'c': c}
+        }
+        
+        inputs, concepts, transforms = learner.unpack_batch(batch)
+        
+        self.assertEqual(inputs, {'x': x})
+        self.assertEqual(concepts, {'c': c})
+        self.assertEqual(transforms, {})
+
+    def test_unpack_batch_with_transforms(self):
+        """Test unpack_batch extracts transforms when present."""
+        learner = MockLearner(n_concepts=2)
+        mock_transform = {'c': 'some_transform'}
+        batch = {
+            'inputs': {'x': torch.randn(4, 8)},
+            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
+            'transforms': mock_transform
+        }
+        
+        inputs, concepts, transforms = learner.unpack_batch(batch)
+        
+        self.assertEqual(transforms, mock_transform)
+
+
+class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
+    """Test configure_optimizers method."""
+
+    def test_configure_optimizers_none(self):
+        """Test configure_optimizers returns None when no optimizer set."""
+        learner = MockLearner(n_concepts=2)
+        result = learner.configure_optimizers()
+        self.assertIsNone(result)
+
+    def test_configure_optimizers_with_optimizer_only(self):
+        """Test configure_optimizers with optimizer only."""
+        learner = MockLearner(
+            n_concepts=2,
+            optim_class=torch.optim.Adam,
+            optim_kwargs={'lr': 0.001}
+        )
+        
+        result = learner.configure_optimizers()
+        
+        self.assertIsInstance(result, dict)
+        self.assertIn('optimizer', result)
+        self.assertIsInstance(result['optimizer'], torch.optim.Adam)
+
+    def test_configure_optimizers_with_scheduler(self):
+        """Test configure_optimizers with optimizer and scheduler."""
+        learner = MockLearner(
+            n_concepts=2,
+            optim_class=torch.optim.Adam,
+            optim_kwargs={'lr': 0.001},
+            scheduler_class=torch.optim.lr_scheduler.StepLR,
+            scheduler_kwargs={'step_size': 10}
+        )
+        
+        result = learner.configure_optimizers()
+        
+        self.assertIsInstance(result, dict)
+        self.assertIn('optimizer', result)
+        self.assertIn('lr_scheduler', result)
+        self.assertIsInstance(result['optimizer'], torch.optim.Adam)
+        self.assertIsInstance(result['lr_scheduler'], torch.optim.lr_scheduler.StepLR)
+
+    def test_configure_optimizers_with_monitor(self):
+        """Test configure_optimizers extracts monitor from scheduler_kwargs."""
+        learner = MockLearner(
+            n_concepts=2,
+            optim_class=torch.optim.Adam,
+            optim_kwargs={'lr': 0.001},
+            scheduler_class=torch.optim.lr_scheduler.ReduceLROnPlateau,
+            scheduler_kwargs={'mode': 'min', 'monitor': 'val_loss'}
+        )
+        
+        result = learner.configure_optimizers()
+        
+        self.assertIn('monitor', result)
+        self.assertEqual(result['monitor'], 'val_loss')
+
+    def test_configure_optimizers_without_kwargs(self):
+        """Test configure_optimizers works without kwargs."""
+        learner = MockLearner(
+            n_concepts=2,
+            optim_class=torch.optim.SGD
+        )
+        
+        result = learner.configure_optimizers()
+        
+        self.assertIsInstance(result, dict)
+        self.assertIsInstance(result['optimizer'], torch.optim.SGD)
+
+
 if __name__ == '__main__':
     unittest.main()

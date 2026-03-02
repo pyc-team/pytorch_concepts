@@ -15,8 +15,12 @@ Summary
    :nosignatures:
 
    ForwardInference
+   LazyForwardInference
    DeterministicInference
+   LazyDeterministicInference
    AncestralSamplingInference
+   LazyAncestralSamplingInference
+   IndependentInference
 
 
 Class Documentation
@@ -27,12 +31,32 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: LazyForwardInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. autoclass:: DeterministicInference
    :members:
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: LazyDeterministicInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. autoclass:: AncestralSamplingInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: LazyAncestralSamplingInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: IndependentInference
    :members:
    :undoc-members:
    :show-inheritance:

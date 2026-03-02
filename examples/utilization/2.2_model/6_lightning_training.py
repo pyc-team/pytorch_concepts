@@ -1,12 +1,13 @@
 """
-Example: Testing ConceptBottleneckModel_Joint Initialization
+Example: ConceptBottleneckModel with PyTorch Lightning Training
 
-This example demonstrates how to initialize and test a ConceptBottleneckModel_Joint,
-which is the high-level API for joint training of concepts and tasks.
+This example demonstrates how to initialize and train a ConceptBottleneckModel
+using PyTorch Lightning.
 
 The model uses:
-- BipartiteModel as the underlying structure (concepts -> tasks)
-- Joint training (concepts and tasks trained simultaneously)
+- ConceptBottleneckModel
+- lightning=True to enable Lightning training capabilities
+- Different inference engines can be used for training vs evaluation
 - Annotations for concept metadata
 - Flexible loss functions and metrics
 """
@@ -65,8 +66,9 @@ def main():
         variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # Specify loss and optimizer for Lightning training
-        training='joint',  # Enable Lightning training mode
+        # Enable Lightning training
+        lightning=True,
+        # Lightning training parameters
         loss=torch.nn.BCEWithLogitsLoss(),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.02}

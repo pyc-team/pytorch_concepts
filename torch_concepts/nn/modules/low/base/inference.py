@@ -68,6 +68,55 @@ class BaseInference(torch.nn.Module):
         """
         return self.query(x, *args, **kwargs)
 
+    def _validate_evidence(self, evidence) -> None:
+        """
+        Validate that evidence contains the required 'input' key.
+        
+        Call this at the beginning of every ``query`` implementation
+        that receives an evidence dictionary.
+        
+        Args:
+            evidence: Evidence dictionary to validate.
+            
+        Raises:
+            AssertionError: If evidence is a dict but missing the 'input' key.
+        """
+        if isinstance(evidence, dict):
+            assert 'input' in evidence, (
+                "Evidence must contain an 'input' key with the input tensor. "
+                f"Got keys: {list(evidence.keys())}"
+            )
+
+    @property
+    def query_kwargs(self) -> frozenset:
+        """Return the set of keyword argument names accepted by :meth:`query`.
+        
+        Subclasses should override this to declare which kwargs they handle.
+        The BaseLearner passes all available kwargs (e.g., ground_truth, 
+        concept_names), and each inference filters to keep only what it needs.
+        
+        Returns
+        -------
+        frozenset
+            Names of accepted keyword arguments. Default: empty set.
+        """
+        return frozenset()
+    
+    def _filter_kwargs(self, kwargs: dict) -> dict:
+        """Filter kwargs to only include those accepted by this inference.
+        
+        Parameters
+        ----------
+        kwargs : dict
+            All keyword arguments passed to query.
+            
+        Returns
+        -------
+        dict
+            Filtered kwargs containing only keys in :attr:`query_kwargs`.
+        """
+        return {k: v for k, v in kwargs.items() if k in self.query_kwargs}
+
     @abstractmethod
     def query(self,
               *args,

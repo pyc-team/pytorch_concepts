@@ -1,20 +1,21 @@
 """
-Example: Testing ConceptBottleneckModel_Joint Initialization
+Example: ConceptBottleneckModel with Manual PyTorch Training
 
-This example demonstrates how to initialize and test a ConceptBottleneckModel_Joint,
-which is the high-level API for joint training of concepts and tasks.
+This example demonstrates how to initialize and train a ConceptBottleneckModel
+using a manual PyTorch training loop (without Lightning).
 
 The model uses:
-- BipartiteModel as the underlying structure (concepts -> tasks)
-- Joint training (concepts and tasks trained simultaneously)
+- ConceptBottleneckModel
+- lightning=False (default) for pure PyTorch module behavior
+- Manual optimizer and loss function setup
 - Annotations for concept metadata
-- Flexible loss functions and metrics
 """
 
 import torch
 from torch import nn
 from torch.distributions import Bernoulli
 
+from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.data.datasets import ToyDataset
 
@@ -23,8 +24,8 @@ from torchmetrics.classification import BinaryAccuracy
 
 
 def main():
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+
+    seed_everything(42)
     
     # Generate toy data
     print("=" * 60)
@@ -112,7 +113,10 @@ def main():
         target = torch.cat([c_train, y_train], dim=1)
 
         # Forward pass - query all variables (concepts + tasks)
-        endogenous = model(x=x_train, query=query)
+        endogenous = model(
+            x=x_train, 
+            query=query, 
+        )
         
         # Compute loss on all outputs
         loss = loss_fn(endogenous, target)

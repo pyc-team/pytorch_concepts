@@ -47,9 +47,7 @@ from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 
-# Learners (high-level)
-from .modules.high.learners.joint import JointLearner
-from .modules.high.learners.independent import IndependentLearner
+
 
 # Models (mid-level)
 from .modules.mid.models.cpd import ParametricCPD
@@ -58,10 +56,14 @@ from .modules.mid.constructors.bipartite import BipartiteModel
 from .modules.mid.constructors.graph import GraphModel
 
 # Inference (mid-level)
-from .modules.mid.inference.forward import (
+from .modules.mid.inference import (
     ForwardInference,
+    LazyForwardInference,
     DeterministicInference,
+    LazyDeterministicInference,
     AncestralSamplingInference,
+    LazyAncestralSamplingInference,
+    IndependentInference,
 )
 
 # Interventions (low-level)
@@ -129,10 +131,6 @@ __all__ = [
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
 
-    # Learners (high-level)
-    "JointLearner",
-    "IndependentLearner",
-
     # Models (mid-level)
     "ParametricCPD",
     "ProbabilisticModel",
@@ -141,8 +139,12 @@ __all__ = [
 
     # Inference
     "ForwardInference",
+    "LazyForwardInference",
     "DeterministicInference",
+    "LazyDeterministicInference",
     "AncestralSamplingInference",
+    "LazyAncestralSamplingInference",
+    "IndependentInference",
 
     # Interventions
     "RewiringIntervention",

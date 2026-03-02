@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
+from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -254,15 +255,15 @@ class TestCBMTraining(unittest.TestCase):
         })
     
     def test_manual_training_mode(self):
-        """Test manual PyTorch training (no training mode)."""
+        """Test manual PyTorch training (no lightning mode)."""
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        # No training mode = pure PyTorch module
-        self.assertIsNone(model._training_mode)
+        # No lightning mode = pure PyTorch module
+        self.assertFalse(isinstance(model, BaseLearner))
         
         # Can train manually
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -361,50 +362,38 @@ class TestCBMFactory(unittest.TestCase):
         })
     
     def test_factory_joint_mode(self):
-        """Test factory creates joint training model."""
+        """Test factory creates Lightning model with lightning=True."""
         model = ConceptBottleneckModel(
-            training='joint',
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        self.assertEqual(model._training_mode, 'joint')
-        self.assertIn('Joint', model.__class__.__name__)
+        self.assertIsInstance(model, BaseLearner)
     
     def test_factory_independent_mode(self):
-        """Test factory creates independent training model."""
+        """Test factory creates Lightning model with lightning=True."""
+        from torch_concepts.nn.modules.mid.inference import IndependentInference
         model = ConceptBottleneckModel(
-            training='independent',
+            lightning=True,
+            train_inference=IndependentInference,
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        self.assertEqual(model._training_mode, 'independent')
-        self.assertIn('Independent', model.__class__.__name__)
+        self.assertIsInstance(model, BaseLearner)
     
     def test_factory_default_is_pytorch(self):
-        """Test default is pure PyTorch module (no training mode)."""
+        """Test default is pure PyTorch module (no lightning mode)."""
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
         
-        self.assertIsNone(model._training_mode)
-    
-    def test_factory_invalid_mode_raises(self):
-        """Test factory raises error for invalid mode."""
-        with self.assertRaises(ValueError) as context:
-            ConceptBottleneckModel(
-                training='invalid_mode',
-                input_size=8,
-                annotations=self.ann,
-                task_names=['task']
-            )
-        
-        self.assertIn('invalid_mode', str(context.exception))
+        self.assertFalse(isinstance(model, BaseLearner))
 
 
 class TestCBMUnifiedForward(unittest.TestCase):
@@ -428,7 +417,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
     def test_forward_with_x_only(self):
         """Test forward with x tensor only."""
         model = ConceptBottleneckModel(
-            training='joint',
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task']
@@ -440,7 +429,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
     def test_forward_with_evidence(self):
         """Test forward with combined x and evidence dict."""
         model = ConceptBottleneckModel(
-            training='joint',
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task']
@@ -454,64 +443,17 @@ class TestCBMUnifiedForward(unittest.TestCase):
         self.assertEqual(out.shape, (4, 3))
     
     def test_forward_same_output_all_modes(self):
-        """Test all training modes produce same forward output shape."""
-        for mode in ['joint', 'independent']:
+        """Test Lightning and pure PyTorch modes produce same forward output shape."""
+        for lightning_mode in [True, False]:
             model = ConceptBottleneckModel(
-                training=mode,
+                lightning=lightning_mode,
                 input_size=8,
                 annotations=self.ann,
                 task_names=['task']
             )
             
             out = model(x=self.x, query=['c1', 'c2', 'task'])
-            self.assertEqual(out.shape, (4, 3), f"Failed for mode: {mode}")
-
-
-class TestCBMGraphLevels(unittest.TestCase):
-    """Test graph level computation."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
-                }
-            )
-        })
-    
-    def test_graph_levels_computed(self):
-        """Test graph_levels attribute is populated."""
-        model = ConceptBottleneckModel(
-            training='joint',
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-        
-        self.assertTrue(hasattr(model, 'graph_levels'))
-        self.assertTrue(hasattr(model, 'roots'))
-        self.assertIsInstance(model.graph_levels, list)
-        self.assertIsInstance(model.roots, list)
-    
-    def test_roots_are_non_task_concepts(self):
-        """Test roots are encoder-level concepts."""
-        model = ConceptBottleneckModel(
-            training='joint',
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-        
-        # Roots should be concepts that depend on input
-        # In bipartite model: c1, c2 are roots
-        self.assertIn('c1', model.roots)
-        self.assertIn('c2', model.roots)
-        self.assertNotIn('task', model.roots)
+            self.assertEqual(out.shape, (4, 3), f"Failed for lightning_mode: {lightning_mode}")
 
 
 class TestTrainingModes(unittest.TestCase):
@@ -537,21 +479,24 @@ class TestTrainingModes(unittest.TestCase):
         }
     
     def test_joint_mode_works(self):
-        """Test ConceptBottleneckModel with joint training."""
-        model = ConceptBottleneckModel(training='joint', **self.kwargs)
+        """Test ConceptBottleneckModel with Lightning training."""
+        model = ConceptBottleneckModel(lightning=True, **self.kwargs)
         
-        self.assertEqual(model._training_mode, 'joint')
+        self.assertIsInstance(model, BaseLearner)
         x = torch.randn(2, 8)
         out = model(x=x, query=['c1', 'c2', 'task'])
         self.assertEqual(out.shape, (2, 3))
     
     def test_independent_mode_works(self):
-        """Test ConceptBottleneckModel with independent training."""
-        model = ConceptBottleneckModel(training='independent', **self.kwargs)
+        """Test ConceptBottleneckModel with Lightning training and IndependentInference."""
+        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        model = ConceptBottleneckModel(lightning=True, train_inference=IndependentInference, **self.kwargs)
         
-        self.assertEqual(model._training_mode, 'independent')
+        self.assertIsInstance(model, BaseLearner)
         x = torch.randn(2, 8)
-        out = model(x=x, query=['c1', 'c2', 'task'])
+        # IndependentInference.query() requires ground_truth tensor with concept_names
+        ground_truth = torch.randint(0, 2, (2, 3)).float()  # (batch, total_concepts)
+        out = model(x=x, query=['c1', 'c2', 'task'], ground_truth=ground_truth, concept_names=['c1', 'c2', 'task'])
         self.assertEqual(out.shape, (2, 3))
 
 
@@ -576,22 +521,25 @@ class TestLearnerIntegration(unittest.TestCase):
             'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
         }
     
-    def _make_model(self, mode, with_loss=True):
+    def _make_model(self, lightning=True, with_loss=True, train_inference=None):
         """Helper to create model with optional loss."""
         loss = nn.BCEWithLogitsLoss() if with_loss else None
-        return ConceptBottleneckModel(
-            training=mode,
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task'],
-            loss=loss,
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
+        kwargs = {
+            'lightning': lightning,
+            'input_size': 8,
+            'annotations': self.ann,
+            'task_names': ['task'],
+            'loss': loss,
+            'optim_class': torch.optim.Adam,
+            'optim_kwargs': {'lr': 0.01}
+        }
+        if train_inference is not None:
+            kwargs['train_inference'] = train_inference
+        return ConceptBottleneckModel(**kwargs)
     
     def test_joint_training_step(self):
-        """Test joint learner training step."""
-        model = self._make_model('joint')
+        """Test Lightning learner training step."""
+        model = self._make_model(lightning=True)
         model.train()
         
         loss = model.training_step(self.batch)
@@ -600,8 +548,9 @@ class TestLearnerIntegration(unittest.TestCase):
         self.assertTrue(loss.requires_grad)
     
     def test_independent_training_step(self):
-        """Test independent learner training step."""
-        model = self._make_model('independent')
+        """Test Lightning learner training step with IndependentInference."""
+        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        model = self._make_model(lightning=True, train_inference=IndependentInference)
         model.train()
         
         loss = model.training_step(self.batch)
@@ -610,8 +559,8 @@ class TestLearnerIntegration(unittest.TestCase):
         self.assertTrue(loss.requires_grad)
     
     def test_configure_optimizers_joint(self):
-        """Test optimizer configuration for joint mode."""
-        model = self._make_model('joint')
+        """Test optimizer configuration for Lightning mode."""
+        model = self._make_model(lightning=True)
         
         config = model.configure_optimizers()
         

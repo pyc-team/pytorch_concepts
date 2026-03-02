@@ -20,9 +20,9 @@ from torch.distributions import Bernoulli, Categorical
 from torch_concepts.nn.modules.high.models.cem import (
     ConceptEmbeddingModel
 )
-from torch_concepts.nn.modules.high.learners import JointLearner
+from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn.modules.mid.inference.forward import (
+from torch_concepts.nn.modules.mid.inference import (
     DeterministicInference,
     AncestralSamplingInference
 )
@@ -141,6 +141,7 @@ class TestCEMInitialization(unittest.TestCase):
             task_names=['task1'],
             inference=DeterministicInference
         )
+        model.eval()  # Switch to eval mode to check eval_inference
         
         self.assertIsInstance(model.inference, DeterministicInference)
     
@@ -152,11 +153,12 @@ class TestCEMInitialization(unittest.TestCase):
             task_names=['task1'],
             inference=AncestralSamplingInference
         )
+        model.eval()  # Switch to eval mode to check eval_inference
         
         self.assertIsInstance(model.inference, AncestralSamplingInference)
     
     def test_factory_default_is_pytorch(self):
-        """Test that default training=None creates pure PyTorch model."""
+        """Test that default lightning=False creates pure PyTorch model."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
@@ -164,21 +166,19 @@ class TestCEMInitialization(unittest.TestCase):
         )
         
         # Default is pure PyTorch (no learner mixin)
-        self.assertFalse(isinstance(model, JointLearner))
-        self.assertIsNone(model._training_mode)
+        self.assertFalse(isinstance(model, BaseLearner))
     
-    def test_factory_joint_training(self):
-        """Test that training='joint' creates Lightning model."""
+    def test_factory_lightning_training(self):
+        """Test that lightning=True creates Lightning model."""
         model = ConceptEmbeddingModel(
-            training='joint',
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task1']
         )
         
-        # Should have JointLearner mixin
-        self.assertIsInstance(model, JointLearner)
-        self.assertEqual(model._training_mode, 'joint')
+        # Should have BaseLearner mixin
+        self.assertIsInstance(model, BaseLearner)
 
 
 class TestCEMForward(unittest.TestCase):
@@ -698,9 +698,8 @@ class TestCEMTraining(unittest.TestCase):
             task_names=['task']
         )
         
-        # No training mode specified = pure PyTorch module (no loss attribute)
-        self.assertIsNone(model._training_mode)
-        self.assertFalse(hasattr(model, 'loss') and model.loss is not None)
+        # No lightning mode = pure PyTorch module (no learner mixin)
+        self.assertFalse(isinstance(model, BaseLearner))
         
         # Can train manually
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -1239,12 +1238,12 @@ class TestCEMIndependentLearner(unittest.TestCase):
         }
     
     def test_cem_independent_training_step(self):
-        """Test CEM independent learner training step works."""
+        """Test CEM Lightning learner training step works."""
         model = ConceptEmbeddingModel(
             input_size=self.input_size,
             annotations=self.ann,
             task_names=['task'],
-            training='independent',
+            lightning=True,
             loss=nn.BCEWithLogitsLoss()
         )
         model.train()
@@ -1253,32 +1252,7 @@ class TestCEMIndependentLearner(unittest.TestCase):
         
         self.assertIsNotNone(loss)
         self.assertTrue(loss.requires_grad)
-    
-    def test_cem_identifies_input_dependent_exogenous(self):
-        """Test that CEM correctly identifies input-dependent exogenous."""
-        model = ConceptEmbeddingModel(
-            input_size=self.input_size,
-            annotations=self.ann,
-            task_names=['task'],
-            training='independent'
-        )
         
-        # CEM should have identified exogenous that depend only on input
-        self.assertTrue(hasattr(model, 'input_dependent_exogenous'))
-        self.assertIsInstance(model.input_dependent_exogenous, list)
-        
-        # CEM should have exogenous variables (one per concept state)
-        self.assertTrue(
-            len(model.input_dependent_exogenous) > 0,
-            "CEM should have input-dependent exogenous variables"
-        )
-        
-        # All identified exogenous should start with 'exog_'
-        for exog_name in model.input_dependent_exogenous:
-            self.assertTrue(
-                exog_name.startswith('exog_'),
-                f"Expected exogenous name to start with 'exog_', got '{exog_name}'"
-            )
 
 
 if __name__ == '__main__':
