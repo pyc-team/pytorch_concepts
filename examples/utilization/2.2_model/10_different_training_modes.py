@@ -109,41 +109,41 @@ def main():
     optim = torch.optim.AdamW
     optim_kwargs = {'lr': 0.1}
 
-    # # =========================================================================
-    # # STANDARD TRAINING (same inference for train and eval)
-    # # =========================================================================
-    # print("\n" + "=" * 60)
-    # print("Example 1: Standard Training (DeterministicInference)")
-    # print("=" * 60)
+    # =========================================================================
+    # STANDARD TRAINING (same inference for train and eval)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 1: Standard Training (DeterministicInference)")
+    print("=" * 60)
 
-    # model_standard = ConceptBottleneckModel(
-    #     input_size=n_features,
-    #     annotations=annotations,
-    #     variable_distributions=variable_distributions,
-    #     task_names=['xor'],
-    #     latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-    #     # Inference engines (both default to DeterministicInference)
-    #     inference=DeterministicInference,
-    #     train_inference=DeterministicInference,
-    #     # Lightning kwargs
-    #     lightning=True,
-    #     loss=loss,
-    #     optim_class=optim,
-    #     optim_kwargs=optim_kwargs
-    # )
-    # print(f"Model type: {type(model_standard).__name__}")
-    # print(f"Inference (eval): {model_standard.eval_inference.__class__.__name__}")
-    # print(f"Training inference: {model_standard.train_inference.__class__.__name__}")
+    model_standard = ConceptBottleneckModel(
+        input_size=n_features,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
+        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        # Inference engines (both default to DeterministicInference)
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        # Lightning kwargs
+        lightning=True,
+        loss=loss,
+        optim_class=optim,
+        optim_kwargs=optim_kwargs
+    )
+    print(f"Model type: {type(model_standard).__name__}")
+    print(f"Inference (eval): {model_standard.eval_inference.__class__.__name__}")
+    print(f"Training inference: {model_standard.train_inference.__class__.__name__}")
 
-    # trainer_standard = Trainer(max_epochs=100)
-    # trainer_standard.fit(model_standard, datamodule=datamodule)
-    # evaluate(model_standard, datamodule, n_concepts, query)
+    trainer_standard = Trainer(max_epochs=100)
+    trainer_standard.fit(model_standard, datamodule=datamodule)
+    evaluate(model_standard, datamodule, n_concepts, query)
 
     # =========================================================================
     # DIFFERENT TRAINING MODE: INDEPENDENT TRAINING
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Example 2: Sampling During Training")
+    print("Example 2: Independent Training with Different Inference Engines")
     print("=" * 60)
     print("Uses IndependentInference for training")
     print("Uses DeterministicInference for evaluation")
