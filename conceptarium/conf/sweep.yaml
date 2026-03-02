@@ -9,14 +9,14 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: asia  # asia / sachs / insurance
-      model: cbm  # cbm / cem
+      dataset: asia, sachs, insurance
+      model: cbm, cem
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
-        # torch_concepts.nn.IndependentInference
-      loss: weighted
-      loss.concept_weight: 10
-      loss.task_weight: 1
+        torch_concepts.nn.IndependentInference
+      loss: standard
+      # loss.concept_weight: 10
+      # loss.task_weight: 1
 
 dataset:
   batch_size: 2048
