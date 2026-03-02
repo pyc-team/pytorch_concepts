@@ -61,7 +61,7 @@ class AncestralSamplingInference(ForwardInference):
         >>>
         >>> # Perform inference - returns samples, not endogenous
         >>> x = torch.randn(4, 10)  # batch_size=4, embedding_size=10
-        >>> results = inference.predict({'embedding': x})
+        >>> results = inference.predict({'input': x})
         >>>
         >>> # Results contain binary samples {0, 1} for Bernoulli variables
         >>> print(results['A'].shape)  # torch.Size([4, 1])
@@ -70,14 +70,14 @@ class AncestralSamplingInference(ForwardInference):
         >>> print(results['B'].unique())  # tensor([0., 1.]) - actual samples
         >>>
         >>> # Query specific concepts - returns concatenated samples
-        >>> samples = inference.query(['B', 'A'], evidence={'embedding': x})
+        >>> samples = inference.query(['B', 'A'], evidence={'input': x})
         >>> print(samples.shape)  # torch.Size([4, 2])
         >>> # samples contains [sample_B, sample_A] for each instance
         >>> print(samples)  # All values are 0 or 1
         >>>
         >>> # Multiple runs produce different samples (stochastic)
-        >>> samples1 = inference.query(['A'], evidence={'embedding': x})
-        >>> samples2 = inference.query(['A'], evidence={'embedding': x})
+        >>> samples1 = inference.query(['A'], evidence={'input': x})
+        >>> samples2 = inference.query(['A'], evidence={'input': x})
         >>> print(torch.equal(samples1, samples2))  # Usually False (different samples)
         >>>
         >>> # With relaxed distributions (requires temperature)
@@ -92,7 +92,7 @@ class AncestralSamplingInference(ForwardInference):
         >>> # Now uses reparameterization trick (.rsample())
         >>>
         >>> # Query returns continuous values in [0, 1] for relaxed distributions
-        >>> relaxed_samples = inference_relaxed.query(['A'], evidence={'embedding': x})
+        >>> relaxed_samples = inference_relaxed.query(['A'], evidence={'input': x})
         >>> # relaxed_samples will be continuous, not binary
     """
     def __init__(self,
