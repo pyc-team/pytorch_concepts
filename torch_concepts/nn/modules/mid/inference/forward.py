@@ -578,6 +578,9 @@ class ForwardInference(BaseInference, ABC):
             RuntimeError: If concatenation produces unexpected feature dimension.
             RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
         """
+        # Filter kwargs to only those needed by this inference to save memory
+        kwargs = self._filter_kwargs(kwargs)
+        
         assert query, "Query list cannot be empty - at least one concept must be requested."
         self._validate_evidence(evidence)
         use_cuda = self._resolve_device(device)
@@ -849,6 +852,9 @@ class LazyForwardInference(ForwardInference, ABC):
             Single tensor containing concatenated predictions for requested concepts,
             ordered as requested (Batch x TotalFeatures).
         """
+        # Filter kwargs to only those needed by this inference to save memory
+        kwargs = self._filter_kwargs(kwargs)
+        
         assert query, "Query list cannot be empty - at least one concept must be requested."
         self._validate_evidence(evidence)
 

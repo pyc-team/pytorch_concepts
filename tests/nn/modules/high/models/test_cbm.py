@@ -494,13 +494,9 @@ class TestTrainingModes(unittest.TestCase):
         
         self.assertIsInstance(model, BaseLearner)
         x = torch.randn(2, 8)
-        # IndependentInference.query() requires ground_truth dict
-        ground_truth = {
-            'c1': torch.randint(0, 2, (2, 1)).float(),
-            'c2': torch.randint(0, 2, (2, 1)).float(),
-            'task': torch.randint(0, 2, (2, 1)).float()
-        }
-        out = model(x=x, query=['c1', 'c2', 'task'], ground_truth=ground_truth)
+        # IndependentInference.query() requires ground_truth tensor with concept_names
+        ground_truth = torch.randint(0, 2, (2, 3)).float()  # (batch, total_concepts)
+        out = model(x=x, query=['c1', 'c2', 'task'], ground_truth=ground_truth, concept_names=['c1', 'c2', 'task'])
         self.assertEqual(out.shape, (2, 3))
 
 
@@ -525,18 +521,21 @@ class TestLearnerIntegration(unittest.TestCase):
             'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
         }
     
-    def _make_model(self, lightning=True, with_loss=True):
+    def _make_model(self, lightning=True, with_loss=True, train_inference=None):
         """Helper to create model with optional loss."""
         loss = nn.BCEWithLogitsLoss() if with_loss else None
-        return ConceptBottleneckModel(
-            lightning=lightning,
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task'],
-            loss=loss,
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
+        kwargs = {
+            'lightning': lightning,
+            'input_size': 8,
+            'annotations': self.ann,
+            'task_names': ['task'],
+            'loss': loss,
+            'optim_class': torch.optim.Adam,
+            'optim_kwargs': {'lr': 0.01}
+        }
+        if train_inference is not None:
+            kwargs['train_inference'] = train_inference
+        return ConceptBottleneckModel(**kwargs)
     
     def test_joint_training_step(self):
         """Test Lightning learner training step."""
@@ -550,7 +549,8 @@ class TestLearnerIntegration(unittest.TestCase):
     
     def test_independent_training_step(self):
         """Test Lightning learner training step with IndependentInference."""
-        model = self._make_model(lightning=True)
+        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        model = self._make_model(lightning=True, train_inference=IndependentInference)
         model.train()
         
         loss = model.training_step(self.batch)

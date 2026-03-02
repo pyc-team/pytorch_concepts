@@ -50,15 +50,14 @@ class TestIndependentInferenceBasic:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {
-            'A': torch.ones(batch_size, 1),
-            'B': torch.ones(batch_size, 1),
-        }
+        # Ground truth as tensor [A, B]
+        ground_truth = torch.ones(batch_size, 2)
 
         result = inference.query(
             query=['A', 'B', 'task'],
             evidence={'input': x},
-            ground_truth=ground_truth
+            ground_truth=ground_truth,
+            concept_names=['A', 'B']
         )
 
         # Result should be (batch_size, 3) - one feature per concept
@@ -71,12 +70,14 @@ class TestIndependentInferenceBasic:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {'A': torch.ones(batch_size, 1)}
+        # Ground truth as tensor [A]
+        ground_truth = torch.ones(batch_size, 1)
 
         result = inference.query(
             query=['A'],
             evidence={'input': x},
-            ground_truth=ground_truth
+            ground_truth=ground_truth,
+            concept_names=['A']
         )
 
         assert result.shape == (batch_size, 1)
@@ -84,12 +85,12 @@ class TestIndependentInferenceBasic:
     def test_query_preserves_order(self):
         """Test that query results are in the requested order."""
         input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
+        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
@@ -98,17 +99,17 @@ class TestIndependentInferenceBasic:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randint(0, 2, (4, 2)).float()  # Binary indices for A and B
 
         # Query in order [A, B]
-        result_ab = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result_ab = inference.query(['A', 'B'], {'input': x}, ground_truth=gt, concept_names=['A', 'B'])
         # Query in order [B, A]
-        result_ba = inference.query(['B', 'A'], {'input': x}, ground_truth)
+        result_ba = inference.query(['B', 'A'], {'input': x}, ground_truth=gt, concept_names=['A', 'B'])
 
-        # First 3 columns of result_ab should equal last 3 columns of result_ba
-        torch.testing.assert_close(result_ab[:, :3], result_ba[:, 2:])
-        # First 2 columns of result_ba should equal last 2 columns of result_ab
-        torch.testing.assert_close(result_ab[:, 3:], result_ba[:, :2])
+        # First column of result_ab (A) should equal second column of result_ba
+        torch.testing.assert_close(result_ab[:, 0:1], result_ba[:, 1:2])
+        # Second column of result_ab (B) should equal first column of result_ba
+        torch.testing.assert_close(result_ab[:, 1:2], result_ba[:, 0:1])
 
     def test_empty_query_raises_error(self):
         """Test that empty query raises ValueError."""
@@ -116,10 +117,10 @@ class TestIndependentInferenceBasic:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randn(4, 1)
 
         with pytest.raises(AssertionError, match="Query list cannot be empty"):
-            inference.query([], {'input': x}, ground_truth)
+            inference.query([], {'input': x}, ground_truth=gt, concept_names=['A'])
 
 
 class TestIndependentInferenceGroundTruthPropagation:
@@ -151,12 +152,22 @@ class TestIndependentInferenceGroundTruthPropagation:
         x = torch.randn(batch_size, 10)
 
         # Compute with GT for A = 0
-        gt_zeros = {'A': torch.zeros(batch_size, 1)}
-        result_with_zeros = inference.query(['B'], {'input': x}, gt_zeros)
+        gt_zeros = torch.zeros(batch_size, 1)
+        result_with_zeros = inference.query(
+            ['B'], 
+            {'input': x}, 
+            ground_truth=gt_zeros,
+            concept_names=['A']
+        )
 
-        # Compute with GT for A = 1
-        gt_ones = {'A': torch.ones(batch_size, 1)}
-        result_with_ones = inference.query(['B'], {'input': x}, gt_ones)
+        # Compute with GT for A = 1  
+        gt_ones = torch.ones(batch_size, 1)
+        result_with_ones = inference.query(
+            ['B'], 
+            {'input': x}, 
+            ground_truth=gt_ones,
+            concept_names=['A']
+        )
 
         # Results should be different because B depends on A
         assert not torch.allclose(result_with_zeros, result_with_ones)
@@ -169,9 +180,14 @@ class TestIndependentInferenceGroundTruthPropagation:
         batch_size = 4
         x = torch.randn(batch_size, 10)
 
-        # Set GT for A
-        gt_fixed = {'A': torch.full((batch_size, 1), 999.0)}  # Extreme value
-        result = inference.query(['A'], {'input': x}, gt_fixed)
+        # Set GT for A to extreme value
+        gt_fixed = torch.full((batch_size, 1), 999.0)
+        result = inference.query(
+            ['A'], 
+            {'input': x}, 
+            ground_truth=gt_fixed,
+            concept_names=['A']
+        )
 
         # Result should NOT be 999 - it should be the model's prediction
         assert not torch.allclose(result, torch.full((batch_size, 1), 999.0))
@@ -217,17 +233,19 @@ class TestIndependentInferenceGradientFlow:
         x = torch.randn(batch_size, 10)
         
         # Provide GT for A and B - these block gradient flow
-        ground_truth = {
-            'A': torch.zeros(batch_size, 1),
-            'B': torch.zeros(batch_size, 1),
-        }
+        ground_truth = torch.zeros(batch_size, 2)  # [A, B]
 
         # Zero gradients
         for layer in layers.values():
             layer.zero_grad()
 
         # Forward pass
-        result = inference.query(['A', 'B', 'task'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B', 'task'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A', 'B']
+        )
         
         # Extract task prediction and compute loss
         task_pred = result[:, 2:]  # Last column is task
@@ -250,17 +268,20 @@ class TestIndependentInferenceGradientFlow:
         batch_size = 4
         x = torch.randn(batch_size, 10)
         
-        # Provide GT only for B (not A)
-        ground_truth = {
-            'B': torch.zeros(batch_size, 1),
-        }
+        # Provide GT for B only (concept_names specifies which concepts have GT)
+        ground_truth = torch.zeros(batch_size, 1)  # Only B
 
         # Zero gradients
         for layer in layers.values():
             layer.zero_grad()
 
         # Forward pass
-        result = inference.query(['A', 'B', 'task'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B', 'task'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['B']
+        )
         
         # Compute loss on A (direct relationship with input)
         a_pred = result[:, 0:1]  # First column is A
@@ -284,16 +305,19 @@ class TestIndependentInferenceGradientFlow:
         x = torch.randn(batch_size, 10)
         
         # Provide GT for A only
-        ground_truth = {
-            'A': torch.ones(batch_size, 1),
-        }
+        ground_truth = torch.ones(batch_size, 1)  # Only A
 
         # Zero gradients
         for layer in layers.values():
             layer.zero_grad()
 
         # Forward pass
-        result = inference.query(['A', 'B', 'task'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B', 'task'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
         
         # Compute loss ONLY on B
         b_pred = result[:, 1:2]  # Second column is B
@@ -340,13 +364,15 @@ class TestIndependentInferenceWithCategorical:
         batch_size = 4
         x = torch.randn(batch_size, 10)
         
-        # Ground truth for A as one-hot (4 classes)
-        gt_a = torch.zeros(batch_size, 4)
-        gt_a[:, 0] = 1  # Class 0
+        # Ground truth for A as class indices (index format)
+        gt_a = torch.zeros(batch_size, 1)  # Class 0 for all samples
 
-        ground_truth = {'A': gt_a}
-
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=gt_a,
+            concept_names=['A']
+        )
 
         # A has 4 features, B has 1
         assert result.shape == (batch_size, 5)
@@ -409,23 +435,35 @@ class TestIndependentInferenceWithExogenous:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {'A': torch.ones(batch_size, 1)}
+        ground_truth = torch.ones(batch_size, 1)  # Only A
 
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
 
         # A has 1 feature, B has 1 feature
         assert result.shape == (batch_size, 2)
 
     def test_exogenous_not_in_ground_truth(self):
-        """Test that exogenous variables work without GT (they don't need it)."""
+        """Test that exogenous variables are not replaced by GT even when computed."""
         model = self._make_model_with_exogenous()
         inference = IndependentInference(model)
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {}  # No GT at all
+        
+        # GT only for endogenous A, not exogenous
+        gt_a = torch.zeros(batch_size, 1)
 
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x},
+            ground_truth=gt_a,
+            concept_names=['A']
+        )
 
         assert result.shape == (batch_size, 2)
 
@@ -441,17 +479,28 @@ class TestIndependentInferenceWithExogenous:
         batch_size = 4
         x = torch.randn(batch_size, 10)
         
-        # First run without any GT
-        result_no_gt = inference.query(['A', 'B'], {'input': x}, {})
+        # Run with GT=0 for A
+        gt_zero = torch.zeros(batch_size, 1)
+        result_gt_zero = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=gt_zero,
+            concept_names=['A']
+        )
         
-        # Second run with GT for A (exogenous should be identical)
-        result_with_gt = inference.query(['A', 'B'], {'input': x}, {'A': torch.zeros(batch_size, 1)})
+        # Run with GT=1 for A
+        gt_one = torch.ones(batch_size, 1)
+        result_gt_one = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=gt_one,
+            concept_names=['A']
+        )
         
-        # A predictions should differ (GT affects downstream differently)
-        # But the underlying exogenous computation is the same
-        # We verify this by checking that A's output changes due to the propagation path
-        assert not torch.allclose(result_no_gt[:, 1:], result_with_gt[:, 1:]), \
-            "B should differ when GT for A is used"
+        # A predictions should be the same (GT affects propagation, not prediction)
+        # But B predictions should differ because GT for A is used in propagation
+        assert not torch.allclose(result_gt_zero[:, 1:], result_gt_one[:, 1:]), \
+            "B should differ when GT for A differs"
 
     def test_exogenous_receives_gradients_when_loss_on_downstream(self):
         """Test that exogenous receives gradients when loss is on downstream concept.
@@ -466,14 +515,19 @@ class TestIndependentInferenceWithExogenous:
         x = torch.randn(batch_size, 10)
         
         # Provide GT for A
-        ground_truth = {'A': torch.ones(batch_size, 1)}
+        ground_truth = torch.ones(batch_size, 1)
 
         # Zero gradients
         for layer in layers.values():
             layer.zero_grad()
 
         # Forward pass
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
         
         # Compute loss on A (first output)
         a_pred = result[:, 0:1]
@@ -506,14 +560,19 @@ class TestIndependentInferenceWithExogenous:
         x = torch.randn(batch_size, 10)
         
         # Provide GT for A
-        ground_truth = {'A': torch.ones(batch_size, 1)}
+        ground_truth = torch.ones(batch_size, 1)
 
         # Zero gradients
         for layer in layers.values():
             layer.zero_grad()
 
         # Forward pass
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
         
         # Compute loss ONLY on B
         b_pred = result[:, 1:2]
@@ -560,9 +619,14 @@ class TestIndependentInferenceWithExogenous:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {'A': torch.ones(batch_size, 1)}
+        ground_truth = torch.ones(batch_size, 1)  # Only A
 
-        result = inference.query(['A', 'B'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['A', 'B'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
 
         assert result.shape == (batch_size, 2)
 
@@ -596,12 +660,18 @@ class TestIndependentInferenceWithExogenous:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {
-            'c1': torch.ones(batch_size, 1),
-            'c2': torch.zeros(batch_size, 1),
-        }
+        # [c1, c2] tensor
+        ground_truth = torch.cat([
+            torch.ones(batch_size, 1),
+            torch.zeros(batch_size, 1),
+        ], dim=1)
 
-        result = inference.query(['c1', 'c2', 'task'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['c1', 'c2', 'task'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['c1', 'c2']
+        )
 
         # c1 (1) + c2 (1) + task (1) = 3
         assert result.shape == (batch_size, 3)
@@ -636,14 +706,19 @@ class TestIndependentInferenceWithExogenous:
 
         batch_size = 4
         x = torch.randn(batch_size, 10)
-        ground_truth = {'c1': torch.ones(batch_size, 1)}
+        ground_truth = torch.ones(batch_size, 1)  # Only c1
 
         # Zero gradients
         linear_emb.zero_grad()
         linear_c1.zero_grad()
         linear_task.zero_grad()
 
-        result = inference.query(['c1', 'task'], {'input': x}, ground_truth)
+        result = inference.query(
+            ['c1', 'task'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['c1']
+        )
         
         # Loss on task only
         task_pred = result[:, 1:2]
@@ -689,9 +764,9 @@ class TestIndependentInferenceDeviceModes:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randn(4, 1)
 
-        result = inference.query(['A'], {'input': x}, ground_truth, device='cpu')
+        result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], device='cpu')
 
         assert result.shape == (4, 1)
 
@@ -701,9 +776,9 @@ class TestIndependentInferenceDeviceModes:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randn(4, 1)
 
-        result = inference.query(['A'], {'input': x}, ground_truth, device='auto')
+        result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], device='auto')
 
         assert result.shape == (4, 1)
 
@@ -713,9 +788,9 @@ class TestIndependentInferenceDeviceModes:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randn(4, 1)
 
-        result = inference.query(['A'], {'input': x}, ground_truth, debug=True)
+        result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], debug=True)
 
         assert result.shape == (4, 1)
 
@@ -741,11 +816,11 @@ class TestIndependentInferenceErrorHandling:
         """Test that missing evidence raises appropriate error."""
         model = self._make_simple_model()
         inference = IndependentInference(model)
-
-        ground_truth = {}
+        
+        gt = torch.randn(4, 1)
 
         with pytest.raises(AssertionError, match="Evidence must contain an 'input' key"):
-            inference.query(['A'], {}, ground_truth)  # Missing 'input' evidence
+            inference.query(['A'], {}, ground_truth=gt, concept_names=['A'])  # Missing 'input' evidence
 
     def test_invalid_query_concept_raises_error(self):
         """Test that invalid query concept raises error."""
@@ -753,10 +828,10 @@ class TestIndependentInferenceErrorHandling:
         inference = IndependentInference(model)
 
         x = torch.randn(4, 10)
-        ground_truth = {}
+        gt = torch.randn(4, 1)
 
         with pytest.raises(ValueError, match="was requested but could not be computed"):
-            inference.query(['nonexistent'], {'input': x}, ground_truth)
+            inference.query(['nonexistent'], {'input': x}, ground_truth=gt, concept_names=['A'])
 
 
 class TestIndependentVsDeterministicInference:
@@ -788,17 +863,22 @@ class TestIndependentVsDeterministicInference:
         x = torch.randn(batch_size, 10)
         
         # Extreme GT that's very different from any prediction
-        ground_truth = {'A': torch.full((batch_size, 1), 100.0)}
+        ground_truth = torch.full((batch_size, 1), 100.0)
 
-        result_independent = independent.query(['B'], {'input': x}, ground_truth)
+        result_independent = independent.query(
+            ['B'], 
+            {'input': x}, 
+            ground_truth=ground_truth,
+            concept_names=['A']
+        )
         result_deterministic = deterministic.query(['B'], {'input': x})
 
         # Results should differ because Independent uses GT for propagation
         # while Deterministic uses predicted A
         assert not torch.allclose(result_independent, result_deterministic, atol=1e-2)
 
-    def test_same_results_without_gt(self):
-        """Test that Independent and Deterministic give same results when GT is empty."""
+    def test_same_results_same_gt(self):
+        """Test that Independent and Deterministic give same A predictions (GT only affects propagation)."""
         model = self._make_chain_model()
         independent = IndependentInference(model)
         deterministic = DeterministicInference(model)
@@ -806,17 +886,23 @@ class TestIndependentVsDeterministicInference:
         batch_size = 4
         x = torch.randn(batch_size, 10)
         
-        # No GT - should cascade predictions like deterministic
-        ground_truth = {}
+        # GT for A that will be used for propagation to B
+        gt_a = torch.zeros(batch_size, 1)
+        
+        result_independent = independent.query(
+            ['A'], 
+            {'input': x}, 
+            ground_truth=gt_a,
+            concept_names=['A']
+        )
+        result_deterministic = deterministic.query(['A'], {'input': x})
 
-        result_independent = independent.query(['A', 'B'], {'input': x}, ground_truth)
-        result_deterministic = deterministic.query(['A', 'B'], {'input': x})
-
+        # A predictions should be identical (GT doesn't affect the prediction itself)
         torch.testing.assert_close(result_independent, result_deterministic)
 
 
-class TestPrepareForwardKwargs:
-    """Test prepare_forward_kwargs method for extracting ground truth from batches."""
+class TestConceptMapping:
+    """Test concept mapping and tensor-to-dict conversion."""
 
     def _make_simple_model(self):
         """Create a simple model for testing."""
@@ -834,120 +920,50 @@ class TestPrepareForwardKwargs:
         )
         return model
 
-    def test_prepare_forward_kwargs_basic(self):
-        """Test prepare_forward_kwargs extracts ground truth correctly."""
-        from torch_concepts.annotations import Annotations, AxisAnnotation
-        
+    def test_query_kwargs_property(self):
+        """Test query_kwargs returns expected kwarg names."""
         model = self._make_simple_model()
         inference = IndependentInference(model)
         
-        # Create annotations
-        ann = AxisAnnotation(
-            labels=['A', 'B'],
-            cardinalities=[1, 1],
-            metadata={
-                'A': {'type': 'binary', 'distribution': Bernoulli},
-                'B': {'type': 'binary', 'distribution': Bernoulli},
-            }
+        expected = frozenset({'ground_truth', 'concept_names'})
+        assert inference.query_kwargs == expected
+
+    def test_query_with_tensor_and_concept_names(self):
+        """Test query accepts ground_truth tensor with concept_names."""
+        model = self._make_simple_model()
+        inference = IndependentInference(model)
+        
+        x = torch.randn(4, 10)
+        gt_tensor = torch.tensor([[0.0, 1.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
+        
+        result = inference.query(
+            query=['A', 'B'],
+            evidence={'input': x},
+            ground_truth=gt_tensor,
+            concept_names=['A', 'B']
         )
         
-        # Create batch
-        batch = {
-            'inputs': {'x': torch.randn(4, 10)},
-            'concepts': {'c': torch.tensor([[0, 1], [1, 0], [1, 1], [0, 0]]).float()}
-        }
-        
-        result = inference.prepare_forward_kwargs(batch, ann)
-        
-        assert 'ground_truth' in result
-        assert 'A' in result['ground_truth']
-        assert 'B' in result['ground_truth']
-        assert result['ground_truth']['A'].shape[0] == 4
-        assert result['ground_truth']['B'].shape[0] == 4
+        assert result.shape == (4, 2)
 
-    def test_prepare_forward_kwargs_categorical(self):
-        """Test prepare_forward_kwargs with categorical concepts."""
-        from torch_concepts.annotations import Annotations, AxisAnnotation
-        
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Categorical, size=3)
-
-        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-
-        model = ProbabilisticModel(
-            variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
-        )
+    def test_query_accepts_extra_kwargs(self):
+        """Test query accepts and ignores unknown kwargs from BaseLearner."""
+        model = self._make_simple_model()
         inference = IndependentInference(model)
         
-        # Create annotations for categorical
-        ann = AxisAnnotation(
-            labels=['A'],
-            cardinalities=[3],
-            metadata={'A': {'type': 'categorical', 'distribution': Categorical}}
+        x = torch.randn(4, 10)
+        gt = torch.randn(4, 2)  # GT for A and B
+        
+        # Should not raise even with extra kwargs
+        result = inference.query(
+            query=['A', 'B'],
+            evidence={'input': x},
+            ground_truth=gt,
+            concept_names=['A', 'B'],
+            some_unknown_kwarg="ignored",
+            another_one=123
         )
         
-        # Batch with categorical GT (class indices)
-        batch = {
-            'inputs': {'x': torch.randn(4, 10)},
-            'concepts': {'c': torch.tensor([[0], [1], [2], [1]]).float()}
-        }
-        
-        result = inference.prepare_forward_kwargs(batch, ann)
-        
-        assert 'ground_truth' in result
-        assert 'A' in result['ground_truth']
-        # Categorical should produce logits of shape (batch, num_classes)
-        assert result['ground_truth']['A'].shape == (4, 3)
-
-    def test_prepare_forward_kwargs_none_batch_raises(self):
-        """Test prepare_forward_kwargs raises for None batch."""
-        from torch_concepts.annotations import AxisAnnotation
-        
-        model = self._make_simple_model()
-        inference = IndependentInference(model)
-        
-        ann = AxisAnnotation(labels=['A'], cardinalities=[1])
-        
-        with pytest.raises(AssertionError, match="Batch cannot be None"):
-            inference.prepare_forward_kwargs(None, ann)
-
-    def test_prepare_forward_kwargs_none_annotations_raises(self):
-        """Test prepare_forward_kwargs raises for None annotations."""
-        model = self._make_simple_model()
-        inference = IndependentInference(model)
-        
-        batch = {'concepts': {'c': torch.randn(4, 2)}}
-        
-        with pytest.raises(AssertionError, match="Annotations cannot be None"):
-            inference.prepare_forward_kwargs(batch, None)
-
-    def test_prepare_forward_kwargs_missing_concepts_raises(self):
-        """Test prepare_forward_kwargs raises when batch has no concepts."""
-        from torch_concepts.annotations import AxisAnnotation
-        
-        model = self._make_simple_model()
-        inference = IndependentInference(model)
-        
-        ann = AxisAnnotation(labels=['A'], cardinalities=[1])
-        batch = {'inputs': {'x': torch.randn(4, 10)}}  # No 'concepts' key
-        
-        with pytest.raises(AssertionError, match="Batch must contain 'concepts' key"):
-            inference.prepare_forward_kwargs(batch, ann)
-
-    def test_prepare_forward_kwargs_missing_c_key_raises(self):
-        """Test prepare_forward_kwargs raises when concepts dict has no 'c' key."""
-        from torch_concepts.annotations import AxisAnnotation
-        
-        model = self._make_simple_model()
-        inference = IndependentInference(model)
-        
-        ann = AxisAnnotation(labels=['A'], cardinalities=[1])
-        batch = {'concepts': {'other': torch.randn(4, 2)}}  # No 'c' key
-        
-        with pytest.raises(AssertionError, match="Concepts dictionary must contain 'c' key"):
-            inference.prepare_forward_kwargs(batch, ann)
+        assert result.shape == (4, 2)
 
 
 if __name__ == '__main__':

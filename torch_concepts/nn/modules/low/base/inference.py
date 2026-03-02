@@ -86,39 +86,36 @@ class BaseInference(torch.nn.Module):
                 "Evidence must contain an 'input' key with the input tensor. "
                 f"Got keys: {list(evidence.keys())}"
             )
+
+    @property
+    def query_kwargs(self) -> frozenset:
+        """Return the set of keyword argument names accepted by :meth:`query`.
+        
+        Subclasses should override this to declare which kwargs they handle.
+        The BaseLearner passes all available kwargs (e.g., ground_truth, 
+        concept_names), and each inference filters to keep only what it needs.
+        
+        Returns
+        -------
+        frozenset
+            Names of accepted keyword arguments. Default: empty set.
+        """
+        return frozenset()
     
-    def prepare_forward_kwargs(self, batch, **kwargs) -> dict:
-        """Return extra keyword arguments for :meth:`query` given the current batch.
-
-        The high-level learner calls this method before each forward pass and
-        spreads the returned dict into the ``forward()`` → ``query()`` call
-        chain.  The default implementation returns an empty dict, meaning no
-        extra arguments are passed.
-
-        Subclasses that need additional data (e.g. ground-truth labels for
-        independent training) should override this method and pull what they
-        need from *batch* or *kwargs*.  This keeps ``BaseLearner`` completely
-        agnostic to inference-specific requirements — no ``if`` statements,
-        no code changes when new inference engines are added.
-
+    def _filter_kwargs(self, kwargs: dict) -> dict:
+        """Filter kwargs to only include those accepted by this inference.
+        
         Parameters
         ----------
-        batch : dict
-            The raw batch dictionary from the dataloader.  Typically contains
-            ``'inputs'`` and ``'concepts'`` keys (and optionally ``'transforms'``).
-        **kwargs
-            Additional learner-known context, for example:
-
-            * ``annotations`` – the concept annotations object, if available.
-            * ``epoch`` – current epoch number.
-
+        kwargs : dict
+            All keyword arguments passed to query.
+            
         Returns
         -------
         dict
-            Extra kwargs to pass through ``forward()`` into ``query()``.
-            Default: ``{}``.
+            Filtered kwargs containing only keys in :attr:`query_kwargs`.
         """
-        return {}
+        return {k: v for k, v in kwargs.items() if k in self.query_kwargs}
 
     @abstractmethod
     def query(self,

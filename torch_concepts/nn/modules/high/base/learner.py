@@ -203,11 +203,11 @@ class BaseLearner(pl.LightningModule):
         return inputs, concepts, transforms
 
     def _get_inference_kwargs(self, batch: dict) -> dict:
-        """Get extra kwargs from the inference engine for the forward pass.
+        """Get kwargs to pass to the inference engine's query method.
         
-        The inference engine can request additional data (e.g., ground truth
-        for independent training) via its ``prepare_forward_kwargs`` method.
-        Models without inference engines (e.g., BlackBox) return empty dict.
+        Provides all standard kwargs that any inference might need. Each 
+        inference engine filters to keep only what it accepts via its
+        ``query_kwargs`` property and ``**kwargs`` in the query signature.
         
         Parameters
         ----------
@@ -217,17 +217,20 @@ class BaseLearner(pl.LightningModule):
         Returns
         -------
         dict
-            Extra kwargs to pass to ``forward()`` and ``query()``.
+            Standard kwargs including ground_truth tensor and concept_names.
         """
-        inference_engine = getattr(self, 'inference', None)
-        if inference_engine is not None and hasattr(inference_engine, 'prepare_forward_kwargs'):
-            return self.inference.prepare_forward_kwargs(
-                batch, 
-                annotations=getattr(self, 'concept_annotations', None),
-                epoch=getattr(self, 'current_epoch', None)
-            )
-        else:
+        # Models without inference engines (e.g., BlackBox) don't need these
+        if not hasattr(self, 'inference'):
             return {}
+        
+        # Extract ground truth tensor from batch
+        concepts = batch.get('concepts', {})
+        ground_truth = concepts.get('c', None)
+
+        return {
+            'ground_truth': ground_truth,
+            'concept_names': self.concept_annotations.labels
+        }
 
     # TODO: implement input preprocessing with transforms from batch
     # @staticmethod

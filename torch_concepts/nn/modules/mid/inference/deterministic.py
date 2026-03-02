@@ -81,29 +81,44 @@ class DeterministicInference(ForwardInference):
 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
         """
-        Convert ground truth to logits for deterministic inference.
+        Convert discrete ground truth to logits for propagation. 
+        Supports both binary (cardinality=1) and categorical (cardinality>1) variables.
+        DOES NOT SUPPORT CONTINUOUS VARIABLES.
         
         Parameters
         ----------
         value : torch.Tensor
-            Ground truth value tensor. Shape: (batch_size,).
+            Ground truth tensor. Shape: (batch_size,) or (batch_size, 1).
+            - Binary (cardinality=1): values in {0, 1}
+            - Categorical (cardinality>1): class indices (converted to one-hot)
         cardinality : int
-            Number of classes (1 for binary, >1 for categorical).
+            Number of features/classes for this variable.
             
         Returns
         -------
         torch.Tensor
             Logits tensor. Shape: (batch_size, cardinality).
         """
-        # TODO: currently assumes discrete, to be extended to continuous 
-        if cardinality > 1:
-            one_hot = torch.nn.functional.one_hot(
-                value.long(), num_classes=cardinality
-            ).float()
-        else:
-            one_hot = value.unsqueeze(-1)
+
+        # TODO: add support for continuous variables
+        # Allow (batch,) and unsqueeze to (batch, 1)
+        if value.dim() == 1:
+            value = value.unsqueeze(-1)
         
-        return torch.logit(one_hot.clamp(1e-7, 1-1e-7))
+        if value.dim() != 2 or value.shape[-1] != 1:
+            raise ValueError(
+                f"Expected shape (batch,) or (batch, 1), got {tuple(value.shape)}."
+            )
+        
+        if cardinality == 1:
+            # Binary: values in {0, 1}
+            return torch.logit(value.float().clamp(1e-7, 1 - 1e-7))
+        else:
+            # Categorical: convert class indices to one-hot then to logits
+            one_hot = torch.nn.functional.one_hot(
+                value.squeeze(-1).long(), num_classes=cardinality
+            ).float()
+            return torch.logit(one_hot.clamp(1e-7, 1 - 1e-7))
 
 
 class LazyDeterministicInference(LazyForwardInference, DeterministicInference):
