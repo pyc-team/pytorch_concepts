@@ -22,11 +22,17 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
 from .modules.low.encoders.exogenous import LinearLatentToExogenous
 from .modules.low.encoders.stochastic import StochasticLatentToConcept
-from .modules.low.encoders.selector import SelectorLatentToExogenous
+from .modules.low.encoders.selector import (
+    CategoricalSelectorLatentToExogenous,
+    SelectorLatentToExogenous,
+)
 
 # Predictors
 from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept
+from .modules.low.predictors.exogenous import (
+    MixConceptExogegnousToConcept,
+    MixMemoryConceptExogenousToConcept,
+)
 from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 
@@ -105,6 +111,7 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "MixConceptExogegnousToConcept",
+    "MixMemoryConceptExogenousToConcept",
     "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
 
@@ -113,6 +120,7 @@ __all__ = [
     "ResidualMLP",
     "MLP",
 
+    "CategoricalSelectorLatentToExogenous",
     "SelectorLatentToExogenous",
 
     # COSMO
