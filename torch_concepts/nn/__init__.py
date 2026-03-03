@@ -44,7 +44,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer
+    L1LogitRegularizer, CMRLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics
@@ -54,6 +54,7 @@ from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.cmr import ConceptMemoryReasoner
 
 
 
@@ -127,6 +128,7 @@ __all__ = [
     "WANDAGraphLearner",
 
     # Loss functions
+    "CMRLoss",
     "ConceptLoss",
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
@@ -141,6 +143,7 @@ __all__ = [
     "ConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptMemoryReasoner",
 
     # Models (mid-level)
     "ParametricCPD",

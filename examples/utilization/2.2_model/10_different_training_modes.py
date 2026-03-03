@@ -23,7 +23,12 @@ can be implemented by creating a custom train_inference that uses evidence.
 
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel
+from torch_concepts.nn import (
+    CMRLoss,
+    ConceptBottleneckModel,
+    ConceptEmbeddingModel,
+    ConceptMemoryReasoner,
+)
 from torch_concepts.nn.modules.mid.inference import (
     DeterministicInference,
     IndependentInference
@@ -201,6 +206,44 @@ def main():
     trainer_cem = Trainer(max_epochs=100)
     trainer_cem.fit(model_cem, datamodule=datamodule)
     evaluate(model_cem, datamodule, n_concepts, query)
+
+    # =========================================================================
+    # CMR WITH JOINT TRAINING
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 4: CMR with Joint Training")
+    print("=" * 60)
+    print("Uses DeterministicInference for both training and evaluation")
+
+    cmr_loss = CMRLoss()
+    optim_kwargs_cmr = {'lr': 0.01}
+
+    model_cmr = ConceptMemoryReasoner(
+        input_size=n_features,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
+        n_rules=10,
+        memory_latent_size=100,
+        memory_decoder_hidden_layers=1,
+        selector_hidden_layers=1,
+        rec_weight=0.1,
+        eps=1e-3,
+        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        lightning=True,
+        loss=cmr_loss,
+        optim_class=optim,
+        optim_kwargs=optim_kwargs_cmr,
+    )
+    print(f"Model type: {type(model_cmr).__name__}")
+    print(f"Eval inference: {model_cmr.eval_inference.__class__.__name__}")
+    print(f"Training inference: {model_cmr.train_inference.__class__.__name__}")
+
+    trainer_cmr = Trainer(max_epochs=100)
+    trainer_cmr.fit(model_cmr, datamodule=datamodule)
+    evaluate(model_cmr, datamodule, n_concepts, query)
 
 
 if __name__ == "__main__":

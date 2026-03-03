@@ -118,6 +118,25 @@ A CBM learns interpretable concept representations and uses them to predict task
        }
    )
 
+**Concept Memory Reasoner (CMR)**
+
+A neurosymbolic concept-based model with task-specific rule selection and reasoning:
+
+.. code-block:: python
+
+   from torch_concepts.nn import ConceptMemoryReasoner
+
+   model = ConceptMemoryReasoner(
+       input_size=2048,
+       annotations=annotations,
+       task_names=['class_A', 'class_B'],
+       n_rules=10,
+       memory_latent_size=100,
+       memory_decoder_hidden_layers=1,
+       selector_hidden_layers=1,
+       eps=1e-3,
+   )
+
 **BlackBox Model**
 
 A standard neural network for comparison baselines:

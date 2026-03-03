@@ -16,6 +16,7 @@ Summary
 
    ConceptLoss
    WeightedConceptLoss
+   CMRLoss
 
 **Graph-Based Losses**
 
@@ -48,6 +49,13 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: DepthWeightedConceptLoss
+
+.. autoclass:: CMRLoss
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: WeightedBCEWithLogitsLoss
    :members:
    :undoc-members:
    :show-inheritance:
