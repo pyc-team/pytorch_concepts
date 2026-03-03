@@ -215,3 +215,102 @@ class WeightedConceptLoss(nn.Module):
         t_loss = self.task_loss(task_input, task_target)
         
         return c_loss * self.concept_weight + t_loss * self.task_weight
+
+
+class CMRLoss(nn.Module):
+    """
+    Loss for Concept-based Memory Reasoner (CMR).
+
+    Implements the objective used in CMR examples:
+    - concept loss on concept logits
+    - task loss without reconstruction term
+    - task loss with reconstruction term
+    - blended task objective that applies reconstruction-aware loss on
+      positive targets and standard loss on negative targets
+
+    Args:
+        concept_weight: Weight applied to concept loss.
+        task_weight: Weight applied to blended task loss.
+    """
+    def __init__(
+        self,
+        concept_weight: float = 1.0,
+        task_weight: float = 1.0,
+    ):
+        super().__init__()
+        self.concept_loss_fn = nn.BCEWithLogitsLoss()
+        self.task_loss_fn = nn.BCELoss(reduction='none')
+        self.concept_weight = concept_weight
+        self.task_weight = task_weight
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"concept_loss_fn={self.concept_loss_fn.__class__.__name__}, "
+            f"task_loss_fn={self.task_loss_fn.__class__.__name__}, "
+            f"concept_weight={self.concept_weight}, "
+            f"task_weight={self.task_weight})"
+        )
+
+    def _compute_explicit(
+        self,
+        concept_input: torch.Tensor,
+        concept_target: torch.Tensor,
+        task_input: torch.Tensor,
+        task_input_with_rec: torch.Tensor,
+        task_target: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute CMR objective.
+
+        Args:
+            concept_input: Concept logits.
+            concept_target: Concept targets.
+            task_input: Task probabilities without reconstruction term.
+            task_input_with_rec: Task probabilities with reconstruction term.
+            task_target: Task targets.
+
+        Returns:
+            Scalar CMR loss.
+        """
+        concept_target = concept_target.float()
+        task_target = task_target.float()
+
+        concept_loss = self.concept_loss_fn(concept_input, concept_target)
+
+        task_loss_no_rec = self.task_loss_fn(task_input, task_target)
+        task_loss_rec = self.task_loss_fn(task_input_with_rec, task_target)
+
+        if task_loss_no_rec.shape != task_target.shape or task_loss_rec.shape != task_target.shape:
+            raise ValueError(
+                "task_loss_fn must return elementwise losses with the same "
+                "shape as task_target (use reduction='none')."
+            )
+
+        blended_task_loss = (task_target * task_loss_rec + (1 - task_target) * task_loss_no_rec).mean()
+
+        return self.concept_weight * concept_loss + self.task_weight * blended_task_loss
+
+    def forward(self, **kwargs) -> torch.Tensor:
+        """Compute CMR loss from explicit CMR tensors only."""
+        explicit_keys = {
+            'concept_input',
+            'concept_target',
+            'task_input',
+            'task_input_with_rec',
+            'task_target',
+        }
+
+        if explicit_keys.issubset(kwargs.keys()):
+            return self._compute_explicit(
+                concept_input=kwargs['concept_input'],
+                concept_target=kwargs['concept_target'],
+                task_input=kwargs['task_input'],
+                task_input_with_rec=kwargs['task_input_with_rec'],
+                task_target=kwargs['task_target'],
+            )
+
+        raise ValueError(
+            "CMRLoss.forward requires explicit CMR tensors: "
+            "concept_input, concept_target, task_input, task_input_with_rec, task_target."
+        )

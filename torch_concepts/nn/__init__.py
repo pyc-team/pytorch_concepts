@@ -22,11 +22,17 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
 from .modules.low.encoders.exogenous import LinearLatentToExogenous
 from .modules.low.encoders.stochastic import StochasticLatentToConcept
-from .modules.low.encoders.selector import SelectorLatentToExogenous
+from .modules.low.encoders.selector import (
+    CategoricalSelectorLatentToExogenous,
+    SelectorLatentToExogenous,
+)
 
 # Predictors
 from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept
+from .modules.low.predictors.exogenous import (
+    MixConceptExogegnousToConcept,
+    MixMemoryConceptExogenousToConcept,
+)
 from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 
@@ -37,7 +43,7 @@ from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss
+from .modules.loss import CMRLoss, ConceptLoss, WeightedConceptLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics
@@ -46,6 +52,7 @@ from .modules.metrics import ConceptMetrics
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.cmr import ConceptMemoryReasoner
 
 
 
@@ -105,6 +112,7 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "MixConceptExogegnousToConcept",
+    "MixMemoryConceptExogenousToConcept",
     "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
 
@@ -113,12 +121,14 @@ __all__ = [
     "ResidualMLP",
     "MLP",
 
+    "CategoricalSelectorLatentToExogenous",
     "SelectorLatentToExogenous",
 
     # COSMO
     "WANDAGraphLearner",
 
     # Loss functions
+    "CMRLoss",
     "ConceptLoss",
     "WeightedConceptLoss",
 
@@ -130,6 +140,7 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptMemoryReasoner",
 
     # Models (mid-level)
     "ParametricCPD",

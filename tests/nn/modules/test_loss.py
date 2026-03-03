@@ -4,11 +4,12 @@ Comprehensive tests for torch_concepts.nn.modules.loss
 Tests loss functions for concept-based learning:
 - ConceptLoss: Unified loss for concepts with different types
 - WeightedConceptLoss: Weighted combination of concept and task losses
+- CMRLoss: Explicit CMR objective with reconstruction-aware task branch
 """
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss
+from torch_concepts.nn.modules.loss import CMRLoss, ConceptLoss, WeightedConceptLoss
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
@@ -417,6 +418,96 @@ class TestLossConfiguration(unittest.TestCase):
             ConceptLoss(annotations, loss_config)
             # Should warn about unused continuous loss
             self.assertTrue(any("continuous" in str(warning.message).lower() for warning in w))
+
+
+class TestCMRLoss(unittest.TestCase):
+    """Test CMRLoss explicit CMR objective behavior."""
+
+    def setUp(self):
+        """Set up tensors for explicit CMR loss inputs."""
+        torch.manual_seed(42)
+        self.batch_size = 12
+        self.n_concepts = 4
+        self.n_tasks = 2
+
+        self.concept_input = torch.randn(self.batch_size, self.n_concepts)
+        self.concept_target = torch.randint(
+            0, 2, (self.batch_size, self.n_concepts)
+        ).float()
+
+        self.task_input = torch.rand(self.batch_size, self.n_tasks)
+        self.task_input_with_rec = torch.rand(self.batch_size, self.n_tasks)
+        self.task_target = torch.randint(
+            0, 2, (self.batch_size, self.n_tasks)
+        ).float()
+
+    def test_basic_forward(self):
+        """Test basic forward pass with explicit tensors."""
+        loss_fn = CMRLoss()
+        loss = loss_fn(
+            concept_input=self.concept_input,
+            concept_target=self.concept_target,
+            task_input=self.task_input,
+            task_input_with_rec=self.task_input_with_rec,
+            task_target=self.task_target,
+        )
+
+        self.assertIsInstance(loss, torch.Tensor)
+        self.assertEqual(loss.shape, ())
+        self.assertTrue(loss >= 0)
+
+    def test_requires_explicit_tensors(self):
+        """Test that missing explicit CMR kwargs raises ValueError."""
+        loss_fn = CMRLoss()
+        with self.assertRaises(ValueError):
+            loss_fn(input=self.task_input, target=self.task_target)
+
+    def test_gradient_flow(self):
+        """Test gradients flow through CMRLoss inputs."""
+        loss_fn = CMRLoss()
+
+        concept_input = self.concept_input.clone().detach().requires_grad_(True)
+        task_input = self.task_input.clone().detach().requires_grad_(True)
+        task_input_with_rec = self.task_input_with_rec.clone().detach().requires_grad_(True)
+
+        loss = loss_fn(
+            concept_input=concept_input,
+            concept_target=self.concept_target,
+            task_input=task_input,
+            task_input_with_rec=task_input_with_rec,
+            task_target=self.task_target,
+        )
+        loss.backward()
+
+        self.assertIsNotNone(concept_input.grad)
+        self.assertIsNotNone(task_input.grad)
+        self.assertIsNotNone(task_input_with_rec.grad)
+        self.assertTrue(torch.any(concept_input.grad != 0))
+        self.assertTrue(torch.any(task_input.grad != 0))
+        self.assertTrue(torch.any(task_input_with_rec.grad != 0))
+
+    def test_weight_parameters_affect_value(self):
+        """Test that changing concept/task weights changes final loss."""
+        loss_concept_only = CMRLoss(concept_weight=1.0, task_weight=0.0)(
+            concept_input=self.concept_input,
+            concept_target=self.concept_target,
+            task_input=self.task_input,
+            task_input_with_rec=self.task_input_with_rec,
+            task_target=self.task_target,
+        )
+        loss_task_only = CMRLoss(concept_weight=0.0, task_weight=1.0)(
+            concept_input=self.concept_input,
+            concept_target=self.concept_target,
+            task_input=self.task_input,
+            task_input_with_rec=self.task_input_with_rec,
+            task_target=self.task_target,
+        )
+
+        self.assertNotAlmostEqual(
+            loss_concept_only.item(),
+            loss_task_only.item(),
+            places=5,
+        )
 
 
 if __name__ == '__main__':

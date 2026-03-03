@@ -18,6 +18,7 @@ Summary
    LinearExogenousToConcept
    StochasticLatentToConcept
    LinearLatentToExogenous
+   CategoricalSelectorLatentToExogenous
    SelectorLatentToExogenous
 
 
@@ -40,6 +41,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: LinearLatentToExogenous
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: CategoricalSelectorLatentToExogenous
    :members:
    :undoc-members:
    :show-inheritance:
