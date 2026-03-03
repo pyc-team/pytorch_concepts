@@ -16,6 +16,7 @@ Summary
 
    LinearConceptToConcept
    MixConceptExogegnousToConcept
+   MixMemoryConceptExogenousToConcept
    HyperlinearConceptExogenousToConcept
    CallableConceptToConcept
 
@@ -29,6 +30,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: MixConceptExogegnousToConcept
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: MixMemoryConceptExogenousToConcept
    :members:
    :undoc-members:
    :show-inheritance:
