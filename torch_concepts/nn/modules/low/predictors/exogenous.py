@@ -224,9 +224,7 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
         self,
         concepts: torch.Tensor,
         exogenous: torch.Tensor,
-        include_rec: bool = False,
-        rec_weight: float = 1.0,
-        hard_roles: bool = False,
+        **kwargs,
     ) -> torch.Tensor:
         """
         Forward pass through the predictor.
@@ -234,17 +232,22 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
         Args:
             concepts: Concept logits of shape (batch_size, in_concepts) representing Bernoulli random variables.
             exogenous: Concept exogenous of shape (batch_size, out_concepts, exogenous_dim) representing rule selection probabilities.
-            include_rec: If True, include a rule reconstruction-quality term.
-            rec_weight: Exponent applied to the reconstruction-quality term.
-            hard_roles: If True, discretize decoded memory roles with argmax.
+            **kwargs: Optional controls:
+                - include_rec (bool): If True, include a rule reconstruction-quality term.
+                - rec_weight (float): Exponent applied to the reconstruction-quality term.
+                - hard_roles (bool): If True, discretize decoded memory roles with argmax.
 
         Returns:
-            torch.Tensor: Task scores of shape (batch_size, out_concepts).
+            torch.Tensor: Task probabilities of shape (batch_size, out_concepts).
 
         Note:
             Concept probabilities are detached from the graph in this method,
             so gradients do not flow from the task loss back into ``concepts``, avoiding task leakage.
         """
+        include_rec = kwargs.get("include_rec", False)
+        rec_weight = kwargs.get("rec_weight", 1.0)
+        hard_roles = kwargs.get("hard_roles", False)
+
         c_probs = torch.sigmoid(concepts).detach()
         c_probs_expanded = c_probs.unsqueeze(1).unsqueeze(1).expand(-1, exogenous.shape[1], exogenous.shape[2], -1)  # (batch_size, out_concepts, in_exogenous, in_concepts)
 

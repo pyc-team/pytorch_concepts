@@ -16,6 +16,7 @@ Summary
 
    ConceptBottleneckModel
    ConceptEmbeddingModel
+   ConceptMemoryReasoner
    BlackBox
    BlackBoxTaskOnly
 
@@ -29,6 +30,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: ConceptEmbeddingModel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: ConceptMemoryReasoner
    :members:
    :undoc-members:
    :show-inheritance:

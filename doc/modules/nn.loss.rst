@@ -16,6 +16,7 @@ Summary
 
    ConceptLoss
    WeightedConceptLoss
+   CMRLoss
 
 **Low-Level Losses**
 
@@ -37,6 +38,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: WeightedConceptLoss
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: CMRLoss
    :members:
    :undoc-members:
    :show-inheritance:

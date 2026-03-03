@@ -1,7 +1,7 @@
 """
-Example: Concept Embedding Model with Low-Level API
+Example: Concept Memory Reasoner with Low-Level API
 
-This example demonstrates how to build a Concept Embedding Model (CEM)
+This example demonstrates how to build a Concept Memory Reasoner (CMR)
 using the low-level encoder and predictor layers.
 """
 import torch

@@ -43,7 +43,7 @@ from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss
+from .modules.loss import CMRLoss, ConceptLoss, WeightedConceptLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics
@@ -52,6 +52,7 @@ from .modules.metrics import ConceptMetrics
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.cmr import ConceptMemoryReasoner
 
 
 
@@ -127,6 +128,7 @@ __all__ = [
     "WANDAGraphLearner",
 
     # Loss functions
+    "CMRLoss",
     "ConceptLoss",
     "WeightedConceptLoss",
 
@@ -138,6 +140,7 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptMemoryReasoner",
 
     # Models (mid-level)
     "ParametricCPD",
