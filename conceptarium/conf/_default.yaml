@@ -1,5 +1,5 @@
 defaults:
-  - dataset: asia
+  - dataset: dag_asia
   - model: cbm
   - loss: standard
   - metrics: standard

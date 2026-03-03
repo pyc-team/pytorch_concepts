@@ -9,7 +9,7 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: asia, sachs, insurance
+      dataset: dag_asia #, dag_sachs, dag_insurance
       model: cbm, cem
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
