@@ -6,7 +6,7 @@ defaults:
 _target_: torch_concepts.data.datamodules.categorical_toy_dag.ToyDAGDataModule
 
 # Name of the dataset
-name: car_starting_dag
+name: dag_car_starting
 
 # Random seed (inherited from global config)
 seed: ${seed}
