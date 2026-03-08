@@ -273,7 +273,8 @@ class GraphModel(BaseConstructor):
             # check exogenous
             if self_exog_vars is not None:
                 assert len(self_exog_vars) == sum(cardinalities)
-                used_exog_vars = [v for v in self_exog_vars if v.concept.startswith(f"exog_{c_name}")]
+                # Use exact matching to avoid substring issues (e.g., "OtherCar" vs "OtherCarCost")
+                used_exog_vars = [v for v in self_exog_vars if v.concept.startswith(f"exog_{c_name}_state_")]
                 exog_vars_names = [v.concept for v in used_exog_vars]
                 in_exogenous = used_exog_vars[0].size
             elif source_exog_vars is not None:
