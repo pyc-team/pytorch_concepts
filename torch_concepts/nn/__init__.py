@@ -64,9 +64,7 @@ from .modules.mid.inference import (
     AncestralSamplingInference,
     IndependentInference,
     ImportanceSamplingInference,
-    LazyImportanceSamplingInference,
     SVIInference,
-    LazySVIInference,
 )
 
 # Interventions (low-level)
@@ -149,9 +147,7 @@ __all__ = [
     "AncestralSamplingInference",
     "IndependentInference",
     "ImportanceSamplingInference",
-    "LazyImportanceSamplingInference",
     "SVIInference",
-    "LazySVIInference",
 
     # Interventions
     "RewiringIntervention",

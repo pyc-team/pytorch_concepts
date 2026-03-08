@@ -30,7 +30,6 @@ from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.inference.importance_sampling import (
     ImportanceSamplingInference,
-    LazyImportanceSamplingInference,
 )
 
 

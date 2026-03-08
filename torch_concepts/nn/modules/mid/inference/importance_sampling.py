@@ -18,7 +18,7 @@ from torch.distributions import (
 import pyro
 from pyro.infer import Importance, EmpiricalMarginal
 
-from .forward import ForwardInference, LazyForwardInference
+from .forward import ForwardInference
 from ..models.variable import Variable, ConceptVariable
 from ..models.probabilistic_model import ProbabilisticModel
 from ...low.base.graph import BaseGraphLearner
@@ -89,10 +89,19 @@ class ImportanceSamplingInference(ForwardInference):
         graph_learner: BaseGraphLearner = None,
         num_samples: int = 1000,
         num_draws: int = 100,
+        detach: bool = False,
+        lazy: bool = False,
         *args,
         **kwargs
     ):
-        super().__init__(probabilistic_model, graph_learner, *args, **kwargs)
+        super().__init__(
+            probabilistic_model,
+            graph_learner,
+            *args,
+            detach=detach,
+            lazy=lazy,
+            **kwargs,
+        )
         self.num_samples = num_samples
         self.num_draws = num_draws
 
@@ -102,22 +111,22 @@ class ImportanceSamplingInference(ForwardInference):
         # Build the Pyro model once; it accepts (evidence, obs_dict) at call time.
         self._pyro_model = build_pyro_model(self)
     
-    def get_results(self, results: torch.Tensor, variable: Variable) -> torch.Tensor:
+    def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
-        Return raw output (logits/parameters) for Pyro model building.
+        Return raw output (logits/parameters) unchanged.
         
-        For importance sampling inference, we return the raw CPD outputs
+        For Pyro-based inference, we keep raw CPD outputs
         which contain the distribution parameters needed to construct
         Pyro distributions.
         
         Args:
-            results: Raw output tensor from the CPD (logits or parameters).
+            pred: Raw output tensor from the CPD (logits or parameters).
             variable: The variable being computed.
         
         Returns:
             torch.Tensor: Raw output tensor unchanged.
         """
-        return results
+        return pred
     
     def ground_truth_to_evidence(
         self, 
@@ -285,31 +294,3 @@ class ImportanceSamplingInference(ForwardInference):
     ) -> torch.Tensor:
         """Query interface — delegates to :meth:`marginal`."""
         return self.marginal(query, evidence, return_dict=False, **kwargs)
-
-
-class LazyImportanceSamplingInference(LazyForwardInference, ImportanceSamplingInference):
-    """
-    Lazy importance sampling inference that only computes ancestor variables.
-    
-    Combines the lazy query strategy (computing only ancestors of queried
-    concepts) with importance sampling inference via Pyro.
-    
-    Use this when:
-        - You only need marginals for a subset of concepts
-        - The graph has many independent branches
-        - You want to avoid computing unused variables
-    
-    Args:
-        probabilistic_model: The probabilistic model to perform inference on.
-        graph_learner: Optional graph learner for weighted adjacency structure.
-        num_samples: Number of importance samples for marginal estimation.
-        num_draws: Number of draws from empirical marginal.
-        **kwargs: Additional arguments passed to parent classes.
-    
-    Example:
-        >>> # Given model: input -> A -> B, input -> C -> D
-        >>> inference = LazyImportanceSamplingInference(pgm, num_samples=1000)
-        >>> # Querying only ['B'] computes marginals for: input, A, B (not C, D)
-        >>> p_B = inference.marginal(['B'], evidence={'input': x})
-    """
-    pass

@@ -43,39 +43,110 @@ from torch_concepts.nn import (
 
 NODE_NAMES = ["economy", "talent", "studies", "job_offer"]
 
+def show_learned_cpts(concept_model, x_train, c_train):
+    """Probe learned CPDs and compare against empirical frequencies computed from the dataset."""
+    concept_model.eval()
+    with torch.no_grad():
+        # ── Root nodes: average predicted probability over the dataset ────
+        economy_cpd = concept_model.get_module_of_concept("economy")
+        p_economy_learned = torch.sigmoid(economy_cpd.parametrization(x_train)).mean().item()
+
+        talent_cpd = concept_model.get_module_of_concept("talent")
+        p_talent_learned = torch.sigmoid(talent_cpd.parametrization(x_train)).mean().item()
+
+        # ── Studies CPT: probe all 4 (economy, talent) combinations ───────
+        # LinearConceptToConcept applies sigmoid internally, so pass large
+        # logits to simulate hard 0/1 parent activations.
+        L = 10.0
+        studies_cpd = concept_model.get_module_of_concept("studies")
+        studies_inputs = torch.tensor([[-L, -L], [-L, L], [L, -L], [L, L]])
+        p_studies_learned = torch.sigmoid(
+            studies_cpd.parametrization(studies_inputs)
+        ).squeeze(-1).tolist()
+
+        # ── Job offer CPT: probe studies=0 and studies=1 ──────────────────
+        job_cpd = concept_model.get_module_of_concept("job_offer")
+        job_inputs = torch.tensor([[-L], [L]])
+        p_job_learned = torch.sigmoid(
+            job_cpd.parametrization(job_inputs)
+        ).squeeze(-1).tolist()
+
+    # Empirical frequencies from the dataset
+    p_economy_emp = c_train[:, 0].mean().item()
+    p_talent_emp  = c_train[:, 1].mean().item()
+
+    print("\n" + "=" * 70)
+    print(f"{'CPT RECOVERY ANALYSIS':^70}")
+    print("=" * 70)
+
+    print("\n── Root nodes ──")
+    print(f"  {'Quantity':<30} {'Learned':>8}  {'Empirical':>9}  {'Error':>8}")
+    print(f"  {'-'*30} {'-'*8}  {'-'*9}  {'-'*8}")
+    for name, learned, emp in [
+        ("P(economy=1)", p_economy_learned, p_economy_emp),
+        ("P(talent=1)",  p_talent_learned,  p_talent_emp),
+    ]:
+        err = learned - emp
+        print(f"  {name:<30} {learned:>8.4f} {emp:>9.4f}  {err:>+8.4f}")
+
+    print("\n── Studies CPT  P(studies=1 | economy, talent) ──")
+    print(f"  {'Condition':<30} {'Learned':>8} {'Empirical':>9}  {'Error':>8}")
+    print(f"  {'-'*30} {'-'*8}   {'-'*9}  {'-'*8}")
+    study_labels = ["e=0, t=0", "e=0, t=1", "e=1, t=0", "e=1, t=1"]
+    study_masks = [
+        (c_train[:, 0] == 0) & (c_train[:, 1] == 0),
+        (c_train[:, 0] == 0) & (c_train[:, 1] == 1),
+        (c_train[:, 0] == 1) & (c_train[:, 1] == 0),
+        (c_train[:, 0] == 1) & (c_train[:, 1] == 1),
+    ]
+    for label, learned, mask in zip(study_labels, p_studies_learned, study_masks):
+        emp = c_train[mask, 2].mean().item() if mask.sum() > 0 else float('nan')
+        err = learned - emp
+        print(f"  {label:<30} {learned:>8.4f} {emp:>9.4f}  {err:>+8.4f}")
+
+    print("\n── Job Offer CPT  P(job_offer=1 | studies) ──")
+    print(f"  {'Condition':<30} {'Learned':>8}  {'Empirical':>9}  {'Error':>8}")
+    print(f"  {'-'*30} {'-'*8}  {'-'*9}  {'-'*8}")
+    for label, learned, s_val in [
+        ("studies=0", p_job_learned[0], 0),
+        ("studies=1", p_job_learned[1], 1),
+    ]:
+        mask = c_train[:, 2] == s_val
+        emp = c_train[mask, 3].mean().item() if mask.sum() > 0 else float('nan')
+        err = learned - emp
+        print(f"  {label:<30} {learned:>8.4f} {emp:>9.4f}  {err:>+8.4f}")
+    print("\n" + "=" * 70)
+
+
 def main():
     # ========================================================================
     #  1. Create the synthetic dataset
     # ========================================================================
 
     # DAG: economy -> studies, talent -> studies, studies -> job_offer
-    # CPTs match the notebook mixing_pyro_CBMs.ipynb:
-    #   P(economy=1) = 0.10,  P(talent=1) = 0.75
-    #   P(studies=1 | e, t) ≈ 0.05 + 0.10*e + 0.10*t + 0.70*e*t
-    #   P(job_offer=1 | studies=0) = 0.05,  P(job_offer=1 | studies=1) = 0.80
 
     latent_dims = 16
-    n_epochs = 1000
-    n_samples = 10000
+    n_epochs = 5000
+    n_samples = 100000
 
     dataset = ToyDAGDataset(
         variables=['economy', 'talent', 'studies', 'job_offer'],
         cardinalities={'economy': 2, 'talent': 2, 'studies': 2, 'job_offer': 2},
         dag=[('economy', 'studies'), ('talent', 'studies'), ('studies', 'job_offer')],
         root_priors={
-            'economy': 0.5,
-            'talent': 0.5,
+            'economy': 0.95,
+            'talent': 0.05,
         },
         conditional_probs={
             'studies': {
-                "economy=0,talent=0": [0.95, 0.05],
-                "economy=0,talent=1": [0.95, 0.05],
-                "economy=1,talent=0": [0.95, 0.05],
+                "economy=0,talent=0": [0.90, 0.10],
+                "economy=0,talent=1": [0.20, 0.80],
+                "economy=1,talent=0": [0.20, 0.80],
                 "economy=1,talent=1": [0.05, 0.95],
             },
             'job_offer': {
-                "studies=0": [0.95, 0.05],
-                "studies=1": [0.05, 0.95],
+                "studies=0": [0.90, 0.10],
+                "studies=1": [0.10, 0.90],
             }
         },
         seed=42,
@@ -121,7 +192,10 @@ def main():
     # Define CPDs (neural networks)
     backbone = ParametricCPD(
         "input",
-        parametrization=global_params(latent_dims=latent_dims)
+        parametrization=torch.nn.Sequential(
+            torch.nn.Linear(latent_dims, latent_dims),
+            torch.nn.LeakyReLU(),
+        ) #global_params(latent_dims=latent_dims)
     )
 
     economy_predictor = ParametricCPD(
@@ -154,11 +228,19 @@ def main():
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
 
+    loss_history = []
+    accuracy_history = []
+
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
         c_pred = inference_engine.query(
-            NODE_NAMES, evidence=initial_input, ground_truth=c_train, concept_names=NODE_NAMES, debug=True
+            NODE_NAMES,
+            evidence=initial_input,
+            ground_truth=c_train,
+            concept_names=NODE_NAMES,
+            debug=True,
+            return_logits=True,
         )
         loss = loss_fn(c_pred, c_train)
         loss.backward()
@@ -166,6 +248,18 @@ def main():
 
         if epoch % 100 == 0:
             concept_accuracy = accuracy_score(c_train.numpy(), (c_pred > 0.).detach().numpy())
+            loss_history.append(loss.item())
+            accuracy_history.append(concept_accuracy)
+
+    print(f"Training losses:", loss_history)
+    print(f"Training accuracies:", accuracy_history)
+
+    # ========================================================================
+    # 2b. CPT Recovery Analysis
+    # ========================================================================
+    # Probe each learned CPD with all parent combinations and compare
+    # against the empirical frequencies computed from the dataset. 
+    show_learned_cpts(concept_model, x_train, c_train)
 
     # ========================================================================
     # 3. Marginal inference using Importance Sampling
