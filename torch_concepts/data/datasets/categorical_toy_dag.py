@@ -33,7 +33,8 @@ class ToyDAGGenerator:
         cardinalities: Dict[str, int],
         dag: List[Tuple[str, str]],
         conditional_probs: Dict[Union[Tuple[str, str], Tuple[str]], np.ndarray],
-        seed: int = 42
+        seed: int = 42,
+        root_priors: Optional[Dict[str, Union[float, List[float]]]] = None,
     ):
         """
         Initialize the toy DAG generator.
@@ -50,12 +51,18 @@ class ToyDAGGenerator:
                               (child_cardinality, parent1_cardinality, parent2_cardinality, ...).
                               Each CPT should sum to 1.0 along the first (child) dimension.
             seed: Random seed for reproducibility
+            root_priors: Optional dictionary mapping root variable names to their
+                        marginal probabilities. For binary variables a single float
+                        p gives P(var=1)=p. For categorical variables a list of
+                        probabilities (summing to 1) over the classes is expected.
+                        Root nodes not listed here are sampled uniformly.
         """
         self.variables = variables
         self.cardinalities = cardinalities
         self.dag = dag
         self.conditional_probs = conditional_probs
         self.seed = seed
+        self.root_priors = root_priors if root_priors is not None else {}
         
         # Build adjacency structure
         self.parents = defaultdict(list)
@@ -102,8 +109,17 @@ class ToyDAGGenerator:
             cardinality = self.cardinalities[var]
             
             if not self.parents[var]:
-                # Root node: sample uniformly
-                value = np.random.randint(0, cardinality)
+                # Root node: use prior if provided, otherwise uniform
+                if var in self.root_priors:
+                    prior = self.root_priors[var]
+                    if isinstance(prior, (int, float)):
+                        # Binary shorthand: P(var=1) = prior
+                        probs = np.array([1.0 - prior, prior])
+                    else:
+                        probs = np.asarray(prior, dtype=np.float64)
+                    value = np.random.choice(cardinality, p=probs)
+                else:
+                    value = np.random.randint(0, cardinality)
             else:
                 # Non-root: sample based on conditional probability
                 parents = self.parents[var]
@@ -205,6 +221,7 @@ class ToyDAGDataset(ConceptDataset):
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
         autoencoder_kwargs: Optional[dict] = None,
+        root_priors: Optional[Dict[str, Union[float, List[float]]]] = None,
         **kwargs,
     ):
         self.variables = variables
@@ -212,6 +229,7 @@ class ToyDAGDataset(ConceptDataset):
         self.dag = dag
         self.seed = seed
         self.n_gen = n_gen
+        self.root_priors = root_priors if root_priors is not None else {}
         self.target_variable = target_variable
         self.latent_variables = latent_variables if latent_variables is not None else []
         self.autoencoder_kwargs = autoencoder_kwargs if autoencoder_kwargs is not None else {}
@@ -382,7 +400,8 @@ class ToyDAGDataset(ConceptDataset):
             cardinalities=self.cardinalities,
             dag=self.dag,
             conditional_probs=self.conditional_probs,
-            seed=self.seed
+            seed=self.seed,
+            root_priors=self.root_priors,
         )
         
         # Generate data (includes all variables, including latent)

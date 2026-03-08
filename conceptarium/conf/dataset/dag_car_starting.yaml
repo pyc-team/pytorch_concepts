@@ -30,6 +30,12 @@ dag:
   - ['engine', 'car_start']
   - ['wheels', 'car_start']
 
+# Prior probabilities for root variables (those without parents)
+# Format: variable_name: [prob_value_0, prob_value_1, ...]
+priors:
+  engine: [0.35, 0.65]  # 35% chance engine is broken, 65% working
+  wheels: [0.2, 0.8]  # 20% chance wheels are broken, 80% working
+
 # Conditional probability tables (CPTs)
 # Format: child_variable:
 #           "parent1=value1,parent2=value2": [prob_child_0, prob_child_1, ...]

@@ -21,6 +21,10 @@ Summary
    AncestralSamplingInference
    LazyAncestralSamplingInference
    IndependentInference
+   ImportanceSamplingInference
+   LazyImportanceSamplingInference
+   StochasticVariationalInference
+   LazyStochasticVariationalInference
 
 
 Class Documentation
@@ -57,6 +61,26 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: IndependentInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: ImportanceSamplingInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: LazyImportanceSamplingInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: StochasticVariationalInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: LazyStochasticVariationalInference
    :members:
    :undoc-members:
    :show-inheritance:
