@@ -46,6 +46,7 @@ from .modules.metrics import ConceptMetrics
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 
 
@@ -58,11 +59,8 @@ from .modules.mid.constructors.graph import GraphModel
 # Inference (mid-level)
 from .modules.mid.inference import (
     ForwardInference,
-    LazyForwardInference,
     DeterministicInference,
-    LazyDeterministicInference,
     AncestralSamplingInference,
-    LazyAncestralSamplingInference,
     IndependentInference,
     ImportanceSamplingInference,
     LazyImportanceSamplingInference,
@@ -133,6 +131,7 @@ __all__ = [
     "BlackBox",
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
+    "CausallyReliableConceptBottleneckModel",
     "ConceptEmbeddingModel",
 
     # Models (mid-level)
@@ -143,11 +142,8 @@ __all__ = [
 
     # Inference
     "ForwardInference",
-    "LazyForwardInference",
     "DeterministicInference",
-    "LazyDeterministicInference",
     "AncestralSamplingInference",
-    "LazyAncestralSamplingInference",
     "IndependentInference",
     "ImportanceSamplingInference",
     "LazyImportanceSamplingInference",
