@@ -42,17 +42,6 @@ class TestLinearConceptToConcept(unittest.TestCase):
         loss.backward()
         self.assertIsNotNone(concepts.grad)
 
-    def test_custom_activation(self):
-        """Test with custom activation function."""
-        predictor = LinearConceptToConcept(
-            in_concepts=10,
-            out_concepts=5,
-            activation=torch.tanh
-        )
-        concepts = torch.randn(2, 10)
-        output = predictor(concepts=concepts)
-        self.assertEqual(output.shape, (2, 5))
-
     def test_prune_functionality(self):
         """Test pruning of input features."""
         predictor = LinearConceptToConcept(

@@ -2,7 +2,7 @@ import torch
 
 from ..base.layer import BasePredictor
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
-from typing import List, Callable
+from typing import List
 
 
 class MixConceptExogegnousToConcept(BasePredictor):
@@ -72,13 +72,12 @@ class MixConceptExogegnousToConcept(BasePredictor):
         in_exogenous: int,
         out_concepts: int,
         cardinalities: List[int],
-        activation: Callable = torch.sigmoid
+        **kwargs,
     ):
         super().__init__(
             in_concepts=in_concepts,
             in_exogenous=in_exogenous,
             out_concepts=out_concepts,
-            activation=activation,
         )
         if cardinalities is None:
             # assume all binary
@@ -122,21 +121,19 @@ class MixConceptExogegnousToConcept(BasePredictor):
         Returns:
             torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
-        in_probs = self.activation(concepts)
-
         # For concepts with cardinality 1, split the Bernoulli probability into a categorical distribution
         if len(self.mask_cardinality_1) > 0:
             exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
-            in_probs_split = torch.cat([
-                in_probs[:, self.mask_cardinality_1[:, None]],
-                1-in_probs[:, self.mask_cardinality_1[:, None]],
+            concepts_split = torch.cat([
+                concepts[:, self.mask_cardinality_1[:, None]],
+                1-concepts[:, self.mask_cardinality_1[:, None]],
             ], dim=-1)
             exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
-            in_probs = replace_expand_cols(in_probs, self.mask_cardinality_1, in_probs_split)
+            concepts = replace_expand_cols(concepts, self.mask_cardinality_1, concepts_split)
 
         c_mix = grouped_concept_exogenous_mixture(
             exogenous,
-            in_probs,
+            concepts,
             groups=list(self.cardinalities_expanded),
         )
         return self.predictor(c_mix.flatten(start_dim=1))

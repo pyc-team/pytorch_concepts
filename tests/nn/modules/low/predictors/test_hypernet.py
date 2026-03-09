@@ -62,19 +62,6 @@ class TestHyperlinearConceptExogenousToConcept(unittest.TestCase):
         self.assertIsNotNone(concepts.grad)
         self.assertIsNotNone(exogenous.grad)
 
-    def test_custom_activation(self):
-        """Test with custom activation."""
-        predictor = HyperlinearConceptExogenousToConcept(
-            in_concepts=10,
-            in_exogenous=128,
-            hidden_size=64,
-            activation=torch.sigmoid
-        )
-        concepts = torch.randn(2, 10)
-        exogenous = torch.randn(2, 3, 128)
-        output = predictor(concepts=concepts, exogenous=exogenous)
-        self.assertEqual(output.shape, (2, 3))
-
     def test_sample_adaptive_weights(self):
         """Test that different samples get different weights."""
         predictor = HyperlinearConceptExogenousToConcept(

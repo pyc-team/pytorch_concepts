@@ -7,7 +7,6 @@ representations into new concept representations using a linear layer.
 import torch
 
 from ..base.layer import BasePredictor
-from typing import Callable
 
 from ....functional import prune_linear_layer
 
@@ -17,18 +16,16 @@ class LinearConceptToConcept(BasePredictor):
     Linear concept predictor.
 
     This predictor transforms input concept representations into other concept
-    representations using an activation followed by a linear layer.
+    representations using a linear layer.
 
     Attributes:
         in_concepts (int): Number of input concept representations.
         out_concepts (int): Number of output concept representations.
-        activation (Callable): Activation function for inputs (default: sigmoid).
         predictor (nn.Sequential): The prediction network.
 
     Args:
         in_concepts: Number of input concept representations.
         out_concepts: Number of output concept representations.
-        activation: Activation function to apply to input concepts (default: torch.sigmoid).
 
     Example:
         >>> import torch
@@ -41,7 +38,7 @@ class LinearConceptToConcept(BasePredictor):
         ... )
         >>>
         >>> # Forward pass
-        >>> in_concepts = torch.randn(2, 10)  # batch_size=2, in_concepts=10
+        >>> in_concepts = torch.rand(2, 10)  # batch_size=2, in_concepts=10
         >>> out_concepts = predictor(in_concepts)
         >>> print(out_concepts.shape)
         torch.Size([2, 5])
@@ -55,7 +52,7 @@ class LinearConceptToConcept(BasePredictor):
         self,
         in_concepts: int,
         out_concepts: int,
-        activation: Callable = torch.sigmoid
+        **kwargs,
     ):
         """
         Initialize the predictor.
@@ -63,12 +60,10 @@ class LinearConceptToConcept(BasePredictor):
         Args:
             in_concepts: Number of input concept representations.
             out_concepts: Number of output concept representations.
-            activation: Activation function for the input (default: torch.sigmoid).
         """
         super().__init__(
             in_concepts=in_concepts,
             out_concepts=out_concepts,
-            activation=activation,
         )
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
@@ -91,8 +86,7 @@ class LinearConceptToConcept(BasePredictor):
         Returns:
             torch.Tensor: Predicted concept probabilities of shape (batch_size, out_concepts).
         """
-        in_probs = self.activation(concepts)
-        return self.predictor(in_probs)
+        return self.predictor(concepts)
         
 
     def prune(self, mask: torch.Tensor):

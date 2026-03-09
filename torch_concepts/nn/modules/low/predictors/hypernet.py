@@ -1,7 +1,6 @@
 import torch
 
 from ..base.layer import BasePredictor
-from typing import Callable
 
 from ....functional import prune_linear_layer
 
@@ -64,24 +63,23 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
         >>> print(output.shape)  # torch.Size([4, 3])
 
     References:
-        Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024. https://arxiv.org/abs/2407.15527
+        De Felice et al. "Causally Reliable Concept Bottleneck Models", NeurIPS 2025. https://arxiv.org/pdf/2503.04363
     """
     def __init__(
         self,
         in_concepts: int,
         in_exogenous: int,
         hidden_size: int,
-        activation: Callable = lambda x: x,
         use_bias : bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
-        min_std: float = 1e-6
+        min_std: float = 1e-6,
+        **kwargs,
     ):
         super().__init__(
             in_concepts=in_concepts,
             in_exogenous=in_exogenous,
             out_concepts=-1, # determined by the number of exogenous variables
-            activation=activation,
         )
         self.hidden_size = hidden_size
         self.use_bias = use_bias
@@ -131,8 +129,7 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
         """
         weights = self.hypernet(exogenous)
 
-        in_probs = self.activation(concepts)
-        out_concepts = torch.einsum('bc,byc->by', in_probs, weights)
+        out_concepts = torch.einsum('bc,byc->by', concepts, weights)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable

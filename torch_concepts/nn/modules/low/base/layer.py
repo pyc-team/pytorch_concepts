@@ -4,7 +4,6 @@ Base layer classes for concept-based neural networks.
 This module provides abstract base classes for building concept layers,
 including encoders and predictors.
 """
-from typing import Callable
 
 import torch
 
@@ -154,15 +153,11 @@ class BasePredictor(BaseConceptLayer):
     Predictors take concept representations (plus latent or exogenous
     variables) and predict other concept representations.
 
-    Attributes:
-        activation (Callable): Activation function for input (default: sigmoid).
-
     Args:
         out_concepts: Number of output concept features.
         in_concepts: Number of input concept features.
         in_latent: Number of input latent features (optional).
         in_exogenous: Number of exogenous input features (optional).
-        activation: Activation function for input (default: torch.sigmoid).
 
     Example:
         >>> import torch
@@ -174,29 +169,21 @@ class BasePredictor(BaseConceptLayer):
         ...         super().__init__(
         ...             out_concepts=out_concepts,
         ...             in_concepts=in_concepts,
-        ...             activation=torch.sigmoid
         ...         )
         ...         self.linear = torch.nn.Linear(in_concepts, out_concepts)
         ...
         ...     def forward(self, concepts):
-        ...         # Apply activation to input concepts
-        ...         probs = self.activation(concepts)
-        ...         # Predict next concepts
-        ...         return self.linear(probs)
+        ...         return self.linear(concepts)
         >>>
         >>> # Example usage
         >>> predictor = MyPredictor(out_concepts=3, in_concepts=10)
         >>>
-        >>> # Generate random concept logits
-        >>> concept_logits = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> # Generate random concept probabilities
+        >>> concept_probs = torch.rand(4, 10)  # batch_size=4, n_concepts=10
         >>>
         >>> # Predict task labels from concepts
-        >>> task_logits = predictor(concept_logits)
+        >>> task_logits = predictor(concept_probs)
         >>> print(task_logits.shape)  # torch.Size([4, 3])
-        >>>
-        >>> # Get task predictions
-        >>> task_probs = torch.sigmoid(task_logits)
-        >>> print(task_probs.shape)  # torch.Size([4, 3])
     """
 
     def __init__(self,
@@ -204,14 +191,13 @@ class BasePredictor(BaseConceptLayer):
                  in_concepts: int,
                  in_latent: int = None,
                  in_exogenous: int = None,
-                 activation: Callable = torch.sigmoid):
+                 **kwargs):
         super().__init__(
             in_concepts=in_concepts,
             in_latent=in_latent,
             in_exogenous=in_exogenous,
             out_concepts=out_concepts,
         )
-        self.activation = activation
 
     def prune(self, mask: torch.Tensor):
         """
