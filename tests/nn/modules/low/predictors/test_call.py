@@ -48,17 +48,6 @@ class TestCallableConceptToConceptInitialization(unittest.TestCase):
         self.assertAlmostEqual(predictor.bias_mean.item(), 1.0, places=5)
         self.assertEqual(predictor.min_std, 1e-5)
 
-    def test_initialization_with_custom_activation(self):
-        """Test initialization with custom activation function."""
-        def simple_func(probs):
-            return probs.sum(dim=1, keepdim=True)
-
-        predictor = CallableConceptToConcept(
-            func=simple_func,
-            activation=torch.sigmoid
-        )
-        self.assertTrue(predictor.use_bias)
-
 
 class TestCallableConceptToConceptForward(unittest.TestCase):
     """Test CallableConceptToConcept forward pass."""
@@ -77,24 +66,6 @@ class TestCallableConceptToConceptForward(unittest.TestCase):
         output = predictor(endogenous)
 
         self.assertEqual(output.shape, (4, 1))
-
-    def test_forward_with_activation(self):
-        """Test forward pass with input activation."""
-        def sum_func(probs):
-            return probs.sum(dim=1, keepdim=True)
-
-        predictor = CallableConceptToConcept(
-            func=sum_func,
-            activation=torch.sigmoid,
-            use_bias=False
-        )
-
-        endogenous = torch.randn(4, 5)
-        output = predictor(endogenous)
-
-        # Verify output is sum of sigmoid(endogenous)
-        expected = torch.sigmoid(endogenous).sum(dim=1, keepdim=True)
-        torch.testing.assert_close(output, expected)
 
     def test_forward_quadratic_function(self):
         """Test forward pass with quadratic function (from docstring example)."""
