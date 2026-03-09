@@ -47,7 +47,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(loss)
     metrics = instantiate(cfg.metrics, annotations=datamodule.annotations, _convert_="all")
     logger.info(metrics)
-    model = instantiate(cfg.model, annotations=datamodule.annotations, loss=loss, metrics=metrics, _convert_="all")
+    model = instantiate(cfg.model, annotations=datamodule.annotations, graph=datamodule.graph, loss=loss, metrics=metrics, _convert_="all")
     
     logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:

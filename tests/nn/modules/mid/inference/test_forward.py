@@ -17,23 +17,20 @@ from torch_concepts.nn import AncestralSamplingInference, DeterministicInference
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
-from torch_concepts.nn.modules.mid.inference.forward import ForwardInference, LazyForwardInference
+from torch_concepts.nn.modules.mid.inference.forward import ForwardInference
 from torch_concepts.distributions import Delta
 
 
 class SimpleForwardInference(ForwardInference):
     """Concrete implementation of ForwardInference for testing."""
 
-    def get_results(self, results, parent_variable):
-        """Simple implementation that samples from distributions."""
-        if isinstance(parent_variable.distribution, type) and issubclass(parent_variable.distribution, Bernoulli):
-            return torch.bernoulli(torch.sigmoid(results))
-        elif isinstance(parent_variable.distribution, type) and issubclass(parent_variable.distribution, Categorical):
-            return torch.argmax(results, dim=-1, keepdim=True).float()
-        elif isinstance(parent_variable.distribution, type) and issubclass(parent_variable.distribution, Normal):
-            return results
+    def activate(self, pred, variable):
+        if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
+            return torch.bernoulli(torch.sigmoid(pred))
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+            return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
-            return results
+            return pred
 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
         """Convert ground truth to sample format (same as AncestralSamplingInference)."""
@@ -523,17 +520,13 @@ class TestForwardInferenceDebugMode:
 class SimpleForwardInference(ForwardInference):
     """Concrete implementation of ForwardInference for testing."""
 
-    def get_results(self, results, parent_variable):
-        """Simple implementation that samples from Bernoulli distributions."""
-        if isinstance(parent_variable.distribution, type) and issubclass(parent_variable.distribution, Bernoulli):
-            # For Bernoulli, sample
-            return torch.bernoulli(torch.sigmoid(results))
-        elif isinstance(parent_variable.distribution, type) and issubclass(parent_variable.distribution, Categorical):
-            # For Categorical, take argmax
-            return torch.argmax(results, dim=-1, keepdim=True).float()
+    def activate(self, pred, variable):
+        if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
+            return torch.bernoulli(torch.sigmoid(pred))
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+            return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
-            # For other distributions (like Delta), return as-is
-            return results
+            return pred
 
 
 class TestForwardInferenceBasic:
@@ -905,9 +898,8 @@ class TestForwardInferenceEdgeCases:
 class SimpleForwardInference(ForwardInference):
     """Concrete implementation for testing."""
 
-    def get_results(self, results: torch.Tensor, parent_variable: Variable):
-        """Simple pass-through implementation."""
-        return results
+    def activate(self, pred, variable):
+        return pred
 
 
 class TestForwardInference(unittest.TestCase):
@@ -1345,149 +1337,33 @@ class TestDeterministicInference(unittest.TestCase):
         self.batch_size = 4
         self.x = torch.randn(self.batch_size, 10)
     
-    # --- Test get_results ---
-    
-    def test_get_results_returns_raw_output(self):
-        """Test that get_results returns raw output without sampling."""
-        # Create some test logits
-        logits = torch.randn(self.batch_size, 1)
-        
-        result = self.inference.get_results(logits, self.var_A)
-        
-        # Should return the same tensor (no sampling)
-        torch.testing.assert_close(result, logits)
-    
-    def test_get_results_preserves_gradients(self):
-        """Test that get_results preserves gradient flow."""
-        logits = torch.randn(self.batch_size, 1, requires_grad=True)
-        
-        result = self.inference.get_results(logits, self.var_A)
-        
-        # Should still require grad
-        self.assertTrue(result.requires_grad)
-        
-        # Gradient should flow through
-        loss = result.sum()
-        loss.backward()
-        self.assertIsNotNone(logits.grad)
-    
-    def test_get_results_with_different_shapes(self):
-        """Test get_results works with various tensor shapes."""
-        # Single feature
-        result1 = self.inference.get_results(torch.randn(4, 1), self.var_A)
-        self.assertEqual(result1.shape, (4, 1))
-        
-        # Multiple features
-        result2 = self.inference.get_results(torch.randn(4, 5), self.var_A)
-        self.assertEqual(result2.shape, (4, 5))
-        
-        # Larger batch
-        result3 = self.inference.get_results(torch.randn(32, 3), self.var_A)
-        self.assertEqual(result3.shape, (32, 3))
-    
-    # --- Test ground_truth_to_evidence (binary) ---
-    
-    def test_ground_truth_to_evidence_binary(self):
-        """Test ground_truth_to_evidence for binary (cardinality=1) concepts."""
-        # Binary ground truth: 0 or 1
-        gt = torch.tensor([0., 1., 0., 1.])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
-        
-        # Should return logits
-        self.assertEqual(evidence.shape, (4, 1))
-        
-        # 0 -> negative logit, 1 -> positive logit
-        self.assertTrue(evidence[0, 0] < 0)  # 0 -> large negative logit
-        self.assertTrue(evidence[1, 0] > 0)  # 1 -> large positive logit
-    
-    def test_ground_truth_to_evidence_binary_extreme_values(self):
-        """Test that binary evidence uses clamping to avoid inf logits."""
-        gt = torch.tensor([0., 1., 0., 1.])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
-        
-        # Should not have inf values due to clamping
-        self.assertFalse(torch.isinf(evidence).any())
-        self.assertFalse(torch.isnan(evidence).any())
-    
-    def test_ground_truth_to_evidence_binary_recovers_probs(self):
-        """Test that sigmoid of evidence recovers ~original values."""
-        gt = torch.tensor([0., 1., 0., 1.])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=1)
-        recovered = torch.sigmoid(evidence).squeeze()
-        
-        # Should be close to 0 and 1 (within clamping tolerance)
-        self.assertTrue(recovered[0] < 0.01)  # ~0
-        self.assertTrue(recovered[1] > 0.99)  # ~1
-    
-    # --- Test ground_truth_to_evidence (categorical) ---
-    
-    def test_ground_truth_to_evidence_categorical(self):
-        """Test ground_truth_to_evidence for categorical (cardinality>1) concepts."""
-        # Categorical ground truth: class indices
-        gt = torch.tensor([0, 1, 2, 0])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
-        
-        # Should return logits with shape (batch, cardinality)
-        self.assertEqual(evidence.shape, (4, 3))
-    
-    def test_ground_truth_to_evidence_categorical_correct_class(self):
-        """Test that categorical evidence has highest logit for correct class."""
-        gt = torch.tensor([0, 1, 2, 1])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
-        
-        # Argmax of each row should match ground truth
-        predicted_classes = evidence.argmax(dim=1)
-        torch.testing.assert_close(predicted_classes, gt)
-    
-    def test_ground_truth_to_evidence_categorical_no_inf_nan(self):
-        """Test that categorical evidence has no inf/nan values."""
-        gt = torch.tensor([0, 1, 2, 3, 4])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=5)
-        
-        self.assertFalse(torch.isinf(evidence).any())
-        self.assertFalse(torch.isnan(evidence).any())
-    
-    def test_ground_truth_to_evidence_categorical_softmax_recovers_onehot(self):
-        """Test that softmax of evidence recovers ~one-hot encoding."""
-        gt = torch.tensor([0, 2, 1])
-        
-        evidence = self.inference.ground_truth_to_evidence(gt, cardinality=3)
-        recovered = torch.softmax(evidence, dim=1)
-        
-        # Should be close to one-hot
-        expected = torch.nn.functional.one_hot(gt, num_classes=3).float()
-        torch.testing.assert_close(recovered, expected, atol=0.02, rtol=0.02)
-    
     # --- Integration tests with inference ---
     
-    def test_deterministic_prediction_returns_logits(self):
-        """Test that DeterministicInference.query returns logits, not samples."""
+    def test_deterministic_prediction_returns_probabilities(self):
+        """Test that DeterministicInference.query returns probabilities (activated)."""
         results = self.inference.query(['A', 'B'], {'input': self.x})
         
         # Should have A (size=1) + B (size=1) = 2 features
         self.assertEqual(results.shape, (self.batch_size, 2))
         
-        # Logits should be continuous real values
-        unique_vals = results.unique()
-        # More than 2 unique values means continuous, not binary
-        self.assertGreater(len(unique_vals), 2)
+        # Probabilities should be in [0, 1] (sigmoid output)
+        self.assertTrue(torch.all(results >= 0))
+        self.assertTrue(torch.all(results <= 1))
     
-    def test_deterministic_query_returns_logits(self):
-        """Test that DeterministicInference.query returns concatenated logits."""
-        output = self.inference.query(['A', 'B'], evidence={'input': self.x})
+    def test_return_logits_returns_raw_outputs(self):
+        """Test that return_logits=True returns raw CPD outputs."""
+        logits = self.inference.query(['A', 'B'], evidence={'input': self.x}, return_logits=True)
+        probs = self.inference.query(['A', 'B'], evidence={'input': self.x})
         
-        # Should have shape (batch, 2) for two concepts
-        self.assertEqual(output.shape, (self.batch_size, 2))
+        self.assertEqual(logits.shape, (self.batch_size, 2))
+        self.assertEqual(probs.shape, (self.batch_size, 2))
         
-        # Values should be continuous logits
-        unique_vals = output.unique()
-        self.assertGreater(len(unique_vals), 2)
+        # Logits can be any real value; probabilities in [0, 1]
+        self.assertTrue(torch.all(probs >= 0))
+        self.assertTrue(torch.all(probs <= 1))
+        
+        # They should not be identical (sigmoid transforms them)
+        self.assertFalse(torch.allclose(logits, probs))
     
     def test_deterministic_gradient_flow(self):
         """Test that gradients flow through deterministic inference."""
@@ -1529,14 +1405,8 @@ class TestDeterministicInference(unittest.TestCase):
 
 class _SimpleForwardInferenceForNewTests(ForwardInference):
     """Minimal concrete ForwardInference for the new tests."""
-    def get_results(self, results, parent_variable):
-        return results
-
-
-class _SimpleLazyForwardInference(LazyForwardInference):
-    """Minimal concrete LazyForwardInference for the new tests."""
-    def get_results(self, results, parent_variable):
-        return results
+    def activate(self, pred, variable):
+        return pred
 
 
 class TestParallelisationIsHappening:
@@ -1679,7 +1549,7 @@ class TestExogenousVariableInference:
 
 
 class TestLazyInferenceSkipsDownstreamVariables:
-    """Verify that LazyForwardInference does NOT compute variables outside the ancestor tree."""
+    """Verify that ForwardInference(lazy=True) does NOT compute variables outside the ancestor tree."""
 
     def _build_two_branch_model(self):
         """
@@ -1708,7 +1578,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
     def test_lazy_query_skips_unrelated_branch(self):
         """Querying B should compute input, A, B only — not C or D."""
         model = self._build_two_branch_model()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
 
         batch_input = torch.randn(4, 5)
 
@@ -1746,7 +1616,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
             variables=[input_var, var_A, var_B, var_C],
             parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
 
         batch_input = torch.randn(4, 5)
         result = inference.query(['B', 'C'], evidence={'input': batch_input}, device='cpu')
@@ -1755,14 +1625,14 @@ class TestLazyInferenceSkipsDownstreamVariables:
         assert result.shape == (4, 4)
 
     def test_lazy_vs_full_same_result(self):
-        """LazyForwardInference.query must produce the same output as ForwardInference.query."""
+        """ForwardInference(lazy=True).query must produce the same output as ForwardInference.query."""
         model_lazy = self._build_two_branch_model()
         model_full = self._build_two_branch_model()
 
         # Share the same parameters
         model_full.load_state_dict(model_lazy.state_dict())
 
-        lazy_inf = _SimpleLazyForwardInference(model_lazy)
+        lazy_inf = _SimpleForwardInferenceForNewTests(model_lazy, lazy=True)
         full_inf = _SimpleForwardInferenceForNewTests(model_full)
 
         torch.manual_seed(0)
@@ -1776,7 +1646,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
     def test_get_ancestors_returns_correct_set(self):
         """_get_ancestors for B should return {input, A, B}."""
         model = self._build_two_branch_model()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
 
         ancestors = inference._get_ancestors(['B'])
         assert ancestors == {'input', 'A', 'B'}
@@ -1890,7 +1760,7 @@ class TestEvidenceBypassSkipsCPD:
 
 class TestForwardVsLazyInferenceParity:
     """
-    Comprehensive tests verifying that ForwardInference and LazyForwardInference
+    Comprehensive tests verifying that ForwardInference and ForwardInference(lazy=True)
     produce identical results, and that Lazy skips unnecessary computations.
     """
 
@@ -2063,7 +1933,7 @@ class TestForwardVsLazyInferenceParity:
         ("_build_complex_dag", ["D", "E"]),
     ])
     def test_forward_and_lazy_produce_same_results(self, builder, query_concepts):
-        """ForwardInference and LazyForwardInference must produce identical results."""
+        """ForwardInference and ForwardInference(lazy=True) must produce identical results."""
         torch.manual_seed(42)
 
         # Build two identical models
@@ -2072,7 +1942,7 @@ class TestForwardVsLazyInferenceParity:
         self._sync_model_weights(model_full, model_lazy)
 
         full_inf = _SimpleForwardInferenceForNewTests(model_full)
-        lazy_inf = _SimpleLazyForwardInference(model_lazy)
+        lazy_inf = _SimpleForwardInferenceForNewTests(model_lazy, lazy=True)
 
         batch_size = 4
         input_size = model_full.variables[0].out_features
@@ -2105,7 +1975,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_chain_query_leaf_skips_nothing(self):
         """Querying leaf C in chain input->A->B->C must compute all."""
         model = self._build_linear_chain()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 5)
 
         computed = self._count_computed_variables(inference, ['C'], {'input': batch_input})
@@ -2114,7 +1984,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_chain_query_mid_skips_downstream(self):
         """Querying B in chain input->A->B->C should skip C."""
         model = self._build_linear_chain()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 5)
 
         computed = self._count_computed_variables(inference, ['B'], {'input': batch_input})
@@ -2124,7 +1994,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_two_branches_query_one_skips_other(self):
         """Querying B should skip branch C->D."""
         model = self._build_two_branches()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 5)
 
         computed = self._count_computed_variables(inference, ['B'], {'input': batch_input})
@@ -2134,7 +2004,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_two_branches_query_both_computes_all(self):
         """Querying B and D should compute all variables."""
         model = self._build_two_branches()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 5)
 
         computed = self._count_computed_variables(inference, ['B', 'D'], {'input': batch_input})
@@ -2143,7 +2013,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_wide_tree_query_one_skips_siblings(self):
         """Querying only A should skip B, C, D, E."""
         model = self._build_wide_tree()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 10)
 
         computed = self._count_computed_variables(inference, ['A'], {'input': batch_input})
@@ -2154,7 +2024,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_wide_tree_query_subset_skips_rest(self):
         """Querying A, C should skip B, D, E."""
         model = self._build_wide_tree()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 10)
 
         computed = self._count_computed_variables(inference, ['A', 'C'], {'input': batch_input})
@@ -2165,7 +2035,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_diamond_query_leaf_computes_both_branches(self):
         """Querying C in diamond must compute A and B (shared ancestors)."""
         model = self._build_diamond()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 6)
 
         computed = self._count_computed_variables(inference, ['C'], {'input': batch_input})
@@ -2174,7 +2044,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_diamond_query_one_branch_skips_other(self):
         """Querying A in diamond should skip B and C."""
         model = self._build_diamond()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 6)
 
         computed = self._count_computed_variables(inference, ['A'], {'input': batch_input})
@@ -2184,7 +2054,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_complex_dag_query_D_skips_BCE_F(self):
         """Querying D in complex DAG should only compute input, A, D."""
         model = self._build_complex_dag()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 8)
 
         computed = self._count_computed_variables(inference, ['D'], {'input': batch_input})
@@ -2195,7 +2065,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_complex_dag_query_E_skips_ADF(self):
         """Querying E should compute input, B, C, E (not A, D, F)."""
         model = self._build_complex_dag()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 8)
 
         computed = self._count_computed_variables(inference, ['E'], {'input': batch_input})
@@ -2206,7 +2076,7 @@ class TestForwardVsLazyInferenceParity:
     def test_lazy_complex_dag_query_F_computes_all_ancestors(self):
         """Querying F should compute all variables (F depends on everything)."""
         model = self._build_complex_dag()
-        inference = _SimpleLazyForwardInference(model)
+        inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 8)
 
         computed = self._count_computed_variables(inference, ['F'], {'input': batch_input})
@@ -2221,7 +2091,7 @@ class TestForwardVsLazyInferenceParity:
         self._sync_model_weights(model_full, model_lazy)
 
         full_inf = _SimpleForwardInferenceForNewTests(model_full)
-        lazy_inf = _SimpleLazyForwardInference(model_lazy)
+        lazy_inf = _SimpleForwardInferenceForNewTests(model_lazy, lazy=True)
 
         batch_input = torch.randn(4, 5)
         all_concepts = ['A', 'B', 'C', 'D']
@@ -2241,7 +2111,7 @@ class TestForwardVsLazyInferenceParity:
             parametric_cpds=[cpd_input],
         )
 
-        lazy_inf = _SimpleLazyForwardInference(model)
+        lazy_inf = _SimpleForwardInferenceForNewTests(model, lazy=True)
         batch_input = torch.randn(4, 5)
 
         # Querying the root should work
@@ -2256,7 +2126,7 @@ class TestForwardVsLazyInferenceParity:
         self._sync_model_weights(model_full, model_lazy)
 
         full_inf = _SimpleForwardInferenceForNewTests(model_full)
-        lazy_inf = _SimpleLazyForwardInference(model_lazy)
+        lazy_inf = _SimpleForwardInferenceForNewTests(model_lazy, lazy=True)
 
         batch_input = torch.randn(4, 6)
 

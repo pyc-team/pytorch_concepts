@@ -19,8 +19,6 @@ class CallableConceptToConcept(BasePredictor):
         func: Callable function that takes concept probabilities and returns predictions.
               Should accept a tensor of shape (batch_size, in_concepts) and return
               a tensor of shape (batch_size, out_concepts).
-        activation: Activation function to apply to input concepts before passing to func.
-                      Default is identity (lambda x: x).
         use_bias: Whether to add learnable stochastic bias to the output. Default is True.
         init_bias_mean: Initial value for the bias mean parameter. Default is 0.0.
         init_bias_std: Initial value for the bias standard deviation. Default is 0.01.
@@ -56,16 +54,15 @@ class CallableConceptToConcept(BasePredictor):
     def __init__(
         self,
         func: Callable,
-        activation: Callable = lambda x: x,
         use_bias: bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
-        min_std: float = 1e-6
+        min_std: float = 1e-6,
+        **kwargs,
     ):
         super().__init__(
             in_concepts=-1,
             out_concepts=-1,
-            activation=activation,
         )
         self.use_bias = use_bias
         self.min_std = float(min_std)
@@ -110,8 +107,7 @@ class CallableConceptToConcept(BasePredictor):
         Returns:
             torch.Tensor: Output predictions of shape (batch_size, out_concepts).
         """
-        in_probs = self.activation(concepts)
-        output = self.func(in_probs, *args, **kwargs)
+        output = self.func(concepts, *args, **kwargs)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable

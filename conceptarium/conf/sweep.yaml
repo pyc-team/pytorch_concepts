@@ -9,11 +9,13 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: dag_asia #, dag_sachs, dag_insurance
-      model: cbm, cem
+      dataset: dag_asia, dag_sachs, dag_insurance
+      model: cbm, cem, c2bm
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
         torch_concepts.nn.IndependentInference
+        # torch_concepts.nn.AncestralSamplingInference
+      # +model.train_inference.detach: false, true
       loss: standard
       # loss.concept_weight: 10
       # loss.task_weight: 1

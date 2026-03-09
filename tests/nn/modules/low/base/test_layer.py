@@ -180,35 +180,6 @@ class TestBasePredictor(unittest.TestCase):
 
         self.assertEqual(predictor.out_concepts, 3)
         self.assertEqual(predictor.in_concepts, 10)
-        self.assertIsNotNone(predictor.activation)
-
-    def test_default_activation(self):
-        """Test default sigmoid activation."""
-        class ConcretePredictor(BasePredictor):
-            def forward(self, x):
-                return x
-
-        predictor = ConcretePredictor(
-            out_concepts=3,
-            in_concepts=10
-        )
-
-        # Default should be sigmoid
-        self.assertEqual(predictor.activation, torch.sigmoid)
-
-    def test_custom_activation(self):
-        """Test custom activation function."""
-        class ConcretePredictor(BasePredictor):
-            def forward(self, x):
-                return x
-
-        predictor = ConcretePredictor(
-            out_concepts=3,
-            in_concepts=10,
-            activation=torch.tanh
-        )
-
-        self.assertEqual(predictor.activation, torch.tanh)
 
     def test_predictor_implementation(self):
         """Test concrete predictor implementation."""
@@ -217,21 +188,17 @@ class TestBasePredictor(unittest.TestCase):
                 super().__init__(
                     out_concepts=out_concepts,
                     in_concepts=in_concepts,
-                    activation=torch.sigmoid
                 )
                 self.linear = nn.Linear(in_concepts, out_concepts)
 
-            def forward(self, endogenous):
-                # Apply activation to input endogenous
-                probs = self.activation(endogenous)
-                # Predict next concepts
-                return self.linear(probs)
+            def forward(self, concepts):
+                return self.linear(concepts)
 
         predictor = MyPredictor(out_concepts=3, in_concepts=10)
-        concept_endogenous = torch.randn(4, 10)
-        task_endogenous = predictor(concept_endogenous)
+        concepts = torch.randn(4, 10)
+        tasks = predictor(concepts)
 
-        self.assertEqual(task_endogenous.shape, (4, 3))
+        self.assertEqual(tasks.shape, (4, 3))
 
     def test_with_embedding_features(self):
         """Test predictor with embedding features."""
@@ -245,9 +212,8 @@ class TestBasePredictor(unittest.TestCase):
                 total_features = in_concepts + in_latent
                 self.linear = nn.Linear(total_features, out_concepts)
 
-            def forward(self, endogenous, latent):
-                probs = self.activation(endogenous)
-                combined = torch.cat([probs, latent], dim=-1)
+            def forward(self, concepts, latent):                # concepts are already activated (probabilities)
+                combined = torch.cat([concepts, latent], dim=-1)
                 return self.linear(combined)
 
         predictor = PredictorWithEmbedding(
@@ -256,31 +222,29 @@ class TestBasePredictor(unittest.TestCase):
             in_latent=8
         )
 
-        endogenous = torch.randn(2, 10)
+        concepts = torch.randn(2, 10)
         latent = torch.randn(2, 8)
-        output = predictor(endogenous, latent)
+        output = predictor(concepts, latent)
 
         self.assertEqual(output.shape, (2, 3))
 
-    def test_activation_application(self):
-        """Test that activation is properly applied."""
+    def test_numerical_stability(self):
+        """Test that predictor handles extreme inputs."""
         class SimplePredictor(BasePredictor):
             def __init__(self, out_concepts, in_concepts):
                 super().__init__(
                     out_concepts=out_concepts,
                     in_concepts=in_concepts,
-                    activation=torch.sigmoid
                 )
                 self.linear = nn.Linear(in_concepts, out_concepts)
 
-            def forward(self, endogenous):
-                activated = self.activation(endogenous)
-                return self.linear(activated)
+            def forward(self, concepts):
+                return self.linear(concepts)
 
         predictor = SimplePredictor(out_concepts=3, in_concepts=5)
 
-        # Test with extreme endogenous
-        endogenous = torch.tensor([[-10.0, -5.0, 0.0, 5.0, 10.0]])
+        # Test with probability-like inputs
+        endogenous = torch.tensor([[0.0, 0.0, 0.5, 1.0, 1.0]])
         output = predictor(endogenous)
 
         # Output should be finite
@@ -306,9 +270,8 @@ class TestLayerIntegration(unittest.TestCase):
                 super().__init__(out_concepts, in_concepts)
                 self.linear = nn.Linear(in_concepts, out_concepts)
 
-            def forward(self, endogenous):
-                probs = self.activation(endogenous)
-                return self.linear(probs)
+            def forward(self, concepts):
+                return self.linear(concepts)
 
         # Create pipeline
         encoder = SimpleEncoder(out_concepts=10, in_latent=784)
@@ -337,9 +300,8 @@ class TestLayerIntegration(unittest.TestCase):
                 super().__init__(out_concepts, in_concepts)
                 self.linear = nn.Linear(in_concepts, out_concepts)
 
-            def forward(self, endogenous):
-                probs = self.activation(endogenous)
-                return self.linear(probs)
+            def forward(self, concepts):
+                return self.linear(concepts)
 
         encoder = SimpleEncoder(out_concepts=10, in_latent=20)
         predictor = SimplePredictor(out_concepts=5, in_concepts=10)

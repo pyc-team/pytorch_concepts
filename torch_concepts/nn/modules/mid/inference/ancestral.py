@@ -5,7 +5,7 @@ import inspect
 import torch
 from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
 
-from .forward import ForwardInference, LazyForwardInference
+from .forward import ForwardInference
 from ..models.variable import Variable
 from ..models.probabilistic_model import ProbabilisticModel
 from ...low.base.graph import BaseGraphLearner
@@ -27,6 +27,10 @@ class AncestralSamplingInference(ForwardInference):
     Args:
         probabilistic_model: The probabilistic model to perform inference on.
         graph_learner: Optional graph learner for weighted adjacency structure.
+        detach: If True, detach concept predictions before propagation to
+            children. Default: False.
+        lazy: If True, only compute ancestors of the queried concepts. Default: False.
+        log_probs: If True, pass logits to distributions; otherwise pass probs.
         **dist_kwargs: Additional kwargs passed to distribution constructors
                       (e.g., temperature for relaxed distributions).
 
@@ -98,11 +102,56 @@ class AncestralSamplingInference(ForwardInference):
     def __init__(self,
                  probabilistic_model: ProbabilisticModel,
                  graph_learner: BaseGraphLearner = None,
+                 detach: bool = False,
+                 lazy: bool = False,
                  log_probs: bool = True,
                  **dist_kwargs):
-        super().__init__(probabilistic_model, graph_learner)
+        super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy)
         self.dist_kwargs = dist_kwargs
         self.log_probs = log_probs
+
+    def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
+        """
+        Sample from the distribution parameterized by the raw CPD output.
+
+        This method creates a distribution using the variable's distribution type
+        and the computed logits/parameters, then draws a sample.
+
+        * ``Bernoulli``  → ``.sample()``
+        * ``RelaxedBernoulli`` / ``RelaxedOneHotCategorical`` → ``.rsample()``
+        * Other           → ``.rsample()``
+
+        Args:
+            pred: Raw output tensor from the CPD (logits or parameters).
+            variable: The variable being computed (defines distribution type).
+
+        Returns:
+            torch.Tensor: Sampled values from the distribution.
+        """
+        sig = inspect.signature(variable.distribution.__init__)
+        params = sig.parameters
+        allowed = {
+            name for name, p in params.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        # retain only allowed dist kwargs
+        dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
+
+        if variable.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
+            if self.log_probs:
+                dist_kwargs['logits'] = pred
+            else:
+                dist_kwargs['probs'] = pred
+
+            if variable.distribution in [Bernoulli]:
+                return variable.distribution(**dist_kwargs).sample()
+            elif variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
+                return variable.distribution(**dist_kwargs).rsample()
+
+        return variable.distribution(pred, **dist_kwargs).rsample()
 
     # TODO: currently assumes discrete, to be extended to continuous 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
@@ -131,63 +180,3 @@ class AncestralSamplingInference(ForwardInference):
             ).float()
         else:
             return value.unsqueeze(-1).float()
-
-    def get_results(self, results: torch.tensor, variable: Variable) -> torch.Tensor:
-        """
-        Sample from the distribution parameterized by the results.
-
-        This method creates a distribution using the variable's distribution type
-        and the computed endogenous/parameters, then draws a sample.
-
-        Args:
-            results: Raw output tensor from the CPD (endogenous or parameters).
-            variable: The variable being computed (defines distribution type).
-
-        Returns:
-            torch.Tensor: Sampled values from the distribution.
-        """
-        sig = inspect.signature(variable.distribution.__init__)
-        params = sig.parameters
-        allowed = {
-            name for name, p in params.items()
-            if name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-        }
-        # retain only allowed dist kwargs
-        dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
-
-        if variable.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
-            if self.log_probs:
-                dist_kwargs['logits'] = results
-            else:
-                dist_kwargs['probs'] = results
-
-            if variable.distribution in [Bernoulli]:
-                return variable.distribution(**dist_kwargs).sample()
-            elif variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
-                return variable.distribution(**dist_kwargs).rsample()
-
-        return variable.distribution(results, **dist_kwargs).rsample()
-
-
-class LazyAncestralSamplingInference(LazyForwardInference, AncestralSamplingInference):
-    """
-    Lazy ancestral sampling inference that only computes ancestor variables.
-    
-    Combines the lazy query strategy (computing only ancestors of queried
-    concepts) with ancestral sampling (drawing samples from distributions).
-    
-    Use this when:
-    - You only need samples for a subset of concepts
-    - The graph has many independent branches
-    - You want to avoid sampling unused variables
-    
-    Example:
-        >>> # Given model: input -> A -> B, input -> C -> D
-        >>> inference = LazyAncestralSamplingInference(pgm)
-        >>> # Querying only ['B'] computes: input, A, B (not C, D)
-        >>> samples = inference.query(['B'], evidence={'input': x})
-    """
-    pass

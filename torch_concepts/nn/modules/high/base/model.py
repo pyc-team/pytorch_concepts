@@ -35,8 +35,7 @@ from .....typing import BackboneType
 from .....utils import add_distribution_to_annotations
 from ...utils import with_training_mode
 
-from ...mid.models.variable import ExogenousVariable, ConceptVariable
-
+from ...mid.constructors.concept_graph import ConceptGraph
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -74,6 +73,13 @@ class BaseModel(nn.Module, ABC):
         ``{'c1': Bernoulli, 'c2': Categorical}``). Required if annotations lack
         'distribution' metadata. If provided, distributions are added to annotations
         internally. Can also be a GroupConfig object. Defaults to None.
+    graph : ConceptGraph, optional
+        Directed acyclic graph (DAG) specifying causal or dependency relationships
+        between concepts. Nodes correspond to concept names in annotations; edges
+        encode parent-child dependencies used by graph-aware models (e.g., 
+        ``CausallyReliableConceptBottleneckModel``). If None, model assumes no explicit 
+        graph structure, and each model enforces its own.
+        Defaults to None.
     backbone : BackboneType, optional
         Feature extraction module (e.g., ResNet, ViT) applied before latent encoder.
         Can be nn.Module or callable. If None, assumes inputs are pre-computed features.
@@ -230,6 +236,7 @@ class BaseModel(nn.Module, ABC):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
+        graph: ConceptGraph = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
         latent_encoder_kwargs: Optional[Dict] = None,
@@ -237,6 +244,8 @@ class BaseModel(nn.Module, ABC):
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
+
+        self.graph = graph
 
         if annotations is not None:
             annotations = annotations.get_axis_annotation(1)
@@ -349,115 +358,91 @@ class BaseModel(nn.Module, ABC):
     #     """
     #     return self._encoder
 
-    @abstractmethod
     def forward(
         self,
         query: List[str],
         x: torch.Tensor = None,
         evidence: Dict[str, torch.Tensor] = None,
+        *inference_args,
+        **inference_kwargs
     ) -> torch.Tensor:
-        """Unified forward pass.
-        
-        This method defines the forward pass for the model.  The active
-        inference engine is selected automatically based on whether the
-        model is in train or eval mode (see the ``inference`` property).
-        Calling ``.train()`` activates ``train_inference``; calling
-        ``.eval()`` activates ``eval_inference``.
+        """Unified forward pass for all inferences.
 
+        The active inference engine is selected automatically based on
+        ``self.training`` (toggled by ``.train()`` / ``.eval()``).
+        
         Parameters
         ----------
         query : List[str]
-            List of concept names to query.
+            Concept names to query.
         x : torch.Tensor, optional
             Raw input tensor. Shape: (batch_size, input_size).
-            If provided, backbone and latent encoder are applied. If None, assumes
-            inputs are pre-computed features.
+            If provided, backbone and latent encoder are applied.
         evidence : Dict[str, torch.Tensor], optional
-            Optional dictionary of evidence tensors for concepts. Keys are concept names,
-            values are tensors with shape (batch_size, concept_dim). Used for interventions
-            or when providing observed concept values.
-
+            Evidence dict mapping names to tensors. Defaults to empty dict.
+            Names should match variable names in the PGM.
+        *inference_args
+            Positional arguments passed to the inference engine's query method.
+        **inference_kwargs
+            Keyword arguments passed to the inference engine's query method.
+        
         Returns
         -------
         torch.Tensor
-            Output tensor containing predictions for the queried concepts.
-
-        Notes
-        -----
-        - The inference engine is chosen via PyTorch's built-in train/eval
-          flag (``self.training``).  ``model.train()`` selects
-          ``train_inference``; ``model.eval()`` selects
-          ``eval_inference``.  Lightning toggles this automatically.
-        - The forward pass should process the input `x` through the backbone and latent encoder
-          if `x` is provided, and then pass the resulting latent representation as evidence to the inference engine.
-        - The `evidence` dictionary allows for flexible input of observed concept values, which can be used for interventions or when some concepts are observed during inference.
-        - This method is called automatically during Lightning training in the `shared_step()` method of Learner classes, and can also be called directly for manual PyTorch training.
+            Concatenated predictions for queried concepts.
         """
-        pass
-
-    @abstractmethod
-    def filter_output_for_loss(self, forward_out, target) -> Dict[str, Any]:
-        """Filter model outputs before passing to loss function.
-
-        Override this method in your model to customize what outputs are passed to the loss.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in loss computation or need specific formatting.
-
-        This method is called automatically during Lightning training in the
-        ``shared_step()`` method of Learner classes. For manual PyTorch training,
-        you typically don't need to call this method explicitly.
+        if evidence is None:
+            evidence = {}
+        
+        # If x is provided, process x through backbone and latent encoder
+        # and add the resulting latent representation as the 'input' of the PGM
+        # TODO: handle backbone kwargs when present
+        if x is not None:
+            features = self.maybe_apply_backbone(x)
+            latent = self.latent_encoder(features)
+            evidence['input'] = latent
+        
+        return self.inference.query(
+            query, 
+            evidence=evidence, 
+            *inference_args, 
+            **inference_kwargs
+        )
+        
+    
+    def filter_output_for_loss(self, forward_out, target):
+        """No filtering needed - return concepts for standard loss computation.
 
         Parameters
         ----------
-        forward_out : Any
-            Raw model output from forward pass (typically concept predictions,
-            but can include auxiliary outputs like attention weights, embeddings).
+        forward_out : torch.Tensor
+            Model output concepts.
         target : torch.Tensor
-            Ground truth labels/targets.
+            Ground truth labels.
 
         Returns
         -------
         dict
-            Dictionary with keys expected by your loss function. Common format:
-            ``{'input': predictions, 'target': ground_truth}`` for standard losses.
-
-        Notes
-        -----
-        - For standard losses like nn.BCEWithLogitsLoss, return format should match
-          the loss function's expected signature.
-        - This method enables models to return rich outputs (embeddings, attentions)
-          without interfering with loss computation.
-        - Must be implemented by all concrete model subclasses.
-
-        Examples
-        --------
-        Standard implementation passes predictions and targets directly to loss:
-        
-        >>> def filter_output_for_loss(self, forward_out, target):
-        ...     return {'input': forward_out, 'target': target}
-
-        See Also
-        --------
-        filter_output_for_metrics : Similar filtering for metrics computation
-        torch_concepts.nn.modules.high.learners.JointLearner.shared_step : Where this is called
+            Dict with 'input' and 'target' for loss computation.
         """
-        pass
+        return {'input': forward_out, 'target': target}
 
-    @abstractmethod
-    def filter_output_for_metrics(self, forward_out, target) -> Dict[str, Any]:
-        """Filter model outputs before passing to metric computation.
+    def filter_output_for_metrics(self, forward_out, target):
+        """No filtering needed - return concepts for metric computation.
 
-        Override this method in your model to customize what outputs are passed to the metrics.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in metric computation or viceversa.
+        Parameters
+        ----------
+        forward_out : torch.Tensor
+            Model output concepts.
+        target : torch.Tensor
+            Ground truth labels.
 
-        Args:
-            forward_out: Model output (typically concept predictions).
-            target: Ground truth concepts.
-        Returns:
-            dict: Filtered outputs for metric computation.
+        Returns
+        -------
+        dict
+            Dict with 'preds' and 'target' for metric computation.
         """
-        pass
+        return {'preds': forward_out, 'target': target}
 
     # ------------------------------------------------------------------
     # Features extraction helpers
