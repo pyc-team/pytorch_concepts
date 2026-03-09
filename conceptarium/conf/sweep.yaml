@@ -40,7 +40,7 @@ metrics:
 
 trainer:
   # logger: wandb
-  max_epochs: 10
+  max_epochs: 200
   patience: 20
 
 matmul_precision: medium
