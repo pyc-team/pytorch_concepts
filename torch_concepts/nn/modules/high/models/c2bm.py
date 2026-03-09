@@ -38,6 +38,7 @@ class CausallyReliableConceptBottleneckModel(BaseModel):
         super().__init__(
             input_size=input_size,
             annotations=annotations,
+            graph=graph,
             lightning=lightning,
             **kwargs
         )

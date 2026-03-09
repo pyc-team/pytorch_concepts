@@ -115,7 +115,7 @@ class MixConceptExogegnousToConcept(BasePredictor):
         Forward pass through the predictor.
 
         Args:
-            concepts: Concept logits of shape (batch_size, in_concepts).
+            concepts: Concept of shape (batch_size, in_concepts).
             exogenous: Concept exogenous of shape (batch_size, in_concepts, exogenous_dim).
 
         Returns:
