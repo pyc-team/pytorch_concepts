@@ -1,13 +1,5 @@
 """
-Example: Using ConceptMetrics with ConceptBottleneckModel
-
-This example demonstrates how to use ConceptMetrics with ConceptBottleneckModel
-for flexible per-concept-type metrics tracking.
-
-The model uses:
-- BipartiteModel as the underlying structure (concepts -> tasks)
-- Lightning training with lightning=True
-- ConceptMetrics for type-aware metric computation
+Example: Using CausallyReliableConceptBottleneckModel
 """
 
 import torch
