@@ -32,6 +32,9 @@ class ForwardInference(BaseInference, ABC):
     Attributes:
         probabilistic_model (ProbabilisticModel): The probabilistic model to perform inference on.
         graph_learner (BaseGraphLearner): Optional graph structure learner.
+        detach (bool): If True, concept predictions are detached before propagation
+            to children.
+        lazy (bool): If True, only compute ancestors of the queried concepts.
         variable_map (Dict[str, Variable]): Maps concept names to Variable objects.
         sorted_variables (List[Variable]): Variables in topological order.
         levels (List[List[Variable]]): Variables grouped by topological depth.
@@ -39,6 +42,11 @@ class ForwardInference(BaseInference, ABC):
     Args:
         probabilistic_model: The probabilistic model to perform inference on.
         graph_learner: Optional graph learner for weighted adjacency structure.
+        detach: If True, detach concept predictions before propagation to
+            children. Each encoder then receives gradients only from its own loss.
+            Exogenous / latent variables keep their gradients. Default: False.
+        lazy: If True, only compute variables that are ancestors of the queried
+            concepts, skipping unrelated branches. Default: False.
 
     Raises:
         RuntimeError: If the model contains cycles (not a DAG).
@@ -90,12 +98,16 @@ class ForwardInference(BaseInference, ABC):
         self, 
         probabilistic_model: ProbabilisticModel, 
         graph_learner: BaseGraphLearner = None, 
+        detach: bool = False,
+        lazy: bool = False,
         *args, 
         **kwargs
     ):
         super().__init__()
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
+        self.detach = detach
+        self.lazy = lazy
         self.variable_map = {var.concept: var for var in probabilistic_model.variables}
 
         # topological order + levels (list of lists of Variables)
@@ -117,19 +129,27 @@ class ForwardInference(BaseInference, ABC):
                 self._cpd_allowed_params[var.concept] = self._get_allowed_params(cpd)
 
     @abstractmethod
-    def get_results(self, results: torch.tensor, variable: Variable):
+    def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
-        Process the raw output tensor from a CPD.
+        Apply the inference-specific transformation to raw CPD output.
 
-        This method should be implemented by subclasses to handle distribution-specific
-        processing (e.g., sampling from Bernoulli, taking argmax from Categorical, etc.).
+        This is the single point where each inference strategy defines its
+        semantics.  The activated value is:
+
+        * propagated to child predictors (they receive already-activated inputs)
+        * returned as the query output (unless ``return_logits=True``)
+
+        Subclass contracts:
+
+        * ``DeterministicInference`` — Bernoulli → sigmoid, Categorical → softmax
+        * ``AncestralSamplingInference`` — sample from the distribution
 
         Args:
-            results: Raw output tensor from the CPD.
-            variable: The variable being computed.
+            pred: Raw output tensor from the CPD (logits).
+            variable: The Variable whose prediction is being transformed.
 
         Returns:
-            Processed output tensor.
+            torch.Tensor: Activated / sampled prediction.
         """
         pass
 
@@ -222,7 +242,6 @@ class ForwardInference(BaseInference, ABC):
             input_tensor = evidence[concept_name]
             parent_kwargs = self.get_parent_kwargs(parametric_cpd, [input_tensor], [])
             output_tensor = parametric_cpd.forward(**parent_kwargs)
-            output_tensor = self.get_results(output_tensor, var)
 
         # 2. Child nodes (has parents)
         else:
@@ -246,8 +265,6 @@ class ForwardInference(BaseInference, ABC):
 
             parent_kwargs = self.get_parent_kwargs(parametric_cpd, parent_input, parent_concepts)
             output_tensor = parametric_cpd.forward(**parent_kwargs)
-            if not isinstance(parametric_cpd.parametrization, _InterventionWrapper):
-                output_tensor = self.get_results(output_tensor, var)
 
         return concept_name, output_tensor
 
@@ -543,12 +560,37 @@ class ForwardInference(BaseInference, ABC):
 
         return final_tensor
 
+    def _get_ancestors(self, query_concepts: List[str]) -> Set[str]:
+        """
+        Get all ancestors (including query concepts) needed to compute the query.
+
+        Args:
+            query_concepts: List of concept names to query.
+
+        Returns:
+            Set of concept names that need to be computed (query + all ancestors).
+        """
+        needed = set(query_concepts)
+        queue = list(query_concepts)
+        while queue:
+            concept_name = queue.pop()
+            var = self.variable_map.get(concept_name)
+            if var is None:
+                continue
+            for parent_var in var.parents:
+                parent_name = parent_var.concept
+                if parent_name not in needed:
+                    needed.add(parent_name)
+                    queue.append(parent_name)
+        return needed
+
     def query(
         self, 
         query: List[str], 
         evidence: Dict[str, torch.Tensor], 
         debug: bool = False, 
         device: str = 'auto',
+        return_logits: bool = False,
         **kwargs
     ) -> torch.Tensor:
         """
@@ -566,6 +608,9 @@ class ForwardInference(BaseInference, ABC):
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
                 - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
                 - 'cpu': Force use of CPU even if CUDA is available
+            return_logits: If True, return raw CPD outputs (logits) instead of
+                activated values.  Useful during training when the loss expects
+                logits (e.g. ``BCEWithLogitsLoss``).
             **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
@@ -584,14 +629,41 @@ class ForwardInference(BaseInference, ABC):
         assert query, "Query list cannot be empty - at least one concept must be requested."
         self._validate_evidence(evidence)
         use_cuda = self._resolve_device(device)
-        results: Dict[str, torch.Tensor] = {}
 
-        for level in self.levels:
-            level_results = self._predict_level(level, evidence, results, debug=debug, use_cuda=use_cuda)
-            results.update(level_results)
-            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
+        # When lazy=True, restrict to the ancestor sub-graph of the query.
+        levels = self.levels
+        if self.lazy:
+            needed = self._get_ancestors(query)
+            levels = [[v for v in lvl if v.concept in needed] for lvl in levels]
+            levels = [lvl for lvl in levels if lvl]
 
-        return self._concatenate_results(query, results)
+        # Two dicts:
+        #   `propagation` – activated values fed to children (detached when self.detach)
+        #   `returned`    – allocated only when propagation can't serve as return
+        #                   (i.e. when return_logits or self.detach)
+        need_separate_return = return_logits or self.detach
+        returned: Dict[str, torch.Tensor] | None = {} if need_separate_return else None
+        propagation: Dict[str, torch.Tensor] = dict(evidence)
+
+        for level in levels:
+            level_output = self._predict_level(level, evidence, propagation, debug=debug, use_cuda=use_cuda)
+
+            # FIXME: where to apply global interventions? extract this from the inference
+            self._apply_global_interventions_for_level(level, level_output, debug=debug, use_cuda=use_cuda)
+
+            for name, pred in level_output.items():
+                variable = self.variable_map.get(name)
+                if isinstance(variable, ConceptVariable):
+                    activated = self.activate(pred, variable)
+                    if returned is not None:
+                        returned[name] = pred if return_logits else activated
+                    propagation[name] = activated.detach() if self.detach else activated
+                else:
+                    if returned is not None:
+                        returned[name] = pred
+                    propagation[name] = pred
+
+        return self._concatenate_results(query, returned if returned is not None else propagation)
 
     @property
     def available_query_vars(self) -> Set[str]:
@@ -776,105 +848,3 @@ class ForwardInference(BaseInference, ABC):
 
         return ProbabilisticModel(new_variables, new_parametric_cpds)
 
-
-class LazyForwardInference(ForwardInference, ABC):
-    """
-    Lazy forward inference that only computes the ancestor tree of queried concepts.
-
-    This class extends :class:`ForwardInference` by overriding ``query`` to first
-    determine which variables are actually needed (the queried concepts and all
-    their ancestors in the DAG), then only runs inference on that subset.
-    This avoids unnecessary computation of variables that are not in the
-    dependency tree of the query.
-
-    All other behaviour (topological sort, parallel execution, interventions,
-    ``predict``, ``get_results``, etc.) is inherited unchanged from
-    :class:`ForwardInference`.
-
-    Example:
-        >>> # Given a model: input -> A -> B, input -> C -> D
-        >>> # Querying only ['B'] will compute: input, A, B
-        >>> # Variable C and D are skipped entirely.
-    """
-
-    def _get_ancestors(self, query_concepts: List[str]) -> Set[str]:
-        """
-        Get all ancestors (including query concepts) needed to compute the query.
-
-        Traverses the graph backwards from query concepts to find all variables
-        that need to be computed.
-
-        Args:
-            query_concepts: List of concept names to query.
-
-        Returns:
-            Set of concept names that need to be computed (query + all ancestors).
-        """
-        needed = set(query_concepts)
-        queue = list(query_concepts)
-
-        while queue:
-            concept_name = queue.pop()
-            if concept_name not in self.variable_map:
-                continue
-            var = self.variable_map[concept_name]
-            for parent_var in var.parents:
-                parent_name = parent_var.concept
-                if parent_name not in needed:
-                    needed.add(parent_name)
-                    queue.append(parent_name)
-
-        return needed
-
-    def query(
-        self, 
-        query: List[str], 
-        evidence: Dict[str, torch.Tensor], 
-        debug: bool = False, 
-        device: str = 'auto', 
-        **kwargs
-    ) -> torch.Tensor:
-        """
-        Execute forward pass on the ancestor tree only and return queried concepts.
-
-        Unlike :meth:`ForwardInference.query` which computes all variables,
-        this method first identifies the minimal set of variables needed
-        (ancestors of the query) and only computes those.
-
-        Args:
-            query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
-            evidence: Dictionary of {root_concept_name: input_tensor}.
-            debug: If True, runs in debug mode (sequential execution).
-            device: Device to use for computation.
-            **kwargs: Additional keyword arguments (ignored for forward compatibility).
-
-        Returns:
-            Single tensor containing concatenated predictions for requested concepts,
-            ordered as requested (Batch x TotalFeatures).
-        """
-        # Filter kwargs to only those needed by this inference to save memory
-        kwargs = self._filter_kwargs(kwargs)
-        
-        assert query, "Query list cannot be empty - at least one concept must be requested."
-        self._validate_evidence(evidence)
-
-        # 1. Find all ancestors needed for the query
-        needed_concepts = self._get_ancestors(query)
-
-        # 2. Filter levels to only include needed variables
-        filtered_levels = [
-            [var for var in level if var.concept in needed_concepts]
-            for level in self.levels
-        ]
-        filtered_levels = [lvl for lvl in filtered_levels if lvl]
-
-        # 3. Run inference on the filtered subset
-        use_cuda = self._resolve_device(device)
-        results: Dict[str, torch.Tensor] = {}
-
-        for level in filtered_levels:
-            level_results = self._predict_level(level, evidence, results, debug=debug, use_cuda=use_cuda)
-            results.update(level_results)
-            self._apply_global_interventions_for_level(level, results, debug=debug, use_cuda=use_cuda)
-
-        return self._concatenate_results(query, results)
