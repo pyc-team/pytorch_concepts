@@ -1,8 +1,10 @@
 """Deterministic inference for probabilistic graphical models."""
 
 import torch
+from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch_concepts.distributions import Delta
 
-from .forward import ForwardInference, LazyForwardInference
+from .forward import ForwardInference
 from ..models.variable import Variable
 
 
@@ -15,8 +17,8 @@ class DeterministicInference(ForwardInference):
     prediction tasks where you want the most likely values rather than samples
     from the distribution.
 
-    Inherits all functionality from ForwardInference but implements get_results()
-    to return raw outputs without stochastic sampling.
+    Inherits all functionality from ForwardInference but implements activate()
+    to map logits to probabilities without stochastic sampling.
 
     Example:
         >>> import torch
@@ -66,77 +68,82 @@ class DeterministicInference(ForwardInference):
         >>> pred_A = (prob_A > 0.5).float()
         >>> print(pred_A)  # Binary predictions
     """
-    def get_results(self, results: torch.tensor, variable: Variable) -> torch.Tensor:
+    def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
-        Return raw output without sampling.
+        Map logits to probabilities based on the variable's distribution.
+
+        * ``Bernoulli`` / ``RelaxedBernoulli``  → sigmoid
+        * ``Categorical`` / ``RelaxedOneHotCategorical`` → softmax
+        * Other           → identity (pass-through)
 
         Args:
-            results: Raw output tensor from the CPD.
-            variable: The variable being computed (unused in deterministic mode).
+            pred: Prediction tensor (logits).
+            variable: The Variable whose prediction is being propagated.
 
         Returns:
-            torch.Tensor: Raw output tensor (endogenous for probabilistic variables).
+            torch.Tensor: Probability tensor in [0, 1].
         """
-        return results
+        dist = getattr(variable, 'distribution', None)
+
+        # TODO: Move this logic to a more central place (e.g. Variable or CPD).
+        # allowing users to define custom distributions and activations.
+        if dist in (Bernoulli, RelaxedBernoulli):
+            return torch.sigmoid(pred)
+        elif dist in (Categorical, RelaxedOneHotCategorical):
+            return torch.softmax(pred, dim=-1)
+        elif dist is Delta:
+            return pred  # already deterministic
+        else:
+            raise NotImplementedError(
+                f"Activation for distribution {dist} not implemented. "
+                "Please implement in DeterministicInference.activate()."
+            )
 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
         """
-        Convert discrete ground truth to logits for propagation. 
-        Supports both binary (cardinality=1) and categorical (cardinality>1) variables.
-        DOES NOT SUPPORT CONTINUOUS VARIABLES.
-        
+        Convert discrete ground truth to activated probabilities for propagation.
+
+        Since the inference engine now owns the activation, propagation values
+        must be in the same representation as ``activate`` produces:
+        probabilities for Bernoulli (0.0/1.0) and one-hot for Categorical.
+
+        Supports both binary (cardinality=1) and categorical (cardinality>1)
+        variables.  DOES NOT SUPPORT CONTINUOUS VARIABLES.
+
         Parameters
         ----------
         value : torch.Tensor
             Ground truth tensor. Shape: (batch_size,) or (batch_size, 1).
             - Binary (cardinality=1): values in {0, 1}
-            - Categorical (cardinality>1): class indices (converted to one-hot)
+            - Categorical (cardinality>1): class indices
         cardinality : int
             Number of features/classes for this variable.
-            
+
         Returns
         -------
         torch.Tensor
-            Logits tensor. Shape: (batch_size, cardinality).
+            Probability / one-hot tensor. Shape: (batch_size, cardinality).
         """
 
+        # TODO: this step should invert whatever is done in the activate() implementation, 
+        # which is currently hardcoded for Bernoulli/Categorical. 
+        # To support custom distributions, we may need a more flexible way to convert GT to evidence format.
         # TODO: add support for continuous variables
+
         # Allow (batch,) and unsqueeze to (batch, 1)
         if value.dim() == 1:
             value = value.unsqueeze(-1)
-        
+
         if value.dim() != 2 or value.shape[-1] != 1:
             raise ValueError(
                 f"Expected shape (batch,) or (batch, 1), got {tuple(value.shape)}."
             )
-        
+
         if cardinality == 1:
-            # Binary: values in {0, 1}
-            return torch.logit(value.float().clamp(1e-7, 1 - 1e-7))
+            # Binary: return 0.0 / 1.0 probabilities
+            return value.float()
         else:
-            # Categorical: convert class indices to one-hot then to logits
-            one_hot = torch.nn.functional.one_hot(
+            # Categorical: return one-hot probabilities
+            return torch.nn.functional.one_hot(
                 value.squeeze(-1).long(), num_classes=cardinality
             ).float()
-            return torch.logit(one_hot.clamp(1e-7, 1 - 1e-7))
-
-
-class LazyDeterministicInference(LazyForwardInference, DeterministicInference):
-    """
-    Lazy deterministic inference that only computes ancestor variables.
-    
-    Combines the lazy query strategy (computing only ancestors of queried
-    concepts) with deterministic inference (returning raw logits).
-    
-    Use this when:
-    - You only need a subset of concepts (e.g., just tasks)
-    - The graph has many independent branches
-    - You want to avoid computing unused variables
-    
-    Example:
-        >>> # Given model: input -> A -> B, input -> C -> D
-        >>> inference = LazyDeterministicInference(pgm)
-        >>> # Querying only ['B'] computes: input, A, B (not C, D)
-        >>> out = inference.query(['B'], evidence={'input': x})
-    """
-    pass
