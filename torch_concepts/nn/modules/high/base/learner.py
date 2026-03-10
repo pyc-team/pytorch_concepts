@@ -206,8 +206,8 @@ class BaseLearner(pl.LightningModule):
         """Get kwargs to pass to the inference engine's query method.
         
         Provides all standard kwargs that any inference might need. Each 
-        inference engine filters to keep only what it accepts via its
-        ``query_kwargs`` property and ``**kwargs`` in the query signature.
+        inference engine filters to keep only what it accepts by inspecting
+        the signature of its ``query`` method.
         
         Parameters
         ----------

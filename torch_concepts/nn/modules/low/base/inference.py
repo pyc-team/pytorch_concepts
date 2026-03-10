@@ -4,6 +4,7 @@ Base inference and intervention classes for concept-based models.
 This module provides abstract base classes for implementing inference mechanisms
 and intervention strategies in concept-based models.
 """
+import inspect
 from abc import ABC, abstractmethod
 
 import torch
@@ -91,19 +92,31 @@ class BaseInference(torch.nn.Module):
     def query_kwargs(self) -> frozenset:
         """Return the set of keyword argument names accepted by :meth:`query`.
         
-        Subclasses should override this to declare which kwargs they handle.
-        The BaseLearner passes all available kwargs (e.g., ground_truth, 
-        concept_names), and each inference filters to keep only what it needs.
+        Automatically derived from the signature of :meth:`query` by
+        inspecting its ``POSITIONAL_OR_KEYWORD`` and ``KEYWORD_ONLY``
+        parameters (excluding ``self``, ``*args``, and ``**kwargs``).
         
         Returns
         -------
         frozenset
-            Names of accepted keyword arguments. Default: empty set.
+            Names of accepted keyword arguments.
         """
-        return frozenset()
+        sig = inspect.signature(self.query)
+        return frozenset(
+            name
+            for name, p in sig.parameters.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        )
     
     def _filter_kwargs(self, kwargs: dict) -> dict:
         """Filter kwargs to only include those accepted by this inference.
+        
+        Inspects the signature of :meth:`query` (like
+        :meth:`AncestralSamplingInference.activate` does for distribution
+        constructors) to determine which keyword arguments are accepted.
         
         Parameters
         ----------
@@ -113,7 +126,8 @@ class BaseInference(torch.nn.Module):
         Returns
         -------
         dict
-            Filtered kwargs containing only keys in :attr:`query_kwargs`.
+            Filtered kwargs containing only keys present in the
+            :meth:`query` signature.
         """
         return {k: v for k, v in kwargs.items() if k in self.query_kwargs}
 
