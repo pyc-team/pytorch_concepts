@@ -74,7 +74,6 @@ Inference is performed using efficient tensorial probabilistic inference algorit
    inference_engine = pyc.nn.AncestralSamplingInference(
        probabilistic_model=probabilistic_model,
        graph_learner=wanda,
-       temperature=1.
    )
    predictions = inference_engine.query(["c1"], evidence={'input': x})
 
