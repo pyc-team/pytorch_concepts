@@ -921,12 +921,16 @@ class TestConceptMapping:
         return model
 
     def test_query_kwargs_property(self):
-        """Test query_kwargs returns expected kwarg names."""
+        """Test query_kwargs returns expected kwarg names from signature."""
         model = self._make_simple_model()
         inference = IndependentInference(model)
         
-        expected = frozenset({'ground_truth', 'concept_names'})
-        assert inference.query_kwargs == expected
+        # Should include all named parameters from the query signature
+        # (excluding self, *args, **kwargs)
+        assert 'ground_truth' in inference.query_kwargs
+        assert 'concept_names' in inference.query_kwargs
+        assert 'query' in inference.query_kwargs
+        assert 'evidence' in inference.query_kwargs
 
     def test_query_with_tensor_and_concept_names(self):
         """Test query accepts ground_truth tensor with concept_names."""

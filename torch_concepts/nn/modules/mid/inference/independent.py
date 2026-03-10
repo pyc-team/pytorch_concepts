@@ -64,11 +64,6 @@ class IndependentInference(DeterministicInference):
         self._index_cache = (key, index_map)
         return index_map
 
-    @property
-    def query_kwargs(self) -> frozenset:
-        """Kwargs accepted by this inference: ground_truth, concept_names."""
-        return frozenset({'ground_truth', 'concept_names'})
-
     def query(
         self,
         query: List[str],
