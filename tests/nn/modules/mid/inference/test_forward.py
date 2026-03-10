@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
@@ -1260,12 +1260,12 @@ class TestForwardInference(unittest.TestCase):
         task_names = ['c1_copy', 'c2_copy', 'xor_copy']
         cardinalities = [1, 1, 2, 1, 1, 2]
         metadata = {
-            'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
-            'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
-            'xor': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task'},
-            'c1_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1 Copy'},
-            'c2_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2 Copy'},
-            'xor_copy': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical',
+            'c1': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 0.1}, 'type': 'binary', 'description': 'Concept 1'},
+            'c2': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 0.1}, 'type': 'binary', 'description': 'Concept 2'},
+            'xor': {'distribution': RelaxedOneHotCategorical, 'dist_kwargs': {'temperature': 0.1}, 'type': 'categorical', 'description': 'XOR Task'},
+            'c1_copy': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 0.1}, 'type': 'binary', 'description': 'Concept 1 Copy'},
+            'c2_copy': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 0.1}, 'type': 'binary', 'description': 'Concept 2 Copy'},
+            'xor_copy': {'distribution': RelaxedOneHotCategorical, 'dist_kwargs': {'temperature': 0.1}, 'type': 'categorical',
                          'description': 'XOR Task Copy'},
         }
         annotations = Annotations(
@@ -1291,7 +1291,7 @@ class TestForwardInference(unittest.TestCase):
         # graph learning init
         graph_learner = WANDAGraphLearner(concept_names, task_names)
 
-        inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, graph_learner, temperature=0.1)
+        inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, graph_learner)
         query_concepts = ["c1", "c2", "xor", "c1_copy", "c2_copy", "xor_copy"]
 
         emb = encoder(x_train)
@@ -1305,10 +1305,151 @@ class TestForwardInference(unittest.TestCase):
         reverse_c2t_mapping = dict(zip(task_names, concept_names))
         query_concepts = sorted(query_concepts, key=lambda x: concept_idx[x] if x in concept_idx else concept_idx[reverse_c2t_mapping[x]])
 
-        inference_engine = AncestralSamplingInference(concept_model_new, temperature=0.1)
+        inference_engine = AncestralSamplingInference(concept_model_new)
         cy_pred_after_unrolling = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
 
         self.assertTrue(cy_pred_after_unrolling.shape == c_train_one_hot.shape)
+
+
+class TestAncestralSamplingCoverage(unittest.TestCase):
+    """Targeted tests to reach 100% coverage on AncestralSamplingInference."""
+
+    # --- activate: log_probs=False (probs branch, line 144) ---
+
+    def test_activate_bernoulli_with_probs(self):
+        """When log_probs=False, probs= is passed instead of logits=."""
+        from torch_concepts import LatentVariable, ConceptVariable
+
+        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Sequential(Linear(5, 1), nn.Sigmoid()))
+
+        pgm = ProbabilisticModel(
+            variables=[input_var, var_A],
+            parametric_cpds=[cpd_input, cpd_A],
+        )
+
+        inference = AncestralSamplingInference(pgm, log_probs=False)
+        x = torch.randn(4, 5)
+        result = inference.query(['A'], evidence={'input': x})
+
+        self.assertEqual(result.shape, (4, 1))
+        # Bernoulli .sample() returns 0 or 1
+        self.assertTrue(torch.all((result == 0) | (result == 1)))
+
+    # --- activate: OneHotCategorical .sample() (line 146-147) ---
+
+    def test_activate_one_hot_categorical(self):
+        """OneHotCategorical should hit the .sample() branch."""
+        from torch_concepts import LatentVariable, ConceptVariable
+
+        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        # Size=3 for a 3-class categorical variable
+        var_A = ConceptVariable('A', parents=['input'], distribution=OneHotCategorical, size=3)
+
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 3))
+
+        pgm = ProbabilisticModel(
+            variables=[input_var, var_A],
+            parametric_cpds=[cpd_input, cpd_A],
+        )
+
+        inference = AncestralSamplingInference(pgm)
+        x = torch.randn(4, 5)
+        result = inference.query(['A'], evidence={'input': x})
+
+        self.assertEqual(result.shape, (4, 3))
+        # Each row should be a one-hot vector (sums to 1, values in {0, 1})
+        self.assertTrue(torch.allclose(result.sum(dim=-1), torch.ones(4)))
+        self.assertTrue(torch.all((result == 0) | (result == 1)))
+
+    # --- activate: generic fallback .rsample() (line 154) ---
+
+    def test_activate_generic_distribution_fallback(self):
+        """A distribution not in the known list should fall through to the generic .rsample() path."""
+        from torch_concepts import LatentVariable, ConceptVariable
+
+        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        # Normal takes (loc, scale); loc= pred (positional), scale via dist_kwargs
+        var_A = ConceptVariable(
+            'A', parents=['input'], distribution=Normal, size=1,
+            dist_kwargs={'scale': torch.tensor(1.0)},
+        )
+
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+
+        pgm = ProbabilisticModel(
+            variables=[input_var, var_A],
+            parametric_cpds=[cpd_input, cpd_A],
+        )
+
+        inference = AncestralSamplingInference(pgm)
+        x = torch.randn(4, 5)
+        result = inference.query(['A'], evidence={'input': x})
+
+        self.assertEqual(result.shape, (4, 1))
+        # Normal .rsample() produces real-valued outputs (not bounded to [0,1])
+        self.assertTrue(result.dtype == torch.float32)
+
+    # --- ground_truth_to_evidence: categorical branch (lines 177-180) ---
+
+    def test_ground_truth_to_evidence_categorical(self):
+        """ground_truth_to_evidence with cardinality > 1 should one-hot encode."""
+        from torch_concepts import LatentVariable, ConceptVariable
+
+        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+
+        pgm = ProbabilisticModel(
+            variables=[input_var, var_A],
+            parametric_cpds=[cpd_input, cpd_A],
+        )
+
+        inference = AncestralSamplingInference(pgm)
+
+        # Simulate categorical ground truth (e.g. class indices for 4 classes)
+        value = torch.tensor([0, 2, 3, 1])
+        result = inference.ground_truth_to_evidence(value, cardinality=4)
+
+        expected = torch.tensor([
+            [1, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+            [0, 1, 0, 0],
+        ]).float()
+        self.assertTrue(torch.equal(result, expected))
+
+    # --- ground_truth_to_evidence: binary branch (lines 181-182) ---
+
+    def test_ground_truth_to_evidence_binary(self):
+        """ground_truth_to_evidence with cardinality == 1 should unsqueeze."""
+        from torch_concepts import LatentVariable, ConceptVariable
+
+        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=Identity())
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+
+        pgm = ProbabilisticModel(
+            variables=[input_var, var_A],
+            parametric_cpds=[cpd_input, cpd_A],
+        )
+
+        inference = AncestralSamplingInference(pgm)
+
+        value = torch.tensor([0.0, 1.0, 1.0, 0.0])
+        result = inference.ground_truth_to_evidence(value, cardinality=1)
+
+        expected = torch.tensor([[0.0], [1.0], [1.0], [0.0]])
+        self.assertTrue(torch.equal(result, expected))
 
 
 class TestDeterministicInference(unittest.TestCase):

@@ -311,15 +311,23 @@ def add_distribution_to_annotations(
     if isinstance(distributions, GroupConfig):
         for (concept_name, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
             if metadata['type'] == 'discrete' and cardinality == 1:
-                new_metadata[concept_name]['distribution'] = distributions['binary']
+                entry = distributions['binary']
             elif metadata['type'] == 'discrete' and cardinality > 1:
-                new_metadata[concept_name]['distribution'] = distributions['categorical']
+                entry = distributions['categorical']
             elif metadata['type'] == 'continuous' and cardinality == 1:
                 raise NotImplementedError("Continuous concepts not supported yet.")
             elif metadata['type'] == 'continuous' and cardinality > 1:
                 raise NotImplementedError("Continuous concepts not supported yet.")
             else:
                 raise ValueError(f"Cannot set distribution type for concept {concept_name}.")
+
+            # entry is either a bare class or [class, {kwargs}]
+            if isinstance(entry, (list, tuple)):
+                new_metadata[concept_name]['distribution'] = entry[0]
+                if len(entry) > 1 and isinstance(entry[1], dict):
+                    new_metadata[concept_name]['dist_kwargs'] = dict(entry[1])
+            else:
+                new_metadata[concept_name]['distribution'] = entry
     elif isinstance(distributions, Mapping):
         for concept_name in axis_annotation.metadata.keys():
             dist = distributions.get(concept_name, None)

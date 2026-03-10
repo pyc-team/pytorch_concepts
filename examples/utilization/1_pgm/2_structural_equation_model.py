@@ -11,11 +11,11 @@ def main():
     n_samples = 1000
 
     # Variable setup
-    latent_var = LatentVariable("input", parents=[], distribution=RelaxedBernoulli)
-    genotype_var = ConceptVariable("genotype", parents=["input"], distribution=RelaxedBernoulli)
-    smoking_var = ConceptVariable("smoking", parents=["genotype"], distribution=RelaxedBernoulli)
-    tar_var = ConceptVariable("tar", parents=["genotype", "smoking"], distribution=RelaxedBernoulli)
-    cancer_var = ConceptVariable("cancer", parents=["tar"], distribution=RelaxedBernoulli)
+    latent_var = LatentVariable("input", parents=[], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    genotype_var = ConceptVariable("genotype", parents=["input"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    smoking_var = ConceptVariable("smoking", parents=["genotype"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    tar_var = ConceptVariable("tar", parents=["genotype", "smoking"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    cancer_var = ConceptVariable("cancer", parents=["tar"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
 
     # ParametricCPD setup
     exogenous_cpd = ParametricCPD("exogenous", parametrization=torch.nn.Sigmoid())
@@ -33,7 +33,7 @@ def main():
                                        parametric_cpds=[exogenous_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model, temperature=1.0, log_probs=False)
+    inference_engine = AncestralSamplingInference(concept_model, log_probs=False)
     initial_input = {'input': torch.randn((n_samples, 1))}
     query_concepts = ["genotype", "smoking", "tar", "cancer"]
 

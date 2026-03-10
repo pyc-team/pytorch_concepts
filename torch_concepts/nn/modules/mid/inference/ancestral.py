@@ -3,7 +3,8 @@
 import inspect
 
 import torch
-from torch.distributions import RelaxedBernoulli, Bernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, RelaxedBernoulli, \
+    OneHotCategorical, RelaxedOneHotCategorical
 
 from .forward import ForwardInference
 from ..models.variable import Variable
@@ -31,8 +32,6 @@ class AncestralSamplingInference(ForwardInference):
             children. Default: False.
         lazy: If True, only compute ancestors of the queried concepts. Default: False.
         log_probs: If True, pass logits to distributions; otherwise pass probs.
-        **dist_kwargs: Additional kwargs passed to distribution constructors
-                      (e.g., temperature for relaxed distributions).
 
     Example:
         >>> import torch
@@ -92,7 +91,7 @@ class AncestralSamplingInference(ForwardInference):
         ...     variables=[embedding_var, var_A_relaxed, var_B],
         ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
         ... )
-        >>> inference_relaxed = AncestralSamplingInference(pgm, temperature=0.05)
+        >>> inference_relaxed = AncestralSamplingInference(pgm)
         >>> # Now uses reparameterization trick (.rsample())
         >>>
         >>> # Query returns continuous values in [0, 1] for relaxed distributions
@@ -104,26 +103,24 @@ class AncestralSamplingInference(ForwardInference):
                  graph_learner: BaseGraphLearner = None,
                  detach: bool = False,
                  lazy: bool = False,
-                 log_probs: bool = True,
-                 **dist_kwargs):
+                 log_probs: bool = True):
         super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy)
-        self.dist_kwargs = dist_kwargs
         self.log_probs = log_probs
 
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
         Sample from the distribution parameterized by the raw CPD output.
 
-        This method creates a distribution using the variable's distribution type
-        and the computed logits/parameters, then draws a sample.
-
         * ``Bernoulli``  → ``.sample()``
         * ``RelaxedBernoulli`` / ``RelaxedOneHotCategorical`` → ``.rsample()``
         * Other           → ``.rsample()``
 
+        Distribution kwargs are read from ``variable.dist_kwargs``.
+
         Args:
             pred: Raw output tensor from the CPD (logits or parameters).
-            variable: The variable being computed (defines distribution type).
+            variable: The variable being computed (defines distribution type
+                and per-variable ``dist_kwargs``).
 
         Returns:
             torch.Tensor: Sampled values from the distribution.
@@ -138,15 +135,15 @@ class AncestralSamplingInference(ForwardInference):
             )
         }
         # retain only allowed dist kwargs
-        dist_kwargs = {k: v for k, v in self.dist_kwargs.items() if k in allowed}
+        dist_kwargs = {k: v for k, v in variable.dist_kwargs.items() if k in allowed}
 
-        if variable.distribution in [Bernoulli, RelaxedBernoulli, RelaxedOneHotCategorical]:
+        if variable.distribution in [Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical]:
             if self.log_probs:
                 dist_kwargs['logits'] = pred
             else:
                 dist_kwargs['probs'] = pred
 
-            if variable.distribution in [Bernoulli]:
+            if variable.distribution in [Bernoulli, OneHotCategorical]:
                 return variable.distribution(**dist_kwargs).sample()
             elif variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
                 return variable.distribution(**dist_kwargs).rsample()

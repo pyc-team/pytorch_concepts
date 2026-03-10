@@ -30,6 +30,8 @@ class Variable:
         parents (List[Variable]): List of parent variables in the graphical model.
         distribution (Type[Distribution]): PyTorch distribution class for this variable.
         size (int): Size/cardinality of the variable (e.g., number of classes for Categorical).
+        dist_kwargs (Dict[str, Any]): Keyword arguments passed to the distribution constructor
+            (e.g., ``{'temperature': 0.5}`` for relaxed distributions).
         metadata (Dict[str, Any]): Additional metadata associated with the variable.
 
     Properties:
@@ -99,7 +101,8 @@ class Variable:
 
     def __new__(cls, concepts: Union[str, List[str]], parents: List[Union['Variable', str]],
                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
+                size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None,
+                dist_kwargs: Optional[Dict[str, Any]] = None):
         """
         Create new Variable instance(s).
 
@@ -112,6 +115,9 @@ class Variable:
             distribution: Distribution type or list of distribution types.
             size: Size parameter(s) for the distribution.
             metadata: Optional metadata dictionary.
+            dist_kwargs: Optional keyword arguments for the distribution
+                constructor (e.g., ``{'temperature': 0.5}``). Shared
+                across all variables when concepts is a list.
 
         Returns:
             Variable: Single instance if concepts is str.
@@ -164,7 +170,8 @@ class Variable:
                 parents=parents,
                 distribution=distribution_list[i],
                 size=size_list[i],
-                metadata=metadata.copy() if metadata else None
+                metadata=metadata.copy() if metadata else None,
+                dist_kwargs=dist_kwargs.copy() if dist_kwargs else None
             )
             new_vars.append(instance)
         return new_vars
@@ -173,7 +180,8 @@ class Variable:
                  parents: List[Union['Variable', str]],
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
+                 metadata: Dict[str, Any] = None,
+                 dist_kwargs: Optional[Dict[str, Any]] = None):
         """
         Initialize a Variable instance.
 
@@ -183,6 +191,9 @@ class Variable:
             distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
             size: Size parameter for the distribution.
             metadata: Optional metadata dictionary.
+            dist_kwargs: Optional keyword arguments for the distribution
+                constructor (e.g., ``{'temperature': 0.5}`` for relaxed
+                distributions).
 
         Raises:
             ValueError: If Categorical variable doesn't have size > 1.
@@ -203,6 +214,7 @@ class Variable:
         self.parents = parents
         self.distribution = distribution
         self.size = size
+        self.dist_kwargs = dist_kwargs if dist_kwargs is not None else {}
         self.metadata = metadata if metadata is not None else {}
 
     @property
@@ -245,7 +257,8 @@ class Variable:
             str: String representation including concepts, distribution, size, and metadata.
         """
         meta_str = f", metadata={self.metadata}" if self.metadata else ""
-        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{meta_str})"
+        dist_kwargs_str = f", dist_kwargs={self.dist_kwargs}" if self.dist_kwargs else ""
+        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, out_features={self.out_features}{meta_str})"
 
 
 class ConceptVariable(Variable):
@@ -262,10 +275,11 @@ class ConceptVariable(Variable):
         parents (List[Variable]): List of parent variables in the graphical model.
         distribution (Type[Distribution]): PyTorch distribution class for this variable.
         size (int): Size/cardinality of the variable.
+        dist_kwargs (Dict[str, Any]): Keyword arguments for the distribution constructor.
         metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'concept'.
         
     Example:
-        >>> from torch.distributions import Bernoulli, Categorical
+        >>> from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
         >>> from torch_concepts import ConceptVariable
         >>> # Observable binary concept
         >>> has_wings = ConceptVariable(
@@ -273,6 +287,15 @@ class ConceptVariable(Variable):
         ...     parents=[],
         ...     distribution=Bernoulli,
         ...     size=1
+        ... )
+        >>> 
+        >>> # Relaxed binary concept with temperature
+        >>> has_wings_relaxed = ConceptVariable(
+        ...     concepts='has_wings',
+        ...     parents=[],
+        ...     distribution=RelaxedBernoulli,
+        ...     size=1,
+        ...     dist_kwargs={'temperature': 0.5}
         ... )
         >>> 
         >>> # Observable categorical concept (e.g., color)
@@ -288,7 +311,8 @@ class ConceptVariable(Variable):
                  parents: List[Union['Variable', str]],
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
+                 metadata: Dict[str, Any] = None,
+                 dist_kwargs: Optional[Dict[str, Any]] = None):
         """
         Initialize a ConceptVariable instance.
         
@@ -298,11 +322,13 @@ class ConceptVariable(Variable):
             distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
             size: Size parameter for the distribution.
             metadata: Optional metadata dictionary.
+            dist_kwargs: Optional keyword arguments for the distribution
+                constructor (e.g., ``{'temperature': 0.5}``).
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'concept'
-        super().__init__(concepts, parents, distribution, size, metadata)
+        super().__init__(concepts, parents, distribution, size, metadata, dist_kwargs)
 
 
 # Backward compatibility alias
@@ -352,7 +378,8 @@ class ExogenousVariable(Variable):
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
                  concept_var: Optional['ConceptVariable'] = None,
-                 metadata: Dict[str, Any] = None):
+                 metadata: Dict[str, Any] = None,
+                 dist_kwargs: Optional[Dict[str, Any]] = None):
         """
         Initialize an ExogenousVariable instance.
         
@@ -363,13 +390,14 @@ class ExogenousVariable(Variable):
             size: Dimensionality of the high-dimensional representation.
             concept_var: Optional reference to the related concept variable.
             metadata: Optional metadata dictionary.
+            dist_kwargs: Optional keyword arguments for the distribution constructor.
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'exogenous'
         if concept_var is not None:
             metadata['concept_var'] = concept_var
-        super().__init__(concepts, parents, distribution, size, metadata)
+        super().__init__(concepts, parents, distribution, size, metadata, dist_kwargs)
         self.concept_var = concept_var
 
 
@@ -388,6 +416,7 @@ class LatentVariable(Variable):
         parents (List[Variable]): List of parent variables in the graphical model (typically empty).
         distribution (Type[Distribution]): PyTorch distribution class for this variable.
         size (int): Dimensionality of the latent representation.
+        dist_kwargs (Dict[str, Any]): Keyword arguments for the distribution constructor.
         metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'latent'.
         
     Example:
@@ -420,7 +449,8 @@ class LatentVariable(Variable):
                  parents: List[Union['Variable', str]],
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
+                 metadata: Dict[str, Any] = None,
+                 dist_kwargs: Optional[Dict[str, Any]] = None):
         """
         Initialize a LatentVariable instance.
         
@@ -430,11 +460,12 @@ class LatentVariable(Variable):
             distribution: Distribution type (typically Delta or Normal for continuous representations).
             size: Dimensionality of the latent representation.
             metadata: Optional metadata dictionary.
+            dist_kwargs: Optional keyword arguments for the distribution constructor.
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'latent'
-        super().__init__(concepts, parents, distribution, size, metadata)
+        super().__init__(concepts, parents, distribution, size, metadata, dist_kwargs)
 
 
 # Backward compatibility alias
