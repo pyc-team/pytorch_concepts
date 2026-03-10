@@ -237,7 +237,6 @@ Detailed Guides
        # Create inference engine
        inference_engine = AncestralSamplingInference(
            sem_model,
-           temperature=1.0,
            log_probs=False
        )
 

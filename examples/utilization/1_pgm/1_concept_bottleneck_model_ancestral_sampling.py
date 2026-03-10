@@ -25,8 +25,10 @@ def main():
 
     # Variable setup
     input_var = LatentVariable("input", parents=[], size=x_train.shape[1])
-    concepts = ConceptVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli)
-    tasks = ConceptVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    concepts = ConceptVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli, 
+                               dist_kwargs={'temperature': 1})
+    tasks = ConceptVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2,
+                            dist_kwargs={'temperature': 1})
 
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Identity())
@@ -37,7 +39,7 @@ def main():
     concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model, temperature=1.)
+    inference_engine = AncestralSamplingInference(concept_model)
     initial_input = {'input': x_train}
     query_concepts = ["c1", "c2", "xor"]
 

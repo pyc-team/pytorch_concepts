@@ -215,7 +215,8 @@ class GraphModel(BaseConstructor):
             encoder_vars = ConceptVariable(label_names,
                                 parents=['input'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
-                                size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names])
+                                size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names],
+                                dist_kwargs=self.annotations[1].metadata[label_names[0]].get('dist_kwargs'))
             # Ensure encoder_vars is always a list
             if not isinstance(encoder_vars, list):
                 encoder_vars = [encoder_vars]
@@ -236,7 +237,8 @@ class GraphModel(BaseConstructor):
                 encoder_var = ConceptVariable(label_name,
                                     parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
-                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)])
+                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)],
+                                    dist_kwargs=self.annotations[1].metadata[label_name].get('dist_kwargs'))
                 encoder_cpd = ParametricCPD(label_name, parametrization=layer)
                 encoder_vars.append(encoder_var)
                 encoder_cpds.append(encoder_cpd)
@@ -300,7 +302,8 @@ class GraphModel(BaseConstructor):
             predictor_var = ConceptVariable(c_name,
                                      parents=concept_parents_names+exog_vars_names,
                                     distribution=self.annotations[1].metadata[c_name]['distribution'],
-                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)])
+                                    size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)],
+                                    dist_kwargs=self.annotations[1].metadata[c_name].get('dist_kwargs'))
             predictor_cpd = ParametricCPD(c_name, parametrization=layer)
 
             predictor_vars.append(predictor_var)

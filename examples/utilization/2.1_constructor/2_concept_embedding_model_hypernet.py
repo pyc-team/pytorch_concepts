@@ -30,9 +30,9 @@ def main():
 
     cardinalities = [1, 1, 2]
     metadata = {
-        'c1': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 1'},
-        'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
-        'xor': {'distribution': RelaxedOneHotCategorical, 'type': 'binary', 'description': 'XOR Task'},
+        'c1': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 1.0}, 'type': 'binary', 'description': 'Concept 1'},
+        'c2': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 1.0}, 'type': 'binary', 'description': 'Concept 2'},
+        'xor': {'distribution': RelaxedOneHotCategorical, 'dist_kwargs': {'temperature': 1.0}, 'type': 'binary', 'description': 'XOR Task'},
     }
     annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
 
@@ -47,7 +47,7 @@ def main():
                                    predictor=LazyConstructor(HyperlinearConceptExogenousToConcept, hidden_size=11))
 
     # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model.probabilistic_model, temperature=1.0)
+    inference_engine = AncestralSamplingInference(concept_model.probabilistic_model)
     query_concepts = ["c1", "c2", "xor"]
     int_policy_c = RandomPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
     int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 0:1])
