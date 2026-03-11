@@ -2,20 +2,27 @@
 Tests for torch_concepts.nn.modules.high.base.learner.BaseLearner
 
 BaseLearner is now a lightweight training orchestrator that handles:
-- Loss computation
+- Loss computation (single module or list→CompositeLoss)
+- loss_weights warning when misused
 - Metrics tracking (ConceptMetrics or dict of MetricCollections)  
 - Optimizer and scheduler configuration
+- shared_step / training_step / validation_step / test_step
+- _get_inference_kwargs
+- log_loss
+- update_metrics error path
 
 Note: Annotations and concept management are now handled by BaseModel,
 not BaseLearner. These tests focus on the core orchestration functionality.
 """
 import unittest
+import warnings
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
 from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.nn.modules.loss import ConceptLoss, CompositeLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.utils import GroupConfig
 
@@ -32,6 +39,31 @@ class MockLearner(BaseLearner):
     def forward(self, x):
         """Simple forward pass for testing."""
         return torch.randn(x.shape[0], self.n_concepts)
+
+
+class FullMockLearner(BaseLearner):
+    """Mock that satisfies all shared_step requirements.
+
+    Mimics the interface that BaseModel normally provides:
+    concept_names, concept_annotations, filter_output_for_loss,
+    filter_output_for_metrics, and a full forward(x, query, evidence, **kw).
+    """
+
+    def __init__(self, annotations, n_concepts=2, **kwargs):
+        super().__init__(**kwargs)
+        self.n_concepts = n_concepts
+        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.concept_names = self.concept_annotations.labels
+        self.dummy_param = nn.Parameter(torch.randn(1))
+
+    def forward(self, x, query=None, evidence=None, **kwargs):
+        return torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+
+    def filter_output_for_loss(self, forward_out, target):
+        return {'input': forward_out, 'target': target}
+
+    def filter_output_for_metrics(self, forward_out, target):
+        return {'preds': forward_out, 'target': target}
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -412,6 +444,233 @@ class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
         
         self.assertIsInstance(result, dict)
         self.assertIsInstance(result['optimizer'], torch.optim.SGD)
+
+
+# ======================================================================
+# Loss list / CompositeLoss branch & loss_weights warning
+# ======================================================================
+
+class TestBaseLearnerLossInit(unittest.TestCase):
+    """Test loss initialisation paths in BaseLearner.__init__."""
+
+    def test_list_of_losses_creates_composite(self):
+        """When loss is a list, CompositeLoss is created."""
+        loss1 = nn.MSELoss()
+        loss2 = nn.L1Loss()
+        learner = MockLearner(loss=[loss1, loss2])
+        self.assertIsInstance(learner.loss, CompositeLoss)
+
+    def test_list_of_losses_with_weights(self):
+        """Weights are forwarded to CompositeLoss."""
+        loss1 = nn.MSELoss()
+        loss2 = nn.L1Loss()
+        learner = MockLearner(loss=[loss1, loss2], loss_weights=[0.7, 0.3])
+        self.assertIsInstance(learner.loss, CompositeLoss)
+        self.assertAlmostEqual(learner.loss.weights[0], 0.7)
+        self.assertAlmostEqual(learner.loss.weights[1], 0.3)
+
+    def test_tuple_of_losses_creates_composite(self):
+        """Tuple of losses also triggers CompositeLoss."""
+        learner = MockLearner(loss=(nn.MSELoss(), nn.L1Loss()))
+        self.assertIsInstance(learner.loss, CompositeLoss)
+
+    def test_single_loss_with_weights_warns(self):
+        """Passing loss_weights with a single loss emits a UserWarning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            learner = MockLearner(loss=nn.MSELoss(), loss_weights=[1.0])
+            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
+            self.assertEqual(len(user_warnings), 1)
+            self.assertIn("loss_weights is ignored", str(user_warnings[0].message))
+        # The loss itself is still set
+        self.assertIsInstance(learner.loss, nn.MSELoss)
+
+
+# ======================================================================
+# update_metrics error path
+# ======================================================================
+
+class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
+    """Test update_metrics raises ValueError for unsupported metrics type."""
+
+    def test_update_metrics_invalid_type_raises(self):
+        """Metrics set to an arbitrary object raises ValueError."""
+        learner = MockLearner(n_concepts=2)
+        learner.metrics = "not_a_valid_metrics"  # bypass __init__ validation
+        preds = torch.tensor([0.8, 0.2])
+        targets = torch.tensor([1, 0])
+        with self.assertRaises(ValueError):
+            learner.update_metrics(preds, targets, step='train')
+
+
+# ======================================================================
+# _get_inference_kwargs
+# ======================================================================
+
+class TestGetInferenceKwargs(unittest.TestCase):
+    """Test _get_inference_kwargs with and without inference attribute."""
+
+    def setUp(self):
+        self.annotations = Annotations({
+            1: AxisAnnotation(
+                labels=('C1', 'C2'),
+                metadata={
+                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
+                }
+            )
+        })
+
+    def test_no_inference_returns_empty(self):
+        """Without inference attr, returns empty dict."""
+        learner = MockLearner(n_concepts=2)
+        # MockLearner has no .inference attribute
+        batch = {
+            'inputs': {'x': torch.randn(4, 3)},
+            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
+        }
+        result = learner._get_inference_kwargs(batch)
+        self.assertEqual(result, {})
+
+    def test_with_inference_returns_kwargs(self):
+        """With inference attr, returns ground_truth / concept_names / return_logits."""
+        learner = FullMockLearner(self.annotations, n_concepts=2)
+        learner.inference = True  # simulate having an inference engine
+        c = torch.randint(0, 2, (4, 2)).float()
+        batch = {
+            'inputs': {'x': torch.randn(4, 3)},
+            'concepts': {'c': c},
+        }
+        result = learner._get_inference_kwargs(batch)
+        self.assertIn('ground_truth', result)
+        self.assertTrue(torch.equal(result['ground_truth'], c))
+        self.assertEqual(result['concept_names'], self.annotations.get_axis_annotation(1).labels)
+        self.assertTrue(result['return_logits'])
+
+
+# ======================================================================
+# shared_step, training_step, validation_step, test_step, log_loss
+# ======================================================================
+
+class TestBaseLearnerSharedStep(unittest.TestCase):
+    """Test shared_step and the per-split step methods."""
+
+    def setUp(self):
+        self.annotations = Annotations({
+            1: AxisAnnotation(
+                labels=('C1', 'C2'),
+                metadata={
+                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
+                }
+            )
+        })
+        self.loss_fn = ConceptLoss(
+            self.annotations,
+            binary=nn.BCEWithLogitsLoss(),
+        )
+        self.batch = {
+            'inputs': {'x': torch.randn(8, 3)},
+            'concepts': {'c': torch.randint(0, 2, (8, 2)).float()},
+        }
+
+    # -- helpers to capture Lightning self.log / self.log_dict calls ----
+
+    @staticmethod
+    def _patch_logging(learner):
+        """Monkey-patch self.log and self.log_dict so they don't need a Trainer."""
+        learner._logged = {}
+        def _fake_log(name, value, **kw):
+            learner._logged[name] = value
+        def _fake_log_dict(d, **kw):
+            learner._logged.update(d)
+        learner.log = _fake_log
+        learner.log_dict = _fake_log_dict
+
+    # -- shared_step ---------------------------------------------------
+
+    def test_shared_step_computes_loss(self):
+        """shared_step returns a scalar loss and logs it."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        loss = learner.shared_step(self.batch, step='train')
+        self.assertEqual(loss.shape, ())
+        self.assertIn('train_loss', learner._logged)
+
+    def test_shared_step_no_loss(self):
+        """shared_step with loss=None still returns (the uninitialized variable raises)."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=None,
+        )
+        self._patch_logging(learner)
+        # loss local variable is never assigned when self.loss is None,
+        # so returning it raises UnboundLocalError — this is the current
+        # behaviour and we document it.
+        with self.assertRaises(UnboundLocalError):
+            learner.shared_step(self.batch, step='train')
+
+    def test_shared_step_with_composite_loss(self):
+        """shared_step works when loss is a list (CompositeLoss)."""
+        loss1 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
+        loss2 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=[loss1, loss2],
+            loss_weights=[1.0, 0.5],
+        )
+        self._patch_logging(learner)
+        loss = learner.shared_step(self.batch, step='val')
+        self.assertEqual(loss.shape, ())
+        self.assertIn('val_loss', learner._logged)
+
+    # -- training_step / validation_step / test_step -------------------
+
+    def test_training_step(self):
+        """training_step delegates to shared_step('train')."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2, loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        loss = learner.training_step(self.batch)
+        self.assertEqual(loss.shape, ())
+        self.assertIn('train_loss', learner._logged)
+
+    def test_validation_step(self):
+        """validation_step delegates to shared_step('val')."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2, loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        loss = learner.validation_step(self.batch)
+        self.assertEqual(loss.shape, ())
+        self.assertIn('val_loss', learner._logged)
+
+    def test_test_step(self):
+        """test_step delegates to shared_step('test')."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2, loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        loss = learner.test_step(self.batch)
+        self.assertEqual(loss.shape, ())
+        self.assertIn('test_loss', learner._logged)
+
+    # -- log_loss (line 171) -------------------------------------------
+
+    def test_log_loss_called(self):
+        """log_loss records '<step>_loss'."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2, loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        fake_loss = torch.tensor(0.42, requires_grad=True)
+        learner.log_loss('train', fake_loss, batch_size=8)
+        self.assertIn('train_loss', learner._logged)
+        self.assertAlmostEqual(learner._logged['train_loss'].item(), 0.42, places=5)
 
 
 if __name__ == '__main__':
