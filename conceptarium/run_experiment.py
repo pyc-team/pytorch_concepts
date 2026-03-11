@@ -15,7 +15,7 @@ from hydra.utils import instantiate
 from conceptarium.trainer import Trainer
 from conceptarium.hydra import parse_hyperparams
 from conceptarium.resolvers import register_custom_resolvers
-from conceptarium.utils import setup_run_env, clean_empty_configs, update_config_from_data
+from conceptarium.utils import setup_run_env, clean_empty_configs, update_config_from_data, instantiate_loss
 
 @hydra.main(config_path="conf", config_name="sweep", version_base="1.3")
 def main(cfg: DictConfig) -> None:
@@ -43,11 +43,22 @@ def main(cfg: DictConfig) -> None:
     # 2. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
-    loss = instantiate(cfg.loss, annotations=datamodule.annotations, _convert_="all")
+
+    loss, loss_weights = instantiate_loss(cfg, datamodule.annotations)
     logger.info(loss)
+
     metrics = instantiate(cfg.metrics, annotations=datamodule.annotations, _convert_="all")
     logger.info(metrics)
-    model = instantiate(cfg.model, annotations=datamodule.annotations, graph=datamodule.graph, loss=loss, metrics=metrics, _convert_="all")
+
+    model = instantiate(
+        cfg.model, 
+        annotations=datamodule.annotations, 
+        graph=datamodule.graph, 
+        loss=loss, 
+        loss_weights=loss_weights, 
+        metrics=metrics, 
+        _convert_="all"
+    )
     
     logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:

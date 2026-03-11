@@ -37,7 +37,8 @@ from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss
+from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
+    L1LogitRegularizer
 
 # Metrics
 from .modules.metrics import ConceptMetrics
@@ -123,6 +124,8 @@ __all__ = [
     # Loss functions
     "ConceptLoss",
     "WeightedConceptLoss",
+    "DepthWeightedConceptLoss",
+    "L1LogitRegularizer",
 
     # Metrics
     "ConceptMetrics",
