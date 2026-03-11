@@ -16,7 +16,6 @@ from torchmetrics.classification import BinaryAccuracy
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
-from torch_concepts import GroupConfig
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
@@ -57,11 +56,9 @@ def main():
     # Define loss function
     loss_fn = ConceptLoss(
         annotations = annotations,
-        fn_collection = GroupConfig(
-            binary = torch.nn.BCEWithLogitsLoss(),
-            categorical = torch.nn.CrossEntropyLoss(),
-            continuous = torch.nn.MSELoss()
-        )
+        binary = torch.nn.BCEWithLogitsLoss(),
+        categorical = torch.nn.CrossEntropyLoss(), # not used as concepts are binary, but included for demonstration
+        continuous = torch.nn.MSELoss() # not used as concepts are binary, but included for demonstration
     )
 
     # Define variable distributions as Bernoulli
