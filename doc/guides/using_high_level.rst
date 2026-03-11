@@ -198,11 +198,11 @@ Detailed Guides
       from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
       
       # Loss configuration
-      loss_config = GroupConfig(
+      loss = ConceptLoss(
+          annotations=ann,
           binary=BCEWithLogitsLoss(),
           categorical=CrossEntropyLoss()
       )
-      loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
       
       # Metrics configuration
       metrics_config = GroupConfig(

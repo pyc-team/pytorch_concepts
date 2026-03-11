@@ -439,40 +439,28 @@ Detailed Guides
    .. code-block:: yaml
    
       _target_: torch_concepts.nn.ConceptLoss
-      _partial_: true
       
-      fn_collection:
-        discrete:
-          binary:
-            path: torch.nn.BCEWithLogitsLoss
-            kwargs: {}
-          categorical:
-            path: torch.nn.CrossEntropyLoss
-            kwargs: {}
-        # continuous:  # Not yet supported
-        #   path: torch.nn.MSELoss
-        #   kwargs: {}
+      binary:
+        _target_: torch.nn.BCEWithLogitsLoss
+      categorical:
+        _target_: torch.nn.CrossEntropyLoss
+      # continuous:  # Not yet supported
+      #   _target_: torch.nn.MSELoss
    
    **Weighted losses** (``conf/loss/weighted.yaml``):
    
    .. code-block:: yaml
    
-      _target_: torch_concepts.nn.ConceptLoss
-      _partial_: true
+      _target_: torch_concepts.nn.WeightedConceptLoss
       
-      fn_collection:
-        discrete:
-          binary:
-            path: torch.nn.BCEWithLogitsLoss
-            kwargs:
-              reduction: none  # Required for weighting
-          categorical:
-            path: torch.nn.CrossEntropyLoss
-            kwargs:
-              reduction: none
+      concept_weight: 3
+      task_weight: 1
+      task_names: ${dataset.default_task_names}
       
-      concept_loss_weight: 1.0
-      task_loss_weight: 1.0
+      binary:
+        _target_: torch.nn.BCEWithLogitsLoss
+      categorical:
+        _target_: torch.nn.CrossEntropyLoss
    
    **Metrics Configuration**
    
@@ -788,22 +776,17 @@ Detailed Guides
    .. code-block:: yaml
    
       _target_: torch_concepts.nn.WeightedConceptLoss
-      _partial_: true
       
-      fn_collection:
-        discrete:
-          binary:
-            path: my_package.MyBinaryLoss
-            kwargs:
-              alpha: 0.25
-              gamma: 2.0
-          categorical:
-            path: torch.nn.CrossEntropyLoss
-            kwargs:
-              label_smoothing: 0.1
+      binary:
+        _target_: my_package.MyBinaryLoss
+        alpha: 0.25
+        gamma: 2.0
+      categorical:
+        _target_: torch.nn.CrossEntropyLoss
+        label_smoothing: 0.1
       
-      concept_loss_weight: 0.5
-      task_loss_weight: 1.0
+      concept_weight: 0.5
+      task_weight: 1.0
    
    Use it:
    

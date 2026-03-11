@@ -52,11 +52,9 @@ def main():
     # Define loss function
     loss_fn = ConceptLoss(
         annotations = annotations,
-        fn_collection = GroupConfig(
-            binary = torch.nn.BCEWithLogitsLoss(),
-            categorical = torch.nn.CrossEntropyLoss(),
-            continuous = torch.nn.MSELoss()
-        )
+        binary = torch.nn.BCEWithLogitsLoss(),
+        categorical = torch.nn.CrossEntropyLoss(),
+        continuous = torch.nn.MSELoss()
     )
 
     # Define variable distributions as Bernoulli

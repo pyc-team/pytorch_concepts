@@ -139,7 +139,7 @@ A standard neural network for comparison baselines:
 Losses and Metrics
 ^^^^^^^^^^^^^^^^^^
 
-Configure losses and metrics using ``GroupConfig`` to automatically handle mixed concept types:
+Configure losses and metrics to automatically handle mixed concept types:
 
 **Concept Loss**
 
@@ -147,17 +147,12 @@ Configure losses and metrics using ``GroupConfig`` to automatically handle mixed
 
    import torch.nn as nn
    from torch_concepts.nn import ConceptLoss
-   from torch_concepts import GroupConfig
    
    # Different loss functions for different concept types
-   loss_config = GroupConfig(
-       binary=nn.BCEWithLogitsLoss(),
-       categorical=nn.CrossEntropyLoss()
-   )
-   
    concept_loss = ConceptLoss(
        annotations=annotations,
-       fn_collection=loss_config
+       binary=nn.BCEWithLogitsLoss(),
+       categorical=nn.CrossEntropyLoss()
    )
 
 **Concept Metrics**
