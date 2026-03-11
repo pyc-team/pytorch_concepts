@@ -7,11 +7,9 @@ concept_weight: 3 # weight applied to concepts
 task_weight: 1 # weight applied to tasks
 task_names: ${dataset.default_task_names}
 
-fn_collection:
-  _target_: "torch_concepts.nn.modules.utils.GroupConfig"
-  binary: 
-    _target_: "torch.nn.BCEWithLogitsLoss"
-  categorical: 
-    _target_: "torch.nn.CrossEntropyLoss"
-  # continuous: 
-    # ... not supported yet
+binary: 
+  _target_: "torch.nn.BCEWithLogitsLoss"
+categorical: 
+  _target_: "torch.nn.CrossEntropyLoss"
+# continuous: 
+  # ... not supported yet

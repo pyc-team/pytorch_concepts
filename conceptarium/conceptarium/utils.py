@@ -7,10 +7,12 @@ This module provides helper functions for:
 - Managing concept annotations and distributions
 """
 import os
+import inspect
 import torch
 import logging
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig, OmegaConf, open_dict
+from hydra.utils import instantiate, get_class
 from torch_concepts import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,47 @@ def clean_empty_configs(cfg: DictConfig) -> DictConfig:
         if not cfg.get('rag'):
             cfg.update(rag = None)
     return cfg
+
+def instantiate_loss(cfg: DictConfig, annotations):
+    """Instantiate loss from config, supporting both single and list forms.
+
+    Args:
+        cfg: Full Hydra DictConfig (reads ``cfg.loss`` and optional ``cfg.loss_weights``).
+        annotations: Annotations object passed to each loss term.
+
+    Returns:
+        Tuple of (loss, loss_weights) ready to pass to the model constructor.
+    """
+    loss_cfg = cfg.loss
+    if OmegaConf.is_list(loss_cfg):
+        loss = [_instantiate_single_loss(t, annotations) for t in loss_cfg]
+        loss_weights = list(cfg.loss_weights) if cfg.get("loss_weights") else None
+    else:
+        loss = _instantiate_single_loss(loss_cfg, annotations)
+        loss_weights = None
+    return loss, loss_weights
+
+
+def _instantiate_single_loss(loss_cfg: DictConfig, annotations):
+    """Instantiate a single loss term, passing ``annotations`` only if accepted.
+
+    Inspects the target class constructor to decide whether to forward the
+    ``annotations`` argument.
+    """
+    target = loss_cfg.get("_target_")
+    needs_annotations = False
+    if target:
+        try:
+            cls = get_class(target)
+            sig = inspect.signature(cls.__init__)
+            needs_annotations = "annotations" in sig.parameters
+        except Exception:
+            needs_annotations = True  # safe fallback: pass it anyway
+
+    if needs_annotations:
+        return instantiate(loss_cfg, annotations=annotations, _convert_="all")
+    return instantiate(loss_cfg, _convert_="all")
+
 
 def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
     """Update model configuration from datamodule properties.

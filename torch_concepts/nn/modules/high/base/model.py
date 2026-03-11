@@ -97,9 +97,14 @@ class BaseModel(nn.Module, ABC):
     
     Lightning Training Parameters (only used when lightning=True)
     -------------------------------------------------------------
-    loss : nn.Module, optional
-        Loss function for training. Should accept 'input' and 'target' kwargs.
-        Common choices: nn.BCEWithLogitsLoss, nn.CrossEntropyLoss, TypedLoss.
+    loss : nn.Module or list of nn.Module, optional
+        Loss function for training, or a list of loss terms to sum.
+        Each term should accept keyword arguments matching its ``forward()``
+        signature (e.g. ``input``, ``target``). When a list is provided, the
+        learner wraps them in a ``CompositeLoss`` internally.
+    loss_weights : list of float, optional
+        Per-term weights when ``loss`` is a list. Defaults to 1.0 per term.
+        Ignored when ``loss`` is a single module.
     metrics : ConceptMetrics or dict, optional
         Metrics for evaluation. Can be a ConceptMetrics object or dict with keys
         'train_metrics', 'val_metrics', 'test_metrics' mapping to MetricCollections.

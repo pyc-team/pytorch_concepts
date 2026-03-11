@@ -40,10 +40,8 @@ class TestHighLevelIntegration(unittest.TestCase):
             )
         })
         
-        self.loss_config = GroupConfig(
-            binary=nn.BCEWithLogitsLoss(),
-            categorical=nn.CrossEntropyLoss()
-        )
+        self.loss_binary = nn.BCEWithLogitsLoss()
+        self.loss_categorical = nn.CrossEntropyLoss()
         
         self.metrics_config = GroupConfig(
             binary={'accuracy': BinaryAccuracy()},
@@ -58,7 +56,7 @@ class TestHighLevelIntegration(unittest.TestCase):
             task_names=['task']
         )
         
-        loss_fn = ConceptLoss(annotations=self.ann, fn_collection=self.loss_config)
+        loss_fn = ConceptLoss(annotations=self.ann, binary=self.loss_binary, categorical=self.loss_categorical)
         
         # Forward pass
         x = torch.randn(8, 16)
@@ -125,7 +123,7 @@ class TestHighLevelIntegration(unittest.TestCase):
             latent_encoder_kwargs={'hidden_size': 32}
         )
         
-        loss_fn = ConceptLoss(annotations=self.ann, fn_collection=self.loss_config)
+        loss_fn = ConceptLoss(annotations=self.ann, binary=self.loss_binary, categorical=self.loss_categorical)
         
         metrics = ConceptMetrics(
             annotations=self.ann,
@@ -195,8 +193,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         )
         
         # Loss
-        loss_config = GroupConfig(binary=nn.BCEWithLogitsLoss())
-        loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
+        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
         
         # Metrics
         metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
@@ -243,8 +240,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         })
         
         # Loss
-        loss_config = GroupConfig(binary=nn.BCEWithLogitsLoss())
-        loss = ConceptLoss(annotations=ann_with_dist, fn_collection=loss_config)
+        loss = ConceptLoss(annotations=ann_with_dist, binary=nn.BCEWithLogitsLoss())
         
         # Metrics
         metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
@@ -362,11 +358,7 @@ class TestDistributionHandling(unittest.TestCase):
             task_names=['cat2']
         )
         
-        loss_config = GroupConfig(
-            binary=nn.BCEWithLogitsLoss(),
-            categorical=nn.CrossEntropyLoss()
-        )
-        loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
+        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss(), categorical=nn.CrossEntropyLoss())
         
         metrics_config = GroupConfig(
             binary={'accuracy': BinaryAccuracy()},

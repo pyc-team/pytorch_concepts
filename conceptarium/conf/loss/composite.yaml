@@ -1,0 +1,24 @@
+# =============================================================
+# Composite loss settings
+#
+# Modular loss composition: define a list of loss terms.
+# The learner wraps them internally into a weighted sum.
+# Each term that needs 'annotations' gets it injected at
+# runtime by run_experiment.py.
+#
+# Set loss_weights at the top level of the config (e.g. in
+# sweep.yaml) to control per-term weighting:
+#   loss_weights: [1.0, 0.5]
+# =============================================================
+- _target_: "torch_concepts.nn.WeightedConceptLoss"
+  concept_weight: 10 # weight applied to concepts
+  task_weight: 1 # weight applied to tasks
+  task_names: ${dataset.default_task_names}
+  binary:
+    _target_: "torch.nn.BCEWithLogitsLoss"
+  categorical: 
+    _target_: "torch.nn.CrossEntropyLoss"
+  # continuous:
+
+- _target_: 'torch_concepts.nn.L1LogitRegularizer'
+  scale: 0.1
