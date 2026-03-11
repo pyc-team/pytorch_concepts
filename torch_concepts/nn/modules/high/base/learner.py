@@ -31,7 +31,11 @@ class BaseLearner(pl.LightningModule):
     Handles loss, metrics, optimizer, scheduler, batch validation, and logging.
 
     Args:
-        loss (nn.Module, optional): Loss function.
+        loss (nn.Module or list of nn.Module, optional): Loss function or list of
+            loss terms to sum. When a list is provided, ``loss_weights`` controls
+            the per-term weighting (defaults to 1.0 each).
+        loss_weights (list of float, optional): Per-term weights when ``loss`` is a
+            list.  Ignored when ``loss`` is a single module.
         metrics (ConceptMetrics or dict, optional): Metrics for evaluation.
         optim_class (Optimizer, optional): Optimizer class.
         optim_kwargs (dict, optional): Optimizer arguments.
@@ -44,7 +48,8 @@ class BaseLearner(pl.LightningModule):
         >>> learner = BaseLearner(loss=None, metrics=None)
     """
     def __init__(self,
-                loss: Optional[nn.Module] = None,
+                loss: Optional[Union[nn.Module, list]] = None,
+                loss_weights: Optional[list] = None,
                 metrics: Optional[Union[ConceptMetrics, Mapping[str, MetricCollection]]] = None,
                 optim_class: Optional[Optimizer] = None,
                 optim_kwargs: Optional[Mapping] = None,
@@ -55,7 +60,19 @@ class BaseLearner(pl.LightningModule):
         super(BaseLearner, self).__init__(**kwargs)
 
         # loss function
-        self.loss = loss
+        if isinstance(loss, (list, tuple)):
+            from ...loss import CompositeLoss
+            self.loss = CompositeLoss(terms=loss, weights=loss_weights)
+        else:
+            if loss_weights is not None:
+                import warnings
+                warnings.warn(
+                    "loss_weights is ignored when loss is a single nn.Module. "
+                    "Pass loss as a list to use per-term weights.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            self.loss = loss
 
         # optimizer and scheduler
         self.optim_class = optim_class

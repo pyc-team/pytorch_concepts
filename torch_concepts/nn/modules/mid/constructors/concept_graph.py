@@ -8,7 +8,8 @@ and topological operations.
 import torch
 
 import pandas as pd
-from typing import List, Tuple, Union, Optional, Set
+from collections import deque
+from typing import Dict, List, Tuple, Union, Optional, Set
 
 from torch import Tensor
 import networkx as nx
@@ -395,6 +396,53 @@ class ConceptGraph:
         """
         G = self._nx_graph
         return list(nx.topological_sort(G))
+
+    def get_levels(self) -> List[List[str]]:
+        """Group nodes by depth from the graph roots.
+
+        Only valid for directed acyclic graphs (DAGs).
+
+        Returns:
+            List of lists, where ``result[d]`` contains the node names at
+            depth *d*.  The outer list is sorted by increasing depth.
+
+        Example:
+            >>> import torch
+            >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+            >>> adj = torch.tensor([[0., 1., 0.],
+            ...                     [0., 0., 1.],
+            ...                     [0., 0., 0.]])
+            >>> g = ConceptGraph(adj, node_names=['A', 'B', 'C'])
+            >>> g.get_levels()
+            [['A'], ['B'], ['C']]
+        """
+        roots = self.get_root_nodes()
+        depths: Dict[str, int] = {}
+        queue: deque = deque()
+        for root in roots:
+            depths[root] = 0
+            queue.append(root)
+
+        while queue:
+            node = queue.popleft()
+            for child in self.get_successors(node):
+                new_depth = depths[node] + 1
+                if child not in depths or new_depth < depths[child]:
+                    depths[child] = new_depth
+                    queue.append(child)
+
+        # Nodes with no edges at all (isolated) default to depth 0
+        for name in self.node_names:
+            if name not in depths:
+                depths[name] = 0
+
+        # Group by depth
+        groups: Dict[int, List[str]] = {}
+        for name, d in depths.items():
+            groups.setdefault(d, []).append(name)
+
+        max_depth = max(groups) if groups else -1
+        return [groups.get(d, []) for d in range(max_depth + 1)]
 
     def get_predecessors(self, node: Union[str, int]) -> List[str]:
         """
