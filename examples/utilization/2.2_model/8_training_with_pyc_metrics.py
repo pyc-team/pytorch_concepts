@@ -17,7 +17,6 @@ import torchmetrics
 
 from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
-from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
@@ -58,11 +57,9 @@ def main():
     # Define loss function
     loss_fn = ConceptLoss(
         annotations = annotations,
-        fn_collection = GroupConfig(
-            binary = torch.nn.BCEWithLogitsLoss(),
-            categorical = torch.nn.CrossEntropyLoss(),
-            continuous = torch.nn.MSELoss()
-        )
+        binary = torch.nn.BCEWithLogitsLoss(),
+        categorical = torch.nn.CrossEntropyLoss(),
+        continuous = torch.nn.MSELoss()
     )
 
     # Define variable distributions as Bernoulli
@@ -70,11 +67,11 @@ def main():
     
     metrics = ConceptMetrics(
         annotations = annotations,
-        summary_metrics=True,
-        perconcept_metrics=True,
-        fn_collection = GroupConfig(
-            binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()}
-        )
+        summary=True,
+        per_concept=True,
+        binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()},
+        categorical = {'accuracy': torchmetrics.classification.MulticlassAccuracy} # filtered out since we don't 
+                                                                                   # have categorical concepts in this dataset
     )
 
     # Initialize the CBM
@@ -127,9 +124,35 @@ def main():
 
     # Evaluate
     print("\n" + "=" * 60)
-    print("Step 5: Evaluation with internally-stored metrics")
+    print("Step 5: Test with internally-tracked metrics")
     print("=" * 60)
     trainer.test(datamodule=datamodule)
+
+    print("\n" + "=" * 60)
+    print("Step 6: Test with a different set of metrics")
+    print("=" * 60)
+    eval_metrics = ConceptMetrics(
+        annotations=annotations,
+        summary=True,
+        per_concept=True,
+        binary={
+            'accuracy': torchmetrics.classification.BinaryAccuracy(),
+            'f1': torchmetrics.classification.BinaryF1Score()
+        }
+    )
+    model.eval()
+    datamodule.setup('test')
+
+    test_idxs = datamodule.testset.indices
+    x_test = dataset.input_data[test_idxs]
+    c_test = dataset.concepts[test_idxs]
+    
+    with torch.no_grad():
+        out = model(x=x_test, query=concept_names)
+
+    eval_metrics.update(preds=out, target=c_test)
+    print(f"Evaluation results with custom metrics: {eval_metrics.compute()}")
+    
 
 if __name__ == "__main__":
     main()

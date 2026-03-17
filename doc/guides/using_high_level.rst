@@ -212,8 +212,8 @@ Detailed Guides
       metrics = ConceptMetrics(
           annotations=ann,
           fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=True
+          summary=True,
+          per_concept=True
       )
    
    **Special Cases**
@@ -347,8 +347,8 @@ Detailed Guides
               binary={'accuracy': BinaryAccuracy(), 'f1': BinaryF1Score()},
               categorical={'accuracy': (MulticlassAccuracy, {'average': 'macro'})}
           ),
-          summary_metrics=True,
-          perconcept_metrics=False
+          summary=True,
+          per_concept=False
       )
    
    **Special Cases**
@@ -512,8 +512,8 @@ Detailed Guides
       metrics = ConceptMetrics(
           annotations=ann,
           fn_collection=metrics_config,
-          summary_metrics=True,      # Aggregate by type
-          perconcept_metrics=True     # Individual concept tracking
+          summary=True,      # Aggregate by type
+          per_concept=True     # Individual concept tracking
       )
       
       # During training
@@ -532,8 +532,8 @@ Detailed Guides
       metrics = ConceptMetrics(
           annotations=ann,
           fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=False
+          summary=True,
+          per_concept=False
       )
       
       results = metrics.compute('train')
@@ -549,8 +549,8 @@ Detailed Guides
       metrics = ConceptMetrics(
           annotations=ann,
           fn_collection=metrics_config,
-          summary_metrics=False,
-          perconcept_metrics=True
+          summary=False,
+          per_concept=True
       )
       
       results = metrics.compute('train')
@@ -567,8 +567,8 @@ Detailed Guides
       metrics = ConceptMetrics(
           annotations=ann,
           fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=['is_round', 'color']  # Only these
+          summary=True,
+          per_concept=['is_round', 'color']  # Only these
       )
    
    **Multiple Metrics per Type**
@@ -721,8 +721,8 @@ Detailed Guides
           metrics=ConceptMetrics(
               annotations=ann,
               fn_collection=metrics_config,
-              summary_metrics=True,
-              perconcept_metrics=True
+              summary=True,
+              per_concept=True
           ),
           optim_class=torch.optim.AdamW,
           optim_kwargs={'lr': 0.001}
@@ -878,8 +878,8 @@ Putting it all together:
             binary={'accuracy': BinaryAccuracy()},
             categorical={'accuracy': (MulticlassAccuracy, {'average': 'micro'})}
         ),
-        summary_metrics=True,
-        perconcept_metrics=True
+        summary=True,
+        per_concept=True
     )
 
     # 3. Create model with all configurations

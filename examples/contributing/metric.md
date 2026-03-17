@@ -39,8 +39,8 @@ metrics = ConceptMetrics(
             'accuracy': torchmetrics.classification.MulticlassAccuracy
         }
     ),
-    summary_metrics=True,
-    perconcept_metrics=False
+    summary=True,
+    per_concept=False
 )
 ```
 
@@ -115,18 +115,18 @@ fn_collection=GroupConfig(
 
 ### 1.3 Summary vs Per-Concept Metrics
 
-Control metric granularity with `summary_metrics` and `perconcept_metrics`:
+Control metric granularity with `summary` and `per_concept`:
 
 ```python
 metrics = ConceptMetrics(
     annotations=annotations,
     fn_collection=GroupConfig(...),
-    summary_metrics=True,    # Aggregate metrics across all concepts of each type
-    perconcept_metrics=True  # Track each concept individually
+    summary=True,    # Aggregate metrics across all concepts of each type
+    per_concept=True  # Track each concept individually
 )
 ```
 
-Options for `perconcept_metrics`:
+Options for `per_concept`:
 - `False`: No per-concept tracking
 - `True`: Track all concepts individually
 - `['concept1', 'concept2']`: Track only specified concepts
@@ -149,8 +149,8 @@ Create a config file at `conceptarium/conf/metrics/<your_config>.yaml`:
 # conceptarium/conf/metrics/standard.yaml
 _target_: "torch_concepts.nn.ConceptMetrics"
 
-summary_metrics: true
-perconcept_metrics: true  # or list of concept names: ${dataset.default_task_names}
+summary: true
+per_concept: true  # or list of concept names: ${dataset.default_task_names}
 
 fn_collection:
   _target_: "torch_concepts.nn.modules.utils.GroupConfig"
@@ -321,8 +321,8 @@ metrics = ConceptMetrics(
             'dependency': ConceptDependencyScore(n_concepts=len(binary_concepts))
         }
     ),
-    summary_metrics=True,
-    perconcept_metrics=False
+    summary=True,
+    per_concept=False
 )
 ```
 
@@ -566,7 +566,7 @@ def test_custom_metric_with_concept_metrics(self):
                 'custom': YourCustomMetric(param1=value)
             }
         ),
-        summary_metrics=True
+        summary=True
     )
     
     # Test update and compute

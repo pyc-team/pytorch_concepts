@@ -171,8 +171,8 @@ Configure losses and metrics to automatically handle mixed concept types:
    concept_metrics = ConceptMetrics(
        annotations=annotations,
        fn_collection=metrics_config,
-       summary_metrics=True,      # Compute average across concepts
-       perconcept_metrics=True    # Compute per-concept metrics
+       summary=True,      # Compute average across concepts
+       per_concept=True    # Compute per-concept metrics
    )
 
 Training Modes

@@ -2,8 +2,7 @@
 Tests for torch_concepts.nn.modules.high.base.learner.BaseLearner
 
 BaseLearner is now a lightweight training orchestrator that handles:
-- Loss computation (single module or list→CompositeLoss)
-- loss_weights warning when misused
+- Loss computation (single nn.Module)
 - Metrics tracking (ConceptMetrics or dict of MetricCollections)  
 - Optimizer and scheduler configuration
 - shared_step / training_step / validation_step / test_step
@@ -15,14 +14,13 @@ Note: Annotations and concept management are now handled by BaseModel,
 not BaseLearner. These tests focus on the core orchestration functionality.
 """
 import unittest
-import warnings
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
 from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
-from torch_concepts.nn.modules.loss import ConceptLoss, CompositeLoss
+from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.utils import GroupConfig
 
@@ -154,7 +152,7 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         """Test initialization with ConceptMetrics object."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
+            summary=True,
             fn_collection=GroupConfig(
                 binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
             )
@@ -218,7 +216,7 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         """Test update_metrics method with ConceptMetrics."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
+            summary=True,
             fn_collection=GroupConfig(
                 binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
             )
@@ -284,7 +282,7 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         """Test update_and_log_metrics method."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
+            summary=True,
             fn_collection=GroupConfig(
                 binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
             )
@@ -447,46 +445,6 @@ class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
 
 
 # ======================================================================
-# Loss list / CompositeLoss branch & loss_weights warning
-# ======================================================================
-
-class TestBaseLearnerLossInit(unittest.TestCase):
-    """Test loss initialisation paths in BaseLearner.__init__."""
-
-    def test_list_of_losses_creates_composite(self):
-        """When loss is a list, CompositeLoss is created."""
-        loss1 = nn.MSELoss()
-        loss2 = nn.L1Loss()
-        learner = MockLearner(loss=[loss1, loss2])
-        self.assertIsInstance(learner.loss, CompositeLoss)
-
-    def test_list_of_losses_with_weights(self):
-        """Weights are forwarded to CompositeLoss."""
-        loss1 = nn.MSELoss()
-        loss2 = nn.L1Loss()
-        learner = MockLearner(loss=[loss1, loss2], loss_weights=[0.7, 0.3])
-        self.assertIsInstance(learner.loss, CompositeLoss)
-        self.assertAlmostEqual(learner.loss.weights[0], 0.7)
-        self.assertAlmostEqual(learner.loss.weights[1], 0.3)
-
-    def test_tuple_of_losses_creates_composite(self):
-        """Tuple of losses also triggers CompositeLoss."""
-        learner = MockLearner(loss=(nn.MSELoss(), nn.L1Loss()))
-        self.assertIsInstance(learner.loss, CompositeLoss)
-
-    def test_single_loss_with_weights_warns(self):
-        """Passing loss_weights with a single loss emits a UserWarning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            learner = MockLearner(loss=nn.MSELoss(), loss_weights=[1.0])
-            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
-            self.assertEqual(len(user_warnings), 1)
-            self.assertIn("loss_weights is ignored", str(user_warnings[0].message))
-        # The loss itself is still set
-        self.assertIsInstance(learner.loss, nn.MSELoss)
-
-
-# ======================================================================
 # update_metrics error path
 # ======================================================================
 
@@ -614,13 +572,15 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
             learner.shared_step(self.batch, step='train')
 
     def test_shared_step_with_composite_loss(self):
-        """shared_step works when loss is a list (CompositeLoss)."""
-        loss1 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
-        loss2 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
+        """shared_step works when loss uses per-type composition."""
+        loss = ConceptLoss(
+            self.annotations,
+            binary=[nn.BCEWithLogitsLoss(), nn.BCEWithLogitsLoss()],
+            binary_weights=[1.0, 0.5],
+        )
         learner = FullMockLearner(
             self.annotations, n_concepts=2,
-            loss=[loss1, loss2],
-            loss_weights=[1.0, 0.5],
+            loss=loss,
         )
         self._patch_logging(learner)
         loss = learner.shared_step(self.batch, step='val')

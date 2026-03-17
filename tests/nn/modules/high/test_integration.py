@@ -90,7 +90,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=self.ann,
             fn_collection=self.metrics_config,
-            summary_metrics=True
+            summary=True
         )
         
         # Forward pass
@@ -128,7 +128,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=self.ann,
             fn_collection=self.metrics_config,
-            summary_metrics=True
+            summary=True
         )
         
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -200,7 +200,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=ann,
             fn_collection=metrics_config,
-            summary_metrics=True
+            summary=True
         )
         
         # All should initialize without errors
@@ -247,7 +247,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=ann_with_dist,
             fn_collection=metrics_config,
-            summary_metrics=True
+            summary=True
         )
         
         # All should initialize without errors
@@ -367,7 +367,7 @@ class TestDistributionHandling(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=ann,
             fn_collection=metrics_config,
-            summary_metrics=True
+            summary=True
         )
         
         # Forward pass

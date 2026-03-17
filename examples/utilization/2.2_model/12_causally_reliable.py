@@ -62,8 +62,8 @@ def main():
     
     metrics = ConceptMetrics(
         annotations = annotations,
-        summary_metrics=True,
-        perconcept_metrics=True,
+        summary=True,
+        per_concept=True,
         fn_collection = GroupConfig(
             binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()}
         )

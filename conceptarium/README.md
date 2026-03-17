@@ -63,8 +63,8 @@ model:
     lr: 0.01
 
 metrics:
-  summary_metrics: true
-  perconcept_metrics: true
+  summary: true
+  per_concept: true
 
 trainer:
   max_epochs: 200
@@ -202,8 +202,8 @@ inference:
   _target_: torch_concepts.nn.DeterministicInference
   _partial_: true
 
-summary_metrics: true       # enable/disable summary metrics over concepts
-perconcept_metrics: false   # enable/disable per-concept metrics
+summary: true       # enable/disable summary metrics over concepts
+per_concept: false   # enable/disable per-concept metrics
 ```
 
 ### Model Common Parameters

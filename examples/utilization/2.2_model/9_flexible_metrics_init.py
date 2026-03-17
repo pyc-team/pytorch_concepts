@@ -45,78 +45,79 @@ def main():
     print(f"  Cardinalities: {annotations[1].cardinalities}")
    
     # Three ways to specify metrics
+
+    # Method 1: Pre-instantiated metrics
     print("\n" + "=" * 60)
     print("Method 1: Pre-instantiated metrics")
     print("=" * 60)
     
-    # with summary metrics only
     metrics1 = ConceptMetrics(
         annotations=annotations,
-        summary_metrics=True,
-        perconcept_metrics=False,
-        fn_collection=GroupConfig(
-            binary={
-                'accuracy': torchmetrics.classification.BinaryAccuracy(),
-                'f1': torchmetrics.classification.BinaryF1Score()
-            },
-            categorical={
-                # For summary metrics only: we use the maximum cardinality (4) across all categorical concepts
-                # This is pre-instantiated, so we manually specify num_classes=4
-                'accuracy': torchmetrics.classification.MulticlassAccuracy(num_classes=4, average='micro')
-            }
-        )
+        summary=True,
+        per_concept=False, # this must be set to False when pre-instantiating metrics
+                           # for categorical concepts (read below)
+        binary={
+            'accuracy': torchmetrics.classification.BinaryAccuracy(),
+            'mcc': torchmetrics.classification.BinaryMatthewsCorrCoef(),
+            'f1': torchmetrics.classification.BinaryF1Score()
+        },
+        categorical={
+            # Metrics for categorical concepts usually require num_classes. Since this could differ
+            # among different concepts, 'per_concept' metrics for categorical concepts cannot be pre-instantiated.
+            # Instead, 'summary' metrics can be pre-instantiated using the maximum cardinality
+            # across all categorical concepts (in this case = 4) 
+            'accuracy': torchmetrics.classification.MulticlassAccuracy(num_classes=4, average='micro')
+        }
     )
     print(f"✓ Created metrics with pre-instantiated objects")
     print(f"  {metrics1}")
-
-    # Method 2: Class + user kwargs (as tuple)
+    
+    # Method 2: Just the class (simplest)
     print("\n" + "=" * 60)
-    print("Method 2: Metric class with user kwargs (tuple)")
+    print("Method 2: Metric class only")
     print("=" * 60)
     
     metrics2 = ConceptMetrics(
         annotations=annotations,
-        summary_metrics=True,
-        fn_collection=GroupConfig(
-            binary={
-                'accuracy': (torchmetrics.classification.BinaryAccuracy, {'threshold': 0.5}),
-            },
-            categorical={
-                # User provides 'average', ConceptMetrics adds 'num_classes' automatically
-                'accuracy': (torchmetrics.classification.MulticlassAccuracy, {'average': 'macro'})
-            }
-        ),
-        perconcept_metrics=['cat1', 'cat2']  # Track individual categorical concepts
+        summary=True,
+        per_concept=True,
+        binary={
+            'accuracy': torchmetrics.classification.BinaryAccuracy,
+            'precision': torchmetrics.classification.BinaryPrecision,
+            'recall': torchmetrics.classification.BinaryRecall
+        },
+        categorical={
+            # If only the (non-instantiated) class if provided, 
+            # num_classes will be handled internally and automatically
+            'accuracy': torchmetrics.classification.MulticlassAccuracy
+        }
     )
-    print(f"✓ Created metrics with (class, kwargs) tuples")
-    print(f"  User provided: threshold=0.5, average='macro'")
-    print(f"  ConceptMetrics added: num_classes automatically per concept")
+    print(f"✓ Created metrics with just metric classes")
+    print(f"  ConceptMetrics handles all instantiation")
     print(f"  {metrics2}")
-    
-    # Method 3: Just the class (simplest)
+
+    # Method 3: Class + user kwargs (as tuple)
     print("\n" + "=" * 60)
-    print("Method 3: Metric class only (simplest)")
+    print("Method 3: Metric class with user kwargs (tuple)")
     print("=" * 60)
     
     metrics3 = ConceptMetrics(
         annotations=annotations,
-        summary_metrics=True,
-        fn_collection=GroupConfig(
-            binary={
-                'accuracy': torchmetrics.classification.BinaryAccuracy,
-                'precision': torchmetrics.classification.BinaryPrecision,
-                'recall': torchmetrics.classification.BinaryRecall
-            },
-            categorical={
-                # Just the class - num_classes will be added automatically
-                'accuracy': torchmetrics.classification.MulticlassAccuracy
-            }
-        )
+        summary=True,
+        per_concept=['cat1', 'cat2'],  # Track individual categorical concepts
+        binary={
+            'accuracy': (torchmetrics.classification.BinaryAccuracy, {'threshold': 0.5}),
+        },
+        categorical={
+            # Again, ConceptMetrics handle 'num_classes' internally
+            'accuracy': (torchmetrics.classification.MulticlassAccuracy, {'average': 'macro'})
+        }
     )
-    print(f"✓ Created metrics with just metric classes")
-    print(f"  ConceptMetrics handles all instantiation")
+    print(f"✓ Created metrics with (class, kwargs) tuples")
+    print(f"  User provided: threshold=0.5, average='macro'")
+    print(f"  ConceptMetrics added: num_classes automatically per concept")
     print(f"  {metrics3}")
-    
+
     # Mixed approach (most flexible)
     print("\n" + "=" * 60)
     print("Method 4: Mix all three approaches")
@@ -124,24 +125,22 @@ def main():
     
     metrics_mixed = ConceptMetrics(
         annotations=annotations,
-        summary_metrics=True,
-        perconcept_metrics=True,
-        fn_collection=GroupConfig(
-            binary={
-                # Pre-instantiated
-                'accuracy': torchmetrics.classification.BinaryAccuracy(),
-                # Class + kwargs
-                'f1': (torchmetrics.classification.BinaryF1Score, {'threshold': 0.5}),
-                # Class only
-                'precision': torchmetrics.classification.BinaryPrecision
-            },
-            categorical={
-                # Class + kwargs for summary (uses max cardinality=4)
-                'accuracy': (torchmetrics.classification.MulticlassAccuracy, {'average': 'weighted'}),
-                # Class only - num_classes added per concept automatically
-                'f1': torchmetrics.classification.MulticlassF1Score
-            }
-        )
+        summary=True,
+        per_concept=True,
+        binary={
+            # Pre-instantiated
+            'accuracy': torchmetrics.classification.BinaryAccuracy(),
+            # Class + kwargs
+            'f1': (torchmetrics.classification.BinaryF1Score, {'threshold': 0.5}),
+            # Class only
+            'precision': torchmetrics.classification.BinaryPrecision
+        },
+        categorical={
+            # Class + kwargs
+            'accuracy': (torchmetrics.classification.MulticlassAccuracy, {'average': 'weighted'}),
+            # Class only
+            'f1': torchmetrics.classification.MulticlassF1Score
+        }
     )
     print(f"✓ Created metrics mixing all three approaches")
     print(f"  This gives maximum flexibility!")

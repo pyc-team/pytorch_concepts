@@ -52,8 +52,8 @@ inference:
   _partial_: true
 
 # Metric tracking
-summary_metrics: true
-perconcept_metrics: false
+summary: true
+per_concept: false
 ```
 
 ### 3. Run Experiments
@@ -88,8 +88,8 @@ task_names: ${dataset.default_task_names}
 special_parameter: 0.1
 
 # Use per-concept metrics to track intervention effects
-perconcept_metrics: true
-summary_metrics: true
+per_concept: true
+summary: true
 ```
 
 ---
