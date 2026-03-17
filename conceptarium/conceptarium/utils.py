@@ -70,31 +70,12 @@ def clean_empty_configs(cfg: DictConfig) -> DictConfig:
     return cfg
 
 def instantiate_loss(cfg: DictConfig, annotations):
-    """Instantiate loss from config, supporting both single and list forms.
-
-    Args:
-        cfg: Full Hydra DictConfig (reads ``cfg.loss`` and optional ``cfg.loss_weights``).
-        annotations: Annotations object passed to each loss term.
-
-    Returns:
-        Tuple of (loss, loss_weights) ready to pass to the model constructor.
-    """
-    loss_cfg = cfg.loss
-    if OmegaConf.is_list(loss_cfg):
-        loss = [_instantiate_single_loss(t, annotations) for t in loss_cfg]
-        loss_weights = list(cfg.loss_weights) if cfg.get("loss_weights") else None
-    else:
-        loss = _instantiate_single_loss(loss_cfg, annotations)
-        loss_weights = None
-    return loss, loss_weights
-
-
-def _instantiate_single_loss(loss_cfg: DictConfig, annotations):
-    """Instantiate a single loss term, passing ``annotations`` only if accepted.
+    """Instantiate loss, passing ``annotations`` only if accepted.
 
     Inspects the target class constructor to decide whether to forward the
     ``annotations`` argument.
     """
+    loss_cfg = cfg.loss
     target = loss_cfg.get("_target_")
     needs_annotations = False
     if target:

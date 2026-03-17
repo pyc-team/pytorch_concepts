@@ -25,8 +25,8 @@ model:
     dropout: 0.1
 
 metrics:
-  summary_metrics: false
-  perconcept_metrics: true #${dataset.default_task_names}
+  summary: false
+  per_concept: true #${dataset.default_task_names}
 
 trainer:
   # logger: wandb

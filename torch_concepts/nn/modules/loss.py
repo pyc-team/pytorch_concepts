@@ -1,6 +1,6 @@
 """Loss functions for concept-based models."""
 import inspect
-from typing import List, Mapping, Optional
+from typing import List, Mapping, Optional, Union
 import torch
 from torch import nn
 
@@ -9,6 +9,51 @@ from ...annotations import Annotations, AxisAnnotation
 from ...utils import instantiate_from_string
 from ...nn.modules.utils import check_collection
 from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
+
+
+def _get_forward_signature(module: nn.Module):
+    """Introspect forward() to get accepted parameter names and whether it has **kwargs.
+    
+    Returns:
+        Tuple[set, bool]: (set of parameter names, has_var_keyword)
+    """
+    params = inspect.signature(module.forward).parameters
+    names = set()
+    has_var_keyword = False
+    for name, param in params.items():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            has_var_keyword = True
+        else:
+            names.add(name)
+    return names, has_var_keyword
+
+
+def _normalize_loss_terms(terms, weights):
+    """Normalize loss terms and weights to consistent list form.
+    
+    Args:
+        terms: A single nn.Module, a list of nn.Module, or None.
+        weights: A list of floats, or None.
+        
+    Returns:
+        Tuple of (list_of_modules, list_of_weights), or (None, None) if terms is None.
+    """
+    if terms is None:
+        return None, None
+    if isinstance(terms, nn.Module):
+        terms = [terms]
+    if not isinstance(terms, (list, tuple)):
+        raise TypeError(
+            f"Loss terms must be an nn.Module or a list of nn.Module, got {type(terms)}"
+        )
+    if weights is None:
+        weights = [1.0] * len(terms)
+    if len(weights) != len(terms):
+        raise ValueError(
+            f"Number of weights ({len(weights)}) must match "
+            f"number of loss terms ({len(terms)})."
+        )
+    return list(terms), list(weights)
 
 
 def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks: List[str]):
@@ -28,20 +73,31 @@ class ConceptLoss(nn.Module):
     Concept loss for concept-based models.
 
     Automatically routes to appropriate loss functions based on concept types
-    (binary, categorical, continuous) using annotation metadata.
+    (binary, categorical, continuous) using annotation metadata. Each type
+    accepts either a single loss module or a list of loss modules with
+    optional per-term weights, enabling type-specific composition (e.g.
+    adding a regularizer only to binary concepts).
 
     Args:
         annotations (Annotations): Concept annotations with metadata including
             type information for each concept.
-        binary (nn.Module, optional): Loss function for binary concepts
-            (e.g. ``BCEWithLogitsLoss()``).
-        categorical (nn.Module, optional): Loss function for categorical
-            concepts (e.g. ``CrossEntropyLoss()``).
-        continuous (nn.Module, optional): Loss function for continuous
-            concepts (e.g. ``MSELoss()``).  Not yet supported.
+        binary (nn.Module or list of nn.Module, optional): Loss function(s)
+            for binary concepts. A single module (e.g. ``BCEWithLogitsLoss()``)
+            or a list of modules to be summed.
+        categorical (nn.Module or list of nn.Module, optional): Loss function(s)
+            for categorical concepts. A single module (e.g.
+            ``CrossEntropyLoss()``) or a list of modules.
+        continuous (nn.Module or list of nn.Module, optional): Loss function(s)
+            for continuous concepts (e.g. ``MSELoss()``).  Not yet supported.
+        binary_weights (list of float, optional): Per-term weights when
+            ``binary`` is a list. Defaults to ``[1.0, ...]``.
+        categorical_weights (list of float, optional): Per-term weights when
+            ``categorical`` is a list. Defaults to ``[1.0, ...]``.
+        continuous_weights (list of float, optional): Per-term weights when
+            ``continuous`` is a list. Defaults to ``[1.0, ...]``.
 
     Example:
-        >>> from torch_concepts.nn import ConceptLoss
+        >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
         >>> from torch_concepts import Annotations, AxisAnnotation
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
         >>> from torch.distributions import Bernoulli, Categorical
@@ -55,27 +111,39 @@ class ConceptLoss(nn.Module):
         ...     }
         ... )})
         >>>
+        >>> # Single loss per type (backward compatible)
         >>> loss_fn = ConceptLoss(
         ...     ann,
         ...     binary=BCEWithLogitsLoss(),
         ...     categorical=CrossEntropyLoss()
         ... )
         >>>
-        >>> predictions = torch.randn(2, 4)
-        >>> targets = torch.cat([
-        ...     torch.randint(0, 2, (2, 1)),
-        ...     torch.randint(0, 3, (2, 1))
-        ... ], dim=1)
-        >>> loss = loss_fn(predictions, targets)
+        >>> # Composite loss per type with weights
+        >>> loss_fn = ConceptLoss(
+        ...     ann,
+        ...     binary=[BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
+        ...     binary_weights=[1.0, 0.5],
+        ...     categorical=CrossEntropyLoss()
+        ... )
     """
     def __init__(
         self,
         annotations: Annotations,
-        binary: Optional[nn.Module] = None,
-        categorical: Optional[nn.Module] = None,
-        continuous: Optional[nn.Module] = None,
+        binary: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        categorical: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        continuous: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        binary_weights: Optional[List[float]] = None,
+        categorical_weights: Optional[List[float]] = None,
+        continuous_weights: Optional[List[float]] = None,
     ):
         super().__init__()
+        
+        # Normalize to lists
+        binary, binary_weights = _normalize_loss_terms(binary, binary_weights)
+        categorical, categorical_weights = _normalize_loss_terms(categorical, categorical_weights)
+        continuous, continuous_weights = _normalize_loss_terms(continuous, continuous_weights)
+        
+        # Validate against annotations (check_collection checks None vs not-None)
         fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
         annotations = annotations.get_axis_annotation(axis=1)
         self.fn_collection = check_collection(annotations, fn_collection, 'loss')
@@ -83,6 +151,26 @@ class ConceptLoss(nn.Module):
         # Use cached type_groups from AxisAnnotation
         self.groups = annotations.type_groups
         self.cardinalities = annotations.cardinalities
+
+        # Register modules, weights, and signatures per type
+        self._type_weights = {}
+        self._type_signatures = {}
+        
+        weights_map = {
+            'binary': binary_weights,
+            'categorical': categorical_weights,
+            'continuous': continuous_weights,
+        }
+        
+        for type_name in ['binary', 'categorical', 'continuous']:
+            terms = self.fn_collection.get(type_name)
+            if terms is not None:
+                # Register as nn.ModuleList for proper parameter tracking
+                setattr(self, f'_{type_name}_terms', nn.ModuleList(terms))
+                self._type_weights[type_name] = weights_map[type_name]
+                self._type_signatures[type_name] = [
+                    _get_forward_signature(m) for m in terms
+                ]
 
         # For categorical loss, precompute max cardinality for padding
         if self.fn_collection.get('categorical'):
@@ -97,56 +185,101 @@ class ConceptLoss(nn.Module):
         types = ['binary', 'categorical', 'continuous']
         parts = []
         for t in types:
-            loss = self.fn_collection.get(t)
-            if loss:
-                if isinstance(loss, nn.Module):
-                    name = loss.__class__.__name__
-                elif isinstance(loss, (tuple, list)):
-                    name = loss[0].__name__
+            terms = self.fn_collection.get(t)
+            if terms is not None:
+                weights = self._type_weights[t]
+                if len(terms) == 1 and weights[0] == 1.0:
+                    name = terms[0].__class__.__name__
+                    parts.append(f"{t}={name}")
                 else:
-                    name = loss.__name__
-                parts.append(f"{t}={name}")
+                    term_strs = []
+                    for m, w in zip(terms, weights):
+                        n = m.__class__.__name__
+                        term_strs.append(f"{w}*{n}" if w != 1.0 else n)
+                    parts.append(f"{t}=[{' + '.join(term_strs)}]")
         return f"{self.__class__.__name__}({', '.join(parts)})"
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def _compute_type_loss(self, type_name: str, kwargs: dict) -> torch.Tensor:
+        """Compute weighted sum of loss terms for a specific concept type.
+        
+        Each term receives only the kwargs its ``forward()`` signature accepts.
+        """
+        terms = getattr(self, f'_{type_name}_terms')
+        weights = self._type_weights[type_name]
+        signatures = self._type_signatures[type_name]
+        
+        total = torch.tensor(0.0, device=kwargs['input'].device)
+        
+        for module, weight, (sig, has_var_kw) in zip(terms, weights, signatures):
+            if has_var_kw:
+                term_kwargs = dict(kwargs)
+            else:
+                term_kwargs = {k: v for k, v in kwargs.items() if k in sig}
+            total = total + weight * module(**term_kwargs)
+        
+        return total
+
+    def _prepare_categorical(self, input: torch.Tensor, target: torch.Tensor):
+        """Pad and stack categorical logits/targets for summary computation.
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: (padded_logits, targets) ready
+            for loss functions like ``CrossEntropyLoss``.
+        """
+        cat_concept_idx = self.groups['categorical']['concept_idx']
+        split_tuple = torch.split(
+            input[:, self.groups['categorical']['logits_idx']],
+            [self.cardinalities[i] for i in cat_concept_idx],
+            dim=1,
+        )
+        padded_logits = [
+            nn.functional.pad(
+                logits,
+                (0, self.max_card - logits.shape[1]),
+                value=float('-inf'),
+            )
+            for logits in split_tuple
+        ]
+        cat_logits = torch.cat(padded_logits, dim=0)
+        cat_targets = target[:, cat_concept_idx].T.reshape(-1).long()
+        return cat_logits, cat_targets
+
+    def forward(self, **kwargs) -> torch.Tensor:
         """Compute total loss across all concept types.
         
-        Splits inputs and targets by concept type, computes individual losses,
-        and sums them to get the total loss.
+        Splits ``input`` and ``target`` by concept type, merges them with any
+        extra kwargs, computes individual losses (each a weighted sum of its
+        terms dispatched by signature), and sums them.
         
         Args:
-            input (torch.Tensor): Model predictions (logits).
-            target (torch.Tensor): Ground truth labels/values.
+            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
+                Any additional kwargs (e.g. ``embeddings``, ``model``) are
+                forwarded to loss terms whose ``forward()`` signature accepts
+                them.
             
         Returns:
             torch.Tensor: Total computed loss (scalar).
         """
-        total_loss = 0.0
+        input = kwargs['input']
+        target = kwargs['target']
+        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        
+        total_loss = torch.tensor(0.0, device=input.device)
         
         # Binary concepts
         if self.fn_collection.get('binary'): 
             binary_logits = input[:, self.groups['binary']['logits_idx']]
             binary_targets = target[:, self.groups['binary']['concept_idx']].float()
-            total_loss += self.fn_collection['binary'](binary_logits, binary_targets)
+            total_loss = total_loss + self._compute_type_loss('binary', {
+                'input': binary_logits, 'target': binary_targets, **extra
+            })
         
         # Categorical concepts
         if self.fn_collection.get('categorical'):
-            split_tuple = torch.split(
-                input[:, self.groups['categorical']['logits_idx']], 
-                [self.cardinalities[i] for i in self.groups['categorical']['concept_idx']], 
-                dim=1
-            )
-            padded_logits = [
-                nn.functional.pad(
-                    logits, 
-                    (0, self.max_card - logits.shape[1]), 
-                    value=float('-inf')
-                ) for logits in split_tuple
-            ]
-            cat_logits = torch.cat(padded_logits, dim=0)
-            cat_targets = target[:, self.groups['categorical']['concept_idx']].T.reshape(-1).long()
-            
-            total_loss += self.fn_collection['categorical'](cat_logits, cat_targets)
+            cat_logits, cat_targets = self._prepare_categorical(input, target)
+            total_loss = total_loss + self._compute_type_loss('categorical', {
+                'input': cat_logits, 'target': cat_targets, **extra
+            })
         
         # Continuous concepts
         if self.fn_collection.get('continuous'):
@@ -166,9 +299,12 @@ class WeightedConceptLoss(nn.Module):
         concept_weight (float): Weight for concept loss.
         task_weight (float): Weight for task loss.
         task_names (List[str]): List of task concept names.
-        binary (nn.Module, optional): Loss function for binary concepts.
-        categorical (nn.Module, optional): Loss function for categorical concepts.
-        continuous (nn.Module, optional): Loss function for continuous concepts.
+        binary (nn.Module or list of nn.Module, optional): Loss function(s) for binary concepts.
+        categorical (nn.Module or list of nn.Module, optional): Loss function(s) for categorical concepts.
+        continuous (nn.Module or list of nn.Module, optional): Loss function(s) for continuous concepts.
+        binary_weights (list of float, optional): Per-term weights when ``binary`` is a list.
+        categorical_weights (list of float, optional): Per-term weights when ``categorical`` is a list.
+        continuous_weights (list of float, optional): Per-term weights when ``continuous`` is a list.
 
     Example:
         >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
@@ -189,9 +325,12 @@ class WeightedConceptLoss(nn.Module):
         concept_weight: float,
         task_weight: float,
         task_names: List[str],
-        binary: Optional[nn.Module] = None,
-        categorical: Optional[nn.Module] = None,
-        continuous: Optional[nn.Module] = None,
+        binary: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        categorical: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        continuous: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        binary_weights: Optional[List[float]] = None,
+        categorical_weights: Optional[List[float]] = None,
+        continuous_weights: Optional[List[float]] = None,
     ):
         super().__init__()
         self.concept_weight = concept_weight
@@ -203,8 +342,16 @@ class WeightedConceptLoss(nn.Module):
         task_annotations = Annotations({1:annotations.subset(task_names)})
         concept_annotations = Annotations({1:annotations.subset(concept_names)})
 
-        self.concept_loss = ConceptLoss(concept_annotations, binary=binary, categorical=categorical, continuous=continuous)
-        self.task_loss = ConceptLoss(task_annotations, binary=binary, categorical=categorical, continuous=continuous)
+        self.concept_loss = ConceptLoss(
+            concept_annotations, binary=binary, categorical=categorical, continuous=continuous,
+            binary_weights=binary_weights, categorical_weights=categorical_weights,
+            continuous_weights=continuous_weights,
+        )
+        self.task_loss = ConceptLoss(
+            task_annotations, binary=binary, categorical=categorical, continuous=continuous,
+            binary_weights=binary_weights, categorical_weights=categorical_weights,
+            continuous_weights=continuous_weights,
+        )
         self.target_c_idx, self.target_t_idx, self.input_c_idx, self.input_t_idx = get_concept_task_idx(
             annotations, concept_names, task_names
         )
@@ -212,23 +359,27 @@ class WeightedConceptLoss(nn.Module):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(fn_collection={self.fn_collection})"
     
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, **kwargs) -> torch.Tensor:
         """Compute weighted loss for concepts and tasks.
         
         Args:
-            input (torch.Tensor): Model predictions (logits).
-            target (torch.Tensor): Ground truth labels/values.
+            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
+                Extra kwargs are forwarded to the inner ConceptLoss instances.
         
         Returns:
             torch.Tensor: Weighted combination of concept and task losses (scalar).
         """
+        input = kwargs['input']
+        target = kwargs['target']
+        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
         task_input = input[:, self.input_t_idx]
         task_target = target[:, self.target_t_idx]
         
-        c_loss = self.concept_loss(concept_input, concept_target)
-        t_loss = self.task_loss(task_input, task_target)
+        c_loss = self.concept_loss(input=concept_input, target=concept_target, **extra)
+        t_loss = self.task_loss(input=task_input, target=task_target, **extra)
         
         return c_loss * self.concept_weight + t_loss * self.task_weight
 
@@ -251,12 +402,18 @@ class DepthWeightedConceptLoss(nn.Module):
         depth_decay (float): Multiplicative factor applied at every
             additional depth level.  Values < 1 down-weight deeper
             concepts; values > 1 up-weight them.  Default ``0.5``.
-        binary (nn.Module, optional): Loss function for binary concepts
-            (e.g. ``BCEWithLogitsLoss()``).
-        categorical (nn.Module, optional): Loss function for categorical
-            concepts (e.g. ``CrossEntropyLoss()``).
-        continuous (nn.Module, optional): Loss function for continuous
-            concepts (e.g. ``MSELoss()``).  Not yet supported.
+        binary (nn.Module or list of nn.Module, optional): Loss function(s)
+            for binary concepts (e.g. ``BCEWithLogitsLoss()``).
+        categorical (nn.Module or list of nn.Module, optional): Loss function(s)
+            for categorical concepts (e.g. ``CrossEntropyLoss()``).
+        continuous (nn.Module or list of nn.Module, optional): Loss function(s)
+            for continuous concepts (e.g. ``MSELoss()``).  Not yet supported.
+        binary_weights (list of float, optional): Per-term weights when
+            ``binary`` is a list.
+        categorical_weights (list of float, optional): Per-term weights when
+            ``categorical`` is a list.
+        continuous_weights (list of float, optional): Per-term weights when
+            ``continuous`` is a list.
 
     Example:
         >>> import torch
@@ -294,9 +451,12 @@ class DepthWeightedConceptLoss(nn.Module):
         graph: ConceptGraph,
         source_weight: float = 1.0,
         depth_decay: float = 0.5,
-        binary: Optional[nn.Module] = None,
-        categorical: Optional[nn.Module] = None,
-        continuous: Optional[nn.Module] = None,
+        binary: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        categorical: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        continuous: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        binary_weights: Optional[List[float]] = None,
+        categorical_weights: Optional[List[float]] = None,
+        continuous_weights: Optional[List[float]] = None,
     ):
         super().__init__()
         self.source_weight = source_weight
@@ -329,6 +489,9 @@ class DepthWeightedConceptLoss(nn.Module):
                 binary=binary,
                 categorical=categorical,
                 continuous=continuous,
+                binary_weights=binary_weights,
+                categorical_weights=categorical_weights,
+                continuous_weights=continuous_weights,
             )
             setattr(self, key, sub_loss)
 
@@ -349,6 +512,9 @@ class DepthWeightedConceptLoss(nn.Module):
                     binary=binary,
                     categorical=categorical,
                     continuous=continuous,
+                    binary_weights=binary_weights,
+                    categorical_weights=categorical_weights,
+                    continuous_weights=continuous_weights,
                 )
                 setattr(self, key, sub_loss)
                 self._depth_levels.insert(0, 0)
@@ -368,42 +534,29 @@ class DepthWeightedConceptLoss(nn.Module):
     # ------------------------------------------------------------------
     # forward
     # ------------------------------------------------------------------
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, **kwargs) -> torch.Tensor:
         """Compute depth-weighted loss across all concept depths.
 
         Args:
-            input (torch.Tensor): Model predictions (logits).
-            target (torch.Tensor): Ground truth labels/values.
+            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
+                Extra kwargs are forwarded to the inner ConceptLoss instances.
 
         Returns:
             torch.Tensor: Total depth-weighted loss (scalar).
         """
+        input = kwargs['input']
+        target = kwargs['target']
+        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        
         total_loss = torch.tensor(0.0, device=input.device)
         for i, d in enumerate(self._depth_levels):
             sub_input = input[:, self._input_idx[i]]
             sub_target = target[:, self._target_idx[i]]
             sub_loss = getattr(self, f"loss_depth_{d}")
             total_loss = total_loss + self._depth_weights_list[i] * sub_loss(
-                sub_input, sub_target
+                input=sub_input, target=sub_target, **extra
             )
         return total_loss
-
-
-def _get_forward_signature(module: nn.Module):
-    """Introspect forward() to get accepted parameter names and whether it has **kwargs.
-    
-    Returns:
-        Tuple[set, bool]: (set of parameter names, has_var_keyword)
-    """
-    params = inspect.signature(module.forward).parameters
-    names = set()
-    has_var_keyword = False
-    for name, param in params.items():
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            has_var_keyword = True
-        else:
-            names.add(name)
-    return names, has_var_keyword
 
 
 class L1LogitRegularizer(nn.Module):
@@ -413,184 +566,7 @@ class L1LogitRegularizer(nn.Module):
         self.scale = scale
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return self.scale * input.abs().mean()
-    
-
-class CompositeLoss(nn.Module):
-    """Internal modular composition of weighted loss terms.
-
-    Used internally by ``BaseLearner`` when the user passes a list of losses.
-    Users should pass ``loss=[term1, term2]`` and ``loss_weights=[w1, w2]`` to
-    model constructors rather than instantiating this class directly.
-
-    Sums weighted loss terms, automatically dispatching kwargs to each term
-    based on its ``forward()`` signature. Each term's ``forward()`` declares
-    the kwargs it needs; ``CompositeLoss`` introspects signatures and passes
-    only the matching kwargs. This means ``filter_output_for_loss`` can return
-    a superset dict and every term picks what it needs.
-
-    Args:
-        terms (List): Loss modules or callables (partials) to sum.
-        weights (List[float], optional): Per-term weights.
-            Defaults to ``[1.0, ...]``.
-        **common_kwargs: Extra kwargs forwarded to any ``terms`` that are
-            callables (not yet instantiated). Typically ``annotations``.
-
-    Example::
-
-        # --- User-facing API (via model constructor) ---
-        model = ConceptBottleneckModel(
-            ...,
-            loss=[concept_loss, reg_loss],
-            loss_weights=[1.0, 0.5],
-        )
-
-        # --- Hydra YAML (via list-based loss config) ---
-        # conf/loss/composite.yaml (a YAML list)
-        # - _target_: torch_concepts.nn.ConceptLoss
-        #   fn_collection: ...
-        # - _target_: my_package.MyRegularizer
-        #   lambda_: 0.01
-        #
-        # sweep.yaml:
-        #   loss_weights: [1.0, 0.5]
-    """
-
-    def __init__(
-        self,
-        terms: List,
-        weights: Optional[List[float]] = None,
-        **common_kwargs,
-    ):
-        super().__init__()
-
-        # Resolve partials / callables with common_kwargs (e.g. annotations)
-        resolved: List[nn.Module] = []
-        for term in terms:
-            if isinstance(term, nn.Module):
-                resolved.append(term)
-            elif callable(term):
-                # functools.partial from Hydra _partial_: true
-                # Pass only kwargs the callable accepts
-                try:
-                    sig = inspect.signature(term)
-                    accepted = {
-                        k: v for k, v in common_kwargs.items()
-                        if k in sig.parameters
-                    }
-                    resolved.append(term(**accepted))
-                except (ValueError, TypeError):
-                    # Fallback: pass all kwargs
-                    resolved.append(term(**common_kwargs))
-            else:
-                raise TypeError(
-                    f"Each term must be an nn.Module or callable, got {type(term)}"
-                )
-
-        # Build unique keys for nn.ModuleDict so each term appears
-        # individually in Lightning's model summary.
-        name_counts: dict = {}
-        term_keys: List[str] = []
-        for t in resolved:
-            base = t.__class__.__name__
-            count = name_counts.get(base, 0)
-            name_counts[base] = count + 1
-            term_keys.append(f"{base}_{count}" if count > 0 else base)
-
-        self.terms = nn.ModuleDict(dict(zip(term_keys, resolved)))
-        self._term_keys = term_keys  # preserve insertion order
-
-        # Weights default to 1.0 per term
-        if weights is None:
-            weights = [1.0] * len(self.terms)
-        if len(weights) != len(self.terms):
-            raise ValueError(
-                f"Number of weights ({len(weights)}) must match "
-                f"number of terms ({len(self.terms)})."
-            )
-        self.register_buffer(
-            '_weights',
-            torch.tensor(weights, dtype=torch.float32),
-        )
-
-        # Introspect each term's forward() for kwarg dispatch
-        self._signatures = [
-            _get_forward_signature(self.terms[k]) for k in self._term_keys
-        ]
-
-    @property
-    def weights(self) -> List[float]:
-        """Per-term weights as a plain list."""
-        return self._weights.tolist()
-
-    # ------------------------------------------------------------------
-    # repr
-    # ------------------------------------------------------------------
-    def __repr__(self) -> str:
-        parts = []
-        for key, w in zip(self._term_keys, self.weights):
-            parts.append(f"{w}*{key}" if w != 1.0 else key)
-        return f"{self.__class__.__name__}({' + '.join(parts)})"
-
-    # ------------------------------------------------------------------
-    # kwarg dispatch helpers
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _zero(kwargs):
-        """Create a zero scalar on the same device as the first tensor in kwargs."""
-        total = torch.tensor(0.0)
-        for v in kwargs.values():
-            if isinstance(v, torch.Tensor):
-                return total.to(v.device)
-        return total
-
-    def _dispatch(self, idx, kwargs):
-        """Call term *idx* with only the kwargs it accepts."""
-        sig, has_var_kw = self._signatures[idx]
-        if has_var_kw:
-            term_kwargs = kwargs
-        else:
-            term_kwargs = {k: v for k, v in kwargs.items() if k in sig}
-        return self.terms[self._term_keys[idx]](**term_kwargs)
-
-    # ------------------------------------------------------------------
-    # forward
-    # ------------------------------------------------------------------
-    def forward(self, **kwargs) -> torch.Tensor:
-        """Compute weighted sum of all loss terms.
-
-        Each term receives the subset of *kwargs* that its ``forward()``
-        signature accepts. Terms whose ``forward`` uses ``**kwargs`` receive
-        everything.
-
-        Args:
-            **kwargs: Keyword arguments produced by
-                ``filter_output_for_loss``.  Typically includes ``input``
-                and ``target``, but models may add extra keys (e.g.
-                ``embeddings``, ``model``).
-
-        Returns:
-            torch.Tensor: Scalar loss (weighted sum of all terms).
-        """
-        total = self._zero(kwargs)
-        for idx in range(len(self._term_keys)):
-            total = total + self._weights[idx] * self._dispatch(idx, kwargs)
-        return total
-
-    def forward_detailed(self, **kwargs):
-        """Compute weighted sum and return per-term losses.
-
-        Same as ``forward`` but additionally returns a dict mapping each
-        term's key to its *weighted* loss value, useful for per-term logging.
-
-        Returns:
-            Tuple[torch.Tensor, dict[str, torch.Tensor]]:
-                (total_loss, {term_key: weighted_loss})
-        """
-        total = self._zero(kwargs)
-        details = {}
-        for idx, key in enumerate(self._term_keys):
-            val = self._weights[idx] * self._dispatch(idx, kwargs)
-            details[key] = val
-            total = total + val
-        return total, details
+        mask = torch.isfinite(input)
+        if mask.any():
+            return self.scale * input[mask].abs().mean()
+        return torch.tensor(0.0, device=input.device)
