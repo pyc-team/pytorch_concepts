@@ -51,9 +51,9 @@ class ConceptMetrics(nn.Module):
             binary={"accuracy": BinaryAccuracy()},
             categorical={"accuracy": (MulticlassAccuracy, {"average": "micro"})},
         )
-        metrics.update(preds, targets, split="train")
-        results = metrics.compute("train")   # {"train/SUMMARY-binary_accuracy": ...}
-        metrics.reset("train")
+        metrics.update(preds, target)
+        results = metrics.compute()   # {"SUMMARY-binary_accuracy": ..., ...}
+        metrics.reset()
     """
     
     def __init__(

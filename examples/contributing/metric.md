@@ -18,27 +18,24 @@ Before implementing a custom metric, ensure you:
 
 ## Part 1: Using TorchMetrics Metrics
 
-### 1.1 Understanding GroupConfig
+### 1.1 Specifying Metrics by Concept Type
 
-The `GroupConfig` object organizes metrics by concept type (binary, categorical, continuous). This allows PyC to automatically route concept predictions to the appropriate metrics.
+`ConceptMetrics` accepts metrics grouped by concept type (``binary``, ``categorical``) as direct keyword arguments. This allows PyC to automatically route concept predictions to the appropriate metrics.
 
 ```python
-from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 import torchmetrics
 
-# Basic usage with GroupConfig
+# Pass metrics directly by concept type
 metrics = ConceptMetrics(
     annotations=concept_annotations,
-    fn_collection=GroupConfig(
-        binary={
-            'accuracy': torchmetrics.classification.BinaryAccuracy(),
-            'f1': torchmetrics.classification.BinaryF1Score()
-        },
-        categorical={
-            'accuracy': torchmetrics.classification.MulticlassAccuracy
-        }
-    ),
+    binary={
+        'accuracy': torchmetrics.classification.BinaryAccuracy(),
+        'f1': torchmetrics.classification.BinaryF1Score()
+    },
+    categorical={
+        'accuracy': torchmetrics.classification.MulticlassAccuracy
+    },
     summary=True,
     per_concept=False
 )
@@ -46,14 +43,15 @@ metrics = ConceptMetrics(
 
 ### 1.2 Three Ways to Specify Metrics
 
-PyC supports three flexible ways to specify metrics in the `GroupConfig`:
+PyC supports three flexible ways to specify metrics:
 
 #### Method 1: Pre-instantiated Metrics (Full Control)
 
 Use this when you need complete control over metric initialization:
 
 ```python
-fn_collection=GroupConfig(
+metrics = ConceptMetrics(
+    annotations=annotations,
     binary={
         'accuracy': torchmetrics.classification.BinaryAccuracy(threshold=0.6),
         'f1': torchmetrics.classification.BinaryF1Score(threshold=0.5)
@@ -64,7 +62,7 @@ fn_collection=GroupConfig(
             num_classes=4,  # max cardinality across all categorical concepts
             average='micro'
         )
-    }
+    },
 )
 ```
 
@@ -76,7 +74,8 @@ fn_collection=GroupConfig(
 Use this to provide custom kwargs while letting PyC handle concept-specific parameters:
 
 ```python
-fn_collection=GroupConfig(
+metrics = ConceptMetrics(
+    annotations=annotations,
     binary={
         # Provide custom threshold, other params use defaults
         'accuracy': (torchmetrics.classification.BinaryAccuracy, {'threshold': 0.5}),
@@ -85,7 +84,7 @@ fn_collection=GroupConfig(
         # Provide averaging strategy, PyC adds num_classes automatically
         'accuracy': (torchmetrics.classification.MulticlassAccuracy, {'average': 'macro'}),
         'f1': (torchmetrics.classification.MulticlassF1Score, {'average': 'weighted'})
-    }
+    },
 )
 ```
 
@@ -97,7 +96,8 @@ fn_collection=GroupConfig(
 Use this when you want all defaults with automatic concept-specific parameters:
 
 ```python
-fn_collection=GroupConfig(
+metrics = ConceptMetrics(
+    annotations=annotations,
     binary={
         'accuracy': torchmetrics.classification.BinaryAccuracy,
         'precision': torchmetrics.classification.BinaryPrecision,
@@ -106,7 +106,7 @@ fn_collection=GroupConfig(
     categorical={
         # PyC automatically adds num_classes per concept
         'accuracy': torchmetrics.classification.MulticlassAccuracy
-    }
+    },
 )
 ```
 
@@ -120,7 +120,8 @@ Control metric granularity with `summary` and `per_concept`:
 ```python
 metrics = ConceptMetrics(
     annotations=annotations,
-    fn_collection=GroupConfig(...),
+    binary={...},
+    categorical={...},
     summary=True,    # Aggregate metrics across all concepts of each type
     per_concept=True  # Track each concept individually
 )
@@ -152,22 +153,19 @@ _target_: "torch_concepts.nn.ConceptMetrics"
 summary: true
 per_concept: true  # or list of concept names: ${dataset.default_task_names}
 
-fn_collection:
-  _target_: "torch_concepts.nn.modules.utils.GroupConfig"
-  
-  binary: 
-    accuracy: 
-      _target_: "torchmetrics.classification.BinaryAccuracy"
-    f1:
-      - _target_: "hydra.utils.get_class"
-        path: "torchmetrics.classification.BinaryF1Score"
-      - threshold: 0.5  # User kwargs
-  
-  categorical: 
-    accuracy:
-      - _target_: "hydra.utils.get_class"
-        path: "torchmetrics.classification.MulticlassAccuracy"
-      - average: 'micro'  # User kwargs, num_classes added automatically
+binary: 
+  accuracy: 
+    _target_: "torchmetrics.classification.BinaryAccuracy"
+  f1:
+    - _target_: "hydra.utils.get_class"
+      path: "torchmetrics.classification.BinaryF1Score"
+    - threshold: 0.5  # User kwargs
+
+categorical: 
+  accuracy:
+    - _target_: "hydra.utils.get_class"
+      path: "torchmetrics.classification.MulticlassAccuracy"
+    - average: 'micro'  # User kwargs, num_classes added automatically
     
   # continuous: 
     # ... not supported yet
@@ -305,22 +303,19 @@ class ConceptDependencyScore(Metric):
         return cov
 ```
 
-### 2.4 Usage with GroupConfig
+### 2.4 Usage with ConceptMetrics
 
 Add your custom metric to the appropriate concept type group:
 
 ```python
 from torch_concepts.nn.modules.metrics import ConceptMetrics, ConceptDependencyScore
-from torch_concepts.nn.modules.utils import GroupConfig
 
 metrics = ConceptMetrics(
     annotations=annotations,
-    fn_collection=GroupConfig(
-        binary={
-            'accuracy': torchmetrics.classification.BinaryAccuracy,
-            'dependency': ConceptDependencyScore(n_concepts=len(binary_concepts))
-        }
-    ),
+    binary={
+        'accuracy': torchmetrics.classification.BinaryAccuracy,
+        'dependency': ConceptDependencyScore(n_concepts=len(binary_concepts))
+    },
     summary=True,
     per_concept=False
 )
@@ -544,7 +539,6 @@ def test_custom_metric_with_concept_metrics(self):
     """Test custom metric integrates with ConceptMetrics."""
     from torch_concepts import Annotations, AxisAnnotation
     from torch_concepts.nn.modules.metrics import ConceptMetrics
-    from torch_concepts.nn.modules.utils import GroupConfig
     
     # Create annotations
     annotations = Annotations({
@@ -561,11 +555,9 @@ def test_custom_metric_with_concept_metrics(self):
     # Create metrics with your custom metric
     metrics = ConceptMetrics(
         annotations=annotations,
-        fn_collection=GroupConfig(
-            binary={
-                'custom': YourCustomMetric(param1=value)
-            }
-        ),
+        binary={
+            'custom': YourCustomMetric(param1=value)
+        },
         summary=True
     )
     
@@ -573,8 +565,8 @@ def test_custom_metric_with_concept_metrics(self):
     preds = torch.randn(8, 2)
     targets = torch.randint(0, 2, (8, 2))
     
-    metrics.update(preds, targets, split='train')
-    results = metrics.compute('train')
+    metrics.update(preds, targets)
+    results = metrics.compute()
     
     self.assertIn('train/SUMMARY-binary_custom', results)
 ```
@@ -584,7 +576,7 @@ def test_custom_metric_with_concept_metrics(self):
 **Recommended workflow:**
 
 1. **Start with TorchMetrics**: Use existing metrics whenever possible
-2. **Use GroupConfig**: Organize metrics by concept type (binary/categorical/continuous)
+2. **Pass metrics by concept type**: Use ``binary=``, ``categorical=`` keyword arguments to ``ConceptMetrics``
 3. **Choose initialization method**: 
    - Pre-instantiated for full control
    - Class + kwargs (tuple) for custom params + automatic handling

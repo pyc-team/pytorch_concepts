@@ -317,7 +317,7 @@ class WeightedConceptLoss(nn.Module):
         ... )
         >>> input = torch.randn(2, 5)
         >>> target = torch.randint(0, 2, (2, 3))
-        >>> loss = loss_fn(input, target)
+        >>> loss = loss_fn(input=input, target=target)
     """
     def __init__(
         self,
@@ -442,7 +442,7 @@ class DepthWeightedConceptLoss(nn.Module):
         ... )
         >>> preds = torch.randn(4, 3)
         >>> targets = torch.randint(0, 2, (4, 3)).float()
-        >>> loss = loss_fn(preds, targets)
+        >>> loss = loss_fn(input=preds, target=targets)
     """
 
     def __init__(
@@ -560,7 +560,27 @@ class DepthWeightedConceptLoss(nn.Module):
 
 
 class L1LogitRegularizer(nn.Module):
-    """Penalise large logit magnitudes (L1 on predictions)."""
+    """Penalise large logit magnitudes via L1 regularisation.
+
+    Computes ``scale * mean(|input|)`` over all finite values in the
+    input tensor.  Non-finite entries (NaN / Inf from categorical
+    padding) are silently ignored.
+    
+    :class:`ConceptLoss`::
+
+        loss_fn = ConceptLoss(
+            annotations=ann,
+            binary=[BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
+            binary_weights=[1.0, 0.5],
+        )
+
+    Args:
+        scale (float): Multiplicative factor applied to the L1 mean.
+            Default ``1.0``.
+
+    Returns:
+        torch.Tensor: Scalar regularisation loss.
+    """
     def __init__(self, scale: float = 1.0):
         super().__init__()
         self.scale = scale

@@ -545,21 +545,26 @@ def completeness_score(
     scorer=roc_auc_score,
     average='macro',
 ):
-    """
-    Calculate the completeness score for the given predictions and true labels.
+    """Calculate the completeness score for the given predictions and true labels.
+
+    Measures how well a concept-based (whitebox) model explains the
+    predictions of a blackbox model.  A score of 1.0 indicates that
+    the whitebox model fully captures the blackbox's performance.
+
     Main reference: `"On Completeness-aware Concept-Based Explanations in
     Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_
 
-    Parameters:
+    Args:
         y_true (torch.Tensor): True labels.
         y_pred_blackbox (torch.Tensor): Predictions from the blackbox model.
-        y_pred_whitebox (torch.Tensor): Predictions from the whitebox model.
-        scorer (function): Scoring function to evaluate predictions. Default is
-            roc_auc_score.
-        average (str): Type of averaging to use. Default is 'macro'.
+        y_pred_whitebox (torch.Tensor): Predictions from the whitebox
+            (concept-based) model.
+        scorer (callable): Scoring function to evaluate predictions.
+            Default is ``roc_auc_score``.
+        average (str): Type of averaging to use. Default is ``'macro'``.
 
     Returns:
-        float: Completeness score.
+        float: Completeness score (whitebox_score / blackbox_score).
     """
     # Convert to numpy for sklearn metrics
     y_true_np = y_true.cpu().detach().numpy()
@@ -584,33 +589,34 @@ def intervention_score(
     average: str = 'macro',
     auc: bool = True,
 ) -> Union[float, List[float]]:
-    """
-    Compute the effect of concept interventions on downstream task predictions.
+    """Compute the effect of concept interventions on downstream task predictions.
 
-    Given  set of intervention groups, the intervention score measures the
+    Given a set of intervention groups, the intervention score measures the
     effectiveness of each intervention group on the model's task predictions.
 
     Main reference: `"Concept Bottleneck
     Models" <https://arxiv.org/abs/2007.04612>`_
 
-    Parameters:
+    Args:
         y_predictor (torch.nn.Module): Model that predicts downstream task
-            abels.
+            labels.
         c_pred (torch.Tensor): Predicted concept values.
         c_true (torch.Tensor): Ground truth concept values.
         y_true (torch.Tensor): Ground truth task labels.
-        intervention_groups (List[List[int]]): List of intervention groups.
+        intervention_groups (List[List[int]]): List of intervention groups,
+            where each group is a list of concept indices to intervene on.
         activation (Callable): Activation function to apply to the model's
-            predictions. Default is torch.sigmoid.
-        scorer (Callable): Scoring function to evaluate predictions. Default is
-            roc_auc_score.
-        average (str): Type of averaging to use. Default is 'macro'.
-        auc (bool): Whether to return the average score across all intervention
-            groups. Default is True.
+            predictions. Default is ``torch.sigmoid``.
+        scorer (Callable): Scoring function to evaluate predictions. Default
+            is ``roc_auc_score``.
+        average (str): Type of averaging to use. Default is ``'macro'``.
+        auc (bool): Whether to return the average score across all
+            intervention groups. Default is ``True``.
 
     Returns:
         Union[float, List[float]]: The intervention effectiveness for each
-            intervention group or the average score across all groups.
+            intervention group, or the average score across all groups when
+            ``auc=True``.
     """
     # Convert to numpy for sklearn metrics
     y_true_np = y_true.cpu().detach().numpy()
@@ -641,25 +647,28 @@ def intervention_score(
 
 
 def cace_score(y_pred_c0, y_pred_c1):
-    """
-    Compute the Average Causal Effect (ACE) also known as the Causal Concept
-    Effect (CaCE) score.
+    """Compute the Average Causal Effect (ACE) / Causal Concept Effect (CaCE) score.
 
-    The ACE/CaCE score measures the causal effect of a concept on the
-    predictions of a model. It is computed as the absolute difference between
-    the expected predictions when the concept is inactive (c0) and active (c1).
+    Measures the causal effect of a concept on model predictions:
+    ``E[Y | do(C=1)] - E[Y | do(C=0)]``.
 
     Main reference: `"Explaining Classifiers with Causal Concept Effect
     (CaCE)" <https://arxiv.org/abs/1907.07165>`_
 
-    Parameters:
-        y_pred_c0 (torch.Tensor): Predictions of the model when the concept is
-            inactive. Shape: (batch_size, num_classes).
-        y_pred_c1 (torch.Tensor): Predictions of the model when the concept is
-            active. Shape: (batch_size, num_classes).
+    Args:
+        y_pred_c0 (torch.Tensor): Predictions when the concept is inactive
+            (``do(C=0)``). Shape: ``(batch_size, num_classes)``.
+        y_pred_c1 (torch.Tensor): Predictions when the concept is active
+            (``do(C=1)``). Shape: ``(batch_size, num_classes)``.
 
     Returns:
-        torch.Tensor: The ACE/CaCE score for each class. Shape: (num_classes,).
+        torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
+
+    Example::
+
+        >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
+        >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
+        >>> cace_score(y_c0, y_c1)  # tensor([ 0.5, -0.5])
     """
     if y_pred_c0.shape != y_pred_c1.shape:
         raise RuntimeError(
@@ -670,11 +679,29 @@ def cace_score(y_pred_c0, y_pred_c1):
 
 
 def residual_concept_causal_effect(cace_before, cace_after):
-    """
-    Compute the residual concept causal effect between two concepts.
+    """Compute the residual concept causal effect.
+
+    Quantifies how much of a concept's causal effect remains after
+    intervening on another (inner) concept.  A value close to 1
+    indicates that the inner intervention had little impact; values
+    close to 0 indicate that the original effect was mostly mediated
+    through the inner concept.
+
     Args:
-        cace_metric_before: ConceptCausalEffect metric before the do-intervention on the inner concept
-        cace_metric_after: ConceptCausalEffect metric after do-intervention on the inner concept
+        cace_before (torch.Tensor): CaCE score **before** the
+            do-intervention on the inner concept.
+        cace_after (torch.Tensor): CaCE score **after** the
+            do-intervention on the inner concept.
+
+    Returns:
+        torch.Tensor: Element-wise ratio ``cace_after / cace_before``.
+
+    Example::
+
+        >>> before = torch.tensor([0.5, 0.4])
+        >>> after  = torch.tensor([0.1, 0.3])
+        >>> residual_concept_causal_effect(before, after)
+        tensor([0.2000, 0.7500])
     """
     return cace_after / cace_before
 

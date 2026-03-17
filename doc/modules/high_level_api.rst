@@ -163,14 +163,10 @@ Configure losses and metrics to automatically handle mixed concept types:
    from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
    
    # Different metrics for different concept types
-   metrics_config = GroupConfig(
-       binary={'accuracy': BinaryAccuracy()},
-       categorical={'accuracy': MulticlassAccuracy}
-   )
-   
    concept_metrics = ConceptMetrics(
        annotations=annotations,
-       fn_collection=metrics_config,
+       binary={'accuracy': BinaryAccuracy()},
+       categorical={'accuracy': MulticlassAccuracy()},
        summary=True,      # Compute average across concepts
        per_concept=True    # Compute per-concept metrics
    )
