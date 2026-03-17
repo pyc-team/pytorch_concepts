@@ -13,15 +13,14 @@ It handles:
 - Model evaluation
 """
 
-from typing import Optional, Mapping, Union
+from typing import Optional, Mapping
 
 from torch import nn
 import torch
-from torchmetrics import MetricCollection
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
-from .....nn.modules.metrics import ConceptMetrics, clone_metric
+from .....nn.modules.metrics import ConceptMetrics
 
 
 class BaseLearner(pl.LightningModule):
@@ -34,7 +33,7 @@ class BaseLearner(pl.LightningModule):
         loss (nn.Module, optional): Loss function for training.  Use per-type composition via ``ConceptLoss``
             to combine multiple terms (see ``binary``, ``binary_weights``,
             etc.).
-        metrics (ConceptMetrics or dict, optional): Metrics for evaluation.
+        metrics (ConceptMetrics, optional): Metrics for evaluation.
         optim_class (Optimizer, optional): Optimizer class.
         optim_kwargs (dict, optional): Optimizer arguments.
         scheduler_class (LRScheduler, optional): Scheduler class.
@@ -47,7 +46,7 @@ class BaseLearner(pl.LightningModule):
     """
     def __init__(self,
                 loss: Optional[nn.Module] = None,
-                metrics: Optional[Union[ConceptMetrics, Mapping[str, MetricCollection]]] = None,
+                metrics: Optional[ConceptMetrics] = None,
                 optim_class: Optional[Optimizer] = None,
                 optim_kwargs: Optional[Mapping] = None,
                 scheduler_class: Optional[LRScheduler] = None,
@@ -66,9 +65,15 @@ class BaseLearner(pl.LightningModule):
         self.scheduler_kwargs = scheduler_kwargs
 
         # Create pointers to train, val and test collections
-        # check if metrics are not empty
-        if metrics is not None and metrics.collection:
+        if isinstance(metrics, ConceptMetrics) and metrics.collection:
             self.setup_metrics(metrics)
+        elif metrics is not None:
+            assert isinstance(metrics, ConceptMetrics), (
+                f"metrics must be a ConceptMetrics instance, got {type(metrics)}"
+            )
+            self.train_metrics = None
+            self.val_metrics = None
+            self.test_metrics = None
         else:
             self.train_metrics = None
             self.val_metrics = None
@@ -79,27 +84,10 @@ class BaseLearner(pl.LightningModule):
         return (f"{self.__class__.__name__}(n_concepts={self.n_concepts}, "
                 f"optimizer={self.optim_class.__name__}, scheduler={scheduler_name})")
     
-    def setup_metrics(self, metrics):
-        if isinstance(metrics, ConceptMetrics):
-            self.train_metrics = metrics.clone(prefix="train")
-            self.val_metrics = metrics.clone(prefix="val")
-            self.test_metrics = metrics.clone(prefix="test")
-        else:
-            # Create MetricCollections for each split with cloned metrics
-            self.train_metrics = MetricCollection(
-                metrics={k: clone_metric(m) for k, m in metrics.items()},
-                prefix="train/"
-            ) if metrics else MetricCollection({})
-            
-            self.val_metrics = MetricCollection(
-                metrics={k: clone_metric(m) for k, m in metrics.items()},
-                prefix="val/"
-            ) if metrics else MetricCollection({})
-            
-            self.test_metrics = MetricCollection(
-                metrics={k: clone_metric(m) for k, m in metrics.items()},
-                prefix="test/"
-            ) if metrics else MetricCollection({}) 
+    def setup_metrics(self, metrics: ConceptMetrics):
+        self.train_metrics = metrics.clone(prefix="train")
+        self.val_metrics = metrics.clone(prefix="val")
+        self.test_metrics = metrics.clone(prefix="test") 
 
     def update_and_log_metrics(self, metrics_args: Mapping, step: str, batch_size: int):
         """Update metrics and log them.

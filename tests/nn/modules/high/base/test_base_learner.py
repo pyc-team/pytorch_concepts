@@ -72,7 +72,7 @@ class TestBaseLearnerInitialization(unittest.TestCase):
         learner = MockLearner(n_concepts=3)
         self.assertEqual(learner.n_concepts, 3)
         self.assertIsNone(learner.loss)
-        self.assertIsNone(learner.metrics)
+        self.assertIsNone(learner.train_metrics)
         self.assertIsNone(learner.optim_class)
 
     def test_initialization_with_loss(self):
@@ -143,7 +143,6 @@ class TestBaseLearnerMetrics(unittest.TestCase):
     def test_metrics_none(self):
         """Test initialization with no metrics."""
         learner = MockLearner(metrics=None)
-        self.assertIsNone(learner.metrics)
         self.assertIsNone(learner.train_metrics)
         self.assertIsNone(learner.val_metrics)
         self.assertIsNone(learner.test_metrics)
@@ -153,102 +152,37 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=self.annotations,
             summary=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
-        # Verify metrics object is stored
-        self.assertIs(learner.metrics, metrics)
-        
-        # Verify pointers to individual collections
-        self.assertIs(learner.train_metrics, metrics.train_metrics)
-        self.assertIs(learner.val_metrics, metrics.val_metrics)
-        self.assertIs(learner.test_metrics, metrics.test_metrics)
+        # Verify split metrics are created
+        self.assertIsNotNone(learner.train_metrics)
+        self.assertIsNotNone(learner.val_metrics)
+        self.assertIsNotNone(learner.test_metrics)
 
-    def test_metrics_with_dict(self):
-        """Test initialization with dict of MetricCollections."""
-        from torchmetrics import MetricCollection
-        
-        train_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        val_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        test_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        
-        metrics_dict = {
-            'train_metrics': train_collection,
-            'val_metrics': val_collection,
-            'test_metrics': test_collection
-        }
-        
-        learner = MockLearner(metrics=metrics_dict)
-        
-        # Verify dict is stored
-        self.assertIs(learner.metrics, metrics_dict)
-        
-        # Verify pointers to individual collections
-        self.assertIs(learner.train_metrics, train_collection)
-        self.assertIs(learner.val_metrics, val_collection)
-        self.assertIs(learner.test_metrics, test_collection)
+    def test_metrics_with_dict_raises(self):
+        """Test that passing a dict raises AssertionError."""
+        with self.assertRaises(AssertionError):
+            MockLearner(metrics={'train_metrics': None})
 
-    def test_metrics_dict_with_invalid_keys(self):
-        """Test that dict with invalid keys raises assertion error."""
-        from torchmetrics import MetricCollection
-        
-        invalid_dict = {
-            'training': MetricCollection({'acc': torchmetrics.classification.BinaryAccuracy()}),
-            'validation': MetricCollection({'acc': torchmetrics.classification.BinaryAccuracy()})
-        }
-        
-        with self.assertRaises(AssertionError) as context:
-            MockLearner(metrics=invalid_dict)
-        self.assertIn("train_metrics", str(context.exception))
-        self.assertIn("val_metrics", str(context.exception))
-        self.assertIn("test_metrics", str(context.exception))
+    def test_metrics_with_invalid_type_raises(self):
+        """Test that passing an invalid type raises AssertionError."""
+        with self.assertRaises(AssertionError):
+            MockLearner(metrics="not_metrics")
 
     def test_update_metrics_with_concept_metrics(self):
         """Test update_metrics method with ConceptMetrics."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
             summary=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
         # Create dummy predictions and targets (2 samples, 2 concepts)
         preds = torch.tensor([[0.8, 0.7], [0.2, 0.3]])
         targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        
-        # Update metrics - should not raise error
-        learner.update_metrics(preds, targets, step='train')
-
-    def test_update_metrics_with_dict(self):
-        """Test update_metrics method with dict of MetricCollections."""
-        from torchmetrics import MetricCollection
-        
-        train_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        
-        metrics_dict = {
-            'train_metrics': train_collection,
-            'val_metrics': None,
-            'test_metrics': None
-        }
-        
-        learner = MockLearner(metrics=metrics_dict)
-        
-        # Create dummy predictions and targets
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
         
         # Update metrics - should not raise error
         learner.update_metrics(preds, targets, step='train')
@@ -283,9 +217,7 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         metrics = ConceptMetrics(
             annotations=self.annotations,
             summary=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
@@ -449,16 +381,15 @@ class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
 # ======================================================================
 
 class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
-    """Test update_metrics raises ValueError for unsupported metrics type."""
+    """Test update_metrics with invalid metrics is a no-op."""
 
-    def test_update_metrics_invalid_type_raises(self):
-        """Metrics set to an arbitrary object raises ValueError."""
+    def test_update_metrics_invalid_type_is_noop(self):
+        """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        learner.metrics = "not_a_valid_metrics"  # bypass __init__ validation
         preds = torch.tensor([0.8, 0.2])
         targets = torch.tensor([1, 0])
-        with self.assertRaises(ValueError):
-            learner.update_metrics(preds, targets, step='train')
+        # Should not raise — train_metrics is None so nothing happens
+        learner.update_metrics(preds, targets, step='train')
 
 
 # ======================================================================

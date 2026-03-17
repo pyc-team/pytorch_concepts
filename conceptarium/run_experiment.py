@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Run concept-based model experiments using Hydra configuration."""
 
+import os
 import warnings
 # Suppress Pydantic warnings from third-party libraries
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -10,10 +11,11 @@ logger = logging.getLogger(__name__)
 
 import hydra
 from omegaconf import DictConfig
-from hydra.utils import instantiate
+from hydra.utils import instantiate, get_original_cwd
 
 from conceptarium.trainer import Trainer
 from conceptarium.hydra import parse_hyperparams
+from conceptarium.registry import register_run
 from conceptarium.resolvers import register_custom_resolvers
 from conceptarium.utils import setup_run_env, clean_empty_configs, update_config_from_data, instantiate_loss
 
@@ -22,6 +24,7 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------------
     # Setup environment
     # ----------------------------------
+    status = "failed"
     cfg = setup_run_env(cfg)
     cfg = clean_empty_configs(cfg)
 
@@ -40,11 +43,12 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------------
     # Model
     # 1. Instantiate the loss function
-    # 2. Instantiate the model
+    # 2. Instantiate the metrics
+    # 3. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
 
-    loss, loss_weights = instantiate_loss(cfg, datamodule.annotations)
+    loss = instantiate_loss(cfg, datamodule.annotations)
     logger.info(loss)
 
     metrics = instantiate(cfg.metrics, annotations=datamodule.annotations, _convert_="all")
@@ -55,7 +59,6 @@ def main(cfg: DictConfig) -> None:
         annotations=datamodule.annotations, 
         graph=datamodule.graph, 
         loss=loss, 
-        loss_weights=loss_weights, 
         metrics=metrics, 
         _convert_="all"
     )
@@ -75,10 +78,14 @@ def main(cfg: DictConfig) -> None:
         # Test
         trainer.test(datamodule=datamodule)
         # ----------------------------------
-        
+
         trainer.logger.finalize("success")
+        status = "success"
     finally:
         trainer.logger.experiment.finish()
+        # Log run to CSV registry
+        csv_path = os.path.join(get_original_cwd(), "conceptarium", "runs.csv")
+        register_run(os.getcwd(), cfg, status=status, csv_path=csv_path)
 
 
 if __name__ == "__main__":
