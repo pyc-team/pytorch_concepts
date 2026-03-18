@@ -85,4 +85,6 @@ data/
 !tests/data/
 
 # conceptarium logs
+runs.csv
+conceptarium/results/
 outputs/

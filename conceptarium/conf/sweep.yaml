@@ -47,4 +47,6 @@ trainer:
 
 matmul_precision: medium
 
+debug: true # whether to add run to the analysis registry 
+
 notes: test
