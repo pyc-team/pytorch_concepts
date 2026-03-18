@@ -205,15 +205,12 @@ Detailed Guides
       )
       
       # Metrics configuration
-      metrics_config = GroupConfig(
-          binary={'accuracy': BinaryAccuracy()},
-          categorical={'accuracy': (MulticlassAccuracy, {'average': 'macro'})}
-      )
       metrics = ConceptMetrics(
           annotations=ann,
-          fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=True
+          binary={'accuracy': BinaryAccuracy()},
+          categorical={'accuracy': (MulticlassAccuracy, {'average': 'macro'})},
+          summary=True,
+          per_concept=True
       )
    
    **Special Cases**
@@ -259,26 +256,13 @@ Detailed Guides
           categorical=Categorical
       )
       
-      # Configure losses by type
-      loss_config = GroupConfig(
-          binary=BCEWithLogitsLoss(),
-          categorical=CrossEntropyLoss()
-      )
-      
-      # Configure metrics by type
-      from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
-      
-      metrics_config = GroupConfig(
-          binary={'accuracy': BinaryAccuracy()},
-          categorical={'accuracy': MulticlassAccuracy}
-      )
    
    **Automatic Type Detection**
    
    GroupConfig automatically determines concept types based on cardinalities:
    
-   - **Binary**: cardinality = 1
-   - **Categorical**: cardinality > 1
+   - **Binary**: when type='discrete' in metadata and cardinality = 1
+   - **Categorical**: when type='discrete' in metadata and cardinality > 1
    - **Continuous**: when type='continuous' in metadata (not yet fully supported)
    
    .. code-block:: python
@@ -288,22 +272,25 @@ Detailed Guides
           1: AxisAnnotation(
               labels=['c1', 'c2', 'c3', 'c4'],
               cardinalities=[1, 1, 3, 5],  # 2 binary + 2 categorical
-              metadata={...}
+              metadata={
+                  'c1': {'type': 'discrete'},
+                  'c2': {'type': 'discrete'},
+                  'c3': {'type': 'discrete'},
+                  'c4': {'type': 'discrete'}
+              }
           )
       })
       
       # Single configuration for all binary, another for all categorical
       variable_distributions = GroupConfig(
-          binary=Bernoulli,      # Applied to c1, c2 (cardinality=1)
+          binary=Bernoulli,       # Applied to c1, c2 (cardinality=1)
           categorical=Categorical # Applied to c3, c4 (cardinality>1)
       )
    
    **Benefits**
    
    1. **Scalability**: Configure 312 CUB-200 attributes as easily as 5 concepts
-   2. **Consistency**: Same settings applied to all concepts of the same type
-   3. **Maintainability**: Change one configuration instead of hundreds
-   4. **Type Safety**: Validates that all required types are configured
+   2. **Type Safety**: Validates that all required types are configured
    
    **Usage with Models**
    
@@ -319,49 +306,8 @@ Detailed Guides
               categorical=Categorical
           ),
           task_names=['class_A', 'class_B']
+
       )
-   
-   **Usage with Loss Functions**
-   
-   .. code-block:: python
-   
-      from torch_concepts.nn import ConceptLoss
-      
-      loss = ConceptLoss(
-          annotations=ann,
-          fn_collection=GroupConfig(
-              binary=BCEWithLogitsLoss(),
-              categorical=CrossEntropyLoss()
-          )
-      )
-   
-   **Usage with Metrics**
-   
-   .. code-block:: python
-   
-      from torch_concepts.nn import ConceptMetrics
-      
-      metrics = ConceptMetrics(
-          annotations=ann,
-          fn_collection=GroupConfig(
-              binary={'accuracy': BinaryAccuracy(), 'f1': BinaryF1Score()},
-              categorical={'accuracy': (MulticlassAccuracy, {'average': 'macro'})}
-          ),
-          summary_metrics=True,
-          perconcept_metrics=False
-      )
-   
-   **Special Cases**
-   
-   **All same type**: GroupConfig works even when all concepts are the same type:
-   
-   .. code-block:: python
-   
-      # All binary
-      variable_distributions = GroupConfig(binary=Bernoulli)
-      
-      # All categorical
-      variable_distributions = GroupConfig(categorical=Categorical)
    
    **Missing types**: If a required type is not configured, an error is raised:
    
@@ -384,22 +330,19 @@ Detailed Guides
    .. code-block:: python
    
       from torch_concepts.nn import ConceptLoss
-      from torch_concepts import GroupConfig
       from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
       
-      # Configure losses by type
-      loss_config = GroupConfig(
+      # Create type-aware loss (routes by concept type automatically)
+      loss = ConceptLoss(
+          annotations=ann,
           binary=BCEWithLogitsLoss(),
           categorical=CrossEntropyLoss()
       )
       
-      # Create type-aware loss
-      loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
-      
-      # Use in training
+      # Use in training (keyword arguments required)
       predictions = model(x)
       targets = batch['concepts']
-      loss_value = loss(predictions, targets)
+      loss_value = loss(input=predictions, target=targets)
    
    **Automatic Routing**
    
@@ -423,7 +366,7 @@ Detailed Guides
       ], dim=1)
       
       # Automatic routing to appropriate losses
-      loss_value = loss(predictions, targets)
+      loss_value = loss(input=predictions, target=targets)
    
    **Weighted Loss**
    
@@ -435,9 +378,11 @@ Detailed Guides
       
       loss = WeightedConceptLoss(
           annotations=ann,
-          fn_collection=loss_config,
-          concept_loss_weight=0.5,  # Weight for concept predictions
-          task_loss_weight=1.0       # Weight for task predictions
+          concept_weight=0.5,
+          task_weight=1.0,
+          task_names=['class_A', 'class_B'],
+          binary=BCEWithLogitsLoss(),
+          categorical=CrossEntropyLoss()
       )
    
    **Integration with Models**
@@ -466,7 +411,7 @@ Detailed Guides
       optimizer = torch.optim.Adam(model.parameters())
       for batch in dataloader:
           predictions = model(batch['inputs'])
-          loss_value = loss(predictions, batch['concepts'])
+          loss_value = loss(input=predictions, target=batch['concepts'])
           loss_value.backward()
           optimizer.step()
    
@@ -481,10 +426,30 @@ Detailed Guides
    
    .. code-block:: python
    
-      loss_config = GroupConfig(
+      loss = ConceptLoss(
+          annotations=ann,
           binary=BCEWithLogitsLoss(reduction='mean'),
           categorical=CrossEntropyLoss(reduction='mean')
       )
+   
+   **Composite Losses**: Combine multiple loss terms per type with weights:
+   
+   .. code-block:: python
+   
+      from torch_concepts.nn import L1LogitRegularizer
+      
+      loss = ConceptLoss(
+          annotations=ann,
+          binary=[BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
+          binary_weights=[1.0, 0.5],
+          categorical=CrossEntropyLoss()
+      )
+   
+   **Functional evaluation metrics**: For post-hoc evaluation, see
+   :func:`~torch_concepts.nn.functional.completeness_score`,
+   :func:`~torch_concepts.nn.functional.intervention_score`, and
+   :func:`~torch_concepts.nn.functional.cace_score` in the
+   :doc:`Functional API </modules/nn.functional>`.
 
 .. dropdown:: Metrics
    :icon: graph
@@ -499,29 +464,23 @@ Detailed Guides
    .. code-block:: python
    
       from torch_concepts.nn import ConceptMetrics
-      from torch_concepts import GroupConfig
       from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
       
-      # Configure metrics by type
-      metrics_config = GroupConfig(
-          binary={'accuracy': BinaryAccuracy()},
-          categorical={'accuracy': MulticlassAccuracy}
-      )
-      
-      # Create metrics tracker
+      # Create metrics tracker (binary / categorical specified directly)
       metrics = ConceptMetrics(
           annotations=ann,
-          fn_collection=metrics_config,
-          summary_metrics=True,      # Aggregate by type
-          perconcept_metrics=True     # Individual concept tracking
+          binary={'accuracy': BinaryAccuracy()},
+          categorical={'accuracy': MulticlassAccuracy},
+          summary=True,      # Aggregate by type
+          per_concept=True     # Individual concept tracking
       )
       
       # During training
-      metrics.update(preds=predictions, target=targets, split='train')
+      metrics.update(preds=predictions, target=targets)
       
       # End of epoch
-      results = metrics.compute('train')
-      metrics.reset('train')
+      results = metrics.compute()
+      metrics.reset()
    
    **Summary vs Per-Concept Metrics**
    
@@ -530,16 +489,14 @@ Detailed Guides
    .. code-block:: python
    
       metrics = ConceptMetrics(
-          annotations=ann,
-          fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=False
+          ...
+          summary=True
       )
       
-      results = metrics.compute('train')
+      results = metrics.compute()
       # Output: {
-      #     'train/SUMMARY-binary_accuracy': tensor(0.8542),
-      #     'train/SUMMARY-categorical_accuracy': tensor(0.7621)
+      #     'SUMMARY-binary_accuracy': tensor(0.8542),
+      #     'SUMMARY-categorical_accuracy': tensor(0.7621)
       # }
    
    **Per-concept metrics**: Track each concept individually
@@ -547,17 +504,15 @@ Detailed Guides
    .. code-block:: python
    
       metrics = ConceptMetrics(
-          annotations=ann,
-          fn_collection=metrics_config,
-          summary_metrics=False,
-          perconcept_metrics=True
+          ...
+          per_concept=True
       )
       
-      results = metrics.compute('train')
+      results = metrics.compute()
       # Output: {
-      #     'train/is_round_accuracy': tensor(0.9000),
-      #     'train/is_smooth_accuracy': tensor(0.8500),
-      #     'train/color_accuracy': tensor(0.7621)
+      #     'is_round_accuracy': tensor(0.9000),
+      #     'is_smooth_accuracy': tensor(0.8500),
+      #     'color_accuracy': tensor(0.7621)
       # }
    
    **Selective tracking**: Track only specific concepts
@@ -565,10 +520,8 @@ Detailed Guides
    .. code-block:: python
    
       metrics = ConceptMetrics(
-          annotations=ann,
-          fn_collection=metrics_config,
-          summary_metrics=True,
-          perconcept_metrics=['is_round', 'color']  # Only these
+          ...
+          per_concept=['is_round', 'color']  # Only these
       )
    
    **Multiple Metrics per Type**
@@ -577,7 +530,8 @@ Detailed Guides
    
       from torchmetrics.classification import BinaryF1Score, BinaryPrecision
       
-      metrics_config = GroupConfig(
+      metrics = ConceptMetrics(
+          annotations=ann,
           binary={
               'accuracy': BinaryAccuracy(),
               'f1': BinaryF1Score(),
@@ -586,32 +540,10 @@ Detailed Guides
           categorical={
               'accuracy': (MulticlassAccuracy, {'average': 'macro'}),
               'f1': (MulticlassF1Score, {'average': 'weighted'})
-          }
+          },
+          summary=True
       )
    
-   **Split-Aware Tracking**
-   
-   Maintain independent metrics for train/validation/test:
-   
-   .. code-block:: python
-   
-      # Training loop
-      for batch in train_loader:
-          predictions = model(batch['inputs'])
-          metrics.update(pred=predictions, target=batch['concepts'], split='train')
-      
-      # Validation loop
-      for batch in val_loader:
-          predictions = model(batch['inputs'])
-          metrics.update(pred=predictions, target=batch['concepts'], split='val')
-      
-      # Compute separately
-      train_results = metrics.compute('train')
-      val_results = metrics.compute('val')
-      
-      # Reset for next epoch
-      metrics.reset('train')
-      metrics.reset('val')
    
    **Integration with Lightning**
    
@@ -717,12 +649,18 @@ Detailed Guides
           input_size=256,
           annotations=ann,
           task_names=['class_A', 'class_B'],
-          loss=ConceptLoss(annotations=ann, fn_collection=loss_config),
+          lightning=True,  # Enable Lightning integration
+          loss=ConceptLoss(
+              annotations=ann,
+              binary=BCEWithLogitsLoss(),
+              categorical=CrossEntropyLoss()
+          ),
           metrics=ConceptMetrics(
               annotations=ann,
-              fn_collection=metrics_config,
-              summary_metrics=True,
-              perconcept_metrics=True
+              binary={'accuracy': BinaryAccuracy()},
+              categorical={'accuracy': (MulticlassAccuracy, {'average': 'macro'})},
+              summary=True,
+              per_concept=True
           ),
           optim_class=torch.optim.AdamW,
           optim_kwargs={'lr': 0.001}
@@ -866,20 +804,16 @@ Putting it all together:
     # 2. Create loss and metrics
     loss = ConceptLoss(
         annotations=ann, 
-        fn_collection=GroupConfig(
-            binary=BCEWithLogitsLoss(),
-            categorical=CrossEntropyLoss()
-        )
+        binary=BCEWithLogitsLoss(),
+        categorical=CrossEntropyLoss()
     )
 
     metrics = ConceptMetrics(
         annotations=ann,
-        fn_collection=GroupConfig(
-            binary={'accuracy': BinaryAccuracy()},
-            categorical={'accuracy': (MulticlassAccuracy, {'average': 'micro'})}
-        ),
-        summary_metrics=True,
-        perconcept_metrics=True
+        binary={'accuracy': BinaryAccuracy()},
+        categorical={'accuracy': (MulticlassAccuracy, {'average': 'micro'})},
+        summary=True,
+        per_concept=True
     )
 
     # 3. Create model with all configurations

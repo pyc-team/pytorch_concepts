@@ -17,15 +17,21 @@ Summary
    ConceptLoss
    WeightedConceptLoss
 
-**Low-Level Losses**
+**Graph-Based Losses**
 
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   WeightedBCEWithLogitsLoss
-   WeightedCrossEntropyLoss
-   WeightedMSELoss
+   DepthWeightedConceptLoss
+
+**Regularisers**
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   L1LogitRegularizer
 
 
 Class Documentation
@@ -41,17 +47,12 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: WeightedBCEWithLogitsLoss
+.. autoclass:: DepthWeightedConceptLoss
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: WeightedCrossEntropyLoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: WeightedMSELoss
+.. autoclass:: L1LogitRegularizer
    :members:
    :undoc-members:
    :show-inheritance:

@@ -2,8 +2,7 @@
 Tests for torch_concepts.nn.modules.high.base.learner.BaseLearner
 
 BaseLearner is now a lightweight training orchestrator that handles:
-- Loss computation (single module or list→CompositeLoss)
-- loss_weights warning when misused
+- Loss computation (single nn.Module)
 - Metrics tracking (ConceptMetrics or dict of MetricCollections)  
 - Optimizer and scheduler configuration
 - shared_step / training_step / validation_step / test_step
@@ -15,14 +14,13 @@ Note: Annotations and concept management are now handled by BaseModel,
 not BaseLearner. These tests focus on the core orchestration functionality.
 """
 import unittest
-import warnings
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
 from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
-from torch_concepts.nn.modules.loss import ConceptLoss, CompositeLoss
+from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.utils import GroupConfig
 
@@ -74,7 +72,7 @@ class TestBaseLearnerInitialization(unittest.TestCase):
         learner = MockLearner(n_concepts=3)
         self.assertEqual(learner.n_concepts, 3)
         self.assertIsNone(learner.loss)
-        self.assertIsNone(learner.metrics)
+        self.assertIsNone(learner.train_metrics)
         self.assertIsNone(learner.optim_class)
 
     def test_initialization_with_loss(self):
@@ -145,7 +143,6 @@ class TestBaseLearnerMetrics(unittest.TestCase):
     def test_metrics_none(self):
         """Test initialization with no metrics."""
         learner = MockLearner(metrics=None)
-        self.assertIsNone(learner.metrics)
         self.assertIsNone(learner.train_metrics)
         self.assertIsNone(learner.val_metrics)
         self.assertIsNone(learner.test_metrics)
@@ -154,103 +151,38 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         """Test initialization with ConceptMetrics object."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            summary=True,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
-        # Verify metrics object is stored
-        self.assertIs(learner.metrics, metrics)
-        
-        # Verify pointers to individual collections
-        self.assertIs(learner.train_metrics, metrics.train_metrics)
-        self.assertIs(learner.val_metrics, metrics.val_metrics)
-        self.assertIs(learner.test_metrics, metrics.test_metrics)
+        # Verify split metrics are created
+        self.assertIsNotNone(learner.train_metrics)
+        self.assertIsNotNone(learner.val_metrics)
+        self.assertIsNotNone(learner.test_metrics)
 
-    def test_metrics_with_dict(self):
-        """Test initialization with dict of MetricCollections."""
-        from torchmetrics import MetricCollection
-        
-        train_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        val_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        test_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        
-        metrics_dict = {
-            'train_metrics': train_collection,
-            'val_metrics': val_collection,
-            'test_metrics': test_collection
-        }
-        
-        learner = MockLearner(metrics=metrics_dict)
-        
-        # Verify dict is stored
-        self.assertIs(learner.metrics, metrics_dict)
-        
-        # Verify pointers to individual collections
-        self.assertIs(learner.train_metrics, train_collection)
-        self.assertIs(learner.val_metrics, val_collection)
-        self.assertIs(learner.test_metrics, test_collection)
+    def test_metrics_with_dict_raises(self):
+        """Test that passing a dict raises AssertionError."""
+        with self.assertRaises(AssertionError):
+            MockLearner(metrics={'train_metrics': None})
 
-    def test_metrics_dict_with_invalid_keys(self):
-        """Test that dict with invalid keys raises assertion error."""
-        from torchmetrics import MetricCollection
-        
-        invalid_dict = {
-            'training': MetricCollection({'acc': torchmetrics.classification.BinaryAccuracy()}),
-            'validation': MetricCollection({'acc': torchmetrics.classification.BinaryAccuracy()})
-        }
-        
-        with self.assertRaises(AssertionError) as context:
-            MockLearner(metrics=invalid_dict)
-        self.assertIn("train_metrics", str(context.exception))
-        self.assertIn("val_metrics", str(context.exception))
-        self.assertIn("test_metrics", str(context.exception))
+    def test_metrics_with_invalid_type_raises(self):
+        """Test that passing an invalid type raises AssertionError."""
+        with self.assertRaises(AssertionError):
+            MockLearner(metrics="not_metrics")
 
     def test_update_metrics_with_concept_metrics(self):
         """Test update_metrics method with ConceptMetrics."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            summary=True,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
         # Create dummy predictions and targets (2 samples, 2 concepts)
         preds = torch.tensor([[0.8, 0.7], [0.2, 0.3]])
         targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        
-        # Update metrics - should not raise error
-        learner.update_metrics(preds, targets, step='train')
-
-    def test_update_metrics_with_dict(self):
-        """Test update_metrics method with dict of MetricCollections."""
-        from torchmetrics import MetricCollection
-        
-        train_collection = MetricCollection({
-            'accuracy': torchmetrics.classification.BinaryAccuracy()
-        })
-        
-        metrics_dict = {
-            'train_metrics': train_collection,
-            'val_metrics': None,
-            'test_metrics': None
-        }
-        
-        learner = MockLearner(metrics=metrics_dict)
-        
-        # Create dummy predictions and targets
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
         
         # Update metrics - should not raise error
         learner.update_metrics(preds, targets, step='train')
@@ -284,10 +216,8 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         """Test update_and_log_metrics method."""
         metrics = ConceptMetrics(
             annotations=self.annotations,
-            summary_metrics=True,
-            fn_collection=GroupConfig(
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()}
-            )
+            summary=True,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
         
@@ -447,60 +377,19 @@ class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
 
 
 # ======================================================================
-# Loss list / CompositeLoss branch & loss_weights warning
-# ======================================================================
-
-class TestBaseLearnerLossInit(unittest.TestCase):
-    """Test loss initialisation paths in BaseLearner.__init__."""
-
-    def test_list_of_losses_creates_composite(self):
-        """When loss is a list, CompositeLoss is created."""
-        loss1 = nn.MSELoss()
-        loss2 = nn.L1Loss()
-        learner = MockLearner(loss=[loss1, loss2])
-        self.assertIsInstance(learner.loss, CompositeLoss)
-
-    def test_list_of_losses_with_weights(self):
-        """Weights are forwarded to CompositeLoss."""
-        loss1 = nn.MSELoss()
-        loss2 = nn.L1Loss()
-        learner = MockLearner(loss=[loss1, loss2], loss_weights=[0.7, 0.3])
-        self.assertIsInstance(learner.loss, CompositeLoss)
-        self.assertAlmostEqual(learner.loss.weights[0], 0.7)
-        self.assertAlmostEqual(learner.loss.weights[1], 0.3)
-
-    def test_tuple_of_losses_creates_composite(self):
-        """Tuple of losses also triggers CompositeLoss."""
-        learner = MockLearner(loss=(nn.MSELoss(), nn.L1Loss()))
-        self.assertIsInstance(learner.loss, CompositeLoss)
-
-    def test_single_loss_with_weights_warns(self):
-        """Passing loss_weights with a single loss emits a UserWarning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            learner = MockLearner(loss=nn.MSELoss(), loss_weights=[1.0])
-            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
-            self.assertEqual(len(user_warnings), 1)
-            self.assertIn("loss_weights is ignored", str(user_warnings[0].message))
-        # The loss itself is still set
-        self.assertIsInstance(learner.loss, nn.MSELoss)
-
-
-# ======================================================================
 # update_metrics error path
 # ======================================================================
 
 class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
-    """Test update_metrics raises ValueError for unsupported metrics type."""
+    """Test update_metrics with invalid metrics is a no-op."""
 
-    def test_update_metrics_invalid_type_raises(self):
-        """Metrics set to an arbitrary object raises ValueError."""
+    def test_update_metrics_invalid_type_is_noop(self):
+        """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        learner.metrics = "not_a_valid_metrics"  # bypass __init__ validation
         preds = torch.tensor([0.8, 0.2])
         targets = torch.tensor([1, 0])
-        with self.assertRaises(ValueError):
-            learner.update_metrics(preds, targets, step='train')
+        # Should not raise — train_metrics is None so nothing happens
+        learner.update_metrics(preds, targets, step='train')
 
 
 # ======================================================================
@@ -614,13 +503,15 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
             learner.shared_step(self.batch, step='train')
 
     def test_shared_step_with_composite_loss(self):
-        """shared_step works when loss is a list (CompositeLoss)."""
-        loss1 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
-        loss2 = ConceptLoss(self.annotations, binary=nn.BCEWithLogitsLoss())
+        """shared_step works when loss uses per-type composition."""
+        loss = ConceptLoss(
+            self.annotations,
+            binary=[nn.BCEWithLogitsLoss(), nn.BCEWithLogitsLoss()],
+            binary_weights=[1.0, 0.5],
+        )
         learner = FullMockLearner(
             self.annotations, n_concepts=2,
-            loss=[loss1, loss2],
-            loss_weights=[1.0, 0.5],
+            loss=loss,
         )
         self._patch_logging(learner)
         loss = learner.shared_step(self.batch, step='val')

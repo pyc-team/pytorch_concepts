@@ -1,100 +1,109 @@
 """
-Example: Composing multiple loss terms with the list-based API
+Example: Composing multiple loss terms with per-type weights
 
-Two scenarios are demonstrated:
-  1. Single loss (backwards-compatible)
-  2. List of losses with custom weights
+Uses the **insurance** Bayesian-network dataset which has **both** binary
+and categorical concepts, making it a good test-bed for type-specific loss
+composition.
+
+Three scenarios are demonstrated:
+  1. Single loss per type (backward-compatible)
+  2. Per-type composite losses with custom weights
+  3. Composite only on binary concepts, plain loss on categorical
 """
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli
-from torchmetrics.classification import BinaryAccuracy
+from torch.distributions import Bernoulli, Categorical
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, L1LogitRegularizer
-from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.data.base.datamodule import ConceptDataModule
-
-
-def evaluate(model, datamodule, concept_names, n_concepts):
-    """Print test-set concept and task accuracy."""
-    concept_acc_fn = BinaryAccuracy()
-    task_acc_fn = BinaryAccuracy()
-    model.eval()
-    c_acc, t_acc, n = 0.0, 0.0, 0
-    with torch.no_grad():
-        for batch in datamodule.test_dataloader():
-            out = model(x=batch['inputs']['x'], query=concept_names)
-            c_acc += concept_acc_fn(out[:, :n_concepts], batch['concepts']['c'][:, :n_concepts].int()).item()
-            t_acc += task_acc_fn(out[:, n_concepts:], batch['concepts']['c'][:, n_concepts:].int()).item()
-            n += 1
-    print(f"Concept accuracy: {c_acc / n:.4f}")
-    print(f"Task accuracy:    {t_acc / n:.4f}")
+from torch_concepts.data.datamodules import BnLearnDataModule
 
 
 def main():
     seed_everything(42)
 
-    # Data
-    dataset = ToyDataset(dataset='xor', seed=42, n_gen=10_000)
-    datamodule = ConceptDataModule(dataset=dataset, batch_size=2048, val_size=0.1, test_size=0.2)
-    annotations = dataset.annotations
+    # ── Data: insurance network (7 binary + 20 categorical concepts) ──
+    datamodule = BnLearnDataModule(
+        name='insurance',
+        seed=42,
+        n_gen=10000,
+        batch_size=512,
+        val_size=0.1,
+        test_size=0.2,
+    )
+    datamodule.setup('fit')
+
+    annotations = datamodule.annotations
     concept_names = annotations.get_axis_annotation(1).labels
-    n_features = dataset.input_data.shape[1]
-    n_concepts = 2
-    variable_distributions = {name: Bernoulli for name in concept_names}
+
+    # Assign distribution families to each concept
+    axis = annotations.get_axis_annotation(1)
+    variable_distributions = {
+        name: Bernoulli if axis.cardinalities[i] == 1 else Categorical
+        for i, name in enumerate(concept_names)
+    }
 
     # Shared model kwargs
     model_kwargs = dict(
-        input_size=n_features,
+        input_size=datamodule.dataset.input_data.shape[1],
         annotations=annotations,
         variable_distributions=variable_distributions,
-        task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        task_names=['PropCost'],          # no separate task — all nodes are concepts
+        latent_encoder_kwargs={'hidden_size': 32, 'n_layers': 2},
         lightning=True,
         optim_class=torch.optim.AdamW,
-        optim_kwargs={'lr': 0.02},
+        optim_kwargs={'lr': 1e-3},
     )
 
-    # ── Scenario 1: single loss ──────────────────────────────
+    # ── Scenario 1: single loss per type ─────────────────────
     print("=" * 60)
-    print("Scenario 1: Single loss")
+    print("Scenario 1: Single loss per type")
     print("=" * 60)
 
-    concept_loss = ConceptLoss(
+    loss_fn = ConceptLoss(
         annotations=annotations,
-        binary=nn.BCEWithLogitsLoss()
+        binary=nn.BCEWithLogitsLoss(),
+        categorical=nn.CrossEntropyLoss(),
     )
+    print(loss_fn)
 
-    model = ConceptBottleneckModel(
-        **model_kwargs, 
-        loss=concept_loss
-    )
-    Trainer(max_epochs=50, enable_progress_bar=True).fit(model, datamodule=datamodule)
-    evaluate(model, datamodule, concept_names, n_concepts)
+    model = ConceptBottleneckModel(**model_kwargs, loss=loss_fn)
+    Trainer(max_epochs=20, enable_progress_bar=True).fit(model, datamodule=datamodule)
 
-
-
-    # ── Scenario 2: list of losses with weights ──────────────
+    # ── Scenario 2: composite losses on both types ───────────
     print("\n" + "=" * 60)
-    print("Scenario 2: Sum of two losses with weights [1.0, 0.5]")
+    print("Scenario 2: Per-type composite loss with weights")
     print("=" * 60)
 
-    concept_loss = ConceptLoss(
+    loss_fn = ConceptLoss(
         annotations=annotations,
-        binary=nn.BCEWithLogitsLoss()
+        binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
+        binary_weights=[1.0, 0.5],
+        categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
+        categorical_weights=[1.0, 0.3],
     )
-    reg = L1LogitRegularizer(scale=0.01)
+    print(loss_fn)
 
-    model = ConceptBottleneckModel(
-        **model_kwargs,
-        loss=[concept_loss, reg],
-        loss_weights=[1.0, 0.5],
+    model = ConceptBottleneckModel(**model_kwargs, loss=loss_fn)
+    Trainer(max_epochs=20, enable_progress_bar=True).fit(model, datamodule=datamodule)
+
+    # ── Scenario 3: regularizer only on binary concepts ──────
+    print("\n" + "=" * 60)
+    print("Scenario 3: Regularizer only on binary, plain CE on categorical")
+    print("=" * 60)
+
+    loss_fn = ConceptLoss(
+        annotations=annotations,
+        binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.05)],
+        binary_weights=[1.0, 0.5],
+        categorical=nn.CrossEntropyLoss(),   # single module, no extra weight
     )
-    Trainer(max_epochs=50, enable_progress_bar=True).fit(model, datamodule=datamodule)
-    evaluate(model, datamodule, concept_names, n_concepts)
+    print(loss_fn)
+
+    model = ConceptBottleneckModel(**model_kwargs, loss=loss_fn)
+    Trainer(max_epochs=20, enable_progress_bar=True).fit(model, datamodule=datamodule)
 
 
 if __name__ == "__main__":

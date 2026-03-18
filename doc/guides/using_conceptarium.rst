@@ -369,8 +369,8 @@ Detailed Guides
         _partial_: true
       
       # Metric tracking
-      summary_metrics: true      # Aggregate metrics by concept type
-      perconcept_metrics: false  # Per-concept individual metrics
+      summary: true      # Aggregate metrics by concept type
+      per_concept: false  # Per-concept individual metrics
    
    **Example - Black-box Baseline**
    
@@ -388,8 +388,8 @@ Detailed Guides
       # Black-box models don't use concepts
       inference: null
       
-      summary_metrics: false
-      perconcept_metrics: false
+      summary: false
+      per_concept: false
    
    **Common Model Parameters**
    
@@ -498,7 +498,7 @@ Detailed Guides
       python run_experiment.py model.optim_kwargs.lr=0.001
       
       # Enable per-concept metrics
-      python run_experiment.py model.perconcept_metrics=true
+      python run_experiment.py model.per_concept=true
       
       # Change encoder architecture
       python run_experiment.py model.encoder_kwargs.hidden_size=256 \
@@ -522,7 +522,7 @@ Detailed Guides
           n_layers: 3
         optim_kwargs:
           lr: 0.001
-        perconcept_metrics: true
+        per_concept: true
 
 .. dropdown:: Running Experiments
    :icon: play
@@ -604,8 +604,8 @@ Detailed Guides
         patience: 50
       
       model:
-        summary_metrics: true
-        perconcept_metrics: true
+        summary: true
+        per_concept: true
    
    Run the sweep:
    

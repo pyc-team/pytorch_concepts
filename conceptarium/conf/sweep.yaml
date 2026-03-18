@@ -35,14 +35,18 @@ model:
   # embedding_size: 8  # for embedding models
 
 metrics:
-  summary_metrics: true
-  perconcept_metrics: true # true or ${dataset.default_task_names}
+  summary: true
+  per_concept: true # true or ${dataset.default_task_names}
 
 trainer:
   # logger: wandb
+  # log_model: true   # whether to save checkpoint on wandb
+  save_top_k: 1.    # whether to save checkpoint locally
   max_epochs: 200
   patience: 20
 
 matmul_precision: medium
+
+debug: true # whether to add run to the analysis registry 
 
 notes: test

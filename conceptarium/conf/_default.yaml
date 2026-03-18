@@ -22,10 +22,14 @@ hydra:
 # =============================================================
 trainer:
   logger: null
+  log_model: false # whether to save checkpoint on wandb
   max_epochs: 200
   monitor: "val_loss"
   patience: 20
   accelerator: "auto"
+  save_top_k: 1 # whether to save best checkpoint locally
+  save_last: false # whether to save last checkpoint locally
+  save_weights_only: true
 
 seed: 42
 notes: null

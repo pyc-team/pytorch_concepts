@@ -4,12 +4,12 @@ defaults:
 
 hydra:
   job:
-    name: test
+    name: benchmark
   sweeper:
     params:
-      seed: 42
-      dataset: dag_asia
-      model: blackbox
+      seed: 1,2,3,4,5
+      dataset: dag_asia, dag_sachs, dag_insurance, dag_alarm
+      model: cbm, cem, c2bm
       loss: standard
 
 dataset:
@@ -17,22 +17,19 @@ dataset:
 
 model:
   optim_kwargs:
-    lr: 0.01
+    lr: 0.005
   latent_encoder_kwargs:
     hidden_size: 128
-    n_layers: 3
+    n_layers: 1
     activation: leaky_relu
-    dropout: 0.1
+    dropout: 0.
 
 metrics:
-  summary: false
-  per_concept: true #${dataset.default_task_names}
+  summary: true
+  per_concept: true
 
 trainer:
-  # logger: wandb
   max_epochs: 200
   patience: 20
 
-matmul_precision: medium
-
-notes: test_blackbox
+debug: false

@@ -89,8 +89,9 @@ class TestHighLevelIntegration(unittest.TestCase):
         
         metrics = ConceptMetrics(
             annotations=self.ann,
-            fn_collection=self.metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True
         )
         
         # Forward pass
@@ -108,10 +109,10 @@ class TestHighLevelIntegration(unittest.TestCase):
         
         # Update metrics  
         filtered = model.filter_output_for_metrics(out, target)
-        metrics.update(**filtered, split='train')
+        metrics.update(**filtered)
         
         # Compute metrics
-        results = metrics.compute('train')
+        results = metrics.compute()
         self.assertIsInstance(results, dict)
     
     def test_model_loss_metrics_full_pipeline(self):
@@ -127,8 +128,9 @@ class TestHighLevelIntegration(unittest.TestCase):
         
         metrics = ConceptMetrics(
             annotations=self.ann,
-            fn_collection=self.metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True
         )
         
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -162,10 +164,10 @@ class TestHighLevelIntegration(unittest.TestCase):
             
             # Metrics
             filtered_metrics = model.filter_output_for_metrics(out, target.int())
-            metrics.update(**filtered_metrics, split='train')
+            metrics.update(**filtered_metrics)
         
         # Compute final metrics
-        results = metrics.compute('train')
+        results = metrics.compute()
         self.assertIsInstance(results, dict)
 
 
@@ -196,11 +198,10 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
         
         # Metrics
-        metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
         metrics = ConceptMetrics(
             annotations=ann,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            summary=True
         )
         
         # All should initialize without errors
@@ -243,11 +244,10 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         loss = ConceptLoss(annotations=ann_with_dist, binary=nn.BCEWithLogitsLoss())
         
         # Metrics
-        metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
         metrics = ConceptMetrics(
             annotations=ann_with_dist,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            summary=True
         )
         
         # All should initialize without errors
@@ -360,14 +360,11 @@ class TestDistributionHandling(unittest.TestCase):
         
         loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss(), categorical=nn.CrossEntropyLoss())
         
-        metrics_config = GroupConfig(
-            binary={'accuracy': BinaryAccuracy()},
-            categorical={'accuracy': MulticlassAccuracy(num_classes=4)}
-        )
         metrics = ConceptMetrics(
             annotations=ann,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True
         )
         
         # Forward pass

@@ -52,8 +52,8 @@ inference:
   _partial_: true
 
 # Metric tracking
-summary_metrics: true
-perconcept_metrics: false
+summary: true
+per_concept: false
 ```
 
 ### 3. Run Experiments
@@ -88,8 +88,8 @@ task_names: ${dataset.default_task_names}
 special_parameter: 0.1
 
 # Use per-concept metrics to track intervention effects
-perconcept_metrics: true
-summary_metrics: true
+per_concept: true
+summary: true
 ```
 
 ---
@@ -215,10 +215,11 @@ Create a custom loss class:
 class FocalConceptLoss(nn.Module):
     """Focal loss for handling class imbalance in concepts."""
     
-    def __init__(self, annotations, fn_collection, alpha=0.25, gamma=2.0):
+    def __init__(self, annotations, binary=None, categorical=None, alpha=0.25, gamma=2.0):
         super().__init__()
         self.annotations = annotations
-        self.fn_collection = fn_collection
+        self.binary = binary
+        self.categorical = categorical
         self.alpha = alpha
         self.gamma = gamma
         # Implementation...
@@ -232,18 +233,16 @@ Create `conceptarium/conf/model/loss/focal.yaml`:
 _target_: torch_concepts.nn.FocalConceptLoss
 _partial_: true
 
-fn_collection:
-  discrete:
-    binary:
-      path: my_package.losses.FocalBinaryLoss
-      kwargs:
-        alpha: 0.25
-        gamma: 2.0
-    categorical:
-      path: my_package.losses.FocalCategoricalLoss
-      kwargs:
-        alpha: 0.25
-        gamma: 2.0
+binary:
+  path: my_package.losses.FocalBinaryLoss
+  kwargs:
+    alpha: 0.25
+    gamma: 2.0
+categorical:
+  path: my_package.losses.FocalCategoricalLoss
+  kwargs:
+    alpha: 0.25
+    gamma: 2.0
 ```
 
 ### 3. Use in Model Configuration

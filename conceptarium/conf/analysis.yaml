@@ -1,0 +1,58 @@
+defaults:
+  - _self_
+
+# =============================================================
+# Hydra settings
+# =============================================================
+hydra:
+  mode: RUN
+  job:
+    name: analysis
+    chdir: false
+  run:
+    dir: "outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+
+
+# =============================================================
+# Metrics settings
+# =============================================================
+metrics:
+  _target_: "torch_concepts.nn.ConceptMetrics"
+
+  summary: true
+  per_concept: true
+
+  binary: 
+    accuracy: 
+      _target_: "torchmetrics.classification.BinaryAccuracy"
+  categorical: 
+    accuracy:
+      - _target_: "hydra.utils.get_class"
+        path: "torchmetrics.classification.MulticlassAccuracy"
+      - average: 'micro'
+  # continuous: 
+    # ... not supported yet
+
+
+# =============================================================
+# Analysis settings
+# =============================================================
+
+# Metadata keys extracted from each job's config (become row index).
+# Use dot-paths; _target_ paths are resolved to class names.
+meta_keys:
+  - dataset.name
+  - model._target_
+  - model.train_inference._target_
+  - seed
+
+# Which meta key represents the seed (averaged over in summary).
+seed_key: seed
+
+# Path to the run registry CSV
+csv_path: runs.csv
+
+# Optional filters to select a subset of runs.
+# Example (via CLI):  'filters={dataset: asia, model: cbm, seed: [1,2]}'
+filters: null
+
