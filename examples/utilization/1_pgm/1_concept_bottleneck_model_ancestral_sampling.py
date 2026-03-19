@@ -36,7 +36,7 @@ def main():
     y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearConceptToConcept), parents=["c1", "c2"])
 
     # ProbabilisticModel Initialization
-    concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
+    concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model)

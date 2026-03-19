@@ -2,12 +2,11 @@
 Probabilistic Model implementation for concept-based architectures.
 
 This module provides :class:`ProbabilisticModel` — a unified factor-graph
-container that holds variables and parametric factors.  When initialised with
-:class:`ParametricCPD` factors (via the ``parametric_cpds`` keyword), the model
-automatically resolves parent references and lazy constructors, acting as a
-Bayesian Network.  When initialised with generic :class:`ParametricFactor`
-instances (via the ``factors`` keyword), the model stores them without
-directed-graph semantics.
+container that holds variables and parametric factors.  When the factors list
+contains :class:`ParametricCPD` instances, the model automatically resolves
+parent references and lazy constructors, acting as a Bayesian Network.  When
+the factors are plain :class:`ParametricFactor` instances, the model stores
+them without directed-graph semantics.
 """
 
 from torch import nn
@@ -28,23 +27,23 @@ class ProbabilisticModel(nn.Module):
     Unified factor-graph container for concept-based probabilistic models.
 
     Stores a set of :class:`Variable` nodes and :class:`ParametricFactor`
-    (or :class:`ParametricCPD`) factors.  When ``parametric_cpds`` is used,
-    the model behaves as a Bayesian Network — resolving lazy constructors,
-    converting string parent references to :class:`Variable` objects, and
-    providing helpers for CPT / potential-table construction and parent
-    queries.
+    (or :class:`ParametricCPD`) factors.  The model inspects the factor types
+    at construction time:
+
+    * If all factors are :class:`ParametricCPD` — the model behaves as a
+      Bayesian Network (resolving lazy constructors, string parent references,
+      and providing CPT / potential-table helpers).
+    * If all factors are plain :class:`ParametricFactor` — the model stores
+      them without directed-graph semantics.
+    * Mixing both types raises a :class:`TypeError`.
 
     Parameters
     ----------
     variables : List[Variable]
         All concept-variables in the model.
-    factors : List[ParametricFactor], optional
-        Generic (undirected) factors.  Mutually exclusive with
-        ``parametric_cpds``.
-    parametric_cpds : List[ParametricCPD], optional
-        Directed factors (CPDs).  Triggers directed-model initialisation
-        (parent resolution, lazy-constructor building).  Mutually exclusive
-        with ``factors``.
+    factors : List[ParametricFactor]
+        The factors (either all :class:`ParametricCPD` or all plain
+        :class:`ParametricFactor`).
 
     Attributes
     ----------
@@ -58,28 +57,25 @@ class ProbabilisticModel(nn.Module):
     Raises
     ------
     TypeError
-        If neither ``factors`` nor ``parametric_cpds`` is provided, or if
-        both are provided simultaneously.
+        If the factors list mixes :class:`ParametricCPD` and plain
+        :class:`ParametricFactor` instances.
     """
 
     def __init__(self, variables: List[Variable],
-                 factors: List[ParametricFactor] = None,
-                 parametric_cpds: List[ParametricCPD] = None):
+                 factors: List[ParametricFactor]):
         super().__init__()
-        if parametric_cpds is not None and factors is not None:
-            raise TypeError("Provide either 'factors' or 'parametric_cpds', not both.")
-        if parametric_cpds is not None:
-            self._is_directed = True
-            input_factors = parametric_cpds
-        elif factors is not None:
-            self._is_directed = False
-            input_factors = factors
-        else:
-            raise TypeError("ProbabilisticModel requires either 'factors' or 'parametric_cpds'.")
+        has_cpds = any(isinstance(f, ParametricCPD) for f in factors)
+        has_plain = any(not isinstance(f, ParametricCPD) for f in factors)
+        if has_cpds and has_plain:
+            raise TypeError(
+                "All factors must be the same type: either all ParametricCPD "
+                "or all ParametricFactor, not a mix of both."
+            )
+        self._is_directed = has_cpds
         self.variables = variables
         self.factors = nn.ModuleDict()
         self.concept_to_variable: Dict[str, Variable] = {}
-        self._initialize_model(input_factors)
+        self._initialize_model(factors)
 
     # ---- properties --------------------------------------------------------
 

@@ -44,7 +44,7 @@ def _build_chain_pgm():
 
     pgm = ProbabilisticModel(
         variables=[input_var, var_A, var_B],
-        parametric_cpds=[cpd_input, cpd_A, cpd_B],
+        factors=[cpd_input, cpd_A, cpd_B],
     )
     return pgm, linear_A, linear_B
 
@@ -70,7 +70,7 @@ def _build_exogenous_pgm():
 
     pgm = ProbabilisticModel(
         variables=[input_var, exog_var, var_A, var_B],
-        parametric_cpds=[cpd_input, cpd_exog, cpd_A, cpd_B],
+        factors=[cpd_input, cpd_exog, cpd_A, cpd_B],
     )
     return pgm, linear_exog, linear_A, linear_B
 

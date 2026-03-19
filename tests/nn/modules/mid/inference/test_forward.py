@@ -54,7 +54,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -77,7 +77,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -101,7 +101,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -125,7 +125,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -145,7 +145,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -164,7 +164,7 @@ class TestForwardInferenceQuery:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -188,7 +188,7 @@ class TestForwardInferencePredictDevices:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -209,7 +209,7 @@ class TestForwardInferencePredictDevices:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -230,7 +230,7 @@ class TestForwardInferencePredictDevices:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -254,7 +254,7 @@ class TestForwardInferencePredictDevices:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -277,7 +277,7 @@ class TestForwardInferenceComputeSingleVariable:
 
         model = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -296,7 +296,7 @@ class TestForwardInferenceComputeSingleVariable:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -323,7 +323,7 @@ class TestForwardInferenceAvailableQueryVars:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -352,7 +352,7 @@ class TestForwardInferenceGetParentKwargs:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -387,7 +387,7 @@ class TestForwardInferenceGetParentKwargs:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -416,7 +416,7 @@ class TestForwardInferenceCycleDetection:
 
         model = ProbabilisticModel(
             variables=[var_A, var_B, var_C],
-            parametric_cpds=[cpd_A, cpd_B, cpd_C]
+            factors=[cpd_A, cpd_B, cpd_C]
         )
 
         with pytest.raises(RuntimeError, match="contains cycles"):
@@ -440,7 +440,7 @@ class TestForwardInferenceComplexHierarchy:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -474,7 +474,7 @@ class TestForwardInferenceComplexHierarchy:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -505,7 +505,7 @@ class TestForwardInferenceDebugMode:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -543,7 +543,7 @@ class TestForwardInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -568,7 +568,7 @@ class TestForwardInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -597,7 +597,7 @@ class TestForwardInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -622,7 +622,7 @@ class TestForwardInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -649,7 +649,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -679,7 +679,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -706,7 +706,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -731,7 +731,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -753,7 +753,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -774,7 +774,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -794,7 +794,7 @@ class TestForwardInferencePredict:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -819,7 +819,7 @@ class TestForwardInferenceEdgeCases:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -847,7 +847,7 @@ class TestForwardInferenceEdgeCases:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -881,7 +881,7 @@ class TestForwardInferenceEdgeCases:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -916,7 +916,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -937,7 +937,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b]
+            factors=[latent_factor, cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -961,7 +961,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -985,7 +985,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1007,7 +1007,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1032,7 +1032,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1051,7 +1051,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1076,7 +1076,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1099,7 +1099,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1120,7 +1120,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1141,7 +1141,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1162,7 +1162,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1183,7 +1183,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b],
-            parametric_cpds=[latent_cpd, cpd_a, cpd_b]
+            factors=[latent_cpd, cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1208,7 +1208,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1226,7 +1226,7 @@ class TestForwardInference(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1328,7 +1328,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm, log_probs=False)
@@ -1354,7 +1354,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1384,7 +1384,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1409,7 +1409,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1440,7 +1440,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1471,7 +1471,7 @@ class TestDeterministicInference(unittest.TestCase):
         
         self.pgm = ProbabilisticModel(
             variables=[self.input_var, self.var_A, self.var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         
         self.inference = DeterministicInference(self.pgm)
@@ -1567,7 +1567,7 @@ class TestParallelisationIsHappening:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
         return model
 
@@ -1644,7 +1644,7 @@ class TestExogenousVariableInference:
 
         model = ProbabilisticModel(
             variables=[input_var, exog_var, var_A],
-            parametric_cpds=[cpd_input, cpd_exog, cpd_A],
+            factors=[cpd_input, cpd_exog, cpd_A],
         )
 
         inference = _SimpleForwardInferenceForNewTests(model)
@@ -1678,7 +1678,7 @@ class TestExogenousVariableInference:
 
         model = ProbabilisticModel(
             variables=[input_var, concept_var, exog_var, var_A],
-            parametric_cpds=[cpd_input, cpd_C, cpd_E, cpd_A],
+            factors=[cpd_input, cpd_C, cpd_E, cpd_A],
         )
 
         inference = _SimpleForwardInferenceForNewTests(model)
@@ -1712,7 +1712,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
         )
         return model
 
@@ -1755,7 +1755,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
         inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
 
@@ -1808,7 +1808,7 @@ class TestEvidenceBypassSkipsCPD:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B],
+            factors=[cpd_input, cpd_A, cpd_B],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1831,7 +1831,7 @@ class TestEvidenceBypassSkipsCPD:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1863,7 +1863,7 @@ class TestEvidenceBypassSkipsCPD:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B],
+            factors=[cpd_input, cpd_A, cpd_B],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1888,7 +1888,7 @@ class TestEvidenceBypassSkipsCPD:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1929,7 +1929,7 @@ class TestForwardVsLazyInferenceParity:
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
 
     @staticmethod
@@ -1955,7 +1955,7 @@ class TestForwardVsLazyInferenceParity:
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
 
     @staticmethod
@@ -1979,7 +1979,7 @@ class TestForwardVsLazyInferenceParity:
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
         )
 
     @staticmethod
@@ -2008,7 +2008,7 @@ class TestForwardVsLazyInferenceParity:
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D, var_E],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E],
         )
 
     @staticmethod
@@ -2046,7 +2046,7 @@ class TestForwardVsLazyInferenceParity:
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D, var_E, var_F],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E, cpd_F],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E, cpd_F],
         )
 
     # -------------------- Parity tests (same results) --------------------
@@ -2249,7 +2249,7 @@ class TestForwardVsLazyInferenceParity:
 
         model = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[cpd_input],
+            factors=[cpd_input],
         )
 
         lazy_inf = _SimpleForwardInferenceForNewTests(model, lazy=True)

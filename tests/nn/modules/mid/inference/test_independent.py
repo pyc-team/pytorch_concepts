@@ -39,7 +39,7 @@ class TestIndependentInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_task],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_task]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_task]
         )
         return model
 
@@ -94,7 +94,7 @@ class TestIndependentInferenceBasic:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         inference = IndependentInference(model)
 
@@ -139,7 +139,7 @@ class TestIndependentInferenceGroundTruthPropagation:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         return model
 
@@ -220,7 +220,7 @@ class TestIndependentInferenceGradientFlow:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_task],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_task]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_task]
         )
         return model, {'A': linear_A, 'B': linear_B, 'task': linear_task}
 
@@ -352,7 +352,7 @@ class TestIndependentInferenceWithCategorical:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         return model
 
@@ -402,7 +402,7 @@ class TestIndependentInferenceWithExogenous:
 
         model = ProbabilisticModel(
             variables=[input_var, exo_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_exo, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_exo, cpd_A, cpd_B]
         )
         return model
 
@@ -424,7 +424,7 @@ class TestIndependentInferenceWithExogenous:
 
         model = ProbabilisticModel(
             variables=[input_var, exo_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_exo, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_exo, cpd_A, cpd_B]
         )
         return model, {'exo': linear_exo, 'A': linear_A, 'B': linear_B}
 
@@ -613,7 +613,7 @@ class TestIndependentInferenceWithExogenous:
 
         model = ProbabilisticModel(
             variables=[input_var, exo_1, exo_2, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_exo_1, cpd_exo_2, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_exo_1, cpd_exo_2, cpd_A, cpd_B]
         )
         inference = IndependentInference(model)
 
@@ -654,7 +654,7 @@ class TestIndependentInferenceWithExogenous:
 
         model = ProbabilisticModel(
             variables=[input_var, exo_emb, var_c1, var_c2, var_task],
-            parametric_cpds=[cpd_input, cpd_emb, cpd_c1, cpd_c2, cpd_task]
+            factors=[cpd_input, cpd_emb, cpd_c1, cpd_c2, cpd_task]
         )
         inference = IndependentInference(model)
 
@@ -700,7 +700,7 @@ class TestIndependentInferenceWithExogenous:
 
         model = ProbabilisticModel(
             variables=[input_var, exo_emb, var_c1, var_task],
-            parametric_cpds=[cpd_input, cpd_emb, cpd_c1, cpd_task]
+            factors=[cpd_input, cpd_emb, cpd_c1, cpd_task]
         )
         inference = IndependentInference(model)
 
@@ -754,7 +754,7 @@ class TestIndependentInferenceDeviceModes:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
         return model
 
@@ -808,7 +808,7 @@ class TestIndependentInferenceErrorHandling:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
         return model
 
@@ -849,7 +849,7 @@ class TestIndependentVsDeterministicInference:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         return model
 
@@ -916,7 +916,7 @@ class TestConceptMapping:
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         return model
 

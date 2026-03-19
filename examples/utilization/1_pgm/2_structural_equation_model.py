@@ -34,7 +34,7 @@ def main():
                                parametrization=CallableConceptToConcept(lambda x: x, use_bias=False),
                                parents=["tar"])
     concept_model = ProbabilisticModel(variables=[latent_var, genotype_var, smoking_var, tar_var, cancer_var],
-                                       parametric_cpds=[input_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
+                                       factors=[input_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, log_probs=False)

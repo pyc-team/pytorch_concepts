@@ -98,12 +98,13 @@ class TestProbabilisticModel(unittest.TestCase):
         self.assertEqual(len(model.variables), 1)
         self.assertEqual(len(model.factors), 1)
 
-    def test_initialization_with_parametric_cpds_kwarg(self):
-        """Test backward-compat initialization using 'parametric_cpds'."""
+    def test_initialization_with_cpd_factors(self):
+        """Test initialization with ParametricCPD factors (directed model)."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(len(model.factors), 1)
+        self.assertTrue(model._is_directed)
 
     def test_initialization_empty_lists(self):
         """Test initialization with empty lists."""
@@ -112,9 +113,18 @@ class TestProbabilisticModel(unittest.TestCase):
         self.assertEqual(len(model.factors), 0)
 
     def test_no_factors_raises_type_error(self):
-        """Test that omitting both factors and parametric_cpds raises TypeError."""
+        """Test that omitting factors raises TypeError."""
         with self.assertRaises(TypeError):
             ProbabilisticModel(variables=[])
+
+    def test_mixed_factor_types_raises_type_error(self):
+        """Test that mixing ParametricCPD and ParametricFactor raises TypeError."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        factor = ParametricFactor(concepts='B', parametrization=nn.Linear(10, 1))
+        with self.assertRaises(TypeError):
+            ProbabilisticModel(variables=[var_a, var_b], factors=[cpd, factor])
 
     def test_add_single_variable(self):
         """Test adding a single variable."""
@@ -216,7 +226,7 @@ class TestProbabilisticModel(unittest.TestCase):
         """Test basic ProbabilisticModel initialization."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(len(model.variables), 1)
         self.assertEqual(len(model.factors), 1)
 
@@ -224,7 +234,7 @@ class TestProbabilisticModel(unittest.TestCase):
         """Test that parametric_cpds property aliases factors."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertIs(model.parametric_cpds, model.factors)
 
     def test_hierarchical_structure(self):
@@ -237,7 +247,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         self.assertEqual(len(model.variables), 2)
         self.assertEqual(len(model.factors), 2)
@@ -252,7 +262,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         resolved_parents = model.get_variable_parents('c')
         self.assertEqual(len(resolved_parents), 1)
@@ -271,7 +281,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[p1, p2, child],
-            parametric_cpds=[p1_cpd, p2_cpd, child_cpd]
+            factors=[p1_cpd, p2_cpd, child_cpd]
         )
         parents = model.get_variable_parents('child')
         self.assertEqual(len(parents), 2)
@@ -283,14 +293,14 @@ class TestProbabilisticModel(unittest.TestCase):
         """Test get_variable_parents returns empty list for root."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(model.get_variable_parents('A'), [])
 
     def test_get_variable_parents_nonexistent(self):
         """Test get_variable_parents returns empty for nonexistent concept."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
         cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(model.get_variable_parents('Z'), [])
 
     def test_build_cpts_no_parents_delta(self):
@@ -299,7 +309,7 @@ class TestProbabilisticModel(unittest.TestCase):
         module = nn.Linear(in_features=2, out_features=1)
         cpd = ParametricCPD(concepts='x', parametrization=module)
 
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         cpts = model.build_cpts()
 
         self.assertIn('x', cpts)
@@ -312,7 +322,7 @@ class TestProbabilisticModel(unittest.TestCase):
         module = nn.Linear(in_features=2, out_features=1)
         cpd = ParametricCPD(concepts='x', parametrization=module)
 
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         pots = model.build_potentials()
 
         self.assertIn('x', pots)
@@ -328,7 +338,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
 
         cpts = model.build_cpts()
@@ -346,7 +356,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         bern_vars = model.get_by_distribution(Bernoulli)
         self.assertEqual(len(bern_vars), 2)
@@ -365,7 +375,7 @@ class TestProbabilisticModel(unittest.TestCase):
 
         model = ProbabilisticModel(
             variables=[var_a, var_b, var_c, var_d],
-            parametric_cpds=[cpd_a, cpd_b, cpd_c, cpd_d]
+            factors=[cpd_a, cpd_b, cpd_c, cpd_d]
         )
         self.assertEqual(len(model.variables), 4)
         d_parents = model.get_variable_parents('D')

@@ -48,7 +48,7 @@ def _make_chain_pgm(dist_A, size_A, dist_B, size_B, latent=10):
 
     pgm = ProbabilisticModel(
         variables=[input_var, var_A, var_B],
-        parametric_cpds=[cpd_input, cpd_A, cpd_B],
+        factors=[cpd_input, cpd_A, cpd_B],
     )
     return pgm
 

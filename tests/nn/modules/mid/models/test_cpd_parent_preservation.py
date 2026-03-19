@@ -63,7 +63,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model (this will trigger lazy initialization)
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         
         # Simulate what happens during forward pass: LazyConstructor.build() is called
@@ -110,7 +110,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[var],
-            parametric_cpds=[cpd]
+            factors=[cpd]
         )
         
         # Get CPD from model
@@ -148,7 +148,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[parent1, parent2, parent3, child],
-            parametric_cpds=[p1_cpd, p2_cpd, p3_cpd, child_cpd]
+            factors=[p1_cpd, p2_cpd, p3_cpd, child_cpd]
         )
         
         # Get child CPD
@@ -202,7 +202,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[var_a, var_b, var_c, var_d],
-            parametric_cpds=[cpd_a, cpd_b, cpd_c, cpd_d]
+            factors=[cpd_a, cpd_b, cpd_c, cpd_d]
         )
         
         # Check each CPD
@@ -259,7 +259,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         
         # Get child CPD
@@ -313,7 +313,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         
         # Get child CPD
@@ -348,7 +348,7 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[parent1, parent2, child],
-            parametric_cpds=[p1_cpd, p2_cpd, child_cpd]
+            factors=[p1_cpd, p2_cpd, child_cpd]
         )
         
         # Get child CPD
@@ -402,7 +402,7 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         # Create model
         model = ProbabilisticModel(
             variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
+            factors=[parent_cpd, child_cpd]
         )
         
         # Verify child CPD has correct parent reference after model creation

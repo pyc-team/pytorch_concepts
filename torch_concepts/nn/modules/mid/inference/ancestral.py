@@ -56,7 +56,7 @@ class AncestralSamplingInference(ForwardInference):
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A, var_B],
-        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
+        ...     factors=[cpd_emb, cpd_A, cpd_B]
         ... )
         >>>
         >>> # Create ancestral sampling inference engine
@@ -89,7 +89,7 @@ class AncestralSamplingInference(ForwardInference):
         ...                               distribution=RelaxedBernoulli, size=1)
         >>> pgm = ProbabilisticModel(
         ...     variables=[embedding_var, var_A_relaxed, var_B],
-        ...     parametric_cpds=[cpd_emb, cpd_A, cpd_B]
+        ...     factors=[cpd_emb, cpd_A, cpd_B]
         ... )
         >>> inference_relaxed = AncestralSamplingInference(pgm)
         >>> # Now uses reparameterization trick (.rsample())

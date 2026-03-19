@@ -61,7 +61,7 @@ def main():
                                                                 torch.nn.Sigmoid()))
 
     concept_model = ProbabilisticModel(variables=[emb, a, b, c],
-                                        parametric_cpds=[emb_cpd, a_cpd, b_cpd, c_cpd])
+                                        factors=[emb_cpd, a_cpd, b_cpd, c_cpd])
 
 
     # Inference Initialization

@@ -75,7 +75,7 @@ class ForwardInference(BaseInference, ABC):
         >>> # Create probabilistic model
         >>> pgm = ProbabilisticModel(
         ...     variables=[input_var, var_A, var_B],
-        ...     parametric_cpds=[latent_cpd, cpd_A, cpd_B]
+        ...     factors=[latent_cpd, cpd_A, cpd_B]
         ... )
         >>>
         >>> # Create forward inference engine
@@ -857,5 +857,5 @@ class ForwardInference(BaseInference, ABC):
         # --- 6) Update available_query_vars to reflect the unrolled graph ---
         self._unrolled_query_vars = set(v.concept for v in new_variables)
 
-        return ProbabilisticModel(new_variables, parametric_cpds=new_parametric_cpds)
+        return ProbabilisticModel(new_variables, new_parametric_cpds)
 
