@@ -31,20 +31,20 @@ def _build_chain_pgm():
 
     Returns (pgm, linear_A, linear_B) so tests can inspect parameter grads.
     """
-    input_var = LatentVariable("input", parents=[], distribution=Delta, size=4)
-    var_A = ConceptVariable("A", parents=["input"], distribution=Bernoulli, size=1)
-    var_B = ConceptVariable("B", parents=["A"], distribution=Bernoulli, size=1)
+    input_var = LatentVariable("input", distribution=Delta, size=4)
+    var_A = ConceptVariable("A", distribution=Bernoulli, size=1)
+    var_B = ConceptVariable("B", distribution=Bernoulli, size=1)
 
     linear_A = nn.Linear(4, 1)
     linear_B = LinearConceptToConcept(1, 1)
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-    cpd_A = ParametricCPD("A", parametrization=linear_A)
-    cpd_B = ParametricCPD("B", parametrization=linear_B)
+    cpd_A = ParametricCPD("A", parametrization=linear_A, parents=["input"])
+    cpd_B = ParametricCPD("B", parametrization=linear_B, parents=["A"])
 
     pgm = ProbabilisticModel(
         variables=[input_var, var_A, var_B],
-        parametric_cpds=[cpd_input, cpd_A, cpd_B],
+        factors=[cpd_input, cpd_A, cpd_B],
     )
     return pgm, linear_A, linear_B
 
@@ -54,10 +54,10 @@ def _build_exogenous_pgm():
 
     Returns (pgm, linear_exog, linear_A, linear_B).
     """
-    input_var = LatentVariable("input", parents=[], distribution=Delta, size=4)
-    exog_var = ExogenousVariable("exog", parents=[], distribution=Delta, size=2)
-    var_A = ConceptVariable("A", parents=["input", "exog"], distribution=Bernoulli, size=1)
-    var_B = ConceptVariable("B", parents=["A"], distribution=Bernoulli, size=1)
+    input_var = LatentVariable("input", distribution=Delta, size=4)
+    exog_var = ExogenousVariable("exog", distribution=Delta, size=2)
+    var_A = ConceptVariable("A", distribution=Bernoulli, size=1)
+    var_B = ConceptVariable("B", distribution=Bernoulli, size=1)
 
     linear_exog = nn.Linear(2, 2)  # just pass-through-ish
     linear_A = nn.Linear(4 + 2, 1)  # input(4) + exog(2) -> 1
@@ -65,12 +65,12 @@ def _build_exogenous_pgm():
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
     cpd_exog = ParametricCPD("exog", parametrization=linear_exog)
-    cpd_A = ParametricCPD("A", parametrization=linear_A)
-    cpd_B = ParametricCPD("B", parametrization=linear_B)
+    cpd_A = ParametricCPD("A", parametrization=linear_A, parents=["input", "exog"])
+    cpd_B = ParametricCPD("B", parametrization=linear_B, parents=["A"])
 
     pgm = ProbabilisticModel(
         variables=[input_var, exog_var, var_A, var_B],
-        parametric_cpds=[cpd_input, cpd_exog, cpd_A, cpd_B],
+        factors=[cpd_input, cpd_exog, cpd_A, cpd_B],
     )
     return pgm, linear_exog, linear_A, linear_B
 

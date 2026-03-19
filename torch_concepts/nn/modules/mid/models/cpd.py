@@ -1,114 +1,74 @@
-import copy
+"""
+Conditional Probability Distribution (CPD) for directed probabilistic graphical models.
 
+This module defines the ParametricCPD class, a ParametricFactor subclass that represents
+conditional probability distributions in Bayesian Networks.  Unlike the base
+ParametricFactor (which only knows about a scope of concepts), a CPD introduces the
+notion of **parents** — giving the factor directed semantics.
+"""
+import copy
 import torch
-import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Optional, Tuple, Union
 from itertools import product
 
+import torch.nn as nn
+
+from .factor import ParametricFactor
 from .variable import Variable
 from .....distributions import Delta
 
 
-class ParametricCPD(nn.Module):
+class ParametricCPD(ParametricFactor):
     """
-    A ParametricCPD represents a conditional probability distribution (CPD) in a probabilistic graphical model.
+    Conditional probability distribution parameterised by a neural network.
 
-    A ParametricCPD links concepts to neural network modules that compute probability distributions.
-    It can automatically split multiple concepts into separate CPD and supports building
-    conditional probability tables (CPTs) and potential tables for inference.
+    Extends :class:`ParametricFactor` with directed-edge semantics: each CPD
+    has a list of **parent** concept-variables and computes
+    ``P(child | parents)`` via its ``parametrization`` module.
 
     Parameters
     ----------
     concepts : Union[str, List[str]]
-        A single concept name or a list of concept names. If a list of N concepts is provided,
-        the ParametricCPD automatically splits into N separate ParametricCPD instances.
-    module : Union[nn.Module, List[nn.Module]]
-        A neural network module or list of modules that compute the probability distribution.
-        If concepts is a list of length N, module can be:
-        - A single module (will be replicated for all concepts)
-        - A list of N modules (one per concept)
+        Concept name(s).  When a list is provided, ``__new__`` returns a list
+        of independent ``ParametricCPD`` instances (one per concept).
+    parametrization : Union[nn.Module, List[nn.Module]]
+        Neural network(s) that compute the conditional distribution.
+    parents : List[Union[Variable, str]], optional
+        Parent concept-variables (or their names as strings, resolved later
+        by :class:`ProbabilisticModel`).  Defaults to ``[]``.
 
     Attributes
     ----------
-    concept : str
-        The concept name associated with this CPD.
-    module : nn.Module
-        The neural network module used to compute probabilities.
-    variable : Optional[Variable]
-        The Variable instance this CPD is linked to (set by ProbabilisticModel).
     parents : List[Variable]
-        List of parent Variables in the graphical model.
-
-    Examples
-    --------
-    >>> import torch
-    >>> import torch.nn as nn
-    >>> from torch_concepts.nn import ParametricCPD
-    >>>
-    >>> # Create different modules for different concepts
-    >>> module_a = nn.Linear(in_features=10, out_features=1)
-    >>> module_b = nn.Sequential(
-    ...     nn.Linear(in_features=10, out_features=5),
-    ...     nn.ReLU(),
-    ...     nn.Linear(in_features=5, out_features=1)
-    ... )
-    >>>
-    >>> # Create CPD with different modules
-    >>> cpd = ParametricCPD(
-    ...     concepts=["binary_concept", "complex_concept"],
-    ...     parametrization=[module_a, module_b]
-    ... )
-    >>>
-    >>> print(cpd[0].parametrization)
-    Linear(in_features=10, out_features=1, bias=True)
-    >>> print(cpd[1].parametrization)
-    Sequential(...)
-
-    Notes
-    -----
-    - The ParametricCPD class uses a custom `__new__` method to automatically split multiple concepts
-      into separate ParametricCPD instances when a list is provided.
-    - ParametricCPDs are typically created and managed by a ProbabilisticModel rather than directly.
-    - The module should accept an 'input' keyword argument in its forward pass.
-    - Supported distributions for CPT/potential building: Bernoulli, Categorical, Delta, Normal.
+        Parent concept-variables in the directed graphical model.
 
     See Also
     --------
-    Variable : Represents a random variable in the probabilistic model.
-    ProbabilisticModel : Container that manages CPD and variables.
+    ParametricFactor : Base (undirected) factor class.
+    ProbabilisticModel : PGM container that resolves parent references.
     """
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
     def __new__(cls, concepts: Union[str, List[str]],
-                parametrization: Union[nn.Module, List[nn.Module]]):
+                parametrization: Union[nn.Module, List[nn.Module]],
+                **kwargs):
         """
         Create new ParametricCPD instance(s).
 
-        If concepts is a string, returns a single ParametricCPD instance.
-        If concepts is a list, returns a list of ParametricCPD instances (one per concept).
-
-        Args:
-            concepts: Single concept name (str) or list of concept names.
-            parametrization: Neural network module or list of modules.
-
-        Returns:
-            ParametricCPD: Single instance if concepts is str.
-            List[ParametricCPD]: List of instances if concepts is list.
-
-        Raises:
-            ValueError: If concepts is str but parametrization is a list.
-            ValueError: If list lengths don't match when concepts is a list.
+        If ``concepts`` is a string, returns a single instance.
+        If ``concepts`` is a list, returns a list of instances (one per concept),
+        each with a deep-copied parametrization.
         """
         if isinstance(concepts, str):
-            # Single concept: parametrization must NOT be a list
             if isinstance(parametrization, list):
                 raise ValueError(
                     "When 'concepts' is a string, 'parametrization' must be a single module, not a list.")
             return object.__new__(cls)
 
-        # concepts is a list -> return list of ParametricCPDs
         n_concepts = len(concepts)
-
-        # Standardize parametrization: single value -> list of N values
         if not isinstance(parametrization, list):
             module_list = [parametrization] * n_concepts
         else:
@@ -119,33 +79,48 @@ class ParametricCPD(nn.Module):
                 f"If concepts is a list of length {n_concepts}, parametrization must either be "
                 f"a single module or a list of length {n_concepts}.")
 
-        new_cpd = []
+        instances = []
         for i in range(n_concepts):
             instance = object.__new__(cls)
             instance.__init__(
-                concepts=concepts[i],  # Pass as string to create single CPD
-                parametrization=copy.deepcopy(module_list[i])
+                concepts=concepts[i],
+                parametrization=copy.deepcopy(module_list[i]),
+                **kwargs,
             )
-            new_cpd.append(instance)
-        return new_cpd
+            instances.append(instance)
+        return instances
 
     def __init__(self, concepts: Union[str, List[str]],
-                 parametrization: Union[nn.Module, List[nn.Module]]):
-        super().__init__()
+                 parametrization: Union[nn.Module, List[nn.Module]],
+                 parents: List[Union[Variable, str]] = None,
+                 **kwargs):
+        super().__init__(concepts=concepts, parametrization=parametrization, **kwargs)
+        self.parents: List[Variable] = list(parents) if parents is not None else []
 
-        self.concept = concepts
-        self.parametrization = parametrization
-        self.variable: Optional[Variable] = None
-        self.parents: List[Variable] = []
-
-    def forward(self, **kwargs) -> torch.Tensor:
-        return self.parametrization(**kwargs)
+    # ------------------------------------------------------------------
+    # Directed-model helpers (moved from ParametricFactor)
+    # ------------------------------------------------------------------
+    @property
+    def in_features(self) -> int:
+        """Sum of parent variable sizes."""
+        if not self.parents:
+            return 0
+        return sum(p.size for p in self.parents)
 
     def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Generates:
-        1. all_full_inputs: Full feature vectors used as input to the module.
-        2. all_discrete_state_vectors: State vectors for discrete parents (for potential table rows).
+        Enumerate all discrete parent-state combinations for table construction.
+
+        Continuous (Delta / Normal) parents are held at zero; discrete parents
+        (Bernoulli, Categorical and their relaxed variants) are exhaustively
+        enumerated.
+
+        Returns
+        -------
+        all_full_inputs : torch.Tensor
+            Input tensors for the parametrization, one row per combination.
+        all_discrete_state_vectors : torch.Tensor
+            Corresponding state vectors for the table rows.
         """
         if not self.parents:
             in_features = self.parametrization.in_features
@@ -156,25 +131,22 @@ class ParametricCPD(nn.Module):
         discrete_state_vectors_list = []
         continuous_tensors = []
 
-        for parent in self.parents:
-            parent_var = parent
-
-            if parent_var.distribution in [Bernoulli, RelaxedBernoulli, Categorical, RelaxedOneHotCategorical]:
+        for parent_var in self.parents:
+            if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
+                                           Categorical, RelaxedOneHotCategorical]:
                 out_dim = parent_var.out_features
-
                 input_combinations = []
                 state_combinations = []
 
                 if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
                     input_combinations = list(product([0.0, 1.0], repeat=out_dim))
                     state_combinations = input_combinations
-
                 elif parent_var.distribution in [Categorical, RelaxedOneHotCategorical]:
                     for i in range(out_dim):
                         one_hot = torch.zeros(out_dim)
                         one_hot[i] = 1.0
                         input_combinations.append(one_hot.tolist())
-                        state_combinations.append([float(i)])  # State is the category index
+                        state_combinations.append([float(i)])
 
                 discrete_combinations_list.append(
                     [torch.tensor(c, dtype=torch.float32).unsqueeze(0) for c in input_combinations])
@@ -184,37 +156,35 @@ class ParametricCPD(nn.Module):
             elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
                 fixed_value = torch.zeros(parent_var.out_features).unsqueeze(0)
                 continuous_tensors.append(fixed_value)
-
             else:
-                raise TypeError(f"Unsupported distribution type {parent_var.distribution.__name__} for CPT generation.")
+                raise TypeError(
+                    f"Unsupported distribution type {parent_var.distribution.__name__} for table generation.")
 
-        # Handle case with only continuous parents (no discrete parents)
         if not discrete_combinations_list:
-            fixed_continuous_input = torch.cat(continuous_tensors, dim=-1) if continuous_tensors else torch.empty((1, 0))
+            fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
+                                      if continuous_tensors else torch.empty((1, 0)))
             return fixed_continuous_input, torch.empty((1, 0))
 
-        # Product across discrete parents
         all_discrete_product = list(product(*discrete_combinations_list))
         all_discrete_states_product = list(product(*discrete_state_vectors_list))
 
+        fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
+                                  if continuous_tensors else torch.empty((1, 0)))
+
         all_full_inputs = []
-        all_discrete_state_vectors = []
-
-        fixed_continuous_input = torch.cat(continuous_tensors, dim=-1) if continuous_tensors else torch.empty((1, 0))
-
-        # Build combined input tensors for the module
         for discrete_inputs in all_discrete_product:
             discrete_part = torch.cat(list(discrete_inputs), dim=-1)
-            full_input_tensor = torch.cat([discrete_part, fixed_continuous_input], dim=-1)
-            all_full_inputs.append(full_input_tensor)
+            all_full_inputs.append(torch.cat([discrete_part, fixed_continuous_input], dim=-1))
 
-        # Build combined state vectors for the potential table rows
+        all_discrete_state_vectors = []
         for discrete_states in all_discrete_states_product:
-            discrete_state_vector = torch.cat(list(discrete_states), dim=-1)
-            all_discrete_state_vectors.append(discrete_state_vector)
-
+            all_discrete_state_vectors.append(torch.cat(list(discrete_states), dim=-1))
 
         return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
+
+    # ------------------------------------------------------------------
+    # CPT / potential-table construction
+    # ------------------------------------------------------------------
 
     def build_cpt(self) -> torch.Tensor:
         if not self.variable:
@@ -308,6 +278,3 @@ class ParametricCPD(nn.Module):
             raise NotImplementedError("Potential table construction not supported for this distribution.")
 
         return potential_table
-
-    def __repr__(self):
-        return f"ParametricCPD(concept='{self.concept}', parametrization={self.parametrization.__class__.__name__})"

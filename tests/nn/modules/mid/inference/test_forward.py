@@ -46,15 +46,15 @@ class TestForwardInferenceQuery:
 
     def test_query_single_concept(self):
         """Test querying a single concept."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -67,17 +67,17 @@ class TestForwardInferenceQuery:
 
     def test_query_multiple_concepts(self):
         """Test querying multiple concepts."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -91,17 +91,17 @@ class TestForwardInferenceQuery:
 
     def test_query_with_specific_order(self):
         """Test that query respects the order of concepts."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -117,15 +117,15 @@ class TestForwardInferenceQuery:
 
     def test_query_missing_concept_raises_error(self):
         """Test that querying a non-existent concept raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -137,15 +137,15 @@ class TestForwardInferenceQuery:
 
     def test_query_empty_list(self):
         """Test querying with empty list raises AssertionError."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -156,15 +156,15 @@ class TestForwardInferenceQuery:
 
     def test_query_with_debug_mode(self):
         """Test query with debug mode enabled."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -180,15 +180,15 @@ class TestForwardInferencePredictDevices:
 
     def test_predict_device_cpu(self):
         """Test predict with explicit CPU device."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -201,15 +201,15 @@ class TestForwardInferencePredictDevices:
 
     def test_predict_device_auto(self):
         """Test predict with auto device detection."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -222,15 +222,15 @@ class TestForwardInferencePredictDevices:
 
     def test_predict_device_invalid_raises_error(self):
         """Test that invalid device raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -242,19 +242,19 @@ class TestForwardInferencePredictDevices:
 
     def test_predict_with_parallel_branches(self):
         """Test predict with parallel branches for CPU threading."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -271,13 +271,13 @@ class TestForwardInferenceComputeSingleVariable:
 
     def test_compute_root_variable_missing_input_raises_error(self):
         """Test that computing root variable without external input raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
+        input_var = InputVariable('input', distribution=Delta, size=10)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
 
         model = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -288,15 +288,15 @@ class TestForwardInferenceComputeSingleVariable:
 
     def test_compute_missing_cpd_raises_error(self):
         """Test that computing variable without CPD raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
         # Intentionally not adding cpd_A
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -313,17 +313,17 @@ class TestForwardInferenceAvailableQueryVars:
 
     def test_available_query_vars(self):
         """Test that available_query_vars returns correct set."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(3, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(3, 2), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -342,17 +342,17 @@ class TestForwardInferenceGetParentKwargs:
 
     def test_get_parent_kwargs_with_endogenous_only(self):
         """Test get_parent_kwargs with only concept parents."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -377,17 +377,17 @@ class TestForwardInferenceGetParentKwargs:
             def forward(self, latent, concepts):
                 return self.linear_latent(latent) + self.linear_concepts(concepts)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input', 'A'], distribution=Delta, size=5)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Delta, size=5)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=CustomLinear())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=CustomLinear(), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -406,17 +406,17 @@ class TestForwardInferenceCycleDetection:
     def test_cyclic_graph_raises_error(self):
         """Test that cyclic graphs raise an error during initialization."""
         # Create variables with a cycle: A -> B -> C -> A
-        var_A = EndogenousVariable('A', parents=['C'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['B'], distribution=Bernoulli, size=1)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
-        cpd_A = ParametricCPD('A', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_A = ParametricCPD('A', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['C'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['B'])
 
         model = ProbabilisticModel(
             variables=[var_A, var_B, var_C],
-            parametric_cpds=[cpd_A, cpd_B, cpd_C]
+            factors=[cpd_A, cpd_B, cpd_C]
         )
 
         with pytest.raises(RuntimeError, match="contains cycles"):
@@ -428,19 +428,19 @@ class TestForwardInferenceComplexHierarchy:
 
     def test_diamond_structure(self):
         """Test diamond structure: input -> A, B -> C."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['A', 'B'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1), parents=['A', 'B'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -460,21 +460,21 @@ class TestForwardInferenceComplexHierarchy:
 
     def test_multi_level_hierarchy(self):
         """Test multi-level hierarchy."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['B'], distribution=Bernoulli, size=1)
-        var_D = EndogenousVariable('D', parents=['C'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
+        var_D = EndogenousVariable('D', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
-        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['B'])
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['C'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -495,17 +495,17 @@ class TestForwardInferenceDebugMode:
 
     def test_predict_debug_mode_sequential(self):
         """Test that debug mode runs sequentially."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -535,15 +535,15 @@ class TestForwardInferenceBasic:
     def test_initialization_simple_model(self):
         """Test ForwardInference initialization with a simple model."""
         # Create a simple model: input -> A
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -555,20 +555,20 @@ class TestForwardInferenceBasic:
 
     def test_initialization_chain_model(self):
         """Test ForwardInference with a chain model: input -> A -> B -> C."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['B'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
         # Use LinearConceptToConcept for endogenous-only parents
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['B'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -585,19 +585,19 @@ class TestForwardInferenceBasic:
 
     def test_initialization_parallel_model(self):
         """Test ForwardInference with parallel branches: input -> [A, B, C]."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -609,20 +609,20 @@ class TestForwardInferenceBasic:
 
     def test_topological_sort_diamond(self):
         """Test topological sort with diamond pattern: input -> [A, B] -> C."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['A', 'B'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
         # Use LinearConceptToConcept for multiple endogenous parents
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1), parents=['A', 'B'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C]
         )
 
         inference = SimpleForwardInference(model)
@@ -641,15 +641,15 @@ class TestForwardInferencePredict:
         """Test predict with a simple model."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -668,18 +668,18 @@ class TestForwardInferencePredict:
         """Test predict with a chain model."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
         # Use LinearConceptToConcept for endogenous parent
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['A'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -696,17 +696,17 @@ class TestForwardInferencePredict:
         """Test predict with debug=True (sequential execution)."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
 
         inference = SimpleForwardInference(model)
@@ -723,15 +723,15 @@ class TestForwardInferencePredict:
         """Test predict with explicit CPU device."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -745,15 +745,15 @@ class TestForwardInferencePredict:
         """Test predict with device='auto'."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -766,15 +766,15 @@ class TestForwardInferencePredict:
 
     def test_predict_invalid_device(self):
         """Test predict with invalid device raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -786,15 +786,15 @@ class TestForwardInferencePredict:
 
     def test_predict_missing_external_input(self):
         """Test predict with missing external input raises error."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A]
+            factors=[cpd_input, cpd_A]
         )
 
         inference = SimpleForwardInference(model)
@@ -811,15 +811,15 @@ class TestForwardInferenceEdgeCases:
 
     def test_missing_cpd_raises_error(self):
         """Test that missing CPD raises RuntimeError during prediction."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         # Only provide CPD for input, not for A
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input]
+            factors=[cpd_input]
         )
 
         inference = SimpleForwardInference(model)
@@ -833,21 +833,21 @@ class TestForwardInferenceEdgeCases:
         """Test parallel execution with multiple variables at same level."""
         torch.manual_seed(42)
 
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Bernoulli, size=1)
-        var_D = EndogenousVariable('D', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
+        var_D = EndogenousVariable('D', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1))
-        cpd_D = ParametricCPD('D', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_D = ParametricCPD('D', parametrization=nn.Linear(10, 1), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -866,22 +866,22 @@ class TestForwardInferenceEdgeCases:
         torch.manual_seed(42)
 
         # Create structure: input -> [A, B] -> C -> D
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Bernoulli, size=1)
-        var_C = EndogenousVariable('C', parents=['A', 'B'], distribution=Bernoulli, size=1)
-        var_D = EndogenousVariable('D', parents=['C'], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
+        var_D = EndogenousVariable('D', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
         # Use LinearConceptToConcept for multiple endogenous parents
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1))
-        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=1), parents=['A', 'B'])
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=1, out_concepts=1), parents=['C'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D]
         )
 
         inference = SimpleForwardInference(model)
@@ -908,15 +908,15 @@ class TestForwardInference(unittest.TestCase):
     def test_initialization_simple_model(self):
         """Test initialization with simple model."""
         # Create simple model: latent -> A
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_a = EndogenousVariable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -927,17 +927,17 @@ class TestForwardInference(unittest.TestCase):
     def test_topological_sort(self):
         """Test topological sorting of variables."""
         # Create chain: latent -> A -> B
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_a = EndogenousVariable('A', parents=[input_var], distribution=Bernoulli, size=1)
-        var_b = EndogenousVariable('B', parents=[var_a], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_b = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(1, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(1, 1), parents=['A'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b]
+            factors=[latent_factor, cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -949,19 +949,19 @@ class TestForwardInference(unittest.TestCase):
     def test_levels_computation(self):
         """Test level-based grouping for parallel computation."""
         # Create diamond structure
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_a = EndogenousVariable('A', parents=[input_var], distribution=Bernoulli, size=1)
-        var_b = EndogenousVariable('B', parents=[input_var], distribution=Bernoulli, size=1)
-        var_c = EndogenousVariable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_b = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_c = EndogenousVariable('C', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1), parents=['A', 'B'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -977,15 +977,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_predict_simple_chain(self):
         """Test predict method with simple chain."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_a = EndogenousVariable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -999,15 +999,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_predict_with_debug_mode(self):
         """Test predict with debug mode (sequential execution)."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1020,19 +1020,19 @@ class TestForwardInference(unittest.TestCase):
 
     def test_predict_diamond_structure(self):
         """Test predict with diamond structure (parallel computation)."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
-        var_b = Variable('B', parents=[input_var], distribution=Bernoulli, size=1)
-        var_c = Variable('C', parents=[var_a, var_b], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
+        var_b = Variable('B', distribution=Bernoulli, size=1)
+        var_c = Variable('C', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(2, 1), parents=['A', 'B'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1045,13 +1045,13 @@ class TestForwardInference(unittest.TestCase):
 
     def test_compute_single_variable_root(self):
         """Test _compute_single_variable for root variable."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
+        input_var = Variable('input', distribution=Delta, size=10)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
 
         pgm = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1068,15 +1068,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_compute_single_variable_child(self):
         """Test _compute_single_variable for child variable."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1093,13 +1093,13 @@ class TestForwardInference(unittest.TestCase):
 
     def test_missing_external_input(self):
         """Test error when root variable missing from external_inputs."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
+        input_var = Variable('input', distribution=Delta, size=10)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
 
         pgm = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1112,15 +1112,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_missing_parent_result(self):
         """Test error when parent hasn't been computed yet."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1133,15 +1133,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_get_parent_kwargs(self):
         """Test get_parent_kwargs method."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1154,15 +1154,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_variable_map(self):
         """Test variable_map creation."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor, cpd_a]
+            factors=[latent_factor, cpd_a]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1173,17 +1173,17 @@ class TestForwardInference(unittest.TestCase):
 
     def test_categorical_parent(self):
         """Test with categorical parent variable."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Categorical, size=3)
-        var_b = Variable('B', parents=[var_a], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Categorical, size=3)
+        var_b = Variable('B', distribution=Bernoulli, size=1)
 
         latent_cpd = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 3))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(3, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(3, 1), parents=['A'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b],
-            parametric_cpds=[latent_cpd, cpd_a, cpd_b]
+            factors=[latent_cpd, cpd_a, cpd_b]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1196,19 +1196,19 @@ class TestForwardInference(unittest.TestCase):
 
     def test_multiple_children_same_parent(self):
         """Test multiple children depending on same parent."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
-        var_b = Variable('B', parents=[input_var], distribution=Bernoulli, size=1)
-        var_c = Variable('C', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
+        var_b = Variable('B', distribution=Bernoulli, size=1)
+        var_c = Variable('C', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1))
-        cpd_c = ParametricCPD('C', parametrization=nn.Linear(10, 1))
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_b = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_c = ParametricCPD('C', parametrization=nn.Linear(10, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a, var_b, var_c],
-            parametric_cpds=[latent_factor, cpd_a, cpd_b, cpd_c]
+            factors=[latent_factor, cpd_a, cpd_b, cpd_c]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1218,15 +1218,15 @@ class TestForwardInference(unittest.TestCase):
 
     def test_missing_factor(self):
         """Test error when factor is missing for a variable."""
-        input_var = Variable('input', parents=[], distribution=Delta, size=10)
-        var_a = Variable('A', parents=[input_var], distribution=Bernoulli, size=1)
+        input_var = Variable('input', distribution=Delta, size=10)
+        var_a = Variable('A', distribution=Bernoulli, size=1)
 
         latent_factor = ParametricCPD('input', parametrization=nn.Identity())
         # Missing cpd_a
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_a],
-            parametric_cpds=[latent_factor]
+            factors=[latent_factor]
         )
 
         inference = SimpleForwardInference(pgm)
@@ -1320,15 +1320,15 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         """When log_probs=False, probs= is passed instead of logits=."""
         from torch_concepts import LatentVariable, ConceptVariable
 
-        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = LatentVariable('input', distribution=Delta, size=5)
+        var_A = ConceptVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Sequential(Linear(5, 1), nn.Sigmoid()))
+        cpd_A = ParametricCPD('A', parametrization=nn.Sequential(Linear(5, 1), nn.Sigmoid()), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm, log_probs=False)
@@ -1345,16 +1345,16 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         """OneHotCategorical should hit the .sample() branch."""
         from torch_concepts import LatentVariable, ConceptVariable
 
-        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        input_var = LatentVariable('input', distribution=Delta, size=5)
         # Size=3 for a 3-class categorical variable
-        var_A = ConceptVariable('A', parents=['input'], distribution=OneHotCategorical, size=3)
+        var_A = ConceptVariable('A', distribution=OneHotCategorical, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 3))
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 3), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1372,19 +1372,19 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         """A distribution not in the known list should fall through to the generic .rsample() path."""
         from torch_concepts import LatentVariable, ConceptVariable
 
-        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
+        input_var = LatentVariable('input', distribution=Delta, size=5)
         # Normal takes (loc, scale); loc= pred (positional), scale via dist_kwargs
         var_A = ConceptVariable(
-            'A', parents=['input'], distribution=Normal, size=1,
+            'A', distribution=Normal, size=1,
             dist_kwargs={'scale': torch.tensor(1.0)},
         )
 
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1401,15 +1401,15 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         """ground_truth_to_evidence with cardinality > 1 should one-hot encode."""
         from torch_concepts import LatentVariable, ConceptVariable
 
-        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = LatentVariable('input', distribution=Delta, size=5)
+        var_A = ConceptVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1432,15 +1432,15 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         """ground_truth_to_evidence with cardinality == 1 should unsqueeze."""
         from torch_concepts import LatentVariable, ConceptVariable
 
-        input_var = LatentVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
+        input_var = LatentVariable('input', distribution=Delta, size=5)
+        var_A = ConceptVariable('A', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1))
+        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1), parents=['input'])
 
         pgm = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
 
         inference = AncestralSamplingInference(pgm)
@@ -1460,18 +1460,18 @@ class TestDeterministicInference(unittest.TestCase):
         # Create simple PGM: input -> A -> B
         from torch_concepts import LatentVariable, ConceptVariable
         
-        self.input_var = LatentVariable('input', parents=[], distribution=Delta, size=10)
-        self.var_A = ConceptVariable('A', parents=['input'], distribution=Bernoulli, size=1)
-        self.var_B = ConceptVariable('B', parents=['A'], distribution=Bernoulli, size=1)
+        self.input_var = LatentVariable('input', distribution=Delta, size=10)
+        self.var_A = ConceptVariable('A', distribution=Bernoulli, size=1)
+        self.var_B = ConceptVariable('B', distribution=Bernoulli, size=1)
         
         # Define CPDs
         cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(10, 1))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1))
+        cpd_A = ParametricCPD('A', parametrization=Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1), parents=['A'])
         
         self.pgm = ProbabilisticModel(
             variables=[self.input_var, self.var_A, self.var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B]
+            factors=[cpd_input, cpd_A, cpd_B]
         )
         
         self.inference = DeterministicInference(self.pgm)
@@ -1555,19 +1555,19 @@ class TestParallelisationIsHappening:
 
     def _build_parallel_model(self):
         """Build a model where A, B, C are in the same level (all depend on input)."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=2)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=2)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 2))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(5, 2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 2), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(5, 2), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 2), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
         return model
 
@@ -1624,12 +1624,12 @@ class TestExogenousVariableInference:
         """An ExogenousVariable parent should be routed through parent_input (not parent_concepts)."""
         # Model: input (latent) -> exog (exogenous) -> A (concept)
         # exog uses Identity CPD, A uses a module with `exogenous` param
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=6)
-        exog_var = ExogenousVariable('exog', parents=['input'], distribution=Delta, size=6)
-        var_A = EndogenousVariable('A', parents=['exog'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=6)
+        exog_var = ExogenousVariable('exog', distribution=Delta, size=6)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_exog = ParametricCPD('exog', parametrization=nn.Linear(6, 6))
+        cpd_exog = ParametricCPD('exog', parametrization=nn.Linear(6, 6), parents=['input'])
 
         # A module that explicitly accepts `exogenous` kwarg
         class ExogToOutput(nn.Module):
@@ -1640,11 +1640,11 @@ class TestExogenousVariableInference:
             def forward(self, exogenous):
                 return self.fc(exogenous)
 
-        cpd_A = ParametricCPD('A', parametrization=ExogToOutput())
+        cpd_A = ParametricCPD('A', parametrization=ExogToOutput(), parents=['exog'])
 
         model = ProbabilisticModel(
             variables=[input_var, exog_var, var_A],
-            parametric_cpds=[cpd_input, cpd_exog, cpd_A],
+            factors=[cpd_input, cpd_exog, cpd_A],
         )
 
         inference = _SimpleForwardInferenceForNewTests(model)
@@ -1656,14 +1656,14 @@ class TestExogenousVariableInference:
 
     def test_mixed_concept_and_exogenous_parents(self):
         """A variable can have both ConceptVariable and ExogenousVariable parents."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=6)
-        concept_var = EndogenousVariable('C', parents=['input'], distribution=Delta, size=2)
-        exog_var = ExogenousVariable('E', parents=['input'], distribution=Delta, size=4)
-        var_A = EndogenousVariable('A', parents=['C', 'E'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=6)
+        concept_var = EndogenousVariable('C', distribution=Delta, size=2)
+        exog_var = ExogenousVariable('E', distribution=Delta, size=4)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(6, 2))
-        cpd_E = ParametricCPD('E', parametrization=nn.Linear(6, 4))
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(6, 2), parents=['input'])
+        cpd_E = ParametricCPD('E', parametrization=nn.Linear(6, 4), parents=['input'])
 
         # A module that takes concepts + exogenous (like HyperlinearConceptExogenousToConcept)
         class ConceptExogModule(nn.Module):
@@ -1674,11 +1674,11 @@ class TestExogenousVariableInference:
             def forward(self, concepts, exogenous):
                 return self.fc(torch.cat([concepts, exogenous], dim=-1))
 
-        cpd_A = ParametricCPD('A', parametrization=ConceptExogModule())
+        cpd_A = ParametricCPD('A', parametrization=ConceptExogModule(), parents=['C', 'E'])
 
         model = ProbabilisticModel(
             variables=[input_var, concept_var, exog_var, var_A],
-            parametric_cpds=[cpd_input, cpd_C, cpd_E, cpd_A],
+            factors=[cpd_input, cpd_C, cpd_E, cpd_A],
         )
 
         inference = _SimpleForwardInferenceForNewTests(model)
@@ -1698,21 +1698,21 @@ class TestLazyInferenceSkipsDownstreamVariables:
                input -> C -> D  (branch 2)
         Querying B should NOT compute C or D.
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Delta, size=3)
-        var_D = EndogenousVariable('D', parents=['C'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=3)
+        var_D = EndogenousVariable('D', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 3))
-        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['C'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
         )
         return model
 
@@ -1743,19 +1743,19 @@ class TestLazyInferenceSkipsDownstreamVariables:
 
     def test_lazy_query_includes_shared_ancestors(self):
         """If two query concepts share an ancestor, it should be computed once."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['A'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
         inference = _SimpleForwardInferenceForNewTests(model, lazy=True)
 
@@ -1798,17 +1798,17 @@ class TestEvidenceBypassSkipsCPD:
 
     def test_evidence_replaces_cpd_output(self):
         """When evidence is provided for a non-root variable, the CPD should be bypassed."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B],
+            factors=[cpd_input, cpd_A, cpd_B],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1823,15 +1823,15 @@ class TestEvidenceBypassSkipsCPD:
 
     def test_evidence_cpd_not_called(self):
         """The CPD forward of a variable with evidence must never be executed."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1853,17 +1853,17 @@ class TestEvidenceBypassSkipsCPD:
 
     def test_evidence_propagates_to_children(self):
         """Evidence for a mid-graph variable should propagate to downstream children."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A, var_B],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B],
+            factors=[cpd_input, cpd_A, cpd_B],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1880,15 +1880,15 @@ class TestEvidenceBypassSkipsCPD:
 
     def test_root_variable_evidence_still_uses_cpd(self):
         """Evidence for a root (no-parent) variable should still pass through the CPD."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
 
         model = ProbabilisticModel(
             variables=[input_var, var_A],
-            parametric_cpds=[cpd_input, cpd_A],
+            factors=[cpd_input, cpd_A],
         )
         inference = _SimpleForwardInferenceForNewTests(model)
 
@@ -1917,19 +1917,19 @@ class TestForwardVsLazyInferenceParity:
         """
         Linear chain: input -> A -> B -> C
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=4)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=3)
-        var_C = EndogenousVariable('C', parents=['B'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=4)
+        var_B = EndogenousVariable('B', distribution=Delta, size=3)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 4))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=4, out_concepts=3))
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 4), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=4, out_concepts=3), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['B'])
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
 
     @staticmethod
@@ -1942,20 +1942,20 @@ class TestForwardVsLazyInferenceParity:
               \\   /
                 C
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=6)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=3)
-        var_C = EndogenousVariable('C', parents=['A', 'B'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=6)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=3)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(6, 3))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(6, 3))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(6, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(6, 3), parents=['input'])
         # C receives A + B as concepts
-        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=6, out_concepts=2))
+        cpd_C = ParametricCPD('C', parametrization=LinearConceptToConcept(in_concepts=6, out_concepts=2), parents=['A', 'B'])
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
         )
 
     @staticmethod
@@ -1965,21 +1965,21 @@ class TestForwardVsLazyInferenceParity:
             input -> A -> B
             input -> C -> D
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=3)
-        var_B = EndogenousVariable('B', parents=['A'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Delta, size=3)
-        var_D = EndogenousVariable('D', parents=['C'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable('A', distribution=Delta, size=3)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=3)
+        var_D = EndogenousVariable('D', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3))
-        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 3))
-        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['A'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(5, 3), parents=['input'])
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=3, out_concepts=2), parents=['C'])
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D],
         )
 
     @staticmethod
@@ -1992,23 +1992,23 @@ class TestForwardVsLazyInferenceParity:
             input -> D
             input -> E
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=2)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Delta, size=2)
-        var_D = EndogenousVariable('D', parents=['input'], distribution=Delta, size=2)
-        var_E = EndogenousVariable('E', parents=['input'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Delta, size=2)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
+        var_D = EndogenousVariable('D', distribution=Delta, size=2)
+        var_E = EndogenousVariable('E', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 2))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 2))
-        cpd_D = ParametricCPD('D', parametrization=nn.Linear(10, 2))
-        cpd_E = ParametricCPD('E', parametrization=nn.Linear(10, 2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 2), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 2), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(10, 2), parents=['input'])
+        cpd_D = ParametricCPD('D', parametrization=nn.Linear(10, 2), parents=['input'])
+        cpd_E = ParametricCPD('E', parametrization=nn.Linear(10, 2), parents=['input'])
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D, var_E],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E],
         )
 
     @staticmethod
@@ -2028,25 +2028,25 @@ class TestForwardVsLazyInferenceParity:
         - E depends on B, C
         - F depends on D, B, E
         """
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=8)
-        var_A = EndogenousVariable('A', parents=['input'], distribution=Delta, size=2)
-        var_B = EndogenousVariable('B', parents=['input'], distribution=Delta, size=2)
-        var_C = EndogenousVariable('C', parents=['input'], distribution=Delta, size=2)
-        var_D = EndogenousVariable('D', parents=['A'], distribution=Delta, size=2)
-        var_E = EndogenousVariable('E', parents=['B', 'C'], distribution=Delta, size=2)
-        var_F = EndogenousVariable('F', parents=['D', 'B', 'E'], distribution=Delta, size=2)
+        input_var = InputVariable('input', distribution=Delta, size=8)
+        var_A = EndogenousVariable('A', distribution=Delta, size=2)
+        var_B = EndogenousVariable('B', distribution=Delta, size=2)
+        var_C = EndogenousVariable('C', distribution=Delta, size=2)
+        var_D = EndogenousVariable('D', distribution=Delta, size=2)
+        var_E = EndogenousVariable('E', distribution=Delta, size=2)
+        var_F = EndogenousVariable('F', distribution=Delta, size=2)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-        cpd_A = ParametricCPD('A', parametrization=nn.Linear(8, 2))
-        cpd_B = ParametricCPD('B', parametrization=nn.Linear(8, 2))
-        cpd_C = ParametricCPD('C', parametrization=nn.Linear(8, 2))
-        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=2))
-        cpd_E = ParametricCPD('E', parametrization=LinearConceptToConcept(in_concepts=4, out_concepts=2))
-        cpd_F = ParametricCPD('F', parametrization=LinearConceptToConcept(in_concepts=6, out_concepts=2))
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(8, 2), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(8, 2), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(8, 2), parents=['input'])
+        cpd_D = ParametricCPD('D', parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=2), parents=['A'])
+        cpd_E = ParametricCPD('E', parametrization=LinearConceptToConcept(in_concepts=4, out_concepts=2), parents=['B', 'C'])
+        cpd_F = ParametricCPD('F', parametrization=LinearConceptToConcept(in_concepts=6, out_concepts=2), parents=['D', 'B', 'E'])
 
         return ProbabilisticModel(
             variables=[input_var, var_A, var_B, var_C, var_D, var_E, var_F],
-            parametric_cpds=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E, cpd_F],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C, cpd_D, cpd_E, cpd_F],
         )
 
     # -------------------- Parity tests (same results) --------------------
@@ -2244,12 +2244,12 @@ class TestForwardVsLazyInferenceParity:
 
     def test_lazy_handles_single_variable_model(self):
         """Degenerate case: model with only root variable."""
-        input_var = InputVariable('input', parents=[], distribution=Delta, size=5)
+        input_var = InputVariable('input', distribution=Delta, size=5)
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
 
         model = ProbabilisticModel(
             variables=[input_var],
-            parametric_cpds=[cpd_input],
+            factors=[cpd_input],
         )
 
         lazy_inf = _SimpleForwardInferenceForNewTests(model, lazy=True)

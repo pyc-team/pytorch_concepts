@@ -25,17 +25,17 @@ def main():
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
     # Variable setup
-    input_var = LatentVariable("input", parents=[], size=latent_dims)
-    concepts = ConceptVariable(concept_names, parents=["input"], distribution=Bernoulli)
-    tasks = ConceptVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2)
+    input_var = LatentVariable("input", size=latent_dims)
+    concepts = ConceptVariable(concept_names, distribution=Bernoulli)
+    tasks = ConceptVariable("xor", distribution=RelaxedOneHotCategorical, size=2)
 
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()))
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearLatentToConcept))
-    y_predictor = ParametricCPD("xor", parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=2))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearLatentToConcept), parents=["input"])
+    y_predictor = ParametricCPD("xor", parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=2), parents=["c1", "c2"])
 
     # ProbabilisticModel Initialization
-    concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])
+    concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], factors=[backbone, *c_encoder, y_predictor])
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)
@@ -49,7 +49,7 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True)
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True, return_logits=True)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -62,8 +62,8 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
