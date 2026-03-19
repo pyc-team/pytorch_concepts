@@ -76,7 +76,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True, return_logits=True)
         c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
         y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
 

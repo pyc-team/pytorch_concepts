@@ -60,7 +60,7 @@ def main():
 
         # generate concept and task predictions
         emb = encoder(x_train)
-        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, return_logits=True)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -84,7 +84,7 @@ def main():
     with intervention(policies=int_policy_c1,
                       strategies=int_strategy_c1,
                       target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, return_logits=True)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
         task_accuracy = accuracy_score(y_train, y_pred > 0.)
@@ -99,7 +99,7 @@ def main():
         with intervention(policies=[int_policy_c1, int_policy_c1],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
+            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, return_logits=True)
             c_pred = cy_pred[:, :c_train.shape[1]]
             y_pred = cy_pred[:, c_train.shape[1]:]
             task_accuracy = accuracy_score(y_train, y_pred > 0.)
