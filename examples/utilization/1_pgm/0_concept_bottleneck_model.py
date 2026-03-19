@@ -43,13 +43,13 @@ def main():
     query_concepts = ["c1", "c2", "xor"]
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True)
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True, return_logits=True)
         c_pred = cy_pred[:, :c_train.shape[1]]
         y_pred = cy_pred[:, c_train.shape[1]:]
 
@@ -62,8 +62,8 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")

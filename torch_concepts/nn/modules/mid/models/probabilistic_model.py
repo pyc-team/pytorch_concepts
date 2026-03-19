@@ -11,7 +11,7 @@ them without directed-graph semantics.
 
 from torch import nn
 from torch.distributions import Distribution
-from typing import List, Dict, Optional, Type
+from typing import List, Dict, Optional, Type, Union
 
 from .variable import Variable, ExogenousVariable, ConceptVariable
 from .factor import ParametricFactor
@@ -62,7 +62,7 @@ class ProbabilisticModel(nn.Module):
     """
 
     def __init__(self, variables: List[Variable],
-                 factors: List[ParametricFactor]):
+                 factors: Union[List[ParametricFactor], List[ParametricCPD]]):
         super().__init__()
         has_cpds = any(isinstance(f, ParametricCPD) for f in factors)
         has_plain = any(not isinstance(f, ParametricCPD) for f in factors)

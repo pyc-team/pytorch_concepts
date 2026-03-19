@@ -55,7 +55,7 @@ def main():
     # Original predictions (observational)
     original_results = inference_engine.query(
         ["genotype", "smoking", "tar", "cancer"],
-        evidence=initial_input
+        evidence=initial_input,
     )
 
     # Intervention: Force smoking to 0 (prevent smoking)
@@ -70,7 +70,7 @@ def main():
     ):
         intervened_results = inference_engine.query(
             ["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input
+            evidence=initial_input,
         )
         cancer_do_smoking_0 = intervened_results[:, 3]
 
@@ -86,7 +86,7 @@ def main():
     ):
         intervened_results = inference_engine.query(
             ["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input
+            evidence=initial_input,
         )
         cancer_do_smoking_1 = intervened_results[:, 3]
 
