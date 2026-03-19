@@ -14,7 +14,7 @@ from .variable import Variable
 
 class ParametricFactor(nn.Module):
     """
-    Base class for factors in a probabilistic graphical model.
+    Base class for factors in a probabilistic graphical model (PGM).
 
     A ParametricFactor associates a set of named concepts (its *scope*) with a
     single neural-network parametrization.  The factor produces one potential
