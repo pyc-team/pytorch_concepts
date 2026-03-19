@@ -36,8 +36,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         parent references.
         """
         # Create parent and child variables
-        parent = Variable(concepts='parent', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs with LazyConstructor
         parent_cpd = ParametricCPD(
@@ -47,7 +47,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         child_cpd = ParametricCPD(
             concepts='child',
             parametrization=LazyConstructor(nn.Linear, out_features=1)
-        )
+        , parents=[parent])
         
         # Set parents and variable on CPDs (this happens in GraphModel._init_predictors)
         parent_cpd.parents = []
@@ -91,7 +91,7 @@ class TestCPDParentPreservation(unittest.TestCase):
     def test_cpd_variable_preserved_after_lazy_build(self):
         """Test that variable reference is preserved when LazyConstructor builds the CPD."""
         # Create variable
-        var = Variable(concepts='test_var', parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='test_var', distribution=Bernoulli, size=1)
         
         # Create CPD with LazyConstructor
         cpd = ParametricCPD(
@@ -134,26 +134,16 @@ class TestCPDParentPreservation(unittest.TestCase):
     def test_multiple_parents_preserved(self):
         """Test that multiple parent references are all preserved."""
         # Create parent variables
-        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts='p2', parents=[], distribution=Bernoulli, size=1)
-        parent3 = Variable(concepts='p3', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='child', parents=[parent1, parent2, parent3], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', distribution=Bernoulli, size=1)
+        parent2 = Variable(concepts='p2', distribution=Bernoulli, size=1)
+        parent3 = Variable(concepts='p3', distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs
         p1_cpd = ParametricCPD(concepts='p1', parametrization=LazyConstructor(nn.Linear, out_features=1))
         p2_cpd = ParametricCPD(concepts='p2', parametrization=LazyConstructor(nn.Linear, out_features=1))
         p3_cpd = ParametricCPD(concepts='p3', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        child_cpd = ParametricCPD(concepts='child', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        
-        # Set parents
-        p1_cpd.parents = []
-        p1_cpd.variable = parent1
-        p2_cpd.parents = []
-        p2_cpd.variable = parent2
-        p3_cpd.parents = []
-        p3_cpd.variable = parent3
-        child_cpd.parents = [parent1, parent2, parent3]
-        child_cpd.variable = child
+        child_cpd = ParametricCPD(concepts='child', parametrization=LazyConstructor(nn.Linear, out_features=1), parents=[parent1, parent2, parent3])
         
         # Create model
         model = ProbabilisticModel(
@@ -188,16 +178,16 @@ class TestCPDParentPreservation(unittest.TestCase):
         Each CPD should maintain its parent references after lazy initialization.
         """
         # Create hierarchical variables
-        var_a = Variable(concepts='A', parents=[], distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', parents=[var_a], distribution=Bernoulli, size=1)
-        var_c = Variable(concepts='C', parents=[var_b], distribution=Bernoulli, size=1)
-        var_d = Variable(concepts='D', parents=[var_c], distribution=Bernoulli, size=1)
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        var_c = Variable(concepts='C', distribution=Bernoulli, size=1)
+        var_d = Variable(concepts='D', distribution=Bernoulli, size=1)
         
         # Create CPDs with lazy constructors
         cpd_a = ParametricCPD(concepts='A', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        cpd_b = ParametricCPD(concepts='B', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        cpd_c = ParametricCPD(concepts='C', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        cpd_d = ParametricCPD(concepts='D', parametrization=LazyConstructor(nn.Linear, out_features=1))
+        cpd_b = ParametricCPD(concepts='B', parametrization=LazyConstructor(nn.Linear, out_features=1), parents=[var_a])
+        cpd_c = ParametricCPD(concepts='C', parametrization=LazyConstructor(nn.Linear, out_features=1), parents=[var_b])
+        cpd_d = ParametricCPD(concepts='D', parametrization=LazyConstructor(nn.Linear, out_features=1), parents=[var_c])
         
         # Set parents and variables
         cpd_a.parents = []
@@ -247,8 +237,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         calculations that depend on parent references.
         """
         # Create parent with higher cardinality
-        parent = Variable(concepts='parent', parents=[], distribution=Categorical, size=5)
-        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', distribution=Categorical, size=5)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs
         parent_cpd = ParametricCPD(
@@ -258,7 +248,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         child_cpd = ParametricCPD(
             concepts='child',
             parametrization=LazyConstructor(nn.Linear, out_features=1)
-        )
+        , parents=[parent])
         
         # Set parents and variables
         parent_cpd.parents = []
@@ -301,8 +291,8 @@ class TestCPDParentPreservation(unittest.TestCase):
         This is a control test to ensure the fix doesn't break non-lazy CPDs.
         """
         # Create variables
-        parent = Variable(concepts='parent', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', distribution=Bernoulli, size=1)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs with non-lazy parametrization
         parent_cpd = ParametricCPD(
@@ -312,7 +302,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         child_cpd = ParametricCPD(
             concepts='child',
             parametrization=nn.Linear(1, 1)
-        )
+        , parents=[parent])
         
         # Set parents and variables
         parent_cpd.parents = []
@@ -346,22 +336,14 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         This calculation depends on having correct parent references.
         """
         # Create parents with different sizes
-        parent1 = Variable(concepts='p1', parents=[], distribution=Categorical, size=3)
-        parent2 = Variable(concepts='p2', parents=[], distribution=Categorical, size=5)
-        child = Variable(concepts='child', parents=[parent1, parent2], distribution=Bernoulli, size=1)
+        parent1 = Variable(concepts='p1', distribution=Categorical, size=3)
+        parent2 = Variable(concepts='p2', distribution=Categorical, size=5)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs
         p1_cpd = ParametricCPD(concepts='p1', parametrization=LazyConstructor(nn.Linear, out_features=3))
         p2_cpd = ParametricCPD(concepts='p2', parametrization=LazyConstructor(nn.Linear, out_features=5))
-        child_cpd = ParametricCPD(concepts='child', parametrization=LazyConstructor(nn.Linear, out_features=1))
-        
-        # Set parents and variables
-        p1_cpd.parents = []
-        p1_cpd.variable = parent1
-        p2_cpd.parents = []
-        p2_cpd.variable = parent2
-        child_cpd.parents = [parent1, parent2]
-        child_cpd.variable = child
+        child_cpd = ParametricCPD(concepts='child', parametrization=LazyConstructor(nn.Linear, out_features=1), parents=[parent1, parent2])
         
         # Create model
         model = ProbabilisticModel(
@@ -398,8 +380,8 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         that doesn't actually run a forward pass, just verifies parent preservation.
         """
         # Create simple parent-child structure
-        parent = Variable(concepts='parent', parents=[], distribution=Categorical, size=4)
-        child = Variable(concepts='child', parents=[parent], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='parent', distribution=Categorical, size=4)
+        child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs with lazy constructors
         parent_cpd = ParametricCPD(
@@ -409,7 +391,7 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         child_cpd = ParametricCPD(
             concepts='child',
             parametrization=LazyConstructor(nn.Linear, out_features=1)
-        )
+        , parents=[parent])
         
         # Set parents and variables
         parent_cpd.parents = []

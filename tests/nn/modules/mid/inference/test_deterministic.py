@@ -33,18 +33,18 @@ from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConce
 
 def _make_variable(name, distribution, size=1):
     """Create a standalone ConceptVariable with the given distribution."""
-    return ConceptVariable(name, parents=[], distribution=distribution, size=size)
+    return ConceptVariable(name, distribution=distribution, size=size)
 
 
 def _make_chain_pgm(dist_A, size_A, dist_B, size_B, latent=10):
     """Build a simple chain: input -> A -> B with specified distributions."""
-    input_var = LatentVariable('input', parents=[], distribution=Delta, size=latent)
-    var_A = ConceptVariable('A', parents=['input'], distribution=dist_A, size=size_A)
-    var_B = ConceptVariable('B', parents=['A'], distribution=dist_B, size=size_B)
+    input_var = LatentVariable('input', distribution=Delta, size=latent)
+    var_A = ConceptVariable('A', distribution=dist_A, size=size_A)
+    var_B = ConceptVariable('B', distribution=dist_B, size=size_B)
 
     cpd_input = ParametricCPD('input', parametrization=nn.Identity())
-    cpd_A = ParametricCPD('A', parametrization=nn.Linear(latent, size_A))
-    cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(size_A, size_B))
+    cpd_A = ParametricCPD('A', parametrization=nn.Linear(latent, size_A), parents=['input'])
+    cpd_B = ParametricCPD('B', parametrization=LinearConceptToConcept(size_A, size_B), parents=['A'])
 
     pgm = ProbabilisticModel(
         variables=[input_var, var_A, var_B],

@@ -24,16 +24,16 @@ def main():
     y_train = torch.cat([y_train, 1-y_train], dim=1)
 
     # Variable setup
-    input_var = LatentVariable("input", parents=[], size=x_train.shape[1])
-    concepts = ConceptVariable(concept_names, parents=["input"], distribution=RelaxedBernoulli, 
+    input_var = LatentVariable("input", size=x_train.shape[1])
+    concepts = ConceptVariable(concept_names, distribution=RelaxedBernoulli, 
                                dist_kwargs={'temperature': 1})
-    tasks = ConceptVariable("xor", parents=concept_names, distribution=RelaxedOneHotCategorical, size=2,
+    tasks = ConceptVariable("xor", distribution=RelaxedOneHotCategorical, size=2,
                             dist_kwargs={'temperature': 1})
 
     # ParametricCPD setup
     backbone = ParametricCPD("input", parametrization=torch.nn.Identity())
-    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearLatentToConcept))
-    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearConceptToConcept))
+    c_encoder = ParametricCPD(["c1", "c2"], parametrization=LazyConstructor(LinearLatentToConcept), parents=["input"])
+    y_predictor = ParametricCPD("xor", parametrization=LazyConstructor(LinearConceptToConcept), parents=["c1", "c2"])
 
     # ProbabilisticModel Initialization
     concept_model = ProbabilisticModel(variables=[input_var, *concepts, tasks], parametric_cpds=[backbone, *c_encoder, y_predictor])

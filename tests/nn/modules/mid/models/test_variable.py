@@ -23,7 +23,6 @@ class TestVariable(unittest.TestCase):
         """Test creating a single concept variable."""
         var = Variable(
             concepts='color',
-            parents=[],
             distribution=Bernoulli,
             size=1
         )
@@ -34,7 +33,6 @@ class TestVariable(unittest.TestCase):
         """Test creating multiple concept variables."""
         vars_list = Variable(
             concepts=['A', 'B', 'C'],
-            parents=[],
             distribution=Bernoulli,
             size=1
         )
@@ -47,7 +45,6 @@ class TestVariable(unittest.TestCase):
         """Test variable with Delta distribution."""
         var = Variable(
             concepts='feature',
-            parents=[],
             distribution=Delta,
             size=1
         )
@@ -57,7 +54,6 @@ class TestVariable(unittest.TestCase):
         """Test variable with Categorical distribution."""
         var = Variable(
             concepts='color',
-            parents=[],
             distribution=Categorical,
             size=3
         )
@@ -68,56 +64,24 @@ class TestVariable(unittest.TestCase):
         """Test variable with Normal distribution."""
         var = Variable(
             concepts='continuous',
-            parents=[],
             distribution=Normal,
             size=1
         )
         self.assertEqual(var.distribution, Normal)
 
-    def test_variable_with_parents(self):
-        """Test variable with parent variables."""
-        parent_var = Variable(
-            concepts='parent',
-            parents=[],
-            distribution=Bernoulli,
-            size=1
-        )
-        child_var = Variable(
-            concepts='child',
-            parents=[parent_var],
-            distribution=Bernoulli,
-            size=1
-        )
-        self.assertEqual(len(child_var.parents), 1)
-        self.assertEqual(child_var.parents[0], parent_var)
-
     def test_variable_out_features(self):
         """Test out_features property."""
-        var_binary = Variable(concepts='binary', parents=[], distribution=Bernoulli, size=1)
+        var_binary = Variable(concepts='binary', distribution=Bernoulli, size=1)
         self.assertEqual(var_binary.out_features, 1)
 
-        var_cat = Variable(concepts='category', parents=[], distribution=Categorical, size=5)
+        var_cat = Variable(concepts='category', distribution=Categorical, size=5)
         self.assertEqual(var_cat.out_features, 5)
-
-    def test_variable_in_features(self):
-        """Test in_features property with parents."""
-        parent1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts='p2', parents=[], distribution=Categorical, size=3)
-
-        child = Variable(
-            concepts='child',
-            parents=[parent1, parent2],
-            distribution=Bernoulli,
-            size=1
-        )
-        self.assertEqual(child.in_features, 1 + 3)
 
     def test_variable_with_metadata(self):
         """Test variable with metadata."""
         metadata = {'description': 'test variable', 'importance': 0.8}
         var = Variable(
             concepts='test',
-            parents=[],
             distribution=Bernoulli,
             size=1,
             metadata=metadata
@@ -128,7 +92,6 @@ class TestVariable(unittest.TestCase):
         """Test multiple concepts with different distributions."""
         vars_list = Variable(
             concepts=['A', 'B', 'C'],
-            parents=[],
             distribution=[Bernoulli, Categorical, Delta],
             size=[1, 3, 1]
         )
@@ -140,7 +103,6 @@ class TestVariable(unittest.TestCase):
         """Test multiple concepts with different sizes."""
         vars_list = Variable(
             concepts=['A', 'B', 'C'],
-            parents=[],
             distribution=Categorical,
             size=[2, 3, 4]
         )
@@ -152,7 +114,6 @@ class TestVariable(unittest.TestCase):
         """Test variable with None distribution defaults to Delta."""
         vars_list = Variable(
             concepts=['A', 'B'],
-            parents=[],
             distribution=None,
             size=1
         )
@@ -164,7 +125,6 @@ class TestVariable(unittest.TestCase):
         with self.assertRaises(ValueError):
             Variable(
                 concepts=['A', 'B', 'C'],
-                parents=[],
                 distribution=[Bernoulli, Categorical],  # Only 2, need 3
                 size=1
             )
@@ -177,7 +137,6 @@ class TestVariableMultiConceptCreation:
         """Test that multiple concepts return a list of Variables."""
         vars_list = Variable(
             concepts=['a', 'b', 'c'],
-            parents=[],
             distribution=Delta,
             size=1
         )
@@ -191,7 +150,6 @@ class TestVariableMultiConceptCreation:
         """Test multi-concept with per-concept distributions."""
         vars_list = Variable(
             concepts=['a', 'b', 'c'],
-            parents=[],
             distribution=[Bernoulli, Delta, Categorical],
             size=[1, 2, 3]
         )
@@ -205,7 +163,6 @@ class TestVariableMultiConceptCreation:
         with pytest.raises(ValueError, match="distribution and size must either be single values or lists of length"):
             Variable(
                 concepts=['a', 'b', 'c'],
-                parents=[],
                 distribution=[Bernoulli, Delta],  # Only 2, need 3
                 size=1
             )
@@ -215,7 +172,6 @@ class TestVariableMultiConceptCreation:
         with pytest.raises(ValueError, match="distribution and size must either be single values or lists of length"):
             Variable(
                 concepts=['a', 'b'],
-                parents=[],
                 distribution=Delta,
                 size=[1, 2, 3]  # 3 sizes for 2 concepts
             )
@@ -229,7 +185,6 @@ class TestVariableValidation:
         with pytest.raises(ValueError, match="Categorical Variable must have a size > 1"):
             Variable(
                 concepts='cat',
-                parents=[],
                 distribution=Categorical,
                 size=1
             )
@@ -239,7 +194,6 @@ class TestVariableValidation:
         with pytest.raises(ValueError, match="Bernoulli Variable must have size=1"):
             Variable(
                 concepts='bern',
-                parents=[],
                 distribution=Bernoulli,
                 size=3
             )
@@ -248,7 +202,6 @@ class TestVariableValidation:
         """Test that Normal distribution is supported."""
         var = Variable(
             concepts='norm',
-            parents=[],
             distribution=Normal,
             size=2
         )
@@ -261,58 +214,29 @@ class TestVariableOutFeatures:
 
     def test_out_features_delta(self):
         """Test out_features for Delta distribution."""
-        var = Variable(concepts='d', parents=[], distribution=Delta, size=3)
+        var = Variable(concepts='d', distribution=Delta, size=3)
         assert var.out_features == 3
 
     def test_out_features_bernoulli(self):
         """Test out_features for Bernoulli distribution."""
-        var = Variable(concepts='b', parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='b', distribution=Bernoulli, size=1)
         assert var.out_features == 1
 
     def test_out_features_categorical(self):
         """Test out_features for Categorical distribution."""
-        var = Variable(concepts='c', parents=[], distribution=Categorical, size=5)
+        var = Variable(concepts='c', distribution=Categorical, size=5)
         assert var.out_features == 5
 
     def test_out_features_normal(self):
         """Test out_features for Normal distribution."""
-        var = Variable(concepts='n', parents=[], distribution=Normal, size=4)
+        var = Variable(concepts='n', distribution=Normal, size=4)
         assert var.out_features == 4
 
     def test_out_features_equals_size(self):
         """Test that out_features is always equal to size."""
-        var = Variable(concepts='x', parents=[], distribution=Delta, size=2)
+        var = Variable(concepts='x', distribution=Delta, size=2)
         assert var.out_features == var.size
         assert var.out_features == 2
-
-
-class TestVariableInFeatures:
-    """Test in_features property calculation."""
-
-    def test_in_features_no_parents(self):
-        """Test in_features with no parents."""
-        var = Variable(concepts='x', parents=[], distribution=Delta, size=2)
-        assert var.in_features == 0
-
-    def test_in_features_single_parent(self):
-        """Test in_features with single parent."""
-        parent = Variable(concepts='p', parents=[], distribution=Delta, size=3)
-        child = Variable(concepts='c', parents=[parent], distribution=Delta, size=2)
-        assert child.in_features == 3
-
-    def test_in_features_multiple_parents(self):
-        """Test in_features with multiple parents."""
-        p1 = Variable(concepts='p1', parents=[], distribution=Delta, size=2)
-        p2 = Variable(concepts='p2', parents=[], distribution=Bernoulli, size=1)
-        p3 = Variable(concepts='p3', parents=[], distribution=Categorical, size=4)
-        child = Variable(concepts='c', parents=[p1, p2, p3], distribution=Delta, size=1)
-        assert child.in_features == 2 + 1 + 4
-
-    def test_in_features_non_variable_parent_raises_error(self):
-        """Test that non-Variable parent raises TypeError."""
-        var = Variable(concepts='c', parents=['not_a_variable'], distribution=Delta, size=1)
-        with pytest.raises(TypeError, match="is not a Variable object"):
-            _ = var.in_features
 
 
 class TestVariableRepr:
@@ -320,7 +244,7 @@ class TestVariableRepr:
 
     def test_repr_without_metadata(self):
         """Test repr without metadata."""
-        var = Variable(concepts='x', parents=[], distribution=Delta, size=2)
+        var = Variable(concepts='x', distribution=Delta, size=2)
         repr_str = repr(var)
         assert 'Variable' in repr_str
         assert 'x' in repr_str
@@ -331,7 +255,6 @@ class TestVariableRepr:
         """Test repr with metadata."""
         var = Variable(
             concepts='y',
-            parents=[],
             distribution=Bernoulli,
             size=1,
             metadata={'key': 'value'}
@@ -347,7 +270,6 @@ class TestEndogenousVariable:
         """Test that EndogenousVariable sets variable_type metadata."""
         var = EndogenousVariable(
             concepts='endo',
-            parents=[],
             distribution=Bernoulli,
             size=1
         )
@@ -358,7 +280,6 @@ class TestEndogenousVariable:
         """Test that custom metadata is preserved."""
         var = EndogenousVariable(
             concepts='endo',
-            parents=[],
             distribution=Delta,
             size=1,
             metadata={'custom': 'data'}
@@ -374,7 +295,6 @@ class TestExogenousVariable:
         """Test that ExogenousVariable sets variable_type metadata."""
         var = ExogenousVariable(
             concepts='exo',
-            parents=[],
             distribution=Delta,
             size=128
         )
@@ -383,10 +303,9 @@ class TestExogenousVariable:
 
     def test_exogenous_variable_with_endogenous_reference(self):
         """Test ExogenousVariable can reference an endogenous variable."""
-        endo = EndogenousVariable(concepts='e', parents=[], distribution=Bernoulli, size=1)
+        endo = EndogenousVariable(concepts='e', distribution=Bernoulli, size=1)
         exo = ExogenousVariable(
             concepts='exo_e',
-            parents=[],
             distribution=Delta,
             size=64,
             metadata={'endogenous_var': endo}
@@ -403,7 +322,6 @@ class TestVariableEdgeCases:
         with pytest.raises(ValueError, match="must be a single value, not a list"):
             Variable(
                 concepts='x',
-                parents=[],
                 distribution=[Delta],
                 size=1
             )
@@ -413,7 +331,6 @@ class TestVariableEdgeCases:
         with pytest.raises(ValueError, match="must be a single value, not a list"):
             Variable(
                 concepts='x',
-                parents=[],
                 distribution=Delta,
                 size=[2]
             )
@@ -422,7 +339,6 @@ class TestVariableEdgeCases:
         """Test that single concept in list returns list with one Variable."""
         vars_list = Variable(
             concepts=['x'],
-            parents=[],
             distribution=Delta,
             size=2
         )
@@ -436,7 +352,6 @@ class TestVariableEdgeCases:
         """Test out_features with RelaxedBernoulli."""
         var = Variable(
             concepts='rb',
-            parents=[],
             distribution=RelaxedBernoulli,
             size=1
         )

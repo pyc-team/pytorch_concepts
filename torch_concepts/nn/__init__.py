@@ -52,6 +52,7 @@ from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 
 # Models (mid-level)
+from .modules.mid.models.factor import ParametricFactor
 from .modules.mid.models.cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.constructors.bipartite import BipartiteModel

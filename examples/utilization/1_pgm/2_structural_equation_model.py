@@ -11,26 +11,30 @@ def main():
     n_samples = 1000
 
     # Variable setup
-    latent_var = LatentVariable("input", parents=[], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    genotype_var = ConceptVariable("genotype", parents=["input"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    smoking_var = ConceptVariable("smoking", parents=["genotype"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    tar_var = ConceptVariable("tar", parents=["genotype", "smoking"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    cancer_var = ConceptVariable("cancer", parents=["tar"], distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    latent_var = LatentVariable("input", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    genotype_var = ConceptVariable("genotype", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    smoking_var = ConceptVariable("smoking", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    tar_var = ConceptVariable("tar", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    cancer_var = ConceptVariable("cancer", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
 
     # ParametricCPD setup
-    exogenous_cpd = ParametricCPD("exogenous", parametrization=torch.nn.Sigmoid())
+    input_cpd = ParametricCPD("input", parametrization=torch.nn.Sigmoid())
     genotype_cpd = ParametricCPD("genotype",
                                  parametrization=torch.nn.Sequential(torch.nn.Linear(1, 1),
-                                                                     torch.nn.Sigmoid()))
+                                                                     torch.nn.Sigmoid()),
+                                 parents=["input"])
     smoking_cpd = ParametricCPD("smoking",
-                                parametrization=CallableConceptToConcept(lambda x: (x>0.5).float(), use_bias=False))
+                                parametrization=CallableConceptToConcept(lambda x: (x>0.5).float(), use_bias=False),
+                                parents=["genotype"])
     tar_cpd = ParametricCPD("tar",
                             parametrization=CallableConceptToConcept(lambda x: torch.logical_or(x[:, 0]>0.5, x[:, 1]>0.5).float().unsqueeze(-1),
-                                                       use_bias=False))
+                                                       use_bias=False),
+                            parents=["genotype", "smoking"])
     cancer_cpd = ParametricCPD("cancer",
-                               parametrization=CallableConceptToConcept(lambda x: x, use_bias=False))
+                               parametrization=CallableConceptToConcept(lambda x: x, use_bias=False),
+                               parents=["tar"])
     concept_model = ProbabilisticModel(variables=[latent_var, genotype_var, smoking_var, tar_var, cancer_var],
-                                       parametric_cpds=[exogenous_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
+                                       parametric_cpds=[input_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
 
     # Inference Initialization
     inference_engine = AncestralSamplingInference(concept_model, log_probs=False)

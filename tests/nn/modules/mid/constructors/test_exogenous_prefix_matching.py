@@ -75,22 +75,26 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         
         # Check that each concept has the correct number of parent variables
         # With source_exogenous, each concept should have exogenous variables matching its cardinality
-        self.assertEqual(len(car_var.parents), 2,
-                        f"Car should have 2 exogenous parent variables, got {len(car_var.parents)}")
-        self.assertEqual(len(carcost_var.parents), 4,
-                        f"CarCost should have 4 exogenous parent variables, got {len(carcost_var.parents)}")
-        self.assertEqual(len(driver_var.parents), 3,
-                        f"Driver should have 3 exogenous parent variables, got {len(driver_var.parents)}")
+        car_parents = model.probabilistic_model.get_variable_parents('Car')
+        carcost_parents = model.probabilistic_model.get_variable_parents('CarCost')
+        driver_parents = model.probabilistic_model.get_variable_parents('Driver')
+        
+        self.assertEqual(len(car_parents), 2,
+                        f"Car should have 2 exogenous parent variables, got {len(car_parents)}")
+        self.assertEqual(len(carcost_parents), 4,
+                        f"CarCost should have 4 exogenous parent variables, got {len(carcost_parents)}")
+        self.assertEqual(len(driver_parents), 3,
+                        f"Driver should have 3 exogenous parent variables, got {len(driver_parents)}")
         
         # Verify parent names start with correct prefix (not substrings of other concepts)
-        car_parent_names = [p if isinstance(p, str) else p.concept for p in car_var.parents]
+        car_parent_names = [p if isinstance(p, str) else p.concept for p in car_parents]
         for name in car_parent_names:
             self.assertTrue(name.startswith('exog_Car_state_'),
                           f"Car parent {name} should start with 'exog_Car_state_'")
             self.assertFalse(name.startswith('exog_CarCost_state_'),
                            f"Car should not have CarCost exogenous variable: {name}")
         
-        carcost_parent_names = [p if isinstance(p, str) else p.concept for p in carcost_var.parents]
+        carcost_parent_names = [p if isinstance(p, str) else p.concept for p in carcost_parents]
         for name in carcost_parent_names:
             self.assertTrue(name.startswith('exog_CarCost_state_'),
                           f"CarCost parent {name} should start with 'exog_CarCost_state_'")
@@ -133,12 +137,16 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         ab_var = [v for v in model.probabilistic_model.variables if v.concept == 'AB'][0]
         abc_var = [v for v in model.probabilistic_model.variables if v.concept == 'ABC'][0]
         
-        self.assertEqual(len(a_var.parents), 2, "A should have 2 exogenous variables")
-        self.assertEqual(len(ab_var.parents), 3, "AB should have 3 exogenous variables")
-        self.assertEqual(len(abc_var.parents), 4, "ABC should have 4 exogenous variables")
+        a_parents = model.probabilistic_model.get_variable_parents('A')
+        ab_parents = model.probabilistic_model.get_variable_parents('AB')
+        abc_parents = model.probabilistic_model.get_variable_parents('ABC')
+        
+        self.assertEqual(len(a_parents), 2, "A should have 2 exogenous variables")
+        self.assertEqual(len(ab_parents), 3, "AB should have 3 exogenous variables")
+        self.assertEqual(len(abc_parents), 4, "ABC should have 4 exogenous variables")
         
         # Verify exact prefix matching - A should not get AB or ABC variables
-        a_parent_names = [p if isinstance(p, str) else p.concept for p in a_var.parents]
+        a_parent_names = [p if isinstance(p, str) else p.concept for p in a_parents]
         for name in a_parent_names:
             self.assertTrue(name.startswith('exog_A_state_'),
                           f"A parent should start with 'exog_A_state_', got {name}")
@@ -182,13 +190,16 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         age_group_var = [v for v in model.probabilistic_model.variables if v.concept == 'Age_Group'][0]
         age_group_risk_var = [v for v in model.probabilistic_model.variables if v.concept == 'Age_Group_Risk'][0]
         
-        self.assertEqual(len(age_group_var.parents), 3,
+        age_group_parents = model.probabilistic_model.get_variable_parents('Age_Group')
+        age_group_risk_parents = model.probabilistic_model.get_variable_parents('Age_Group_Risk')
+        
+        self.assertEqual(len(age_group_parents), 3,
                         "Age_Group should have 3 exogenous variables")
-        self.assertEqual(len(age_group_risk_var.parents), 5,
+        self.assertEqual(len(age_group_risk_parents), 5,
                         "Age_Group_Risk should have 5 exogenous variables")
         
         # Verify Age_Group doesn't get Age_Group_Risk's exogenous variables
-        age_group_parent_names = [p if isinstance(p, str) else p.concept for p in age_group_var.parents]
+        age_group_parent_names = [p if isinstance(p, str) else p.concept for p in age_group_parents]
         for name in age_group_parent_names:
             self.assertTrue(name.startswith('exog_Age_Group_state_'),
                           f"Age_Group parent should start with 'exog_Age_Group_state_', got {name}")
@@ -234,15 +245,19 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         othercar_var = [v for v in model.probabilistic_model.variables if v.concept == 'OtherCar'][0]
         othercarcost_var = [v for v in model.probabilistic_model.variables if v.concept == 'OtherCarCost'][0]
         
-        self.assertEqual(len(other_var.parents), 2,
+        other_parents = model.probabilistic_model.get_variable_parents('Other')
+        othercar_parents = model.probabilistic_model.get_variable_parents('OtherCar')
+        othercarcost_parents = model.probabilistic_model.get_variable_parents('OtherCarCost')
+        
+        self.assertEqual(len(other_parents), 2,
                         "Other should have 2 exogenous variables")
-        self.assertEqual(len(othercar_var.parents), 3,
+        self.assertEqual(len(othercar_parents), 3,
                         "OtherCar should have 3 exogenous variables")
-        self.assertEqual(len(othercarcost_var.parents), 4,
+        self.assertEqual(len(othercarcost_parents), 4,
                         "OtherCarCost should have 4 exogenous variables")
         
         # Verify OtherCar doesn't get OtherCarCost's exogenous (the original bug!)
-        othercar_parent_names = [p if isinstance(p, str) else p.concept for p in othercar_var.parents]
+        othercar_parent_names = [p if isinstance(p, str) else p.concept for p in othercar_parents]
         for name in othercar_parent_names:
             self.assertTrue(name.startswith('exog_OtherCar_state_'),
                           f"OtherCar parent should start with 'exog_OtherCar_state_', got {name}")
@@ -286,9 +301,10 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         carcost_var = [v for v in model.probabilistic_model.variables if v.concept == 'CarCost'][0]
 
         # Without source exogenous, root concepts should only have 'input' as parent, no exogenous variables
-        self.assertEqual(len(car_var.parents), 1,
+        car_parents = model.probabilistic_model.get_variable_parents('Car')
+        self.assertEqual(len(car_parents), 1,
                         "Car should have 1 parent (input) when use_source_exogenous=False")
-        self.assertEqual(type(car_var.parents[0]).__name__, 'LatentVariable',
+        self.assertEqual(type(car_parents[0]).__name__, 'LatentVariable',
                         "Car's only parent should be LatentVariable")
         
         # Verify no exogenous variables exist

@@ -138,7 +138,7 @@ class GraphModel(BaseConstructor):
         self.internal_node_idx = [self.labels.index(i) for i in self.internal_nodes]
 
         # latent variable and CPDs
-        input_var = LatentVariable('input', parents=[], size=self.input_size)
+        input_var = LatentVariable('input', size=self.input_size)
         latent_cpd = ParametricCPD('input', parametrization=Identity())
 
         # concepts init
@@ -184,11 +184,11 @@ class GraphModel(BaseConstructor):
         """
         exog_names = [f"exog_{c}_state_{i}" for cix, c in enumerate(label_names) for i in range(cardinalities[cix])]
         exog_vars = ExogenousVariable(exog_names,
-                            parents=[parent_var.concept],
                             distribution=Delta,
                             size=layer._module_kwargs['out_exogenous'])
 
-        exog_cpds = ParametricCPD(exog_names, parametrization=layer)
+        exog_cpds = ParametricCPD(exog_names, parametrization=layer,
+                                  parents=[parent_var.concept])
         # exog_vars and exog_cpds can be a single Variable or a list of Variables
         # depending on whether len(exog_names) == 1 or > 1
         # Ensure we always return lists for consistency
@@ -213,7 +213,6 @@ class GraphModel(BaseConstructor):
         """
         if parent_vars[0].concept == 'input':
             encoder_vars = ConceptVariable(label_names,
-                                parents=['input'],
                                 distribution=[self.annotations[1].metadata[c]['distribution'] for c in label_names],
                                 size=[self.annotations[1].cardinalities[self.annotations[1].get_index(c)] for c in label_names],
                                 dist_kwargs=self.annotations[1].metadata[label_names[0]].get('dist_kwargs'))
@@ -221,7 +220,8 @@ class GraphModel(BaseConstructor):
             if not isinstance(encoder_vars, list):
                 encoder_vars = [encoder_vars]
 
-            encoder_cpds = ParametricCPD(label_names, parametrization=layer)
+            encoder_cpds = ParametricCPD(label_names, parametrization=layer,
+                                        parents=['input'])
             # Ensure encoder_cpds is always a list
             if not isinstance(encoder_cpds, list):
                 encoder_cpds = [encoder_cpds]
@@ -235,11 +235,11 @@ class GraphModel(BaseConstructor):
                 exog_vars_names = [v.concept for v in exog_vars]
                 
                 encoder_var = ConceptVariable(label_name,
-                                    parents=exog_vars_names,
                                     distribution=self.annotations[1].metadata[label_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(label_name)],
                                     dist_kwargs=self.annotations[1].metadata[label_name].get('dist_kwargs'))
-                encoder_cpd = ParametricCPD(label_name, parametrization=layer)
+                encoder_cpd = ParametricCPD(label_name, parametrization=layer,
+                                           parents=exog_vars_names)
                 encoder_vars.append(encoder_var)
                 encoder_cpds.append(encoder_cpd)
         return encoder_vars, encoder_cpds
@@ -300,11 +300,11 @@ class GraphModel(BaseConstructor):
                 in_exogenous = None
 
             predictor_var = ConceptVariable(c_name,
-                                     parents=concept_parents_names+exog_vars_names,
                                     distribution=self.annotations[1].metadata[c_name]['distribution'],
                                     size=self.annotations[1].cardinalities[self.annotations[1].get_index(c_name)],
                                     dist_kwargs=self.annotations[1].metadata[c_name].get('dist_kwargs'))
-            predictor_cpd = ParametricCPD(c_name, parametrization=layer)
+            predictor_cpd = ParametricCPD(c_name, parametrization=layer,
+                                         parents=concept_parents_names+exog_vars_names)
 
             predictor_vars.append(predictor_var)
             predictor_cpds.append(predictor_cpd)

@@ -241,7 +241,7 @@ class TestGraphModel(unittest.TestCase):
 
         # Verify the OtherCarCost predictor variable only has correct parents
         othercarcost_var = pm.concept_to_variable['OtherCarCost']
-        parent_names = [p.concept for p in othercarcost_var.parents]
+        parent_names = [p.concept for p in pm.get_variable_parents('OtherCarCost')]
         # Should NOT contain any 'exog_OtherCar_state_*' parents
         leaked_parents = [p for p in parent_names if p.startswith('exog_OtherCar_state_')]
         self.assertEqual(len(leaked_parents), 0,
@@ -301,7 +301,7 @@ class TestGraphModel(unittest.TestCase):
 
         # Verify exogenous parents of OtherCarCost only reference OtherCar's exog vars
         othercarcost_var = pm.concept_to_variable['OtherCarCost']
-        parent_names = [p.concept for p in othercarcost_var.parents]
+        parent_names = [p.concept for p in pm.get_variable_parents('OtherCarCost')]
         # Should only contain OtherCar (concept parent) and exog_OtherCar_state_* (source exog)
         # but NOT exog_OtherCarCost_state_* (those don't exist in this mode)
         for p_name in parent_names:
