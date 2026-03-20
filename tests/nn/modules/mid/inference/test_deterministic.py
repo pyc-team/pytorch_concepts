@@ -140,23 +140,24 @@ class TestActivateDelta:
 
 
 class TestActivateUnknownDistribution:
-    """activate with unsupported distribution → NotImplementedError."""
+    """activate with unsupported distribution → identity fallback."""
 
-    def test_raises(self):
+    def test_identity_fallback(self):
         var = _make_variable('c', Normal)
         inf = DeterministicInference.__new__(DeterministicInference)
         pred = torch.randn(4, 1)
-        with pytest.raises(NotImplementedError, match="Activation for distribution"):
-            inf.activate(pred, var)
+        result = inf.activate(pred, var)
+        torch.testing.assert_close(result, pred)
 
-    def test_raises_when_distribution_is_none(self):
+    def test_identity_when_distribution_is_none(self):
         """Variable whose distribution is None."""
         var = _make_variable('c', Bernoulli)
         var.distribution = None  # override to None
+        var.activation = lambda x: x  # match the fallback
         inf = DeterministicInference.__new__(DeterministicInference)
         pred = torch.randn(4, 1)
-        with pytest.raises(NotImplementedError):
-            inf.activate(pred, var)
+        result = inf.activate(pred, var)
+        torch.testing.assert_close(result, pred)
 
 
 # ===========================================================================

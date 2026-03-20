@@ -6,10 +6,21 @@ concept-based models. Variables can have different probability distributions
 and support hierarchical concept structures.
 """
 import torch
+from functools import partial
 from torch.distributions import Distribution, Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
-from typing import List, Dict, Any, Union, Optional, Type
+from typing import List, Dict, Any, Union, Optional, Type, Callable
 
 from .....distributions import Delta
+
+
+# Default logits → probabilities activations per distribution type.
+_DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
+    Bernoulli: torch.sigmoid,
+    RelaxedBernoulli: torch.sigmoid,
+    Categorical: partial(torch.softmax, dim=-1),
+    RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
+    Delta: lambda x: x,
+}
 
 
 class Variable:
@@ -73,7 +84,8 @@ class Variable:
     def __new__(cls, concepts: Union[str, List[str]],
                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                 size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None,
-                dist_kwargs: Optional[Dict[str, Any]] = None):
+                dist_kwargs: Optional[Dict[str, Any]] = None,
+                activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
         """
         Create new Variable instance(s).
 
@@ -140,7 +152,8 @@ class Variable:
                 distribution=distribution_list[i],
                 size=size_list[i],
                 metadata=metadata.copy() if metadata else None,
-                dist_kwargs=dist_kwargs.copy() if dist_kwargs else None
+                dist_kwargs=dist_kwargs.copy() if dist_kwargs else None,
+                activation=activation,
             )
             new_vars.append(instance)
         return new_vars
@@ -149,7 +162,8 @@ class Variable:
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
                  metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None):
+                 dist_kwargs: Optional[Dict[str, Any]] = None,
+                 activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
         """
         Initialize a Variable instance.
 
@@ -161,6 +175,10 @@ class Variable:
             dist_kwargs: Optional keyword arguments for the distribution
                 constructor (e.g., ``{'temperature': 0.5}`` for relaxed
                 distributions).
+            activation: Optional callable that maps logits to probabilities.
+                If ``None``, a default is chosen based on *distribution*
+                (e.g. sigmoid for Bernoulli, softmax for Categorical,
+                identity for Delta).  Pass a custom callable to override.
 
         Raises:
             ValueError: If Categorical variable doesn't have size > 1.
@@ -182,6 +200,10 @@ class Variable:
         self.size = size
         self.dist_kwargs = dist_kwargs if dist_kwargs is not None else {}
         self.metadata = metadata if metadata is not None else {}
+        if activation is not None:
+            self.activation = activation
+        else:
+            self.activation = _DEFAULT_ACTIVATIONS.get(distribution, lambda x: x)
 
     @property
     def out_features(self) -> int:
@@ -254,7 +276,8 @@ class ConceptVariable(Variable):
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
                  metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None):
+                 dist_kwargs: Optional[Dict[str, Any]] = None,
+                 **kwargs):
         """
         Initialize a ConceptVariable instance.
         
@@ -265,11 +288,13 @@ class ConceptVariable(Variable):
             metadata: Optional metadata dictionary.
             dist_kwargs: Optional keyword arguments for the distribution
                 constructor (e.g., ``{'temperature': 0.5}``).
+            **kwargs: Additional keyword arguments forwarded to
+                :class:`Variable` (e.g. ``activation``).
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'concept'
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs)
+        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
 
 
 # Backward compatibility alias
@@ -316,7 +341,8 @@ class ExogenousVariable(Variable):
                  size: Union[int, List[int]] = 1,
                  concept_var: Optional['ConceptVariable'] = None,
                  metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None):
+                 dist_kwargs: Optional[Dict[str, Any]] = None,
+                 **kwargs):
         """
         Initialize an ExogenousVariable instance.
         
@@ -327,13 +353,15 @@ class ExogenousVariable(Variable):
             concept_var: Optional reference to the related concept variable.
             metadata: Optional metadata dictionary.
             dist_kwargs: Optional keyword arguments for the distribution constructor.
+            **kwargs: Additional keyword arguments forwarded to
+                :class:`Variable` (e.g. ``activation``).
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'exogenous'
         if concept_var is not None:
             metadata['concept_var'] = concept_var
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs)
+        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
         self.concept_var = concept_var
 
 
@@ -381,7 +409,8 @@ class LatentVariable(Variable):
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
                  size: Union[int, List[int]] = 1,
                  metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None):
+                 dist_kwargs: Optional[Dict[str, Any]] = None,
+                 **kwargs):
         """
         Initialize a LatentVariable instance.
         
@@ -391,11 +420,13 @@ class LatentVariable(Variable):
             size: Dimensionality of the latent representation.
             metadata: Optional metadata dictionary.
             dist_kwargs: Optional keyword arguments for the distribution constructor.
+            **kwargs: Additional keyword arguments forwarded to
+                :class:`Variable` (e.g. ``activation``).
         """
         if metadata is None:
             metadata = {}
         metadata['variable_type'] = 'latent'
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs)
+        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
 
 
 # Backward compatibility alias
