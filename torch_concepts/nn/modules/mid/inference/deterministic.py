@@ -1,8 +1,6 @@
 """Deterministic inference for probabilistic graphical models."""
 
 import torch
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
-from torch_concepts.distributions import Delta
 
 from .forward import ForwardInference
 from ..models.variable import Variable
@@ -70,34 +68,21 @@ class DeterministicInference(ForwardInference):
     """
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
-        Map logits to probabilities based on the variable's distribution.
+        Map logits to probabilities using the variable's activation.
 
-        * ``Bernoulli`` / ``RelaxedBernoulli``  → sigmoid
-        * ``Categorical`` / ``RelaxedOneHotCategorical`` → softmax
-        * Other           → identity (pass-through)
+        The activation function is stored on the :class:`Variable` instance
+        (defaulting to sigmoid for Bernoulli, softmax for Categorical,
+        identity for Delta, etc.).  Custom activations can be provided when
+        constructing the variable.
 
         Args:
             pred: Prediction tensor (logits).
             variable: The Variable whose prediction is being propagated.
 
         Returns:
-            torch.Tensor: Probability tensor in [0, 1].
+            torch.Tensor: Probability tensor.
         """
-        dist = getattr(variable, 'distribution', None)
-
-        # TODO: Move this logic to a more central place (e.g. Variable or CPD).
-        # allowing users to define custom distributions and activations.
-        if dist in (Bernoulli, RelaxedBernoulli):
-            return torch.sigmoid(pred)
-        elif dist in (Categorical, RelaxedOneHotCategorical):
-            return torch.softmax(pred, dim=-1)
-        elif dist is Delta:
-            return pred  # already deterministic
-        else:
-            raise NotImplementedError(
-                f"Activation for distribution {dist} not implemented. "
-                "Please implement in DeterministicInference.activate()."
-            )
+        return variable.activation(pred)
 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
         """

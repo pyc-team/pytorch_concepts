@@ -3,8 +3,6 @@
 import inspect
 
 import torch
-from torch.distributions import Bernoulli, RelaxedBernoulli, \
-    OneHotCategorical, RelaxedOneHotCategorical
 
 from .forward import ForwardInference
 from ..models.variable import Variable
@@ -21,8 +19,9 @@ class AncestralSamplingInference(ForwardInference):
     realistic samples from the model and for tasks requiring stochastic predictions.
 
     The sampling respects the probabilistic structure:
-    - Samples from Bernoulli distributions using .sample()
-    - Uses reparameterization (.rsample()) for RelaxedBernoulli and RelaxedOneHotCategorical
+    - Uses reparameterization (.rsample()) when the distribution supports it
+    - Falls back to .sample() otherwise
+    - Passes logits or probs depending on the log_probs flag
     - Supports custom distribution kwargs (e.g., temperature for Gumbel-Softmax)
 
     Args:
@@ -111,9 +110,10 @@ class AncestralSamplingInference(ForwardInference):
         """
         Sample from the distribution parameterized by the raw CPD output.
 
-        * ``Bernoulli``  → ``.sample()``
-        * ``RelaxedBernoulli`` / ``RelaxedOneHotCategorical`` → ``.rsample()``
-        * Other           → ``.rsample()``
+        The method introspects the distribution's constructor to decide how
+        to pass ``pred`` (as ``logits``, ``probs``, or positional arg) and
+        uses ``has_rsample`` to choose between ``.rsample()`` and
+        ``.sample()``.
 
         Distribution kwargs are read from ``variable.dist_kwargs``.
 
@@ -137,18 +137,17 @@ class AncestralSamplingInference(ForwardInference):
         # retain only allowed dist kwargs
         dist_kwargs = {k: v for k, v in variable.dist_kwargs.items() if k in allowed}
 
-        if variable.distribution in [Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical]:
-            if self.log_probs:
-                dist_kwargs['logits'] = pred
-            else:
-                dist_kwargs['probs'] = pred
+        # Decide how to pass pred based on the distribution's accepted params
+        if "logits" in allowed and self.log_probs:
+            dist_kwargs["logits"] = pred
+            dist = variable.distribution(**dist_kwargs)
+        elif "probs" in allowed and not self.log_probs:
+            dist_kwargs["probs"] = pred
+            dist = variable.distribution(**dist_kwargs)
+        else:
+            dist = variable.distribution(pred, **dist_kwargs)
 
-            if variable.distribution in [Bernoulli, OneHotCategorical]:
-                return variable.distribution(**dist_kwargs).sample()
-            elif variable.distribution in [RelaxedBernoulli, RelaxedOneHotCategorical]:
-                return variable.distribution(**dist_kwargs).rsample()
-
-        return variable.distribution(pred, **dist_kwargs).rsample()
+        return dist.rsample() if dist.has_rsample else dist.sample()
 
     # TODO: currently assumes discrete, to be extended to continuous 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
