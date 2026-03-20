@@ -344,6 +344,58 @@ def add_distribution_to_annotations(
         return axis_annotation
 
 
+def add_activation_to_annotations(
+        annotations: Union[Annotations, AxisAnnotation],
+    ) -> Union[Annotations, AxisAnnotation]:
+    """Backfill default activation functions into annotation metadata.
+
+    For every concept that has a ``'distribution'`` key but no ``'activation'``
+    key, this function looks up the default activation in
+    :data:`~torch_concepts.nn.modules.mid.models.variable._DEFAULT_ACTIVATIONS`
+    and writes it into the metadata.  If no default exists for a distribution
+    and no activation was provided by the user, a ``ValueError`` is raised.
+
+    Args:
+        annotations: Annotations or AxisAnnotation with per-concept metadata
+            that already contains ``'distribution'``.
+
+    Returns:
+        The same annotations object with ``'activation'`` filled in.
+
+    Raises:
+        ValueError: If a concept's distribution has no known default
+            activation and no explicit ``'activation'`` was provided.
+    """
+    from .nn.modules.mid.models.variable import _DEFAULT_ACTIVATIONS
+
+    if isinstance(annotations, Annotations):
+        axis_annotation = annotations.get_axis_annotation(1)
+    elif isinstance(annotations, AxisAnnotation):
+        axis_annotation = annotations
+    else:
+        raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
+
+    for label in axis_annotation.labels:
+        meta = axis_annotation.metadata[label]
+        if 'activation' not in meta and 'distribution' in meta:
+            dist = meta['distribution']
+            if dist in _DEFAULT_ACTIVATIONS:
+                meta['activation'] = _DEFAULT_ACTIVATIONS[dist]
+            else:
+                raise ValueError(
+                    f"No default activation for distribution "
+                    f"{dist.__name__} of concept '{label}'. "
+                    f"Please provide an explicit 'activation' "
+                    f"in the annotation metadata."
+                )
+
+    if isinstance(annotations, Annotations):
+        annotations[1] = axis_annotation
+        return annotations
+    else:
+        return axis_annotation
+
+
 def get_from_string(class_path: str):
     """Import and return a class from its fully qualified string path.
 

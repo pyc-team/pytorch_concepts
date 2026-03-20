@@ -32,7 +32,7 @@ import torch.nn as nn
 from .....annotations import Annotations
 from ...low.dense_layers import MLP
 from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations
+from .....utils import add_distribution_to_annotations, add_activation_to_annotations
 from ...utils import with_training_mode
 
 from ...mid.constructors.concept_graph import ConceptGraph
@@ -262,6 +262,12 @@ class BaseModel(nn.Module, ABC):
                 self.concept_annotations = add_distribution_to_annotations(
                     annotations, variable_distributions
                 )
+
+            # Backfill default activations for concepts that don't have one
+            self.concept_annotations = add_activation_to_annotations(
+                self.concept_annotations
+            )
+
             self.concept_names = self.concept_annotations.labels
 
         self._backbone = backbone
