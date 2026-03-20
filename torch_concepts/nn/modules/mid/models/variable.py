@@ -7,18 +7,22 @@ and support hierarchical concept structures.
 """
 import torch
 from functools import partial
-from torch.distributions import Distribution, Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Distribution, Bernoulli, Categorical, MultivariateNormal, Normal, \
+    RelaxedBernoulli, OneHotCategorical, RelaxedOneHotCategorical
 from typing import List, Dict, Any, Union, Optional, Type, Callable
 
 from .....distributions import Delta
 
-
+# TODO: Include additional distributions and their default activations.
 # Default logits → probabilities activations per distribution type.
 _DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
     Bernoulli: torch.sigmoid,
     RelaxedBernoulli: torch.sigmoid,
     Categorical: partial(torch.softmax, dim=-1),
+    OneHotCategorical: partial(torch.softmax, dim=-1),
     RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
+    Normal: lambda x: x,
+    MultivariateNormal: lambda x: x,
     Delta: lambda x: x,
 }
 
@@ -202,8 +206,13 @@ class Variable:
         self.metadata = metadata if metadata is not None else {}
         if activation is not None:
             self.activation = activation
+        elif distribution in _DEFAULT_ACTIVATIONS:
+            self.activation = _DEFAULT_ACTIVATIONS[distribution]
         else:
-            self.activation = _DEFAULT_ACTIVATIONS.get(distribution, lambda x: x)
+            raise ValueError(
+                f"No default activation for distribution {distribution.__name__}. "
+                f"Please provide an explicit 'activation' callable."
+            )
 
     @property
     def out_features(self) -> int:
