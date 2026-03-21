@@ -152,6 +152,26 @@ def main():
 
     eval_metrics.update(preds=out, target=c_test)
     print(f"Evaluation results with custom metrics: {eval_metrics.compute()}")
+
+    # Compute CaCE for every concept on the task
+    print("\n" + "=" * 60)
+    print("Step 7: Compute CaCE (concept → task)")
+    print("=" * 60)
+
+    from torch_concepts.nn.modules.metrics import compute_cace
+
+    task_name = 'xor'
+    source_names = [n for n in concept_names if n != task_name]
+    test_loader = datamodule.test_dataloader()
+
+    for src in source_names:
+        cace = compute_cace(
+            model=model,
+            dataloader=test_loader,
+            source_concept=src,
+            target_concept=task_name,
+        )
+        print(f"  CaCE({src} → {task_name}) = {cace.item():.4f}")
     
 
 if __name__ == "__main__":

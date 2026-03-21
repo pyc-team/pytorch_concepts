@@ -124,9 +124,106 @@ class TestConceptMetricsModule(unittest.TestCase):
 
     def test_placeholder(self):
         """Placeholder test for commented out code."""
-        # The ConceptCausalEffect class is currently commented out
-        # This test ensures the module structure is correct
         self.assertTrue(True)
+
+
+class TestComputeCace(unittest.TestCase):
+    """Test compute_cace utility function."""
+
+    def setUp(self):
+        """Build a minimal CBM and fake dataloader."""
+        from torch.distributions import Bernoulli
+        from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
+
+        ann = Annotations({
+            1: AxisAnnotation(
+                labels=['c1', 'c2', 'task'],
+                cardinalities=[1, 1, 1],
+                metadata={
+                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
+                    'task': {'type': 'discrete', 'distribution': Bernoulli},
+                }
+            )
+        })
+        self.model = ConceptBottleneckModel(
+            input_size=4, annotations=ann, task_names=['task']
+        )
+        x = torch.randn(8, 4)
+        self.dataloader = [{"inputs": {"x": x[:4]}, "concepts": {}},
+                           {"inputs": {"x": x[4:]}, "concepts": {}}]
+
+    def test_basic(self):
+        """Returns a scalar tensor."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        result = compute_cace(
+            model=self.model,
+            dataloader=self.dataloader,
+            source_concept='c1',
+            target_concept='task',
+        )
+        self.assertEqual(result.dim(), 0)
+
+    def test_custom_v_high_v_low(self):
+        """Custom intervention values."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        result = compute_cace(
+            model=self.model,
+            dataloader=self.dataloader,
+            source_concept='c1',
+            target_concept='task',
+            prob_high=0.8,
+            prob_low=0.2,
+        )
+        self.assertEqual(result.dim(), 0)
+
+    def test_empty_dataloader_raises(self):
+        """Empty dataloader should raise ValueError."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        with self.assertRaises(ValueError):
+            compute_cace(
+                model=self.model,
+                dataloader=[],
+                source_concept='c1',
+                target_concept='task',
+            )
+
+    def test_identical_interventions_give_zero(self):
+        """do(C=v) vs do(C=v) should yield zero CaCE."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        result = compute_cace(
+            model=self.model,
+            dataloader=self.dataloader,
+            source_concept='c1',
+            target_concept='task',
+            prob_high=0.5,
+            prob_low=0.5,
+        )
+        self.assertTrue(torch.allclose(result, torch.tensor(0.0), atol=1e-6))
+
+    def test_restores_training_mode(self):
+        """Model training mode is restored after compute_cace."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        self.model.train()
+        compute_cace(
+            model=self.model,
+            dataloader=self.dataloader,
+            source_concept='c1',
+            target_concept='task',
+        )
+        self.assertTrue(self.model.training)
+
+    def test_keeps_eval_mode(self):
+        """If model was in eval mode, stays in eval mode."""
+        from torch_concepts.nn.modules.metrics import compute_cace
+        self.model.eval()
+        compute_cace(
+            model=self.model,
+            dataloader=self.dataloader,
+            source_concept='c1',
+            target_concept='task',
+        )
+        self.assertFalse(self.model.training)
 
 
 class TestConceptMetrics(unittest.TestCase):
