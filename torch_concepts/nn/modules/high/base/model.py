@@ -32,7 +32,7 @@ import torch.nn as nn
 from .....annotations import Annotations
 from ...low.dense_layers import MLP
 from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations, add_activation_to_annotations
+from .....utils import add_distribution_to_annotations, add_activation_to_annotations, add_default_properties
 from ...utils import with_training_mode
 
 from ...mid.constructors.concept_graph import ConceptGraph
@@ -70,9 +70,16 @@ class BaseModel(nn.Module, ABC):
         If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
         Dictionary mapping concept names to torch.distributions classes (e.g.,
-        ``{'c1': Bernoulli, 'c2': Categorical}``). Required if annotations lack
-        'distribution' metadata. If provided, distributions are added to annotations
-        internally. Can also be a GroupConfig object. Defaults to None.
+        ``{'c1': Bernoulli, 'c2': Categorical}``). If None, default distributions
+        are used (e.g., ``Bernoulli`` for binary, ``Categorical`` for categorical concepts).
+        If provided, distributions are added to annotations internally. 
+        Can also be a GroupConfig object. Defaults to None.
+    variable_activations : Mapping, optional
+        Dictionary mapping concept names to activation functions (e.g.,
+        ``{'c1': torch.sigmoid, 'c2': torch.softmax}``). If None, default activations
+        are used (e.g., ``torch.sigmoid`` for binary, ``torch.softmax`` for categorical concepts).
+        If provided, activations are added to annotations internally. 
+        Can also be a GroupConfig object. Defaults to None.
     graph : ConceptGraph, optional
         Directed acyclic graph (DAG) specifying causal or dependency relationships
         between concepts. Nodes correspond to concept names in annotations; edges
@@ -130,15 +137,15 @@ class BaseModel(nn.Module, ABC):
 
     Notes
     -----
-    - **Concept Distributions**: The model needs to know which distribution to use
-      for each concept (Bernoulli, Categorical, Normal, etc.). This can be provided
-      in two ways:
-      
-      1. In annotations metadata: ``metadata={'c1': {'distribution': Bernoulli}}``
-      2. Via variable_distributions parameter at initialization
-      
-      If distributions are in annotations, variable_distributions is not needed.
-      If not, variable_distributions is required and will be added to annotations.
+    - **Concept Distributions and Activations**: The model needs to know which
+      distribution and activation to use for each concept. These can be provided 
+      in three ways:
+
+      1. In annotations metadata before model init
+      2. Via the `variable_distributions` and `variable_activations` parameters
+      3. If missing, the model will fill in defaults
+      If no default can be determined, a ``ValueError`` is raised.
+
     - Subclasses must implement ``forward()``, ``filter_output_for_loss()``,
       and ``filter_output_for_metrics()`` methods.
     - For Lightning training, set lightning=True. The BaseLearner mixin is
@@ -148,45 +155,61 @@ class BaseModel(nn.Module, ABC):
 
     Examples
     --------
-    Distributions specify how the model represents concepts. Provide them either
-    in annotations metadata OR via variable_distributions parameter:
+    Distributions and activations should be in annotations metadata. If not
+    provided, defaults are used (Bernoulli for binary, Categorical for
+    categorical concepts):
     
     >>> import torch
     >>> import torch.nn as nn
     >>> from torch.distributions import Bernoulli
     >>> from torch_concepts.nn import ConceptBottleneckModel
     >>> from torch_concepts.annotations import AxisAnnotation, Annotations
+    >>> from torch_concepts.utils import add_distribution_to_annotations
     >>> 
-    >>> # Option 1: Distributions in annotations metadata
+    >>> # Option 1: Explicit distributions in annotations metadata
     >>> ann = Annotations({
     ...     1: AxisAnnotation(
     ...         labels=['c1', 'c2', 'task'],
     ...         cardinalities=[1, 1, 1],
     ...         metadata={
-    ...             'c1': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'c2': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'task': {'type': 'binary', 'distribution': Bernoulli}
+    ...             'c1': {'type': 'discrete', 'distribution': Bernoulli},
+    ...             'c2': {'type': 'discrete', 'distribution': Bernoulli},
+    ...             'task': {'type': 'discrete', 'distribution': Bernoulli}
     ...         }
     ...     )
     ... })
     >>> model = ConceptBottleneckModel(
     ...     input_size=10,
-    ...     annotations=ann,  # Distributions already in metadata
+    ...     annotations=ann, # distributions provided in metadata
     ...     task_names=['task']
     ... )
     >>> 
-    >>> # Option 2: Distributions via variable_distributions parameter
+    >>> # Option 2: Add distributions via utility before model init
     >>> ann_no_dist = Annotations({
     ...     1: AxisAnnotation(
     ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1]
+    ...         cardinalities=[1, 1, 1],
+    ...         metadata={
+    ...             'c1': {'type': 'discrete'},
+    ...             'c2': {'type': 'discrete'},
+    ...             'task': {'type': 'discrete'}
+    ...         }
     ...     )
     ... })
-    >>> variable_distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
+    >>> distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
+    >>> ann_no_dist = add_distribution_to_annotations(
+    ...     ann_no_dist, distributions
+    ... )
     >>> model = ConceptBottleneckModel(
     ...     input_size=10,
     ...     annotations=ann_no_dist,
-    ...     variable_distributions=variable_distributions,  # Added here
+    ...     task_names=['task']
+    ... )
+    >>> 
+    >>> # Option 3: Let the model use defaults (Bernoulli for binary discrete)
+    >>> model = ConceptBottleneckModel(
+    ...     input_size=10,
+    ...     annotations=ann_no_dist,
     ...     task_names=['task']
     ... )
     >>> 
@@ -237,6 +260,7 @@ class BaseModel(nn.Module, ABC):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
+        variable_activations: Optional[Mapping] = None,
         graph: ConceptGraph = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
@@ -251,22 +275,15 @@ class BaseModel(nn.Module, ABC):
         if annotations is not None:
             annotations = annotations.get_axis_annotation(1)
 
-            # Add distribution information to annotations metadata
-            if annotations.has_metadata('distribution'):
-                self.concept_annotations = annotations
-            else:
-                assert variable_distributions is not None, (
-                    "variable_distributions must be provided if annotations "
-                    "lack 'distribution' metadata."
-                )
-                self.concept_annotations = add_distribution_to_annotations(
-                    annotations, variable_distributions
-                )
+            # 1. If distributions/activations are explicitly passed, override annotations
+            if variable_distributions is not None:
+                annotations = add_distribution_to_annotations(annotations, variable_distributions)
+            if variable_activations is not None:
+                annotations = add_activation_to_annotations(annotations, variable_activations)
 
-            # Backfill default activations for concepts that don't have one
-            self.concept_annotations = add_activation_to_annotations(
-                self.concept_annotations
-            )
+            # 2. Fill in defaults for any concepts still missing distribution/activation
+            # this also serves as a validation step to ensure all concepts have necessary metadata
+            self.concept_annotations = add_default_properties(annotations)
 
             self.concept_names = self.concept_annotations.labels
 

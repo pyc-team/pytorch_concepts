@@ -13,7 +13,13 @@ from typing import List, Dict, Any, Union, Optional, Type, Callable
 
 from .....distributions import Delta
 
-# TODO: Include additional distributions and their default activations.
+# Default distributions per concept type group (binary / categorical / continuous).
+_DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
+    'binary': Bernoulli,
+    'categorical': Categorical,
+    # 'continuous': Normal,  # TODO: add when continuous concepts are supported
+}
+
 # Default logits → probabilities activations per distribution type.
 _DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
     Bernoulli: torch.sigmoid,
@@ -236,7 +242,7 @@ class Variable:
         """
         meta_str = f", metadata={self.metadata}" if self.metadata else ""
         dist_kwargs_str = f", dist_kwargs={self.dist_kwargs}" if self.dist_kwargs else ""
-        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, out_features={self.out_features}{meta_str})"
+        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, {meta_str})"
 
 
 class ConceptVariable(Variable):

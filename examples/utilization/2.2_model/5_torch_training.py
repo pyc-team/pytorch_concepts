@@ -13,7 +13,6 @@ The model uses:
 
 import torch
 from torch import nn
-from torch.distributions import Bernoulli
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
@@ -60,14 +59,10 @@ def main():
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    # Define variable distributions as Bernoulli
-    variable_distributions = {name: Bernoulli for name in concept_names + task_names}
-
-    # Initialize the CBM
+    # Initialize the CBM (defaults for distributions and activations are handled internally)
     model = ConceptBottleneckModel(
         input_size=n_features,
         annotations=concept_annotations,
-        variable_distributions=variable_distributions,
         task_names=task_names,
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1}
     )

@@ -49,8 +49,6 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
     train_inference : BaseInference, optional
         Inference engine class for training. Only used when lightning=True.
         Defaults to DeterministicInference.
-    variable_distributions : Mapping, optional
-        Distribution classes for each concept if not in annotations.
     **kwargs
         Additional arguments passed to BaseBipartiteModel, including:
         

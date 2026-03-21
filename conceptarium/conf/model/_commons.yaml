@@ -27,7 +27,23 @@ variable_distributions:
     - _target_: "hydra.utils.get_class"
       path: "torch.distributions.RelaxedOneHotCategorical"
     - temperature: 1.
-  # TODO: handle kwargs
+  # TODO
+  # continuous: 
+    # ... not supported yet
+
+
+# =============================================================
+# Concept activation configs
+# =============================================================
+variable_activations:
+  _target_: "torch_concepts.GroupConfig"
+  binary:
+    _target_: "hydra.utils.get_method"
+    path: "torch.sigmoid"
+  categorical:
+    _target_: "hydra.utils.get_method"
+    path: "torch.softmax"
+  # TODO
   # continuous: 
     # ... not supported yet
 
