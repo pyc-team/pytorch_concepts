@@ -14,7 +14,7 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
@@ -40,16 +40,16 @@ class TestCBMInitialization(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'binary', 'distribution': Bernoulli},
-                    'task1': {'type': 'binary', 'distribution': Bernoulli}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'}
                 }
             )
         })
     
-    def test_init_with_distributions_in_annotations(self):
-        """Test initialization when distributions are in annotations."""
+    def test_init_defaults(self):
+        """Test initialization with default distributions (no explicit distributions)."""
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
@@ -59,35 +59,47 @@ class TestCBMInitialization(unittest.TestCase):
         self.assertIsInstance(model.model, nn.Module)
         self.assertTrue(hasattr(model, 'inference'))
         self.assertEqual(model.concept_names, ['color', 'shape', 'size', 'task1'])
+        # Defaults should have been filled in
+        meta = model.concept_annotations.metadata
+        self.assertEqual(meta['color']['distribution'], Categorical)
+        self.assertEqual(meta['size']['distribution'], Bernoulli)
     
-    def test_init_with_variable_distributions(self):
-        """Test initialization with variable_distributions parameter."""
-        ann_no_dist = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        variable_distributions = {
-            'c1': Bernoulli,
-            'c2': Bernoulli,
-            'task': Bernoulli
+    def test_init_with_variable_distributions_param(self):
+        """Test initialization passing variable_distributions to the model constructor."""
+        custom_dists = {
+            'color': Categorical,
+            'shape': Categorical,
+            'size': RelaxedBernoulli,
+            'task1': RelaxedBernoulli,
         }
-        
         model = ConceptBottleneckModel(
             input_size=8,
-            annotations=ann_no_dist,
-            variable_distributions=variable_distributions,
-            task_names=['task']
+            annotations=self.ann,
+            task_names=['task1'],
+            variable_distributions=custom_dists,
         )
         
-        self.assertEqual(model.concept_names, ['c1', 'c2', 'task'])
+        meta = model.concept_annotations.metadata
+        self.assertEqual(meta['size']['distribution'], RelaxedBernoulli)
+        self.assertEqual(meta['task1']['distribution'], RelaxedBernoulli)
+    
+    def test_init_with_variable_activations_param(self):
+        """Test initialization passing variable_activations to the model constructor."""
+        custom_acts = {
+            'color': lambda x: x,
+            'shape': lambda x: x,
+            'size': torch.sigmoid,
+            'task1': torch.sigmoid,
+        }
+        model = ConceptBottleneckModel(
+            input_size=8,
+            annotations=self.ann,
+            task_names=['task1'],
+            variable_activations=custom_acts,
+        )
+        
+        meta = model.concept_annotations.metadata
+        self.assertEqual(meta['size']['activation'], torch.sigmoid)
     
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""
@@ -123,10 +135,10 @@ class TestCBMForward(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'binary', 'distribution': Bernoulli},
-                    'task1': {'type': 'binary', 'distribution': Bernoulli}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'}
                 }
             )
         })
@@ -193,9 +205,9 @@ class TestCBMFilterMethods(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -247,9 +259,9 @@ class TestCBMTraining(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -304,8 +316,8 @@ class TestCBMEdgeCases(unittest.TestCase):
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'}
                 }
             )
         })
@@ -326,7 +338,7 @@ class TestCBMEdgeCases(unittest.TestCase):
             1: AxisAnnotation(
                 labels=['c1'],
                 cardinalities=[1],
-                metadata={'c1': {'type': 'binary', 'distribution': Bernoulli}}
+                metadata={'c1': {'type': 'discrete'}}
             )
         })
         
@@ -354,9 +366,9 @@ class TestCBMFactory(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -406,9 +418,9 @@ class TestCBMUnifiedForward(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -466,9 +478,9 @@ class TestTrainingModes(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -510,9 +522,9 @@ class TestLearnerIntegration(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })

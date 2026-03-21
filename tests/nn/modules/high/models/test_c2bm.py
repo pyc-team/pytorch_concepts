@@ -59,12 +59,12 @@ def _diamond_graph():
 
 
 def _binary_annotations(names):
-    """All-Bernoulli annotations for *names*."""
+    """All-binary annotations for *names* (defaults will assign Bernoulli)."""
     return Annotations({
         1: AxisAnnotation(
             labels=list(names),
             cardinalities=[1] * len(names),
-            metadata={n: {'type': 'discrete', 'distribution': Bernoulli} for n in names},
+            metadata={n: {'type': 'discrete'} for n in names},
         )
     })
 
@@ -76,9 +76,9 @@ def _mixed_annotations():
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
             metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Categorical},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
+                'A': {'type': 'discrete'},
+                'B': {'type': 'discrete'},
+                'C': {'type': 'discrete'},
             },
         )
     })
@@ -181,8 +181,8 @@ class TestC2BMInitialization:
         )
         assert model.backbone is not None
 
-    def test_with_variable_distributions(self, chain_graph):
-        """Annotations without distributions — pass via variable_distributions."""
+    def test_with_defaults(self, chain_graph):
+        """Annotations without distributions — defaults should be used."""
         ann_no_dist = Annotations({
             1: AxisAnnotation(
                 labels=['A', 'B', 'C'],
@@ -198,9 +198,11 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=ann_no_dist,
             graph=chain_graph,
-            variable_distributions={'A': Bernoulli, 'B': Bernoulli, 'C': Bernoulli},
         )
         assert model.concept_names == ['A', 'B', 'C']
+        # Defaults should have been filled
+        meta = model.concept_annotations.metadata
+        assert meta['A']['distribution'] == Bernoulli
 
     def test_diamond_graph_init(self, diamond_graph, binary_diamond_ann):
         model = CausallyReliableConceptBottleneckModel(

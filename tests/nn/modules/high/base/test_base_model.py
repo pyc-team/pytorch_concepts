@@ -12,10 +12,11 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.utils import add_distribution_to_annotations, add_activation_to_annotations
 
 
 # Test Fixtures
@@ -69,9 +70,9 @@ def annotations_with_distributions():
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
             metadata={
-                'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                'task': {'type': 'discrete', 'distribution': Bernoulli}
+                'c1': {'type': 'discrete'},
+                'c2': {'type': 'discrete'},
+                'task': {'type': 'discrete'}
             }
         )
     })
@@ -108,31 +109,15 @@ def mixed_annotations():
     })
 
 
-@pytest.fixture
-def variable_distributions_dict():
-    """Variable distributions as dict."""
-    return {
-        'c1': Bernoulli,
-        'c2': Bernoulli,
-        'task': Bernoulli
-    }
 
-
-@pytest.fixture
-def variable_distributions_groupconfig():
-    """Variable distributions as GroupConfig."""
-    return GroupConfig(
-        binary=Bernoulli,
-        categorical=Categorical
-    )
 
 
 # Initialization Tests
 class TestBaseModelInitialization:
     """Test BaseModel initialization with various configurations."""
     
-    def test_init_with_distributions_in_annotations(self, annotations_with_distributions):
-        """Test initialization when distributions are in annotations."""
+    def test_init_defaults(self, annotations_with_distributions):
+        """Test initialization fills default distributions and activations."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
@@ -140,48 +125,83 @@ class TestBaseModelInitialization:
         
         assert model.concept_names == ['c1', 'c2', 'task']
         assert model.concept_annotations.has_metadata('distribution')
+        assert model.concept_annotations.has_metadata('activation')
+        meta = model.concept_annotations.metadata
+        assert meta['c1']['distribution'] == Bernoulli
         assert model.latent_size == 10  # No encoder, uses input_size
     
     def test_init_with_variable_distributions_dict(
-        self, annotations_without_distributions, variable_distributions_dict
+        self, annotations_without_distributions
     ):
-        """Test initialization with variable_distributions as dict."""
+        """Test initialization with variable_distributions dict passed to constructor."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_without_distributions,
-            variable_distributions=variable_distributions_dict
+            variable_distributions={
+                'c1': RelaxedBernoulli,
+                'c2': RelaxedBernoulli,
+                'task': Bernoulli,
+            },
         )
         
         assert model.concept_names == ['c1', 'c2', 'task']
         assert model.concept_annotations.has_metadata('distribution')
         meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == Bernoulli
-        assert meta['c2']['distribution'] == Bernoulli
+        assert meta['c1']['distribution'] == RelaxedBernoulli
+        assert meta['c2']['distribution'] == RelaxedBernoulli
         assert meta['task']['distribution'] == Bernoulli
     
     def test_init_with_variable_distributions_groupconfig(
-        self, mixed_annotations, variable_distributions_groupconfig
+        self, mixed_annotations
     ):
-        """Test initialization with variable_distributions as GroupConfig."""
+        """Test initialization with variable_distributions as GroupConfig passed to constructor."""
         model = ConcreteModel(
             input_size=10,
             annotations=mixed_annotations,
-            variable_distributions=variable_distributions_groupconfig
+            variable_distributions=GroupConfig(
+                binary=RelaxedBernoulli,
+                categorical=Categorical,
+            ),
         )
         
         assert model.concept_names == ['binary_c', 'cat_c']
         assert model.concept_annotations.has_metadata('distribution')
         meta = model.concept_annotations.metadata
-        assert meta['binary_c']['distribution'] == Bernoulli
+        assert meta['binary_c']['distribution'] == RelaxedBernoulli
         assert meta['cat_c']['distribution'] == Categorical
     
-    def test_init_without_distributions_raises_error(self, annotations_without_distributions):
-        """Test that missing distributions raises assertion error."""
-        with pytest.raises(AssertionError, match="variable_distributions must be provided"):
-            ConcreteModel(
-                input_size=10,
-                annotations=annotations_without_distributions
-            )
+    def test_init_with_variable_activations_dict(
+        self, annotations_without_distributions
+    ):
+        """Test initialization with variable_activations dict passed to constructor."""
+        custom_act = nn.ReLU
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_without_distributions,
+            variable_activations={
+                'c1': custom_act,
+                'c2': custom_act,
+                'task': custom_act,
+            },
+        )
+        
+        meta = model.concept_annotations.metadata
+        assert meta['c1']['activation'] == custom_act
+        assert meta['c2']['activation'] == custom_act
+        assert meta['task']['activation'] == custom_act
+    
+    def test_init_without_distributions_uses_defaults(self, annotations_without_distributions):
+        """Test that missing distributions are filled with defaults (Bernoulli for binary discrete)."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_without_distributions
+        )
+        assert model.concept_annotations.has_metadata('distribution')
+        assert model.concept_annotations.has_metadata('activation')
+        meta = model.concept_annotations.metadata
+        assert meta['c1']['distribution'] == Bernoulli
+        assert meta['c2']['distribution'] == Bernoulli
+        assert meta['task']['distribution'] == Bernoulli
     
     def test_init_with_latent_encoder_class(self, annotations_with_distributions):
         """Test initialization with latent encoder class and kwargs."""

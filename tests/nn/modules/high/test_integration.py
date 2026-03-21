@@ -18,6 +18,7 @@ from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.utils import add_distribution_to_annotations
 from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
 
 
@@ -210,7 +211,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
         self.assertIsNotNone(metrics)
     
     def test_annotations_with_variable_distributions(self):
-        """Test using annotations without distributions (provide separately)."""
+        """Test using annotations without distributions (add via utility)."""
         ann_no_dist = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'c2'],
@@ -226,12 +227,14 @@ class TestAnnotationsWithComponents(unittest.TestCase):
             'c1': Bernoulli,
             'c2': Bernoulli
         }
+        ann_no_dist = add_distribution_to_annotations(
+            ann_no_dist, variable_distributions
+        )
         
-        # Model adds distributions internally
+        # Model uses annotations with distributions already added
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=ann_no_dist,
-            variable_distributions=variable_distributions,
             task_names=['c2']
         )
         
