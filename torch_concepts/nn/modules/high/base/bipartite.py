@@ -30,8 +30,6 @@ class BaseBipartiteModel(BaseModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
         If False (default), works as pure PyTorch module.
-    variable_distributions : Mapping, optional
-        Distribution classes for each concept if not in annotations.
     **kwargs
         Additional arguments passed to BaseModel, including:
         

@@ -647,19 +647,19 @@ class TestUtilsCoverage(unittest.TestCase):
         self.assertEqual(result.metadata['cat']['distribution'], torch.distributions.Categorical)
 
     def test_add_distribution_groupconfig_continuous_raises(self):
-        """Continuous concepts raise NotImplementedError (lines 317-320)."""
+        """Continuous concepts without a continuous GroupConfig key raise ValueError."""
         from torch_concepts.utils import add_distribution_to_annotations
         # continuous + cardinality == 1
         metadata = {'c': {'type': 'continuous'}}
         axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
         dists = GroupConfig(binary=torch.distributions.Bernoulli, categorical=torch.distributions.Categorical)
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(ValueError):
             add_distribution_to_annotations(axis_ann, dists)
 
         # continuous + cardinality > 1
         metadata2 = {'c': {'type': 'continuous'}}
         axis_ann2 = AxisAnnotation(labels=('c',), cardinalities=(3,), metadata=metadata2)
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(ValueError):
             add_distribution_to_annotations(axis_ann2, dists)
 
     def test_add_distribution_groupconfig_unknown_type_raises(self):
@@ -711,6 +711,93 @@ class TestUtilsCoverage(unittest.TestCase):
         result = add_distribution_to_annotations(axis_ann, dists)
         self.assertEqual(result.metadata['bin']['distribution'], torch.distributions.Bernoulli)
         self.assertNotIn('dist_kwargs', result.metadata['bin'])
+
+
+    # --- add_default_properties (activation defaults) ---
+
+    def test_add_activation_backfills_bernoulli(self):
+        """Bernoulli distribution gets sigmoid activation backfilled."""
+        from torch_concepts.utils import add_default_properties
+        metadata = {'c': {'type': 'discrete', 'distribution': torch.distributions.Bernoulli}}
+        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
+        result = add_default_properties(axis_ann)
+        self.assertIn('activation', result.metadata['c'])
+        self.assertIs(result.metadata['c']['activation'], torch.sigmoid)
+
+    def test_add_activation_backfills_categorical(self):
+        """Categorical distribution gets softmax activation backfilled."""
+        from torch_concepts.utils import add_default_properties
+        from functools import partial
+        metadata = {'color': {'type': 'discrete', 'distribution': torch.distributions.Categorical}}
+        axis_ann = AxisAnnotation(labels=('color',), cardinalities=(3,), metadata=metadata)
+        result = add_default_properties(axis_ann)
+        self.assertIn('activation', result.metadata['color'])
+        # Check it's a partial(softmax, dim=-1) — apply and compare
+        x = torch.randn(2, 3)
+        expected = torch.softmax(x, dim=-1)
+        actual = result.metadata['color']['activation'](x)
+        self.assertTrue(torch.allclose(expected, actual))
+
+    def test_add_activation_skips_existing(self):
+        """Concepts that already have 'activation' are not overwritten."""
+        from torch_concepts.utils import add_default_properties
+        custom_act = lambda x: x * 2
+        metadata = {
+            'c': {'type': 'discrete', 'distribution': torch.distributions.Bernoulli,
+                   'activation': custom_act},
+        }
+        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
+        result = add_default_properties(axis_ann)
+        self.assertIs(result.metadata['c']['activation'], custom_act)
+
+    def test_add_default_properties_fills_both(self):
+        """Concepts without distribution or activation get both defaults filled."""
+        from torch_concepts.utils import add_default_properties
+        metadata = {'c': {'type': 'discrete'}}
+        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
+        result = add_default_properties(axis_ann)
+        self.assertIs(result.metadata['c']['distribution'], torch.distributions.Bernoulli)
+        self.assertIs(result.metadata['c']['activation'], torch.sigmoid)
+
+    def test_add_activation_unknown_distribution_raises(self):
+        """Unknown distribution without explicit activation raises ValueError."""
+        from torch_concepts.utils import add_default_properties
+        from torch.distributions import Distribution
+        class _UnknownDist(Distribution):
+            pass
+        metadata = {'c': {'type': 'discrete', 'distribution': _UnknownDist}}
+        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
+        with self.assertRaises(ValueError):
+            add_default_properties(axis_ann)
+
+    def test_add_activation_invalid_annotations_type(self):
+        """Passing a non-Annotations/AxisAnnotation raises ValueError."""
+        from torch_concepts.utils import add_default_properties
+        with self.assertRaises(ValueError):
+            add_default_properties("not_an_annotation")
+
+    def test_add_activation_annotations_object(self):
+        """Works with Annotations wrapper and returns Annotations."""
+        from torch_concepts.utils import add_default_properties
+        metadata = {'c': {'type': 'discrete', 'distribution': torch.distributions.Bernoulli}}
+        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
+        annotations = Annotations({1: axis_ann})
+        result = add_default_properties(annotations)
+        self.assertIsInstance(result, Annotations)
+        self.assertIs(result.get_axis_annotation(1).metadata['c']['activation'], torch.sigmoid)
+
+    def test_add_activation_multiple_concepts(self):
+        """Handles mixed concepts: binary + categorical."""
+        from torch_concepts.utils import add_default_properties
+        metadata = {
+            'binary_c': {'type': 'discrete', 'distribution': torch.distributions.Bernoulli},
+            'cat_c': {'type': 'discrete', 'distribution': torch.distributions.Categorical},
+        }
+        axis_ann = AxisAnnotation(labels=('binary_c', 'cat_c'), cardinalities=(1, 3), metadata=metadata)
+        result = add_default_properties(axis_ann)
+        self.assertIs(result.metadata['binary_c']['activation'], torch.sigmoid)
+        x = torch.randn(2, 3)
+        self.assertTrue(torch.allclose(result.metadata['cat_c']['activation'](x), torch.softmax(x, dim=-1)))
 
 
 if __name__ == '__main__':

@@ -3,7 +3,6 @@ Example: Using CausallyReliableConceptBottleneckModel
 """
 
 import torch
-from torch.distributions import Bernoulli
 from pytorch_lightning import Trainer
 import torchmetrics
 
@@ -57,9 +56,6 @@ def main():
         continuous = torch.nn.MSELoss()
     )
 
-    # Define variable distributions as Bernoulli
-    variable_distributions = {name: Bernoulli for name in concept_names}
-    
     metrics = ConceptMetrics(
         annotations = annotations,
         summary=True,
@@ -74,7 +70,6 @@ def main():
     model = CausallyReliableConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
-        variable_distributions=variable_distributions,
         graph=datamodule.graph,
         exogenous_size=8,
         hypernet_hidden_size=8,

@@ -48,10 +48,10 @@ class TestCEMInitialization(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task1': {'type': 'discrete', 'distribution': Bernoulli}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'}
                 }
             )
         })
@@ -81,8 +81,8 @@ class TestCEMInitialization(unittest.TestCase):
         # The exogenous size should be passed to the encoder
         self.assertTrue(hasattr(model, 'model'))
     
-    def test_init_with_variable_distributions(self):
-        """Test initialization with variable_distributions parameter."""
+    def test_init_with_defaults(self):
+        """Test initialization without explicit distributions (defaults used)."""
         ann_no_dist = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'c2', 'task'],
@@ -95,20 +95,16 @@ class TestCEMInitialization(unittest.TestCase):
             )
         })
         
-        variable_distributions = {
-            'c1': Bernoulli,
-            'c2': Bernoulli,
-            'task': Bernoulli
-        }
-        
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann_no_dist,
-            variable_distributions=variable_distributions,
             task_names=['task']
         )
         
         self.assertEqual(model.concept_names, ['c1', 'c2', 'task'])
+        # Defaults should be filled in
+        meta = model.concept_annotations.metadata
+        self.assertEqual(meta['c1']['distribution'], Bernoulli)
     
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""
@@ -191,10 +187,10 @@ class TestCEMForward(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task1': {'type': 'discrete', 'distribution': Bernoulli}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'}
                 }
             )
         })
@@ -310,10 +306,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'c3': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -337,10 +333,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['color', 'shape', 'material', 'task'],
                 cardinalities=[5, 4, 3, 2],
                 metadata={
-                    'color': {'type': 'categorical', 'distribution': Categorical},
-                    'shape': {'type': 'categorical', 'distribution': Categorical},
-                    'material': {'type': 'categorical', 'distribution': Categorical},
-                    'task': {'type': 'categorical', 'distribution': Categorical}
+                    'color': {'type': 'categorical'},
+                    'shape': {'type': 'categorical'},
+                    'material': {'type': 'categorical'},
+                    'task': {'type': 'categorical'}
                 }
             )
         })
@@ -363,11 +359,11 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['binary1', 'categorical1', 'binary2', 'categorical2', 'task'],
                 cardinalities=[1, 4, 1, 3, 1],
                 metadata={
-                    'binary1': {'type': 'binary', 'distribution': Bernoulli},
-                    'categorical1': {'type': 'categorical', 'distribution': Categorical},
-                    'binary2': {'type': 'binary', 'distribution': Bernoulli},
-                    'categorical2': {'type': 'categorical', 'distribution': Categorical},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'binary1': {'type': 'discrete'},
+                    'categorical1': {'type': 'categorical'},
+                    'binary2': {'type': 'discrete'},
+                    'categorical2': {'type': 'categorical'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -390,10 +386,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'c3': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -421,10 +417,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['color', 'shape', 'material', 'task'],
                 cardinalities=[5, 4, 3, 2],
                 metadata={
-                    'color': {'type': 'categorical', 'distribution': Categorical},
-                    'shape': {'type': 'categorical', 'distribution': Categorical},
-                    'material': {'type': 'categorical', 'distribution': Categorical},
-                    'task': {'type': 'categorical', 'distribution': Categorical}
+                    'color': {'type': 'categorical'},
+                    'shape': {'type': 'categorical'},
+                    'material': {'type': 'categorical'},
+                    'task': {'type': 'categorical'}
                 }
             )
         })
@@ -452,11 +448,11 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['binary1', 'categorical1', 'binary2', 'categorical2', 'task'],
                 cardinalities=[1, 4, 1, 3, 1],
                 metadata={
-                    'binary1': {'type': 'binary', 'distribution': Bernoulli},
-                    'categorical1': {'type': 'categorical', 'distribution': Categorical},
-                    'binary2': {'type': 'binary', 'distribution': Bernoulli},
-                    'categorical2': {'type': 'categorical', 'distribution': Categorical},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'binary1': {'type': 'discrete'},
+                    'categorical1': {'type': 'categorical'},
+                    'binary2': {'type': 'discrete'},
+                    'categorical2': {'type': 'categorical'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -484,11 +480,11 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'c4', 'task'],
                 cardinalities=[1, 1, 1, 1, 1],
                 metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli},
-                    'c3': {'type': 'binary', 'distribution': Bernoulli},
-                    'c4': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'c4': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -515,10 +511,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[5, 4, 3, 2],
                 metadata={
-                    'color': {'type': 'categorical', 'distribution': Categorical},
-                    'shape': {'type': 'categorical', 'distribution': Categorical},
-                    'size': {'type': 'categorical', 'distribution': Categorical},
-                    'task': {'type': 'categorical', 'distribution': Categorical}
+                    'color': {'type': 'categorical'},
+                    'shape': {'type': 'categorical'},
+                    'size': {'type': 'categorical'},
+                    'task': {'type': 'categorical'}
                 }
             )
         })
@@ -545,12 +541,12 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['b1', 'cat1', 'b2', 'cat2', 'b3', 'task'],
                 cardinalities=[1, 4, 1, 3, 1, 1],
                 metadata={
-                    'b1': {'type': 'binary', 'distribution': Bernoulli},
-                    'cat1': {'type': 'categorical', 'distribution': Categorical},
-                    'b2': {'type': 'binary', 'distribution': Bernoulli},
-                    'cat2': {'type': 'categorical', 'distribution': Categorical},
-                    'b3': {'type': 'binary', 'distribution': Bernoulli},
-                    'task': {'type': 'binary', 'distribution': Bernoulli}
+                    'b1': {'type': 'discrete'},
+                    'cat1': {'type': 'categorical'},
+                    'b2': {'type': 'discrete'},
+                    'cat2': {'type': 'categorical'},
+                    'b3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -581,10 +577,10 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[2, 3, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Categorical},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -629,9 +625,9 @@ class TestCEMFilterMethods(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -683,9 +679,9 @@ class TestCEMTraining(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -797,11 +793,11 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 2],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Categorical},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task2': {'type': 'discrete', 'distribution': Categorical}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'},
+                    'task2': {'type': 'discrete'}
                 }
             )
         })
@@ -857,10 +853,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary (cardinality 1)
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -882,10 +878,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -910,10 +906,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical (cardinality > 1)
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'discrete', 'distribution': Categorical},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -935,10 +931,10 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical
                 metadata={
-                    'color': {'type': 'discrete', 'distribution': Categorical},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'size': {'type': 'discrete', 'distribution': Categorical},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'color': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -963,11 +959,11 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],  # Mix: binary (1), categorical (3), binary (1), categorical (4), categorical (2)
                 metadata={
-                    'is_red': {'type': 'discrete', 'distribution': Bernoulli},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'has_texture': {'type': 'discrete', 'distribution': Bernoulli},
-                    'size': {'type': 'discrete', 'distribution': Categorical},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'is_red': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'has_texture': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -989,11 +985,11 @@ class TestCEMConceptTypes(unittest.TestCase):
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],  # Mixed
                 metadata={
-                    'is_red': {'type': 'discrete', 'distribution': Bernoulli},
-                    'shape': {'type': 'discrete', 'distribution': Categorical},
-                    'has_texture': {'type': 'discrete', 'distribution': Bernoulli},
-                    'size': {'type': 'discrete', 'distribution': Categorical},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'is_red': {'type': 'discrete'},
+                    'shape': {'type': 'discrete'},
+                    'has_texture': {'type': 'discrete'},
+                    'size': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1022,9 +1018,9 @@ class TestCEMEdgeCases(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1036,8 +1032,8 @@ class TestCEMEdgeCases(unittest.TestCase):
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1060,10 +1056,10 @@ class TestCEMEdgeCases(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1086,9 +1082,9 @@ class TestCEMEdgeCases(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[3, 4, 5],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Categorical},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1146,11 +1142,11 @@ class TestCEMCardinalities(unittest.TestCase):
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 4],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Categorical},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task2': {'type': 'discrete', 'distribution': Categorical}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'c3': {'type': 'discrete'},
+                    'task1': {'type': 'discrete'},
+                    'task2': {'type': 'discrete'}
                 }
             )
         })
@@ -1175,9 +1171,9 @@ class TestCEMComparison(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })
@@ -1220,9 +1216,9 @@ class TestCEMIndependentLearner(unittest.TestCase):
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
+                    'c1': {'type': 'discrete'},
+                    'c2': {'type': 'discrete'},
+                    'task': {'type': 'discrete'}
                 }
             )
         })

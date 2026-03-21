@@ -50,13 +50,10 @@ class DummyLatentEncoder(nn.Module):
 
 
 def make_annotations(labels, cardinalities, distributions=None):
-    """Helper to create annotations with default Bernoulli distributions."""
-    if distributions is None:
-        distributions = {}
+    """Helper to create annotations (defaults will fill in distributions)."""
     metadata = {}
     for label, card in zip(labels, cardinalities):
-        dist = distributions.get(label, Bernoulli if card == 1 else Categorical)
-        metadata[label] = {'type': 'discrete', 'distribution': dist}
+        metadata[label] = {'type': 'discrete'}
     return Annotations({
         1: AxisAnnotation(
             labels=labels,
@@ -122,8 +119,8 @@ class TestBlackBoxInitialization(unittest.TestCase):
         expected_output_size = sum(self.ann[1].cardinalities)
         self.assertEqual(model.linear.out_features, expected_output_size)
     
-    def test_init_with_variable_distributions(self):
-        """Test initialization with variable distributions."""
+    def test_init_with_defaults(self):
+        """Test initialization with default distributions."""
         ann = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'c2'],
@@ -135,12 +132,9 @@ class TestBlackBoxInitialization(unittest.TestCase):
             )
         })
         
-        var_dist = {'c1': Bernoulli, 'c2': Bernoulli}
-        
         model = BlackBox(
             input_size=8,
             annotations=ann,
-            variable_distributions=var_dist
         )
         
         self.assertIsInstance(model, nn.Module)
@@ -619,8 +613,8 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
         self.assertEqual(model.task_annotations.labels, ['task1', 'task2'])
         self.assertEqual(model.task_annotations.cardinalities, [1, 3])
     
-    def test_init_with_variable_distributions(self):
-        """Test initialization with explicit variable distributions."""
+    def test_init_with_defaults(self):
+        """Test initialization with default distributions."""
         ann = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'task'],
@@ -632,13 +626,10 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
             )
         })
         
-        var_dist = {'c1': Bernoulli, 'task': Bernoulli}
-        
         model = BlackBoxTaskOnly(
             input_size=8,
             annotations=ann,
             task_names='task',
-            variable_distributions=var_dist
         )
         
         self.assertIsInstance(model, nn.Module)

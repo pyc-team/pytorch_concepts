@@ -140,14 +140,13 @@ class TestActivateDelta:
 
 
 class TestActivateUnknownDistribution:
-    """activate with unsupported distribution → identity fallback."""
+    """activate with unsupported distribution → raises ValueError."""
 
-    def test_identity_fallback(self):
-        var = _make_variable('c', Normal)
-        inf = DeterministicInference.__new__(DeterministicInference)
-        pred = torch.randn(4, 1)
-        result = inf.activate(pred, var)
-        torch.testing.assert_close(result, pred)
+    def test_raises_for_unknown_distribution(self):
+        class _CustomDist(torch.distributions.Distribution):
+            pass
+        with pytest.raises(ValueError, match="No default activation"):
+            _make_variable('c', _CustomDist)
 
     def test_identity_when_distribution_is_none(self):
         """Variable whose distribution is None."""

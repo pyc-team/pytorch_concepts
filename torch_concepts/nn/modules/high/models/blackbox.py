@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from typing import List, Optional, Mapping, Union
+from typing import List, Optional, Union
 
 from .....data.utils import ensure_list
 from .....annotations import Annotations
@@ -31,14 +31,12 @@ class BlackBox(BaseModel):
         self,
         input_size: int,
         annotations: Annotations,
-        variable_distributions: Optional[Mapping] = None,
         lightning: bool = False,
         **kwargs
     ) -> None:
         super().__init__(
             input_size=input_size,
             annotations=annotations,
-            variable_distributions=variable_distributions,
             lightning=lightning,
             **kwargs
         )
@@ -93,7 +91,6 @@ class BlackBoxTaskOnly(BaseModel):
         input_size (int): Dimensionality of input features.
         annotations (Annotations): Annotation object for output variables.
         task_names (Union[List[str], str]): Task names to predict.
-        variable_distributions (Mapping, optional): Distributions of variables.
         lightning (bool, optional): Enable Lightning training. Default False.
         **kwargs: Additional arguments for BaseModel.
 
@@ -112,14 +109,12 @@ class BlackBoxTaskOnly(BaseModel):
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
-        variable_distributions: Optional[Mapping] = None,
         lightning: bool = False,
         **kwargs
     ) -> None:
         super().__init__(
             input_size=input_size,
             annotations=annotations,
-            variable_distributions=variable_distributions,
             lightning=lightning,
             **kwargs
         )

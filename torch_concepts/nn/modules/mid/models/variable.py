@@ -7,18 +7,28 @@ and support hierarchical concept structures.
 """
 import torch
 from functools import partial
-from torch.distributions import Distribution, Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Distribution, Bernoulli, Categorical, MultivariateNormal, Normal, \
+    RelaxedBernoulli, OneHotCategorical, RelaxedOneHotCategorical
 from typing import List, Dict, Any, Union, Optional, Type, Callable
 
 from .....distributions import Delta
 
+# Default distributions per concept type group (binary / categorical / continuous).
+_DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
+    'binary': Bernoulli,
+    'categorical': Categorical,
+    # 'continuous': Normal,  # TODO: add when continuous concepts are supported
+}
 
 # Default logits → probabilities activations per distribution type.
 _DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
     Bernoulli: torch.sigmoid,
     RelaxedBernoulli: torch.sigmoid,
     Categorical: partial(torch.softmax, dim=-1),
+    OneHotCategorical: partial(torch.softmax, dim=-1),
     RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
+    Normal: lambda x: x,
+    MultivariateNormal: lambda x: x,
     Delta: lambda x: x,
 }
 
@@ -202,8 +212,13 @@ class Variable:
         self.metadata = metadata if metadata is not None else {}
         if activation is not None:
             self.activation = activation
+        elif distribution in _DEFAULT_ACTIVATIONS:
+            self.activation = _DEFAULT_ACTIVATIONS[distribution]
         else:
-            self.activation = _DEFAULT_ACTIVATIONS.get(distribution, lambda x: x)
+            raise ValueError(
+                f"No default activation for distribution {distribution.__name__}. "
+                f"Please provide an explicit 'activation' callable."
+            )
 
     @property
     def out_features(self) -> int:
@@ -227,7 +242,7 @@ class Variable:
         """
         meta_str = f", metadata={self.metadata}" if self.metadata else ""
         dist_kwargs_str = f", dist_kwargs={self.dist_kwargs}" if self.dist_kwargs else ""
-        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, out_features={self.out_features}{meta_str})"
+        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, {meta_str})"
 
 
 class ConceptVariable(Variable):

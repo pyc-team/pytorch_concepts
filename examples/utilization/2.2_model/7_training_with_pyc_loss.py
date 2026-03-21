@@ -61,14 +61,10 @@ def main():
         continuous = torch.nn.MSELoss() # not used as concepts are binary, but included for demonstration
     )
 
-    # Define variable distributions as Bernoulli
-    variable_distributions = {name: Bernoulli for name in concept_names}
-
     # Initialize the CBM
     model = ConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
-        variable_distributions=variable_distributions,
         task_names=['xor'],
         latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
         lightning=True,
