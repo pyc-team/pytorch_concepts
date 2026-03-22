@@ -110,9 +110,6 @@ class DeterministicInference(ForwardInference):
             Probability / one-hot tensor. Shape: (batch_size, cardinality).
         """
 
-        # TODO: this step should invert whatever is done in the activate() implementation, 
-        # which is currently hardcoded for Bernoulli/Categorical. 
-        # To support custom distributions, we may need a more flexible way to convert GT to evidence format.
         # TODO: add support for continuous variables
 
         # Allow (batch,) and unsqueeze to (batch, 1)
