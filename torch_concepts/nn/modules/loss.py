@@ -1,5 +1,6 @@
 """Loss functions for concept-based models."""
 import inspect
+import warnings
 from typing import List, Mapping, Optional, Union
 import torch
 from torch import nn
@@ -203,11 +204,16 @@ class ConceptLoss(nn.Module):
         """Compute weighted sum of loss terms for a specific concept type.
         
         Each term receives only the kwargs its ``forward()`` signature accepts.
+        If ``padding_mask`` is present in *kwargs* but a term's signature does
+        not accept it (and has no ``**kwargs``), a warning is emitted so that
+        users are aware their custom loss/regularizer is receiving padded
+        values without explicit masking information.
         """
         terms = getattr(self, f'_{type_name}_terms')
         weights = self._type_weights[type_name]
         signatures = self._type_signatures[type_name]
         
+        has_padding = 'padding_mask' in kwargs
         total = torch.tensor(0.0, device=kwargs['input'].device)
         
         for module, weight, (sig, has_var_kw) in zip(terms, weights, signatures):
@@ -215,6 +221,17 @@ class ConceptLoss(nn.Module):
                 term_kwargs = dict(kwargs)
             else:
                 term_kwargs = {k: v for k, v in kwargs.items() if k in sig}
+                if has_padding and 'padding_mask' not in sig and 'target' not in sig:
+                    warnings.warn(
+                        f"{module.__class__.__name__} does not accept a "
+                        f"'padding_mask' parameter. Categorical concept "
+                        f"logits are padded with -inf for concepts with "
+                        f"cardinality < max_cardinality. If this module "
+                        f"could be affected by this, add a 'padding_mask' parameter "
+                        f"to its forward() to handle padded positions "
+                        f"correctly.",
+                        stacklevel=2,
+                    )
             total = total + weight * module(**term_kwargs)
         
         return total
@@ -223,8 +240,11 @@ class ConceptLoss(nn.Module):
         """Pad and stack categorical logits/targets for summary computation.
         
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (padded_logits, targets) ready
-            for loss functions like ``CrossEntropyLoss``.
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                ``(padded_logits, targets, padding_mask)`` ready for loss
+                functions like ``CrossEntropyLoss``.  ``padding_mask`` is a
+                boolean tensor of the same shape as ``padded_logits`` that is
+                ``True`` for real logit positions and ``False`` for padding.
         """
         cat_concept_idx = self.groups['categorical']['concept_idx']
         split_tuple = torch.split(
@@ -232,17 +252,24 @@ class ConceptLoss(nn.Module):
             [self.cardinalities[i] for i in cat_concept_idx],
             dim=1,
         )
-        padded_logits = [
-            nn.functional.pad(
-                logits,
-                (0, self.max_card - logits.shape[1]),
-                value=float('-inf'),
+        padded_logits = []
+        masks = []
+        for logits in split_tuple:
+            pad_size = self.max_card - logits.shape[1]
+            padded_logits.append(
+                nn.functional.pad(logits, (0, pad_size), value=float('-inf'))
             )
-            for logits in split_tuple
-        ]
+            mask = torch.ones(
+                logits.shape[0], self.max_card,
+                dtype=torch.bool, device=logits.device,
+            )
+            if pad_size > 0:
+                mask[:, -pad_size:] = False
+            masks.append(mask)
         cat_logits = torch.cat(padded_logits, dim=0)
+        cat_mask = torch.cat(masks, dim=0)
         cat_targets = target[:, cat_concept_idx].T.reshape(-1).long()
-        return cat_logits, cat_targets
+        return cat_logits, cat_targets, cat_mask
 
     def forward(self, **kwargs) -> torch.Tensor:
         """Compute total loss across all concept types.
@@ -276,9 +303,10 @@ class ConceptLoss(nn.Module):
         
         # Categorical concepts
         if self.fn_collection.get('categorical'):
-            cat_logits, cat_targets = self._prepare_categorical(input, target)
+            cat_logits, cat_targets, cat_mask = self._prepare_categorical(input, target)
             total_loss = total_loss + self._compute_type_loss('categorical', {
-                'input': cat_logits, 'target': cat_targets, **extra
+                'input': cat_logits, 'target': cat_targets,
+                'padding_mask': cat_mask, **extra
             })
         
         # Continuous concepts
@@ -562,10 +590,11 @@ class DepthWeightedConceptLoss(nn.Module):
 class L1LogitRegularizer(nn.Module):
     """Penalise large logit magnitudes via L1 regularisation.
 
-    Computes ``scale * mean(|input|)`` over all finite values in the
-    input tensor.  Non-finite entries (NaN / Inf from categorical
-    padding) are silently ignored.
-    
+    Computes ``scale * mean(|input|)`` over all valid (non-padded)
+    positions.  When used as a categorical loss term inside
+    :class:`ConceptLoss`, a ``padding_mask`` is automatically provided
+    to distinguish real logits from padding.
+
     :class:`ConceptLoss`::
 
         loss_fn = ConceptLoss(
@@ -585,8 +614,15 @@ class L1LogitRegularizer(nn.Module):
         super().__init__()
         self.scale = scale
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        mask = torch.isfinite(input)
+    def forward(
+        self,
+        input: torch.Tensor,
+        padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if padding_mask is not None:
+            mask = padding_mask
+        else:
+            mask = torch.isfinite(input)
         if mask.any():
             return self.scale * input[mask].abs().mean()
         return torch.tensor(0.0, device=input.device)

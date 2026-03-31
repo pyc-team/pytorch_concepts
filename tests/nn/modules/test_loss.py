@@ -1299,12 +1299,17 @@ class TestPrepareCategorical(unittest.TestCase):
             torch.randint(0, 5, (4, 1)),
         ], dim=1)
 
-        cat_logits, cat_targets = loss_fn._prepare_categorical(preds, targets)
+        cat_logits, cat_targets, cat_mask = loss_fn._prepare_categorical(preds, targets)
         # 2 concepts x 4 batch = 8 rows, padded to max_card=5 columns
         self.assertEqual(cat_logits.shape, (8, 5))
         self.assertEqual(cat_targets.shape, (8,))
+        self.assertEqual(cat_mask.shape, (8, 5))
         # Padded positions for cat1 (card=3) should be -inf in columns 3,4
         self.assertTrue((cat_logits[:4, 3:] == float('-inf')).all())
+        # Mask should be False at padded positions, True elsewhere
+        self.assertTrue((cat_mask[:4, :3]).all())
+        self.assertFalse((cat_mask[:4, 3:]).any())
+        self.assertTrue((cat_mask[4:, :]).all())  # cat2 has max card, no padding
 
     def test_single_categorical_no_padding(self):
         axis = AxisAnnotation(
@@ -1318,9 +1323,12 @@ class TestPrepareCategorical(unittest.TestCase):
         preds = torch.randn(6, 4)
         targets = torch.randint(0, 4, (6, 1))
 
-        cat_logits, cat_targets = loss_fn._prepare_categorical(preds, targets)
+        cat_logits, cat_targets, cat_mask = loss_fn._prepare_categorical(preds, targets)
         self.assertEqual(cat_logits.shape, (6, 4))
         self.assertEqual(cat_targets.shape, (6,))
+        self.assertEqual(cat_mask.shape, (6, 4))
+        # Single concept at max card — no padding, mask all True
+        self.assertTrue(cat_mask.all())
 
 
 if __name__ == '__main__':

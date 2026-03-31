@@ -358,68 +358,97 @@ class ConceptMetrics(nn.Module):
         for collection in self._per_concept.values():
             collection.reset()
 
-# class ConceptCausalEffect(Metric):
-#     """
-#     Concept Causal Effect (CaCE) metric for measuring causal effects.
-#
-#     CaCE measures the causal effect between concept pairs or between a concept
-#     and the task by comparing predictions under interventions do(C=1) vs do(C=0).
-#
-#     Note: Currently only works on binary concepts.
-#
-#     Attributes:
-#         preds_do_1 (Tensor): Accumulated predictions under do(C=1).
-#         preds_do_0 (Tensor): Accumulated predictions under do(C=0).
-#         total (Tensor): Total number of samples processed.
-#
-#     Example:
-#         >>> import torch
-#         >>> from torch_concepts.nn.modules.metrics import ConceptCausalEffect
-#         >>>
-#         >>> # Create metric
-#         >>> cace = ConceptCausalEffect()
-#         >>>
-#         >>> # Update with predictions under interventions
-#         >>> preds_do_1 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])  # P(Y|do(C=1))
-#         >>> preds_do_0 = torch.tensor([[0.8, 0.2], [0.7, 0.3]])  # P(Y|do(C=0))
-#         >>> cace.update(preds_do_1, preds_do_0)
-#         >>>
-#         >>> # Compute causal effect
-#         >>> effect = cace.compute()
-#         >>> print(f"Causal effect: {effect:.3f}")
-#
-#     References:
-#         Goyal et al. "Explaining Classifiers with Causal Concept Effect (CaCE)",
-#         arXiv 2019. https://arxiv.org/abs/1907.07165
-#     """
-#     def __init__(self):
-#         super().__init__()
-#         self.add_state("preds_do_1", default=torch.tensor(0.), dist_reduce_fx="sum")
-#         self.add_state("preds_do_0", default=torch.tensor(0.), dist_reduce_fx="sum")
-#         self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
 
-#     def update(self, 
-#                preds_do_1: torch.Tensor, 
-#                preds_do_0: torch.Tensor):
-#         """
-#         Update metric state with predictions under interventions.
-#
-#         Args:
-#             preds_do_1: Predictions when intervening C=1, shape (batch_size, n_classes).
-#             preds_do_0: Predictions when intervening C=0, shape (batch_size, n_classes).
-#         """
-#         _check_same_shape(preds_do_1, preds_do_0)
-#         # expected value = 1*p(output=1|do(1)) + 0*(1-p(output=1|do(1))
-#         self.preds_do_1 += preds_do_1[:,1].sum()
-#         # expected value = 1*p(output=1|do(0)) + 0*(1-p(output=1|do(0))
-#         self.preds_do_0 += preds_do_0[:,1].sum()
-#         self.total += preds_do_1.size()[0]
+@torch.no_grad()
+def compute_cace(
+    model,
+    dataloader,
+    source_concept: str,
+    target_concept: str,
+    prob_high: Union[float, torch.Tensor] = 1.0,
+    prob_low: Union[float, torch.Tensor] = 0.0,
+) -> torch.Tensor:
+    """Compute the Causal Concept Effect of *source_concept* on *target_concept*.
 
-#     def compute(self):
-#         """
-#         Compute the Causal Concept Effect (CaCE).
-#
-#         Returns:
-#             torch.Tensor: The average causal effect E[Y|do(C=1)] - E[Y|do(C=0)].
-#         """
-#         return (self.preds_do_1.float() / self.total) - (self.preds_do_0.float()  / self.total)
+    Runs ``do(source = prob_high)`` vs ``do(source = prob_low)`` over the
+    dataloader and returns the mean difference on the target.
+
+    Values are in **probability space** (0–1 for binary concepts).
+    They are converted to logits internally via ``torch.logit``.
+
+    * **Binary** (default): ``prob_high=1, prob_low=0``.
+    * **Categorical**: pass probability vectors, e.g.
+      ``prob_high=tensor([0, 0, 1])``, ``prob_low=tensor([1, 0, 0])``.
+
+    Args:
+        model: A high-level concept model (e.g.
+            :class:`~torch_concepts.nn.ConceptBottleneckModel`).
+        dataloader: Iterable yielding batch dicts with
+            ``{'inputs': {'x': Tensor}}``.
+        source_concept: Concept to intervene on.
+        target_concept: Concept whose prediction is measured.
+        prob_high: Probability for the *high* regime (default 1.0).
+        prob_low: Probability for the *low* regime (default 0.0).
+
+    Returns:
+        Scalar tensor with the CaCE score.
+
+    Example::
+
+        >>> cace = compute_cace(
+        ...     model=cbm,
+        ...     dataloader=test_loader,
+        ...     source_concept="c1",
+        ...     target_concept="task",
+        ... )
+    """
+    from ..modules.low.inference.intervention import DoIntervention, intervention
+    from ..modules.low.policy.uniform import UniformPolicy
+    from ...nn.functional import cace_score
+
+    cpds = model.model.probabilistic_model.parametric_cpds
+    was_training = model.training
+    model.eval()
+
+    if not any(True for _ in dataloader):
+        if was_training:
+            model.train()
+        raise ValueError("Dataloader yielded no batches.")
+
+    # Convert probabilities → logits (the intervention operates in logit space)
+    eps = 1e-6
+    if not torch.is_tensor(prob_high):
+        prob_high = torch.tensor(prob_high)
+    if not torch.is_tensor(prob_low):
+        prob_low = torch.tensor(prob_low)
+    logit_high = torch.logit(prob_high.float(), eps=eps)
+    logit_low = torch.logit(prob_low.float(), eps=eps)
+
+    strategy_high = DoIntervention(model=cpds, constants=logit_high)
+    strategy_low = DoIntervention(model=cpds, constants=logit_low)
+
+    all_high, all_low = [], []
+    for batch in dataloader:
+        x = batch["inputs"]["x"]
+
+        with intervention(
+            policies=UniformPolicy(out_concepts=1),
+            strategies=strategy_high,
+            target_concepts=[source_concept],
+        ):
+            out_high = model(x=x, query=[target_concept])
+
+        with intervention(
+            policies=UniformPolicy(out_concepts=1),
+            strategies=strategy_low,
+            target_concepts=[source_concept],
+        ):
+            out_low = model(x=x, query=[target_concept])
+
+        all_high.append(out_high)
+        all_low.append(out_low)
+
+    if was_training:
+        model.train()
+
+    return cace_score(torch.cat(all_low), torch.cat(all_high)).squeeze()

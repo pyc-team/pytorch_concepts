@@ -41,7 +41,7 @@ from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConcept
     L1LogitRegularizer
 
 # Metrics
-from .modules.metrics import ConceptMetrics
+from .modules.metrics import ConceptMetrics, compute_cace
 
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
@@ -126,6 +126,7 @@ __all__ = [
 
     # Metrics
     "ConceptMetrics",
+    "compute_cace",
 
     # Models (high-level)
     "BlackBox",

@@ -126,8 +126,8 @@ class ConceptDataset(Dataset):
         # this defines self.annotations property
         self._annotations = annotations
         # maybe reduce annotations based on subset of concept names
-        self.maybe_reduce_annotations(annotations,
-                                      concept_names_subset)
+        self._maybe_reduce_annotations(annotations,
+                                       concept_names_subset)
 
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
@@ -137,7 +137,7 @@ class ConceptDataset(Dataset):
         # Store concept data C
         self.concepts = None
         if concepts is not None:
-            self.set_concepts(concepts) # Annotat
+            self.set_concepts(concepts)
 
         # Store graph
         self._graph = None
@@ -341,10 +341,12 @@ class ConceptDataset(Dataset):
 
     # Setters ##############################################################
 
-    def maybe_reduce_annotations(self,
+    def _maybe_reduce_annotations(self,
                                 annotations: Annotations,
                                 concept_names_subset: Optional[List[str]] = None):
-        """Set concept and labels for the dataset.
+        """If ``concept_names_subset`` is provided, the annotations are reduced
+        to include only the specified concepts. 
+
         Args:
             annotations: Annotations object for all concepts.
             concept_names_subset: List of strings naming the subset of concepts to use. 
@@ -391,6 +393,9 @@ class ConceptDataset(Dataset):
         """Set the adjacency matrix of the causal graph between concepts 
         as a pandas DataFrame.
         
+        If a concept subset was selected via ``concept_names_subset``,
+        the graph is automatically subsetted to match the current concepts.
+
         Args:
             graph: A pandas DataFrame representing the adjacency matrix of the 
                    causal graph. Rows and columns should be named after the 
@@ -398,10 +403,10 @@ class ConceptDataset(Dataset):
         """
         if not isinstance(graph, pd.DataFrame):
             raise TypeError(f"Graph must be a pandas DataFrame, got {type(graph).__name__}.")
-        # eventually extract subset
-        graph = graph.loc[self.concept_names, self.concept_names]
+        # Subset graph to match current concept_names
+        subgraph = graph.loc[self.concept_names, self.concept_names]
         self._graph = ConceptGraph(
-            data=parse_tensor(graph, 'graph', self.precision),
+            data=parse_tensor(subgraph, 'graph', self.precision),
             node_names=self.concept_names
         )
         
