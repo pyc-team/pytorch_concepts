@@ -35,17 +35,9 @@ variable_distributions:
 # =============================================================
 # Concept activation configs
 # =============================================================
-variable_activations:
-  _target_: "torch_concepts.GroupConfig"
-  binary:
-    _target_: "hydra.utils.get_method"
-    path: "torch.sigmoid"
-  categorical:
-    _target_: "hydra.utils.get_method"
-    path: "torch.softmax"
-  # TODO
-  # continuous: 
-    # ... not supported yet
+# variable_activations are intentionally omitted so that defaults
+# from _DEFAULT_ACTIVATIONS are used (sigmoid for binary,
+# partial(softmax, dim=-1) for categorical).
 
 
 # =============================================================
