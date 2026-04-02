@@ -47,6 +47,11 @@ class ForwardInference(BaseInference, ABC):
             Exogenous / latent variables keep their gradients. Default: False.
         lazy: If True, only compute variables that are ancestors of the queried
             concepts, skipping unrelated branches. Default: False.
+        p: Probability of propagating ground truth instead of the model's own
+            prediction for each concept. ``p=0`` (default) gives standard
+            forward inference; ``p=1`` gives fully independent training.
+            Intermediate values create a stochastic mix (per-sample Bernoulli
+            mask). Ground truth must be supplied at query time for ``p > 0``.
 
     Raises:
         RuntimeError: If the model contains cycles (not a DAG).
@@ -100,15 +105,20 @@ class ForwardInference(BaseInference, ABC):
         graph_learner: BaseGraphLearner = None, 
         detach: bool = False,
         lazy: bool = False,
+        p: float = 0.0,
         *args, 
         **kwargs
     ):
         super().__init__()
+        if not 0.0 <= p <= 1.0:
+            raise ValueError(f"p must be in [0, 1], got {p}")
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
         self.detach = detach
         self.lazy = lazy
+        self.p = p
         self.variable_map = {var.concept: var for var in probabilistic_model.variables}
+        self._index_cache: Tuple[None, Dict[str, int]] = (None, {})
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -608,6 +618,16 @@ class ForwardInference(BaseInference, ABC):
 
         return final_tensor
 
+    def _get_index_map(self, concept_names: List[str]) -> Dict[str, int]:
+        """Get cached mapping from concept name to column index."""
+        key = tuple(concept_names)
+        if self._index_cache[0] == key:
+            return self._index_cache[1]
+
+        index_map = {name: i for i, name in enumerate(concept_names)}
+        self._index_cache = (key, index_map)
+        return index_map
+
     def _get_ancestors(self, query_concepts: List[str]) -> Set[str]:
         """
         Get all ancestors (including query concepts) needed to compute the query.
@@ -633,6 +653,8 @@ class ForwardInference(BaseInference, ABC):
         self, 
         query: List[str], 
         evidence: Dict[str, torch.Tensor], 
+        ground_truth: torch.Tensor = None,
+        concept_names: List[str] = None,
         debug: bool = False, 
         device: str = 'auto',
         return_logits: bool = False,
@@ -645,9 +667,19 @@ class ForwardInference(BaseInference, ABC):
         each level) and then extracts and concatenates only the requested concepts
         in the specified order.
 
+        When ``ground_truth`` and ``concept_names`` are provided and ``self.p > 0``,
+        each concept with available ground truth is propagated as GT (instead of
+        the model's own prediction) with probability ``self.p``.  This creates a
+        smooth bridge between pure forward inference (``p=0``) and fully
+        independent training (``p=1``).
+
         Args:
             query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
             evidence: Dictionary of {root_concept_name: input_tensor}.
+            ground_truth: Optional ground truth tensor in index format.
+                Shape: (batch, num_concepts). One column per concept.
+            concept_names: Ordered concept names matching ground_truth columns.
+                Required when ground_truth is provided.
             debug: If True, runs in debug mode (sequential execution).
             device: Device to use for computation. Options:
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
@@ -664,6 +696,7 @@ class ForwardInference(BaseInference, ABC):
 
         Raises:
             ValueError: If requested concept was not computed.
+            ValueError: If ground_truth is provided without concept_names.
             RuntimeError: If batch sizes don't match across concepts.
             RuntimeError: If concatenation produces unexpected feature dimension.
             RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
@@ -675,6 +708,14 @@ class ForwardInference(BaseInference, ABC):
         self._validate_evidence(evidence)
         use_cuda = self._resolve_device(device)
 
+        # Resolve ground-truth propagation
+        use_gt = ground_truth is not None and self.p > 0
+        if ground_truth is not None and concept_names is None:
+            raise ValueError("concept_names must be provided when ground_truth is given.")
+        if self.p > 0 and ground_truth is None:
+            raise ValueError("ground_truth must be provided when p > 0.")
+        index_map = self._get_index_map(concept_names) if concept_names is not None else {}
+
         # When lazy=True, restrict to the ancestor sub-graph of the query.
         levels = self.levels
         if self.lazy:
@@ -685,8 +726,8 @@ class ForwardInference(BaseInference, ABC):
         # Two dicts:
         #   `propagation` – activated values fed to children (detached when self.detach)
         #   `returned`    – allocated only when propagation can't serve as return
-        #                   (i.e. when return_logits or self.detach)
-        need_separate_return = return_logits or self.detach
+        #                   (i.e. when return_logits, self.detach, or GT propagation)
+        need_separate_return = return_logits or self.detach or use_gt
         returned: Dict[str, torch.Tensor] | None = {} if need_separate_return else None
         propagation: Dict[str, torch.Tensor] = dict(evidence)
 
@@ -702,7 +743,26 @@ class ForwardInference(BaseInference, ABC):
                     activated = self.activate(pred, variable)
                     if returned is not None:
                         returned[name] = pred if return_logits else activated
-                    propagation[name] = activated.detach() if self.detach else activated
+
+                    # Decide propagation value: GT override with probability p
+                    if use_gt and name in index_map:
+                        idx = index_map[name]
+                        gt_value = self.ground_truth_to_evidence(
+                            value=ground_truth[:, idx:idx+1],
+                            cardinality=variable.size,
+                        )
+                        if self.p >= 1.0:
+                            propagation[name] = gt_value
+                        else:
+                            # Bernoulli mask: per-sample decision
+                            mask = torch.bernoulli(
+                                torch.full((pred.shape[0], 1), self.p,
+                                           device=pred.device, dtype=pred.dtype)
+                            )
+                            pred_value = activated.detach() if self.detach else activated
+                            propagation[name] = mask * gt_value + (1 - mask) * pred_value
+                    else:
+                        propagation[name] = activated.detach() if self.detach else activated
                 else:
                     if returned is not None:
                         returned[name] = pred

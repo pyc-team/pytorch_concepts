@@ -102,8 +102,9 @@ class AncestralSamplingInference(ForwardInference):
                  graph_learner: BaseGraphLearner = None,
                  detach: bool = False,
                  lazy: bool = False,
-                 log_probs: bool = True):
-        super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy)
+                 log_probs: bool = True,
+                 p: float = 0.0):
+        super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy, p=p)
         self.log_probs = log_probs
 
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
@@ -172,7 +173,9 @@ class AncestralSamplingInference(ForwardInference):
         """
         if cardinality > 1:
             return torch.nn.functional.one_hot(
-                value.long(), num_classes=cardinality
+                value.squeeze(-1).long(), num_classes=cardinality
             ).float()
         else:
-            return value.unsqueeze(-1).float()
+            if value.dim() == 1:
+                value = value.unsqueeze(-1)
+            return value.float()

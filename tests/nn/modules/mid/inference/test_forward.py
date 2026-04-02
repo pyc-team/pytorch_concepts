@@ -2277,5 +2277,300 @@ class TestForwardVsLazyInferenceParity:
         torch.testing.assert_close(result_full, result_lazy)
 
 
+class TestGroundTruthProbabilisticPropagation:
+    """Tests for the p parameter: stochastic GT propagation in ForwardInference.query().
+
+    p=0 → pure forward (no GT used for propagation)
+    p=1 → fully independent (GT always used for propagation)
+    0<p<1 → per-sample Bernoulli mix of GT and model prediction
+    """
+
+    def _make_chain_model(self):
+        """input -> A -> B -> task (all binary)."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_task = EndogenousVariable('task', distribution=Bernoulli, size=1)
+
+        linear_A = nn.Linear(10, 1)
+        linear_B = nn.Linear(1, 1)
+        linear_task = nn.Linear(1, 1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=linear_A, parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=linear_B, parents=['A'])
+        cpd_task = ParametricCPD('task', parametrization=linear_task, parents=['B'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B, var_task],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_task],
+        )
+        return model, {'A': linear_A, 'B': linear_B, 'task': linear_task}
+
+    # ---- p validation ----
+
+    def test_p_invalid_negative(self):
+        """p < 0 should raise ValueError."""
+        model, _ = self._make_chain_model()
+        with pytest.raises(ValueError, match="p must be in"):
+            DeterministicInference(model, p=-0.1)
+
+    def test_p_invalid_above_one(self):
+        """p > 1 should raise ValueError."""
+        model, _ = self._make_chain_model()
+        with pytest.raises(ValueError, match="p must be in"):
+            DeterministicInference(model, p=1.5)
+
+    def test_p_zero_is_default(self):
+        """Default p=0 means no GT propagation."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model)
+        assert inference.p == 0.0
+
+    # ---- p=0: GT provided but ignored for propagation ----
+
+    def test_p0_ignores_ground_truth_for_propagation(self):
+        """With p=0, ground_truth should NOT affect downstream predictions."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=0.0)
+
+        x = torch.randn(8, 10)
+        gt_zeros = torch.zeros(8, 1)
+        gt_ones = torch.ones(8, 1)
+
+        result_gt0 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt_zeros, concept_names=['A'],
+        )
+        result_gt1 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt_ones, concept_names=['A'],
+        )
+        # Both should be identical — GT is ignored when p=0
+        torch.testing.assert_close(result_gt0, result_gt1)
+
+    def test_p0_same_as_no_gt(self):
+        """With p=0, results should match a plain query without GT."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=0.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 2)
+
+        result_with_gt = inference.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        result_no_gt = inference.query(['A', 'B', 'task'], {'input': x})
+        torch.testing.assert_close(result_with_gt, result_no_gt)
+
+    # ---- p=1: fully independent training ----
+
+    def test_p1_uses_gt_for_propagation(self):
+        """With p=1, different GT values should produce different downstream results."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_zeros = torch.zeros(8, 1)
+        gt_ones = torch.ones(8, 1)
+
+        result_gt0 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt_zeros, concept_names=['A'],
+        )
+        result_gt1 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt_ones, concept_names=['A'],
+        )
+        assert not torch.allclose(result_gt0, result_gt1), \
+            "p=1 should use GT for propagation, giving different downstream results"
+
+    def test_p1_returns_model_predictions_not_gt(self):
+        """With p=1, returned values should be model predictions, not GT values."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.full((8, 1), 999.0)
+
+        result = inference.query(
+            ['A'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        assert not torch.allclose(result, torch.full((8, 1), 999.0)), \
+            "Returned predictions should be from the model, not GT"
+
+    def test_p1_gradient_isolation(self):
+        """With p=1, gradient should NOT flow from downstream loss to upstream predictor."""
+        model, layers = self._make_chain_model()
+        inference = DeterministicInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.zeros(8, 2)  # GT for A and B
+
+        for layer in layers.values():
+            layer.zero_grad()
+
+        result = inference.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        task_pred = result[:, 2:]
+        loss = nn.functional.binary_cross_entropy_with_logits(
+            task_pred, torch.zeros(8, 1)
+        )
+        loss.backward()
+
+        assert layers['A'].weight.grad is None or torch.all(layers['A'].weight.grad == 0), \
+            "With p=1 and GT for A, gradient should not flow back to A from task loss"
+
+    def test_p1_matches_independent_inference(self):
+        """ForwardInference(p=1) should produce the same results as IndependentInference."""
+        from torch_concepts.nn.modules.mid.inference.independent import IndependentInference
+
+        model, _ = self._make_chain_model()
+        forward_p1 = DeterministicInference(model, p=1.0)
+        independent = IndependentInference(model)
+
+        x = torch.randn(8, 10)
+        gt = torch.zeros(8, 2)
+
+        result_forward = forward_p1.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        result_indep = independent.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        torch.testing.assert_close(result_forward, result_indep)
+
+    # ---- 0 < p < 1: stochastic mixing ----
+
+    def test_intermediate_p_stochastic(self):
+        """With 0 < p < 1, results should vary across runs (stochastic Bernoulli mask)."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=0.5)
+
+        x = torch.randn(64, 10)
+        gt = torch.ones(64, 1)
+
+        torch.manual_seed(0)
+        r1 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        torch.manual_seed(1)
+        r2 = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        # With different seeds the Bernoulli masks differ, so results should differ
+        assert not torch.allclose(r1, r2), \
+            "Intermediate p should produce stochastic results across seeds"
+
+    def test_intermediate_p_between_extremes(self):
+        """With 0 < p < 1, average result should lie between p=0 and p=1 extremes."""
+        model, _ = self._make_chain_model()
+
+        x = torch.randn(128, 10)
+        gt = torch.ones(128, 1)
+
+        inf_p0 = DeterministicInference(model, p=0.0)
+        inf_p1 = DeterministicInference(model, p=1.0)
+        inf_mid = DeterministicInference(model, p=0.5)
+
+        r0 = inf_p0.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
+        r1 = inf_p1.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
+
+        # Average over many runs at p=0.5
+        torch.manual_seed(42)
+        runs = [
+            inf_mid.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
+            for _ in range(20)
+        ]
+        r_mid = torch.stack(runs).mean()
+
+        lo, hi = min(r0, r1), max(r0, r1)
+        assert lo <= r_mid <= hi or torch.isclose(r_mid, lo, atol=0.15) or torch.isclose(r_mid, hi, atol=0.15), \
+            f"Average result at p=0.5 ({r_mid:.3f}) should be between p=0 ({r0:.3f}) and p=1 ({r1:.3f})"
+
+    # ---- error handling ----
+
+    def test_gt_without_concept_names_raises(self):
+        """Providing ground_truth without concept_names should raise ValueError."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=0.5)
+
+        x = torch.randn(4, 10)
+        gt = torch.zeros(4, 1)
+
+        with pytest.raises(ValueError, match="concept_names must be provided"):
+            inference.query(['A'], {'input': x}, ground_truth=gt)
+
+    def test_p_positive_without_gt_raises(self):
+        """p > 0 without ground_truth should raise ValueError."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=0.5)
+
+        x = torch.randn(4, 10)
+
+        with pytest.raises(ValueError, match="ground_truth must be provided"):
+            inference.query(['A'], {'input': x})
+
+    # ---- p with categorical variables ----
+
+    def test_p1_with_categorical(self):
+        """p=1 should work correctly with categorical (multi-class) concepts."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Categorical, size=4)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 4), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(4, 1), parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = DeterministicInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.zeros(8, 1)  # class 0
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape == (8, 5)  # A=4 + B=1
+
+    # ---- p with return_logits ----
+
+    def test_p1_with_return_logits(self):
+        """p=1 with return_logits should return raw logits, not activated values."""
+        model, _ = self._make_chain_model()
+        inference = DeterministicInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.zeros(8, 1)
+
+        result_logits = inference.query(
+            ['A'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+            return_logits=True,
+        )
+        result_activated = inference.query(
+            ['A'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+            return_logits=False,
+        )
+        # Logits and activated should differ (sigmoid applied)
+        assert not torch.allclose(result_logits, result_activated, atol=1e-6) or \
+            torch.allclose(result_logits, torch.zeros_like(result_logits), atol=1e-6), \
+            "return_logits should give raw outputs, not activated"
+
+
 if __name__ == "__main__":
     unittest.main()
