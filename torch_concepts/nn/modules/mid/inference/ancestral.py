@@ -148,7 +148,10 @@ class AncestralSamplingInference(ForwardInference):
         else:
             dist = variable.distribution(pred, **dist_kwargs)
 
-        return dist.rsample() if dist.has_rsample else dist.sample()
+        sample = dist.rsample() if dist.has_rsample else dist.sample()
+        if sample.dim() == 1:
+            sample = sample.unsqueeze(-1)
+        return sample
 
     # TODO: currently assumes discrete, to be extended to continuous 
     def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:

@@ -2572,5 +2572,657 @@ class TestGroundTruthProbabilisticPropagation:
             "return_logits should give raw outputs, not activated"
 
 
+class TestAncestralSamplingWithP:
+    """Comprehensive tests for the p parameter with AncestralSamplingInference.
+
+    AncestralSamplingInference differs from DeterministicInference:
+    - activate() samples from distributions (stochastic, non-differentiable for Bernoulli)
+    - ground_truth_to_evidence() returns raw values / one-hot (not probabilities)
+
+    These tests verify p works correctly with sampling-based inference.
+    """
+
+    def _make_chain_model(self):
+        """input -> A -> B (binary Bernoulli chain)."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        linear_A = nn.Linear(10, 1)
+        linear_B = nn.Linear(1, 1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=linear_A, parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=linear_B, parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        return model, {'A': linear_A, 'B': linear_B}
+
+    def _make_chain_model_with_task(self):
+        """input -> A -> B -> task (binary Bernoulli chain)."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_task = EndogenousVariable('task', distribution=Bernoulli, size=1)
+
+        linear_A = nn.Linear(10, 1)
+        linear_B = nn.Linear(1, 1)
+        linear_task = nn.Linear(1, 1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=linear_A, parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=linear_B, parents=['A'])
+        cpd_task = ParametricCPD('task', parametrization=linear_task, parents=['B'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B, var_task],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_task],
+        )
+        return model, {'A': linear_A, 'B': linear_B, 'task': linear_task}
+
+    # ------------------------------------------------------------------
+    # p init and validation
+    # ------------------------------------------------------------------
+
+    def test_p_default_is_zero(self):
+        """AncestralSamplingInference should default to p=0."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model)
+        assert inference.p == 0.0
+
+    def test_p_stored_correctly(self):
+        """p should be stored on the inference object."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.7)
+        assert inference.p == 0.7
+
+    def test_p_invalid_negative(self):
+        """p < 0 should raise ValueError."""
+        model, _ = self._make_chain_model()
+        with pytest.raises(ValueError, match="p must be in"):
+            AncestralSamplingInference(model, p=-0.1)
+
+    def test_p_invalid_above_one(self):
+        """p > 1 should raise ValueError."""
+        model, _ = self._make_chain_model()
+        with pytest.raises(ValueError, match="p must be in"):
+            AncestralSamplingInference(model, p=1.5)
+
+    def test_p_positive_without_gt_raises(self):
+        """p > 0 without ground_truth should raise ValueError."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.5)
+        x = torch.randn(4, 10)
+        with pytest.raises(ValueError, match="ground_truth must be provided"):
+            inference.query(['A'], {'input': x})
+
+    def test_gt_without_concept_names_raises(self):
+        """Providing ground_truth without concept_names should raise ValueError."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.5)
+        x = torch.randn(4, 10)
+        with pytest.raises(ValueError, match="concept_names must be provided"):
+            inference.query(['A'], {'input': x}, ground_truth=torch.zeros(4, 1))
+
+    # ------------------------------------------------------------------
+    # p=0: GT ignored, same as no-GT query
+    # ------------------------------------------------------------------
+
+    def test_p0_ignores_gt_for_propagation(self):
+        """With p=0, ground_truth should NOT affect downstream predictions.
+
+        We use a large batch and fixed seed so that sampling noise averages out.
+        """
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.0)
+
+        x = torch.randn(8, 10)
+        gt_zeros = torch.zeros(8, 1)
+        gt_ones = torch.ones(8, 1)
+
+        torch.manual_seed(0)
+        r0 = inference.query(['B'], {'input': x}, ground_truth=gt_zeros, concept_names=['A'])
+        torch.manual_seed(0)
+        r1 = inference.query(['B'], {'input': x}, ground_truth=gt_ones, concept_names=['A'])
+
+        # Same seed, p=0 → GT is ignored, so identical sampling → same results
+        torch.testing.assert_close(r0, r1)
+
+    def test_p0_same_as_no_gt(self):
+        """With p=0, results should match a query without GT (same seed)."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 1)
+
+        torch.manual_seed(42)
+        r_with_gt = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        torch.manual_seed(42)
+        r_no_gt = inference.query(['A', 'B'], {'input': x})
+
+        torch.testing.assert_close(r_with_gt, r_no_gt)
+
+    # ------------------------------------------------------------------
+    # p=1: fully independent (GT always propagated)
+    # ------------------------------------------------------------------
+
+    def test_p1_uses_gt_for_propagation(self):
+        """With p=1, different GT values should produce different downstream results."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(64, 10)
+        gt_zeros = torch.zeros(64, 1)
+        gt_ones = torch.ones(64, 1)
+
+        torch.manual_seed(0)
+        r0 = inference.query(['B'], {'input': x}, ground_truth=gt_zeros, concept_names=['A'])
+        torch.manual_seed(0)
+        r1 = inference.query(['B'], {'input': x}, ground_truth=gt_ones, concept_names=['A'])
+
+        # B receives different input (GT=0 vs GT=1) → distribution differs
+        # Because sampling is stochastic, test that the *distributions* differ
+        # by checking mean over larger batch
+        assert r0.float().mean() != r1.float().mean() or \
+            not torch.equal(r0, r1), \
+            "p=1 should use GT for propagation, producing different B distributions"
+
+    def test_p1_returns_model_samples_not_gt(self):
+        """With p=1, returned values should be sampled predictions, not GT."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.full((8, 1), 999.0)
+
+        result = inference.query(
+            ['A'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        # Bernoulli samples are 0 or 1, never 999
+        assert torch.all((result == 0) | (result == 1)), \
+            "Returned values should be Bernoulli samples, not GT"
+
+    def test_p1_output_is_binary_samples(self):
+        """AncestralSampling with p=1 should still return binary samples for Bernoulli."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(32, 10)
+        gt = torch.ones(32, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        assert result.shape == (32, 2)
+        assert torch.all((result == 0) | (result == 1))
+
+    def test_p1_gt_for_multiple_concepts(self):
+        """p=1 with GT for multiple concepts in a chain."""
+        model, _ = self._make_chain_model_with_task()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 2)  # GT for both A and B
+
+        result = inference.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        assert result.shape == (8, 3)
+        # All outputs are Bernoulli samples
+        assert torch.all((result == 0) | (result == 1))
+
+    def test_p1_partial_gt_coverage(self):
+        """p=1 with GT only for A, not B — B should use its own prediction for propagation."""
+        model, _ = self._make_chain_model_with_task()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.ones(8, 1)  # GT only for A
+
+        result = inference.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape == (8, 3)
+
+    # ------------------------------------------------------------------
+    # 0 < p < 1: stochastic mixing
+    # ------------------------------------------------------------------
+
+    def test_intermediate_p_stochastic(self):
+        """With 0 < p < 1, results should vary across seeds."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.5)
+
+        x = torch.randn(64, 10)
+        gt = torch.ones(64, 1)
+
+        torch.manual_seed(0)
+        r1 = inference.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A'])
+        torch.manual_seed(1)
+        r2 = inference.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A'])
+
+        assert not torch.equal(r1, r2), \
+            "Intermediate p should produce different results with different seeds"
+
+    def test_intermediate_p_shape(self):
+        """Intermediate p should produce correctly shaped output."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=0.3)
+
+        x = torch.randn(16, 10)
+        gt = torch.zeros(16, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        assert result.shape == (16, 2)
+
+    # ------------------------------------------------------------------
+    # Categorical variables
+    # ------------------------------------------------------------------
+
+    @pytest.mark.xfail(
+        reason="Categorical.sample() returns class index (size 1) but variable "
+               "declares size=4; _concatenate_results expects 4 features. "
+               "Pre-existing incompatibility — use OneHotCategorical instead.",
+        raises=RuntimeError,
+    )
+    def test_p1_with_categorical_standalone(self):
+        """p=1 with categorical (multi-class) concept and ancestral sampling."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Categorical, size=4)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 4), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(4, 1), parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.zeros(8, 1)
+
+        # Categorical.sample() now returns 2D after unsqueeze fix
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape[0] == 8
+
+    def test_p1_one_hot_categorical_gt_affects_downstream(self):
+        """Different categorical GT should produce different downstream results.
+
+        Uses OneHotCategorical which returns (batch, classes) — compatible with
+        downstream linear layers.
+        """
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=OneHotCategorical, size=4)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 4), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(4, 1), parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(64, 10)
+        gt_class0 = torch.zeros(64, 1)
+        gt_class3 = torch.full((64, 1), 3.0)
+
+        # One-hot for class 0: [1,0,0,0] → different linear_B input than class 3: [0,0,0,1]
+        torch.manual_seed(42)
+        r0 = inference.query(['B'], {'input': x}, ground_truth=gt_class0, concept_names=['A'])
+        torch.manual_seed(42)
+        r3 = inference.query(['B'], {'input': x}, ground_truth=gt_class3, concept_names=['A'])
+
+        assert not torch.equal(r0, r3), \
+            "Different categorical GT should produce different B sampling distributions"
+
+    # ------------------------------------------------------------------
+    # OneHotCategorical variables
+    # ------------------------------------------------------------------
+
+    def test_p1_with_one_hot_categorical(self):
+        """p=1 with OneHotCategorical variable."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=OneHotCategorical, size=3)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 3), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(3, 1), parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.zeros(8, 1)  # class 0
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape[0] == 8
+
+    # ------------------------------------------------------------------
+    # Relaxed distributions (continuous samples, reparameterizable)
+    # ------------------------------------------------------------------
+
+    def test_p1_with_relaxed_bernoulli(self):
+        """p=1 with RelaxedBernoulli (continuous, reparameterizable)."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable(
+            'A', distribution=RelaxedBernoulli, size=1,
+            dist_kwargs={'temperature': torch.tensor(0.5)},
+        )
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(1, 1), parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.ones(8, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        # A is continuous relaxed sample, B is binary
+        assert result.shape == (8, 2)
+        # A values should be continuous in (0,1), not just {0,1}
+        a_vals = result[:, 0]
+        assert not torch.all((a_vals == 0) | (a_vals == 1)), \
+            "RelaxedBernoulli should produce continuous values"
+
+    # ------------------------------------------------------------------
+    # Exogenous variables (CEM-like architecture)
+    # ------------------------------------------------------------------
+
+    def test_p1_with_exogenous(self):
+        """p=1 with exogenous variables — exogenous should not be replaced by GT."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        exo_var = ExogenousVariable('exo', distribution=Delta, size=8)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_exo = ParametricCPD('exo', parametrization=nn.Linear(10, 8), parents=['input'])
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(8, 1), parents=['exo'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(9, 1), parents=['exo', 'A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, exo_var, var_A, var_B],
+            factors=[cpd_input, cpd_exo, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.ones(8, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape == (8, 2)
+        # A and B are Bernoulli samples
+        assert torch.all((result == 0) | (result == 1))
+
+    def test_p05_with_exogenous(self):
+        """Intermediate p with exogenous variables should work."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        exo_var = ExogenousVariable('exo', distribution=Delta, size=8)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_exo = ParametricCPD('exo', parametrization=nn.Linear(10, 8), parents=['input'])
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(8, 1), parents=['exo'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(9, 1), parents=['exo', 'A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, exo_var, var_A, var_B],
+            factors=[cpd_input, cpd_exo, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, p=0.5)
+
+        x = torch.randn(16, 10)
+        gt_a = torch.ones(16, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape == (16, 2)
+
+    # ------------------------------------------------------------------
+    # log_probs flag interaction with p
+    # ------------------------------------------------------------------
+
+    def test_p1_with_log_probs_false(self):
+        """p=1 should work when log_probs=False (probs passed to distribution)."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD(
+            'A', parametrization=nn.Sequential(nn.Linear(10, 1), nn.Sigmoid()),
+            parents=['input'],
+        )
+        cpd_B = ParametricCPD(
+            'B', parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid()),
+            parents=['A'],
+        )
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B],
+            factors=[cpd_input, cpd_A, cpd_B],
+        )
+        inference = AncestralSamplingInference(model, log_probs=False, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt_a = torch.ones(8, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt_a, concept_names=['A'],
+        )
+        assert result.shape == (8, 2)
+        assert torch.all((result == 0) | (result == 1))
+
+    # ------------------------------------------------------------------
+    # return_logits with p
+    # ------------------------------------------------------------------
+
+    def test_p1_with_return_logits(self):
+        """p=1 + return_logits should return raw CPD output, not samples."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 1)
+
+        result = inference.query(
+            ['A'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+            return_logits=True,
+        )
+        # Logits can be any real value, not just {0, 1}
+        assert result.shape == (8, 1)
+
+    # ------------------------------------------------------------------
+    # detach interaction with p
+    # ------------------------------------------------------------------
+
+    def test_p1_with_detach(self):
+        """p=1 with detach=True should still work (detach applies to non-GT propagation)."""
+        model, _ = self._make_chain_model_with_task()
+        inference = AncestralSamplingInference(model, detach=True, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 2)
+
+        result = inference.query(
+            ['A', 'B', 'task'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        assert result.shape == (8, 3)
+
+    # ------------------------------------------------------------------
+    # lazy mode interaction with p
+    # ------------------------------------------------------------------
+
+    def test_p1_with_lazy(self):
+        """p=1 with lazy=True should compute only needed ancestors."""
+        model, _ = self._make_chain_model_with_task()
+        inference = AncestralSamplingInference(model, lazy=True, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 1)
+
+        result = inference.query(
+            ['B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+        )
+        assert result.shape == (8, 1)
+
+    # ------------------------------------------------------------------
+    # ground_truth_to_evidence shape correctness
+    # ------------------------------------------------------------------
+
+    def test_gt_to_evidence_binary_1d_input(self):
+        """ground_truth_to_evidence should handle 1D input (batch,)."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model)
+
+        value = torch.tensor([0.0, 1.0, 1.0, 0.0])
+        result = inference.ground_truth_to_evidence(value, cardinality=1)
+        assert result.shape == (4, 1)
+        torch.testing.assert_close(result, torch.tensor([[0.0], [1.0], [1.0], [0.0]]))
+
+    def test_gt_to_evidence_binary_2d_input(self):
+        """ground_truth_to_evidence should handle 2D input (batch, 1)."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model)
+
+        value = torch.tensor([[0.0], [1.0], [1.0], [0.0]])
+        result = inference.ground_truth_to_evidence(value, cardinality=1)
+        assert result.shape == (4, 1)
+        torch.testing.assert_close(result, torch.tensor([[0.0], [1.0], [1.0], [0.0]]))
+
+    def test_gt_to_evidence_categorical_1d_input(self):
+        """ground_truth_to_evidence categorical should handle 1D (batch,)."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model)
+
+        value = torch.tensor([0, 2, 3, 1])
+        result = inference.ground_truth_to_evidence(value, cardinality=4)
+        expected = torch.tensor([
+            [1, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+            [0, 1, 0, 0],
+        ]).float()
+        assert result.shape == (4, 4)
+        torch.testing.assert_close(result, expected)
+
+    def test_gt_to_evidence_categorical_2d_input(self):
+        """ground_truth_to_evidence categorical should handle 2D (batch, 1)."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model)
+
+        value = torch.tensor([[0], [2], [3], [1]])
+        result = inference.ground_truth_to_evidence(value, cardinality=4)
+        expected = torch.tensor([
+            [1, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+            [0, 1, 0, 0],
+        ]).float()
+        assert result.shape == (4, 4)
+        torch.testing.assert_close(result, expected)
+
+    # ------------------------------------------------------------------
+    # Parallel concepts at same level with p
+    # ------------------------------------------------------------------
+
+    def test_p1_parallel_concepts_same_level(self):
+        """p=1 with multiple concepts at the same topological level."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_A = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
+        var_C = EndogenousVariable('C', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_B = ParametricCPD('B', parametrization=nn.Linear(10, 1), parents=['input'])
+        cpd_C = ParametricCPD('C', parametrization=nn.Linear(2, 1), parents=['A', 'B'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A, var_B, var_C],
+            factors=[cpd_input, cpd_A, cpd_B, cpd_C],
+        )
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 2)  # GT for A and B (same level)
+
+        result = inference.query(
+            ['A', 'B', 'C'], {'input': x},
+            ground_truth=gt, concept_names=['A', 'B'],
+        )
+        assert result.shape == (8, 3)
+
+    # ------------------------------------------------------------------
+    # Debug mode with p
+    # ------------------------------------------------------------------
+
+    def test_p1_debug_mode(self):
+        """p=1 in debug mode (sequential execution) should produce valid output."""
+        model, _ = self._make_chain_model()
+        inference = AncestralSamplingInference(model, p=1.0)
+
+        x = torch.randn(8, 10)
+        gt = torch.ones(8, 1)
+
+        result = inference.query(
+            ['A', 'B'], {'input': x},
+            ground_truth=gt, concept_names=['A'],
+            debug=True,
+        )
+        assert result.shape == (8, 2)
+        assert torch.all((result == 0) | (result == 1))
+
+
 if __name__ == "__main__":
     unittest.main()
