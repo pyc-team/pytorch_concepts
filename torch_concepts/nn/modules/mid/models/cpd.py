@@ -52,15 +52,22 @@ class ParametricCPD(ParametricFactor):
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
-    def __new__(cls, concepts: Union[str, List[str]],
+    def __new__(cls, 
+                concepts: Union[str, List[str]],
                 parametrization: Union[nn.Module, List[nn.Module]],
+                shared: bool = False,
                 **kwargs):
         """
         Create new ParametricCPD instance(s).
 
         If ``concepts`` is a string, returns a single instance.
-        If ``concepts`` is a list, returns a list of instances (one per concept),
-        each with a deep-copied parametrization.
+        If ``concepts`` is a list and ``shared=False`` (default), returns a
+        list of instances (one per concept), each with a deep-copied
+        parametrization.
+        If ``concepts`` is a list and ``shared=True``, returns a **single**
+        instance whose parametrization is shared across all concepts.  The
+        parametrization must output concatenated logits for all concepts
+        (i.e. ``(batch, n_concepts * size)``).
         """
         if isinstance(concepts, str):
             if isinstance(parametrization, list):
@@ -68,6 +75,14 @@ class ParametricCPD(ParametricFactor):
                     "When 'concepts' is a string, 'parametrization' must be a single module, not a list.")
             return object.__new__(cls)
 
+        # --- shared=True: single instance, no deepcopy ---
+        if shared:
+            if isinstance(parametrization, list):
+                raise ValueError(
+                    "When shared=True, 'parametrization' must be a single module, not a list.")
+            return object.__new__(cls)
+
+        # --- shared=False (default): one deepcopied instance per concept ---
         n_concepts = len(concepts)
         if not isinstance(parametrization, list):
             module_list = [parametrization] * n_concepts
@@ -90,12 +105,15 @@ class ParametricCPD(ParametricFactor):
             instances.append(instance)
         return instances
 
-    def __init__(self, concepts: Union[str, List[str]],
+    def __init__(self, 
+                 concepts: Union[str, List[str]],
                  parametrization: Union[nn.Module, List[nn.Module]],
                  parents: List[Union[Variable, str]] = None,
+                 shared: bool = False,
                  **kwargs):
         super().__init__(concepts=concepts, parametrization=parametrization, **kwargs)
         self.parents: List[Variable] = list(parents) if parents is not None else []
+        self.shared: bool = shared
 
     # ------------------------------------------------------------------
     # Directed-model helpers (moved from ParametricFactor)

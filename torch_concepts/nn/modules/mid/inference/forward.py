@@ -124,13 +124,23 @@ class ForwardInference(BaseInference, ABC):
         # calling inspect.signature() on every forward pass.
         self._cpd_allowed_params: Dict[str, Set[str]] = {}
         self._cached_parents: Dict[str, List] = {}
+        _cpd_id_to_allowed: Dict[int, Set[str]] = {}
         for var in self.probabilistic_model.variables:
             cpd = self.probabilistic_model.get_module_of_concept(var.concept)
             if cpd is not None:
-                self._cpd_allowed_params[var.concept] = self._get_allowed_params(cpd)
+                cpd_id = id(cpd)
+                if cpd_id not in _cpd_id_to_allowed:
+                    _cpd_id_to_allowed[cpd_id] = self._get_allowed_params(cpd)
+                self._cpd_allowed_params[var.concept] = _cpd_id_to_allowed[cpd_id]
                 self._cached_parents[var.concept] = getattr(cpd, 'parents', [])
             else:
                 self._cached_parents[var.concept] = []
+
+        # Build shared CPD primary names for fast-path in _concatenate_results.
+        self._shared_cpd_primaries: Set[str] = set()
+        for cpd in self.probabilistic_model.factors.values():
+            if getattr(cpd, 'shared', False):
+                self._shared_cpd_primaries.add(cpd.concept)
 
     @abstractmethod
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
@@ -311,46 +321,56 @@ class ForwardInference(BaseInference, ABC):
     ) -> Dict[str, torch.Tensor]:
         """
         Compute predictions for a single level.
-        
-        Args:
-            level: List of Variables in this level.
-            evidence: Dictionary mapping variable names to observed/input tensors.
-            results: Dictionary of already computed results (from previous levels).
-            debug: If True, runs sequentially for easier debugging.
-            use_cuda: Whether to use CUDA streams for parallelism.
-            
-        Returns:
-            Dictionary mapping concept names to their output tensors for this level.
+
+        Iterates over unique CPDs rather than variables.  Shared CPDs are
+        executed once and the output is sliced into per-concept tensors.
         """
         level_results = {}
 
-        # Sequential execution
-        if debug or len(level) <= 1:
-            for var in level:
-                concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+        # Deduplicate CPDs: collect unique (cpd_id -> (cpd, primary_var))
+        seen_cpd_ids: Set[int] = set()
+        unique_cpds: List[Tuple[Variable, object]] = []   # (representative var, cpd)
+        for var in level:
+            cpd = self.probabilistic_model.get_module_of_concept(var.concept)
+            if cpd is None:
+                raise RuntimeError(f"Missing parametric_cpd for variable/concept: {var.concept}")
+            cid = id(cpd)
+            if cid in seen_cpd_ids:
+                continue
+            seen_cpd_ids.add(cid)
+            # For shared CPDs the representative var is the primary (first concept)
+            rep_var = self.variable_map[cpd.concept] if getattr(cpd, 'shared', False) else var
+            unique_cpds.append((rep_var, cpd))
+
+        def _run_cpd(var, cpd):
+            concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+            if getattr(cpd, 'shared', False):
+                offset = 0
+                for cname in cpd.concepts:
+                    var_size = self.variable_map[cname].out_features
+                    level_results[cname] = output_tensor[..., offset:offset + var_size]
+                    offset += var_size
+            else:
                 level_results[concept_name] = output_tensor
+
+        # Sequential execution
+        if debug or len(unique_cpds) <= 1:
+            for var, cpd in unique_cpds:
+                _run_cpd(var, cpd)
             return level_results
 
         # Parallel execution
-        level_outputs = []
-
         if use_cuda:
-            # GPU: parallel via CUDA streams
-            streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
-            for var, stream in zip(level, streams):
+            streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in unique_cpds]
+            for (var, cpd), stream in zip(unique_cpds, streams):
                 with torch.cuda.stream(stream):
-                    concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
-                    level_outputs.append((concept_name, output_tensor))
+                    _run_cpd(var, cpd)
             torch.cuda.synchronize()
         else:
-            # CPU: parallel via threads
-            with ThreadPoolExecutor(max_workers=len(level)) as executor:
-                futures = [executor.submit(self._compute_single_variable, var, evidence, results) for var in level]
+            with ThreadPoolExecutor(max_workers=len(unique_cpds)) as executor:
+                futures = [executor.submit(_run_cpd, var, cpd) for var, cpd in unique_cpds]
                 for fut in futures:
-                    level_outputs.append(fut.result())
-
-        for concept_name, output_tensor in level_outputs:
-            level_results[concept_name] = output_tensor
+                    fut.result()
 
         return level_results
 
@@ -534,6 +554,10 @@ class ForwardInference(BaseInference, ABC):
         """
         Extract and concatenate predictions for queried concepts.
 
+        When all queried concepts belong to a single shared CPD and are
+        requested in their original order, the full output tensor is returned
+        directly (avoiding thousands of tiny ``torch.cat`` calls).
+
         Args:
             query_concepts: Ordered list of concept names to return.
             all_predictions: Dictionary mapping concept names to output tensors.
@@ -545,6 +569,21 @@ class ForwardInference(BaseInference, ABC):
             ValueError: If a queried concept is missing from predictions.
             RuntimeError: If batch sizes or feature dimensions are inconsistent.
         """
+        # --- fast path: entire shared CPD queried in order ---
+        if self._shared_cpd_primaries:
+            shared_map = self.probabilistic_model._shared_cpd_map
+            first = query_concepts[0]
+            primary = shared_map.get(first, first)
+            if primary in self._shared_cpd_primaries:
+                cpd = self.probabilistic_model.factors[str(primary)]
+                if query_concepts == list(cpd.concepts):
+                    # All concepts of this shared CPD in original order → cat is unnecessary.
+                    # The slices are contiguous views; stack them once.
+                    return torch.cat(
+                        [all_predictions[c] for c in cpd.concepts], dim=-1
+                    )
+
+        # --- general path ---
         result_tensors = []
         for concept_name in query_concepts:
             if concept_name not in all_predictions:
@@ -561,7 +600,7 @@ class ForwardInference(BaseInference, ABC):
         final_tensor = torch.cat(result_tensors, dim=-1)
 
         expected_feature_dim = sum(self.variable_map[c].out_features for c in query_concepts)
-        if final_tensor.shape[1] != expected_feature_dim:
+        if final_tensor.shape[-1] != expected_feature_dim:
             raise RuntimeError(
                 f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
                 f"but got {final_tensor.shape[1]}. Check Variable.out_features logic."
