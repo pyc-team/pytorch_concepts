@@ -3224,5 +3224,31 @@ class TestAncestralSamplingWithP:
         assert torch.all((result == 0) | (result == 1))
 
 
+class TestSharedCPDDimensionValidation(unittest.TestCase):
+    """Test that shared CPD output dimension mismatches are caught."""
+
+    def test_shared_cpd_extra_features_raises(self):
+        """Shared CPD outputting more features than expected raises RuntimeError."""
+        input_var = InputVariable('input', distribution=Delta, size=10)
+        var_a = EndogenousVariable('A', distribution=Bernoulli, size=1)
+        var_b = EndogenousVariable('B', distribution=Bernoulli, size=1)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        # Output 5 features but A(1) + B(1) = 2 expected
+        shared_cpd = ParametricCPD(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 5),
+            shared=True, parents=['input'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_a, var_b],
+            factors=[cpd_input, shared_cpd],
+        )
+        inference = DeterministicInference(model)
+        x = torch.randn(4, 10)
+
+        with self.assertRaises(RuntimeError, msg="Shared CPD output feature dimension mismatch"):
+            inference.query(['A', 'B'], {'input': x})
+
+
 if __name__ == "__main__":
     unittest.main()

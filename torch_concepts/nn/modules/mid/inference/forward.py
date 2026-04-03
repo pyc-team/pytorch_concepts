@@ -360,6 +360,12 @@ class ForwardInference(BaseInference, ABC):
                     var_size = self.variable_map[cname].out_features
                     level_results[cname] = output_tensor[..., offset:offset + var_size]
                     offset += var_size
+                if offset != output_tensor.shape[-1]:
+                    raise RuntimeError(
+                        "Shared CPD output feature dimension mismatch: "
+                        f"expected {offset} features from concepts {list(cpd.concepts)}, "
+                        f"but got {output_tensor.shape[-1]}."
+                    )
             else:
                 level_results[concept_name] = output_tensor
 
@@ -587,8 +593,10 @@ class ForwardInference(BaseInference, ABC):
             if primary in self._shared_cpd_primaries:
                 cpd = self.probabilistic_model.factors[str(primary)]
                 if query_concepts == list(cpd.concepts):
-                    # All concepts of this shared CPD in original order → cat is unnecessary.
-                    # The slices are contiguous views; stack them once.
+                    # All concepts of this shared CPD in original order.
+                    # The per-concept slices are contiguous views of the
+                    # activated output; re-concatenating them is cheaper
+                    # than the general path (skips validation overhead).
                     return torch.cat(
                         [all_predictions[c] for c in cpd.concepts], dim=-1
                     )

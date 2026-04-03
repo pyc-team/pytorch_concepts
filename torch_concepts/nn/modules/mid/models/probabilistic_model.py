@@ -201,7 +201,7 @@ class ProbabilisticModel(nn.Module):
 
     def get_variable_parents(self, concept_name: str) -> List[Variable]:
         """Return the parent variables of a concept (empty if none / undirected)."""
-        cpd = self.factors[str(concept_name)] if str(concept_name) in self.factors else None
+        cpd = self.get_module_of_concept(concept_name)
         return cpd.parents if cpd is not None and hasattr(cpd, 'parents') else []
 
     # ---- CPT / potential-table helpers (directed models) -------------------
@@ -219,15 +219,34 @@ class ProbabilisticModel(nn.Module):
         return f
 
     def build_potentials(self):
-        """Build potential tables for all concepts."""
+        """Build potential tables for all concepts.
+        
+        Raises:
+            NotImplementedError: If the model contains shared CPDs.
+        """
+        self._reject_shared_cpds("build_potentials")
         return {
             concept: self._make_temp_parametric_cpd(concept, module).build_potential()
             for concept, module in self.factors.items()
         }
 
     def build_cpts(self):
-        """Build Conditional Probability Tables for all concepts."""
+        """Build Conditional Probability Tables for all concepts.
+        
+        Raises:
+            NotImplementedError: If the model contains shared CPDs.
+        """
+        self._reject_shared_cpds("build_cpts")
         return {
             concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
             for concept, module in self.factors.items()
         }
+
+    def _reject_shared_cpds(self, method_name: str) -> None:
+        """Raise if any factor is a shared CPD."""
+        if self._shared_cpd_map:
+            raise NotImplementedError(
+                f"{method_name}() does not support shared CPDs. "
+                f"Secondary concepts {list(self._shared_cpd_map.keys())} "
+                f"would be silently omitted."
+            )
