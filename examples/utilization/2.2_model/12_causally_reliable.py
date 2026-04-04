@@ -51,18 +51,14 @@ def main():
     # Define loss function
     loss_fn = ConceptLoss(
         annotations = annotations,
-        binary = torch.nn.BCEWithLogitsLoss(),
-        categorical = torch.nn.CrossEntropyLoss(),
-        continuous = torch.nn.MSELoss()
+        binary = torch.nn.BCEWithLogitsLoss()
     )
 
     metrics = ConceptMetrics(
         annotations = annotations,
         summary=True,
         per_concept=True,
-        fn_collection = GroupConfig(
-            binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()}
-        )
+        binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()}
     )
 
 
@@ -99,8 +95,9 @@ def main():
     query = concept_names
     print(f"Query variables: {query}")
     
+    device = next(model.parameters()).device
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
+        endogenous = model(x=x_batch.to(device), query=query)
     
     print(f"Input shape: {x_batch.shape}")
     print(f"Output endogenous shape: {endogenous.shape}")

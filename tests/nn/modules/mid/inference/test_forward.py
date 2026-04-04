@@ -2572,6 +2572,34 @@ class TestGroundTruthProbabilisticPropagation:
             "return_logits should give raw outputs, not activated"
 
 
+class TestAncestralSamplingDroppedKwargsWarning(unittest.TestCase):
+    """Test that unrecognized dist_kwargs produce a warning."""
+
+    def test_unrecognized_dist_kwarg_warns(self):
+        """Passing a typo'd dist_kwarg should trigger a UserWarning."""
+        import warnings
+        input_var = InputVariable('input', distribution=Delta, size=5)
+        var_A = EndogenousVariable(
+            'A', distribution=Bernoulli, size=1,
+            dist_kwargs={'nonexistent_param': 42},
+        )
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_A = ParametricCPD('A', parametrization=nn.Linear(5, 1), parents=['input'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_A],
+            factors=[cpd_input, cpd_A],
+        )
+        inference = AncestralSamplingInference(model)
+        x = torch.randn(4, 5)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            inference.query(['A'], {'input': x})
+            matching = [x for x in w if "nonexistent_param" in str(x.message)]
+            self.assertTrue(len(matching) > 0, "Expected warning about dropped dist_kwargs")
+
+
 class TestAncestralSamplingWithP:
     """Comprehensive tests for the p parameter with AncestralSamplingInference.
 

@@ -122,7 +122,15 @@ class DeterministicInference(ForwardInference):
             )
 
         if cardinality == 1:
-            # Binary: return 0.0 / 1.0 probabilities
+            # Binary: validate values are in {0, 1}
+            unique_vals = value.unique()
+            if not all(v in (0, 1) for v in unique_vals.tolist()):
+                import warnings
+                warnings.warn(
+                    f"Binary ground truth contains values outside {{0, 1}}: "
+                    f"{unique_vals.tolist()}. Values will be used as-is.",
+                    stacklevel=2,
+                )
             return value.float()
         else:
             # Categorical: return one-hot probabilities

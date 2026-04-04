@@ -377,11 +377,16 @@ class ForwardInference(BaseInference, ABC):
 
         # Parallel execution
         if use_cuda:
+            default_stream = torch.cuda.current_stream()
             streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in unique_cpds]
             for (var, cpd), stream in zip(unique_cpds, streams):
+                # Side stream must wait for default stream's prior work
+                stream.wait_stream(default_stream)
                 with torch.cuda.stream(stream):
                     _run_cpd(var, cpd)
-            torch.cuda.synchronize()
+            # Default stream waits for all side streams before using results
+            for stream in streams:
+                default_stream.wait_stream(stream)
         else:
             with ThreadPoolExecutor(max_workers=len(unique_cpds)) as executor:
                 futures = [executor.submit(_run_cpd, var, cpd) for var, cpd in unique_cpds]
@@ -453,16 +458,19 @@ class ForwardInference(BaseInference, ABC):
 
                     # GPU: parallel via CUDA streams
                     if use_cuda:
+                        default_stream = torch.cuda.current_stream()
                         streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in global_wrappers]
 
                         for (concept_name, wrapper), stream in zip(global_wrappers, streams):
+                            stream.wait_stream(default_stream)
                             with torch.cuda.stream(stream):
                                 concept_name_out, intervened_output = self._apply_single_global_intervention(
                                     concept_name, wrapper, results
                                 )
                                 intervention_outputs.append((concept_name_out, intervened_output))
 
-                        torch.cuda.synchronize()
+                        for stream in streams:
+                            default_stream.wait_stream(stream)
 
                     # CPU: parallel via threads
                     else:
@@ -621,7 +629,7 @@ class ForwardInference(BaseInference, ABC):
         if final_tensor.shape[-1] != expected_feature_dim:
             raise RuntimeError(
                 f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
-                f"but got {final_tensor.shape[1]}. Check Variable.out_features logic."
+                f"but got {final_tensor.shape[-1]}. Check Variable.out_features logic."
             )
 
         return final_tensor

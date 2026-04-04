@@ -125,6 +125,8 @@ class ParametricCPD(ParametricFactor):
             return 0
         return sum(p.size for p in self.parents)
 
+    _MAX_DISCRETE_BITS = 20  # cap on total discrete parent bits for table construction
+
     def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Enumerate all discrete parent-state combinations for table construction.
@@ -139,11 +141,32 @@ class ParametricCPD(ParametricFactor):
             Input tensors for the parametrization, one row per combination.
         all_discrete_state_vectors : torch.Tensor
             Corresponding state vectors for the table rows.
+
+        Raises
+        ------
+        RuntimeError
+            If the total number of discrete parent bits exceeds
+            ``_MAX_DISCRETE_BITS`` (default 20), which would require
+            enumerating more than ~1 million combinations.
         """
         if not self.parents:
             in_features = self.parametrization.in_features
             placeholder_input = torch.zeros((1, in_features))
             return placeholder_input, torch.empty((1, 0))
+
+        # --- guard against combinatorial explosion ---
+        total_bits = 0
+        for p in self.parents:
+            if p.distribution in [Bernoulli, RelaxedBernoulli]:
+                total_bits += p.out_features
+            elif p.distribution in [Categorical, RelaxedOneHotCategorical]:
+                total_bits += p.out_features  # one-hot dims
+        if total_bits > self._MAX_DISCRETE_BITS:
+            raise RuntimeError(
+                f"Total discrete parent bits ({total_bits}) exceeds the "
+                f"maximum of {self._MAX_DISCRETE_BITS}. Table construction "
+                f"would require 2^{total_bits} rows."
+            )
 
         discrete_combinations_list = []
         discrete_state_vectors_list = []
@@ -205,6 +228,12 @@ class ParametricCPD(ParametricFactor):
     # ------------------------------------------------------------------
 
     def build_cpt(self) -> torch.Tensor:
+        if self.shared:
+            raise NotImplementedError(
+                "build_cpt() is not supported for shared CPDs. "
+                "Shared CPDs output concatenated logits for multiple concepts "
+                "and cannot be decomposed into per-variable CPTs."
+            )
         if not self.variable:
             raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
@@ -242,6 +271,12 @@ class ParametricCPD(ParametricFactor):
         return probabilities
 
     def build_potential(self) -> torch.Tensor:
+        if self.shared:
+            raise NotImplementedError(
+                "build_potential() is not supported for shared CPDs. "
+                "Shared CPDs output concatenated logits for multiple concepts "
+                "and cannot be decomposed into per-variable potential tables."
+            )
         if not self.variable:
             raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 

@@ -1,6 +1,7 @@
 """Ancestral sampling inference for probabilistic graphical models."""
 
 import inspect
+from typing import Dict, Set
 
 import torch
 
@@ -107,6 +108,21 @@ class AncestralSamplingInference(ForwardInference):
         super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy, p=p)
         self.log_probs = log_probs
 
+        # Cache distribution constructor signatures to avoid calling
+        # inspect.signature() on every forward pass.
+        self._dist_allowed_params: Dict[type, Set[str]] = {}
+        for var in probabilistic_model.variables:
+            dist_cls = var.distribution
+            if dist_cls not in self._dist_allowed_params:
+                sig = inspect.signature(dist_cls.__init__)
+                self._dist_allowed_params[dist_cls] = {
+                    name for name, p in sig.parameters.items()
+                    if name != "self" and p.kind in (
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    )
+                }
+
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
         """
         Sample from the distribution parameterized by the raw CPD output.
@@ -126,17 +142,29 @@ class AncestralSamplingInference(ForwardInference):
         Returns:
             torch.Tensor: Sampled values from the distribution.
         """
-        sig = inspect.signature(variable.distribution.__init__)
-        params = sig.parameters
-        allowed = {
-            name for name, p in params.items()
-            if name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-        }
+        allowed = self._dist_allowed_params.get(variable.distribution)
+        if allowed is None:
+            # Fallback for dynamically added distributions
+            sig = inspect.signature(variable.distribution.__init__)
+            allowed = {
+                name for name, p in sig.parameters.items()
+                if name != "self" and p.kind in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
+            self._dist_allowed_params[variable.distribution] = allowed
+
         # retain only allowed dist kwargs
         dist_kwargs = {k: v for k, v in variable.dist_kwargs.items() if k in allowed}
+        dropped = set(variable.dist_kwargs) - set(dist_kwargs)
+        if dropped:
+            import warnings
+            warnings.warn(
+                f"Variable '{variable.concept}': dist_kwargs {dropped} are not "
+                f"accepted by {variable.distribution.__name__} and were ignored.",
+                stacklevel=2,
+            )
 
         # Decide how to pass pred based on the distribution's accepted params
         if "logits" in allowed and self.log_probs:

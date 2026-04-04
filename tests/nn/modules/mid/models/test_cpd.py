@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.variable import Variable
+from torch_concepts.nn.modules.mid.models.variable import Variable, ConceptVariable
 from torch_concepts.distributions import Delta
 
 
@@ -421,6 +421,45 @@ class TestParametricCPD(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             cpd.build_cpt()
+
+
+class TestParametricCPDParentCap(unittest.TestCase):
+    """Test _get_parent_combinations caps exponential blowup."""
+
+    def test_too_many_binary_parents_raises(self):
+        """More than _MAX_DISCRETE_BITS binary parents should raise RuntimeError."""
+        parents = [ConceptVariable(f'p{i}', distribution=Bernoulli, size=1) for i in range(21)]
+
+        cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(21, 1), parents=[p.concept for p in parents])
+        cpd.parents = parents  # bypass string resolution
+
+        with self.assertRaises(RuntimeError, msg="discrete parent bits"):
+            cpd._get_parent_combinations()
+
+    def test_within_cap_succeeds(self):
+        """A small number of parents should not raise."""
+        parents = [ConceptVariable(f'p{i}', distribution=Bernoulli, size=1) for i in range(3)]
+
+        cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(3, 1), parents=[p.concept for p in parents])
+        cpd.parents = parents
+        inputs, states = cpd._get_parent_combinations()
+        self.assertEqual(inputs.shape[0], 8)  # 2^3 = 8
+
+
+class TestParametricCPDSharedGuard(unittest.TestCase):
+    """Test shared CPD guard in build_cpt / build_potential."""
+
+    def test_shared_cpd_build_cpt_raises(self):
+        """build_cpt should raise NotImplementedError for shared CPDs."""
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(5, 2), shared=True)
+        with self.assertRaises(NotImplementedError):
+            cpd.build_cpt()
+
+    def test_shared_cpd_build_potential_raises(self):
+        """build_potential should raise NotImplementedError for shared CPDs."""
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(5, 2), shared=True)
+        with self.assertRaises(NotImplementedError):
+            cpd.build_potential()
 
 
 if __name__ == '__main__':

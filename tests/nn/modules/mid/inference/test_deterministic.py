@@ -385,3 +385,31 @@ class TestDeterministicQueryLazy:
             inf_full.query(['B'], evidence={'input': x}),
             inf_lazy.query(['B'], evidence={'input': x}),
         )
+
+
+class TestGroundTruthRangeValidation:
+    """Test that ground_truth_to_evidence warns on out-of-range binary values."""
+
+    def test_binary_gt_out_of_range_warns(self):
+        """Passing a value not in {0, 1} for binary should warn."""
+        import warnings
+        inference = DeterministicInference.__new__(DeterministicInference)
+        value = torch.tensor([[0.5]])
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = inference.ground_truth_to_evidence(value, cardinality=1)
+            matching = [x for x in w if "outside {0, 1}" in str(x.message)]
+            assert len(matching) > 0, "Expected warning for out-of-range binary GT"
+        assert result.shape == (1, 1)
+
+    def test_binary_gt_valid_no_warning(self):
+        """Values in {0, 1} should not produce a warning."""
+        import warnings
+        inference = DeterministicInference.__new__(DeterministicInference)
+        value = torch.tensor([[0.0], [1.0]])
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = inference.ground_truth_to_evidence(value, cardinality=1)
+            matching = [x for x in w if "outside {0, 1}" in str(x.message)]
+            assert len(matching) == 0, "Should not warn for valid binary GT"
+        assert result.shape == (2, 1)

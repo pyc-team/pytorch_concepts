@@ -212,5 +212,42 @@ class TestConceptGraph(unittest.TestCase):
         self.assertFalse(cycle_graph.is_dag())
 
 
+class TestConceptGraphCacheInvalidation(unittest.TestCase):
+    """Test that NX graph cache is invalidated on edge mutation."""
+
+    def test_edge_weight_mutation_invalidates_cache(self):
+        """Modifying edge_weight should invalidate the cached NX graph."""
+        adj = torch.tensor([[0., 1.], [0., 0.]])
+        g = ConceptGraph(adj, node_names=['A', 'B'])
+
+        # Trigger cache creation
+        _ = g._nx_graph
+        self.assertIsNotNone(g._nx_graph_cache)
+
+        # Mutate edge weights
+        g.edge_weight = torch.tensor([5.0])
+        self.assertIsNone(g._nx_graph_cache)
+
+        # New cache should reflect the mutation
+        nx_g = g._nx_graph
+        self.assertAlmostEqual(nx_g['A']['B']['weight'], 5.0)
+
+    def test_edge_index_mutation_invalidates_cache(self):
+        """Modifying edge_index should invalidate the cached NX graph."""
+        adj = torch.tensor([[0., 1.], [0., 0.]])
+        g = ConceptGraph(adj, node_names=['A', 'B'])
+
+        _ = g._nx_graph
+        self.assertIsNotNone(g._nx_graph_cache)
+
+        # Reverse direction: B -> A
+        g.edge_index = torch.tensor([[1], [0]])
+        self.assertIsNone(g._nx_graph_cache)
+
+        nx_g = g._nx_graph
+        self.assertTrue(nx_g.has_edge('B', 'A'))
+        self.assertFalse(nx_g.has_edge('A', 'B'))
+
+
 if __name__ == '__main__':
     unittest.main()
