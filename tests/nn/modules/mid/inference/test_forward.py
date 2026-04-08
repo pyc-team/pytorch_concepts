@@ -3278,5 +3278,79 @@ class TestSharedCPDDimensionValidation(unittest.TestCase):
             inference.query(['A', 'B'], {'input': x})
 
 
+class TestEarlyExitOnQuerySatisfied(unittest.TestCase):
+    """Test that query() stops processing levels once all queried variables are computed."""
+
+    def _build_three_level_model(self):
+        """Build a 3-level model: input -> A -> B, with a counter on B's CPD."""
+        input_var = InputVariable('input', distribution=Delta, size=4)
+        var_a = EndogenousVariable('A', distribution=Delta, size=3)
+        var_b = EndogenousVariable('B', distribution=Delta, size=2)
+
+        cpd_input = ParametricCPD('input', parametrization=nn.Identity())
+        cpd_a = ParametricCPD('A', parametrization=nn.Linear(4, 3), parents=['input'])
+
+        # Wrap B's parametrization to count calls
+        linear_b = nn.Linear(3, 2)
+        call_count = {'value': 0}
+        original_forward = linear_b.forward
+
+        def counting_forward(x):
+            call_count['value'] += 1
+            return original_forward(x)
+
+        linear_b.forward = counting_forward
+        cpd_b = ParametricCPD('B', parametrization=linear_b, parents=['A'])
+
+        model = ProbabilisticModel(
+            variables=[input_var, var_a, var_b],
+            factors=[cpd_input, cpd_a, cpd_b],
+        )
+        return model, call_count
+
+    def test_query_root_skips_downstream(self):
+        """Querying only the root variable should not compute downstream CPDs."""
+        model, call_count = self._build_three_level_model()
+        inference = DeterministicInference(model)
+        x = torch.randn(2, 4)
+
+        result = inference.query(['input'], {'input': x})
+        self.assertEqual(call_count['value'], 0,
+                         "B's CPD should not be called when only 'input' is queried")
+        self.assertEqual(result.shape, (2, 4))
+
+    def test_query_mid_level_skips_deeper(self):
+        """Querying level-1 variable should not compute level-2 CPDs."""
+        model, call_count = self._build_three_level_model()
+        inference = DeterministicInference(model)
+        x = torch.randn(2, 4)
+
+        result = inference.query(['A'], {'input': x})
+        self.assertEqual(call_count['value'], 0,
+                         "B's CPD should not be called when only 'A' is queried")
+        self.assertEqual(result.shape, (2, 3))
+
+    def test_query_leaf_computes_all(self):
+        """Querying the leaf variable should compute all levels."""
+        model, call_count = self._build_three_level_model()
+        inference = DeterministicInference(model)
+        x = torch.randn(2, 4)
+
+        result = inference.query(['B'], {'input': x})
+        self.assertEqual(call_count['value'], 1,
+                         "B's CPD should be called exactly once")
+        self.assertEqual(result.shape, (2, 2))
+
+    def test_query_all_computes_all(self):
+        """Querying all variables should compute everything."""
+        model, call_count = self._build_three_level_model()
+        inference = DeterministicInference(model)
+        x = torch.randn(2, 4)
+
+        result = inference.query(['input', 'A', 'B'], {'input': x})
+        self.assertEqual(call_count['value'], 1)
+        self.assertEqual(result.shape, (2, 4 + 3 + 2))
+
+
 if __name__ == "__main__":
     unittest.main()

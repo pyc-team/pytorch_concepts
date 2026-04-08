@@ -56,6 +56,7 @@ class ParametricCPD(ParametricFactor):
                 concepts: Union[str, List[str]],
                 parametrization: Union[nn.Module, List[nn.Module]],
                 shared: bool = False,
+                shared_name: Optional[str] = None,
                 **kwargs):
         """
         Create new ParametricCPD instance(s).
@@ -110,10 +111,12 @@ class ParametricCPD(ParametricFactor):
                  parametrization: Union[nn.Module, List[nn.Module]],
                  parents: List[Union[Variable, str]] = None,
                  shared: bool = False,
+                 shared_name: Optional[str] = None,
                  **kwargs):
         super().__init__(concepts=concepts, parametrization=parametrization, **kwargs)
         self.parents: List[Variable] = list(parents) if parents is not None else []
         self.shared: bool = shared
+        self.shared_name: Optional[str] = shared_name
 
     # ------------------------------------------------------------------
     # Directed-model helpers (moved from ParametricFactor)
@@ -158,9 +161,9 @@ class ParametricCPD(ParametricFactor):
         total_bits = 0
         for p in self.parents:
             if p.distribution in [Bernoulli, RelaxedBernoulli]:
-                total_bits += p.out_features
+                total_bits += p.size
             elif p.distribution in [Categorical, RelaxedOneHotCategorical]:
-                total_bits += p.out_features  # one-hot dims
+                total_bits += p.size  # one-hot dims
         if total_bits > self._MAX_DISCRETE_BITS:
             raise RuntimeError(
                 f"Total discrete parent bits ({total_bits}) exceeds the "
@@ -175,7 +178,7 @@ class ParametricCPD(ParametricFactor):
         for parent_var in self.parents:
             if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
                                            Categorical, RelaxedOneHotCategorical]:
-                out_dim = parent_var.out_features
+                out_dim = parent_var.size
                 input_combinations = []
                 state_combinations = []
 
@@ -195,7 +198,7 @@ class ParametricCPD(ParametricFactor):
                     [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
 
             elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
-                fixed_value = torch.zeros(parent_var.out_features).unsqueeze(0)
+                fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
                 continuous_tensors.append(fixed_value)
             else:
                 raise TypeError(

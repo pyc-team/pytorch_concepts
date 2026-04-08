@@ -105,13 +105,15 @@ class ProbabilisticModel(nn.Module):
                     self.factors[str(concept)] = factor
 
     def _register_shared_factor(self, factor):
-        """Register a shared CPD under its primary concept and map secondary names 
-        as lightweight string redirects."""
-        primary = factor.concept
-        factor.variable = self.concept_to_variable.get(primary)
-        self.factors[str(primary)] = factor
-        for name in factor.concepts[1:]:
-            self._shared_cpd_map[name] = primary
+        """Register a shared CPD under its shared_name (if provided) or primary
+        concept and map the remaining concept names as lightweight string redirects."""
+        shared_name = getattr(factor, 'shared_name', None)
+        key = shared_name if shared_name else factor.concept
+        factor.variable = self.concept_to_variable.get(factor.concept)
+        self.factors[str(key)] = factor
+        for name in factor.concepts:
+            if name != key:
+                self._shared_cpd_map[name] = key
 
     def _initialize_directed(self, input_factors: List[ParametricFactor]):
         """Directed-model initialisation: lazy constructors + parent resolution."""

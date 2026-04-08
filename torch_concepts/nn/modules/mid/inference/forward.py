@@ -146,11 +146,11 @@ class ForwardInference(BaseInference, ABC):
             else:
                 self._cached_parents[var.concept] = []
 
-        # Build shared CPD primary names for fast-path in _concatenate_results.
+        # Build shared CPD registration keys for fast-path in _concatenate_results.
         self._shared_cpd_primaries: Set[str] = set()
-        for cpd in self.probabilistic_model.factors.values():
+        for key, cpd in self.probabilistic_model.factors.items():
             if getattr(cpd, 'shared', False):
-                self._shared_cpd_primaries.add(cpd.concept)
+                self._shared_cpd_primaries.add(key)
 
     @abstractmethod
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
@@ -266,9 +266,15 @@ class ForwardInference(BaseInference, ABC):
 
         # 1. Root nodes (no parents)
         if not parents:
-            if concept_name not in evidence:
+            # For shared CPDs with a shared_name, allow evidence under that name
+            shared_name = getattr(parametric_cpd, 'shared_name', None)
+            if shared_name and shared_name in evidence:
+                evidence_key = shared_name
+            else:
+                evidence_key = concept_name
+            if evidence_key not in evidence:
                 raise ValueError(f"Root variable '{concept_name}' requires an input tensor in the 'evidence' dictionary.")
-            input_tensor = evidence[concept_name]
+            input_tensor = evidence[evidence_key]
             parent_kwargs = self.get_parent_kwargs(parametric_cpd, [input_tensor], [])
             output_tensor = parametric_cpd.forward(**parent_kwargs)
 
@@ -357,7 +363,7 @@ class ForwardInference(BaseInference, ABC):
             if getattr(cpd, 'shared', False):
                 offset = 0
                 for cname in cpd.concepts:
-                    var_size = self.variable_map[cname].out_features
+                    var_size = self.variable_map[cname].size
                     level_results[cname] = output_tensor[..., offset:offset + var_size]
                     offset += var_size
                 if offset != output_tensor.shape[-1]:
@@ -625,11 +631,11 @@ class ForwardInference(BaseInference, ABC):
 
         final_tensor = torch.cat(result_tensors, dim=-1)
 
-        expected_feature_dim = sum(self.variable_map[c].out_features for c in query_concepts)
+        expected_feature_dim = sum(self.variable_map[c].size for c in query_concepts)
         if final_tensor.shape[-1] != expected_feature_dim:
             raise RuntimeError(
                 f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
-                f"but got {final_tensor.shape[-1]}. Check Variable.out_features logic."
+                f"but got {final_tensor.shape[-1]}. Check Variable.size logic."
             )
 
         return final_tensor
@@ -747,6 +753,8 @@ class ForwardInference(BaseInference, ABC):
         returned: Dict[str, torch.Tensor] | None = {} if need_separate_return else None
         propagation: Dict[str, torch.Tensor] = dict(evidence)
 
+        query_set = set(query)
+
         for level in levels:
             level_output = self._predict_level(level, evidence, propagation, debug=debug, use_cuda=use_cuda)
 
@@ -783,6 +791,11 @@ class ForwardInference(BaseInference, ABC):
                     if returned is not None:
                         returned[name] = pred
                     propagation[name] = pred
+
+            # Early exit: stop if all queried variables have been computed
+            results_dict = returned if returned is not None else propagation
+            if query_set.issubset(results_dict):
+                break
 
         return self._concatenate_results(query, returned if returned is not None else propagation)
 
