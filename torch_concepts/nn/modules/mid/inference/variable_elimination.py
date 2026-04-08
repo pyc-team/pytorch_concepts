@@ -8,7 +8,7 @@ flow back through the neural-network parameters that produced the factor
 potentials — enabling end-to-end training through inference.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 
@@ -208,6 +208,7 @@ class VariableEliminationInference(BaseInference):
         super().__init__()
         self.probabilistic_model = probabilistic_model
         self.elimination_order = elimination_order
+        self._order_cache: Dict[Tuple[Tuple[str, ...], Tuple[str, ...]], List[str]] = {}
 
     # ------------------------------------------------------------------
     # BaseInference interface
@@ -264,12 +265,17 @@ class VariableEliminationInference(BaseInference):
         evidence_set = set(evidence.keys())
         hidden = all_vars - query_set - evidence_set
 
-        # 4. Elimination ordering
-        if self.elimination_order is not None:
+        # 4. Elimination ordering (cached by query/evidence pattern)
+        cache_key = (tuple(sorted(query)), tuple(sorted(evidence.keys())))
+        if cache_key in self._order_cache:
+            elim_order = self._order_cache[cache_key]
+        elif self.elimination_order is not None:
             # Filter user-provided order to only include actual hidden vars
             elim_order = [v for v in self.elimination_order if v in hidden]
+            self._order_cache[cache_key] = elim_order
         else:
             elim_order = _min_degree_order(factors, list(hidden))
+            self._order_cache[cache_key] = elim_order
 
         # 5. Sum-Product VE
         phi_star = _sum_product_ve(factors, elim_order)

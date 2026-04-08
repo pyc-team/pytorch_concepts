@@ -52,7 +52,7 @@ from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 
 # Models (mid-level)
-from .modules.mid.models.parametricFactor import ParametricFactor
+from .modules.mid.models.parametric_factor import ParametricFactor
 from .modules.mid.models.parametric_cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.constructors.bipartite import BipartiteModel
@@ -64,6 +64,7 @@ from .modules.mid.inference import (
     DeterministicInference,
     AncestralSamplingInference,
     IndependentInference,
+    VariableEliminationInference,
 )
 
 # Interventions (low-level)
@@ -146,7 +147,7 @@ __all__ = [
     "DeterministicInference",
     "AncestralSamplingInference",
     "IndependentInference",
-
+    "VariableEliminationInference",
     # Interventions
     "RewiringIntervention",
     "GroundTruthIntervention",
