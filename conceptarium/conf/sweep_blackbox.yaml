@@ -8,8 +8,8 @@ hydra:
   sweeper:
     params:
       seed: 42
-      dataset: dag_asia
-      model: blackbox
+      dataset: dag_asia, celeba
+      model: blackbox, blackbox_task
       loss: standard
 
 dataset:
