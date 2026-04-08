@@ -84,7 +84,7 @@ def main(cfg: DictConfig) -> None:
     finally:
         trainer.logger.experiment.finish()
         # Log run to CSV registry
-        if cfg.debug:
+        if cfg.get("debug", False):
             logger.warning("Debug mode is ON - skipping registry logging")
         else:
             csv_path = os.path.join(get_original_cwd(), "conceptarium", "runs.csv")
