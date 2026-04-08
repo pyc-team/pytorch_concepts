@@ -17,7 +17,7 @@ from torch_concepts.nn import (
     LinearConceptToConcept,
     LinearLatentToConcept,
 )
-from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 
 

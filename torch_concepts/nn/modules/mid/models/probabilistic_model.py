@@ -15,7 +15,7 @@ from typing import List, Dict, Optional, Type, Union
 
 from .variable import Variable, ExogenousVariable, ConceptVariable
 from .parametricFactor import ParametricFactor
-from .parametricCPD import ParametricCPD
+from .parametric_cpd import ParametricCPD
 
 
 # ---------------------------------------------------------------------------

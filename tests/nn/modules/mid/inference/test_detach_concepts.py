@@ -17,7 +17,7 @@ from torch.distributions import Bernoulli
 from torch_concepts import LatentVariable, ConceptVariable, ExogenousVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import DeterministicInference
-from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 

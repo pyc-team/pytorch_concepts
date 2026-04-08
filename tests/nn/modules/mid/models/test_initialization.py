@@ -16,7 +16,7 @@ from torch_concepts.nn.modules.mid.models.variable import (
     ExogenousVariable,
     LatentVariable,
 )
-from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.distributions import Delta
 
 

@@ -15,7 +15,7 @@ from torch.distributions import Bernoulli, Categorical
 
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable
 from torch_concepts.nn.modules.mid.models.variable import Variable
-from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.inference.independent import IndependentInference
 from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
