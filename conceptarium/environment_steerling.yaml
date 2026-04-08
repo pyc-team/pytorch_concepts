@@ -1,0 +1,32 @@
+name: steerling
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13.*
+
+  - numpy
+  - pandas==2.2.*
+  - pytables
+  - tqdm
+  - scikit-learn
+  - scipy
+  - openpyxl
+
+  - pip
+  - pip:
+    # PyTorch with CUDA 12.8 (via PyTorch index)
+    - --extra-index-url https://download.pytorch.org/whl/cu128
+    - torch
+    - torchvision
+    - torchmetrics>=0.7
+    - lightning
+    # Steerling - Interpretable Causal Diffusion Language Model
+    - steerling
+    # Other dependencies
+    - hydra-core
+    - wandb
+    - bnlearn # library for Bayesian networks
+    - gdown # to download files from Google Drive (CelebA dataset)
+    - transformers # State-of-the-art pretrained models for backbones
+    - hydra-list-sweeper
