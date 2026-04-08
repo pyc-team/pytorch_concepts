@@ -4,7 +4,7 @@ from torch.nn import Identity, Module
 from .....annotations import Annotations
 from ..models.variable import Variable, LatentVariable, ExogenousVariable, ConceptVariable
 from .concept_graph import ConceptGraph
-from ..models.cpd import ParametricCPD
+from ..models.parametricCPD import ParametricCPD
 from ..models.probabilistic_model import ProbabilisticModel
 from .....distributions import Delta
 from ..base.model import BaseConstructor

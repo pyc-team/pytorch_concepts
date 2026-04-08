@@ -22,7 +22,7 @@ from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicI
 from torch_concepts.nn.modules.mid.models.variable import (
     Variable, ConceptVariable, LatentVariable,
 )
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 

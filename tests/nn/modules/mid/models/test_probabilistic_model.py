@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 from torch_concepts.nn.modules.mid.models.variable import Variable
-from torch_concepts.nn.modules.mid.models.factor import ParametricFactor
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametricFactor import ParametricFactor
+from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.mid.models.probabilistic_model import (
     ProbabilisticModel,

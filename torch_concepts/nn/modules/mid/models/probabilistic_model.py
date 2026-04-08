@@ -14,8 +14,8 @@ from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type, Union
 
 from .variable import Variable, ExogenousVariable, ConceptVariable
-from .factor import ParametricFactor
-from .cpd import ParametricCPD
+from .parametricFactor import ParametricFactor
+from .parametricCPD import ParametricCPD
 
 
 # ---------------------------------------------------------------------------

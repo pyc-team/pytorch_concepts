@@ -11,7 +11,7 @@ from typing import List, Sequence, Union, Optional, Dict
 import torch
 import torch.nn as nn
 
-from ...mid.models.cpd import ParametricCPD
+from ...mid.models.parametricCPD import ParametricCPD
 from ..base.inference import BaseIntervention
 
 # ---------------- core helpers ----------------

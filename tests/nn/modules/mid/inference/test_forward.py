@@ -15,7 +15,7 @@ from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable,
 from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
     LinearExogenousToConcept, HyperlinearConceptExogenousToConcept
 from torch_concepts.nn.modules.mid.models.variable import Variable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.inference.forward import ForwardInference
 from torch_concepts.distributions import Delta

@@ -5,7 +5,7 @@ from torch_concepts.nn.modules.low.inference.intervention import (
     _set_submodule,
     _as_list,
 )
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.parametricCPD import ParametricCPD
 from torch_concepts.nn.modules.low.inference.intervention import (
     _GlobalPolicyState,
 )
