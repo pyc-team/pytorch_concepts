@@ -139,10 +139,30 @@ class ConceptGraph:
         self._node_name_to_index = {name: idx for idx, name in enumerate(self.node_names)}
 
         # Convert to sparse format and store
-        self.edge_index, self.edge_weight = _dense_to_sparse_pytorch(data)
+        self._edge_index, self._edge_weight = _dense_to_sparse_pytorch(data)
 
         # Cache networkx graph for faster repeated access
         self._nx_graph_cache = None
+
+    @property
+    def edge_index(self) -> Tensor:
+        """Edge list of shape (2, num_edges)."""
+        return self._edge_index
+
+    @edge_index.setter
+    def edge_index(self, value: Tensor):
+        self._edge_index = value
+        self._nx_graph_cache = None  # invalidate cache
+
+    @property
+    def edge_weight(self) -> Tensor:
+        """Edge weights of shape (num_edges,)."""
+        return self._edge_weight
+
+    @edge_weight.setter
+    def edge_weight(self, value: Tensor):
+        self._edge_weight = value
+        self._nx_graph_cache = None  # invalidate cache
 
     @classmethod
     def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):

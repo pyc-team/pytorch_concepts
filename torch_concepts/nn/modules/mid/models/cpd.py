@@ -52,15 +52,23 @@ class ParametricCPD(ParametricFactor):
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
-    def __new__(cls, concepts: Union[str, List[str]],
+    def __new__(cls, 
+                concepts: Union[str, List[str]],
                 parametrization: Union[nn.Module, List[nn.Module]],
+                shared: bool = False,
+                shared_name: Optional[str] = None,
                 **kwargs):
         """
         Create new ParametricCPD instance(s).
 
         If ``concepts`` is a string, returns a single instance.
-        If ``concepts`` is a list, returns a list of instances (one per concept),
-        each with a deep-copied parametrization.
+        If ``concepts`` is a list and ``shared=False`` (default), returns a
+        list of instances (one per concept), each with a deep-copied
+        parametrization.
+        If ``concepts`` is a list and ``shared=True``, returns a **single**
+        instance whose parametrization is shared across all concepts.  The
+        parametrization must output concatenated logits for all concepts
+        (i.e. ``(batch, n_concepts * size)``).
         """
         if isinstance(concepts, str):
             if isinstance(parametrization, list):
@@ -68,6 +76,14 @@ class ParametricCPD(ParametricFactor):
                     "When 'concepts' is a string, 'parametrization' must be a single module, not a list.")
             return object.__new__(cls)
 
+        # --- shared=True: single instance, no deepcopy ---
+        if shared:
+            if isinstance(parametrization, list):
+                raise ValueError(
+                    "When shared=True, 'parametrization' must be a single module, not a list.")
+            return object.__new__(cls)
+
+        # --- shared=False (default): one deepcopied instance per concept ---
         n_concepts = len(concepts)
         if not isinstance(parametrization, list):
             module_list = [parametrization] * n_concepts
@@ -90,12 +106,17 @@ class ParametricCPD(ParametricFactor):
             instances.append(instance)
         return instances
 
-    def __init__(self, concepts: Union[str, List[str]],
+    def __init__(self, 
+                 concepts: Union[str, List[str]],
                  parametrization: Union[nn.Module, List[nn.Module]],
                  parents: List[Union[Variable, str]] = None,
+                 shared: bool = False,
+                 shared_name: Optional[str] = None,
                  **kwargs):
         super().__init__(concepts=concepts, parametrization=parametrization, **kwargs)
         self.parents: List[Variable] = list(parents) if parents is not None else []
+        self.shared: bool = shared
+        self.shared_name: Optional[str] = shared_name
 
     # ------------------------------------------------------------------
     # Directed-model helpers (moved from ParametricFactor)
@@ -106,6 +127,8 @@ class ParametricCPD(ParametricFactor):
         if not self.parents:
             return 0
         return sum(p.size for p in self.parents)
+
+    _MAX_DISCRETE_BITS = 20  # cap on total discrete parent bits for table construction
 
     def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -121,11 +144,32 @@ class ParametricCPD(ParametricFactor):
             Input tensors for the parametrization, one row per combination.
         all_discrete_state_vectors : torch.Tensor
             Corresponding state vectors for the table rows.
+
+        Raises
+        ------
+        RuntimeError
+            If the total number of discrete parent bits exceeds
+            ``_MAX_DISCRETE_BITS`` (default 20), which would require
+            enumerating more than ~1 million combinations.
         """
         if not self.parents:
             in_features = self.parametrization.in_features
             placeholder_input = torch.zeros((1, in_features))
             return placeholder_input, torch.empty((1, 0))
+
+        # --- guard against combinatorial explosion ---
+        total_bits = 0
+        for p in self.parents:
+            if p.distribution in [Bernoulli, RelaxedBernoulli]:
+                total_bits += p.size
+            elif p.distribution in [Categorical, RelaxedOneHotCategorical]:
+                total_bits += p.size  # one-hot dims
+        if total_bits > self._MAX_DISCRETE_BITS:
+            raise RuntimeError(
+                f"Total discrete parent bits ({total_bits}) exceeds the "
+                f"maximum of {self._MAX_DISCRETE_BITS}. Table construction "
+                f"would require 2^{total_bits} rows."
+            )
 
         discrete_combinations_list = []
         discrete_state_vectors_list = []
@@ -134,7 +178,7 @@ class ParametricCPD(ParametricFactor):
         for parent_var in self.parents:
             if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
                                            Categorical, RelaxedOneHotCategorical]:
-                out_dim = parent_var.out_features
+                out_dim = parent_var.size
                 input_combinations = []
                 state_combinations = []
 
@@ -154,7 +198,7 @@ class ParametricCPD(ParametricFactor):
                     [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
 
             elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
-                fixed_value = torch.zeros(parent_var.out_features).unsqueeze(0)
+                fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
                 continuous_tensors.append(fixed_value)
             else:
                 raise TypeError(
@@ -187,6 +231,12 @@ class ParametricCPD(ParametricFactor):
     # ------------------------------------------------------------------
 
     def build_cpt(self) -> torch.Tensor:
+        if self.shared:
+            raise NotImplementedError(
+                "build_cpt() is not supported for shared CPDs. "
+                "Shared CPDs output concatenated logits for multiple concepts "
+                "and cannot be decomposed into per-variable CPTs."
+            )
         if not self.variable:
             raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
@@ -224,6 +274,12 @@ class ParametricCPD(ParametricFactor):
         return probabilities
 
     def build_potential(self) -> torch.Tensor:
+        if self.shared:
+            raise NotImplementedError(
+                "build_potential() is not supported for shared CPDs. "
+                "Shared CPDs output concatenated logits for multiple concepts "
+                "and cannot be decomposed into per-variable potential tables."
+            )
         if not self.variable:
             raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 

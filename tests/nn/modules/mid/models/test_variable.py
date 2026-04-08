@@ -358,6 +358,24 @@ class TestVariableEdgeCases:
         assert var.out_features == 1
 
 
+class TestVariableDeepCopy:
+    """Test that multi-variable creation uses deep copies of metadata/dist_kwargs."""
+
+    def test_metadata_deep_copy(self):
+        """Mutating one variable's metadata must not affect siblings."""
+        meta = {'config': {'temp': 0.5}}
+        vars_ = Variable(['A', 'B'], distribution=Bernoulli, size=1, metadata=meta)
+        vars_[0].metadata['config']['temp'] = 999
+        assert vars_[1].metadata['config']['temp'] == 0.5
+
+    def test_dist_kwargs_deep_copy(self):
+        """Mutating one variable's dist_kwargs must not affect siblings."""
+        dk = {'extra': [1, 2, 3]}
+        vars_ = Variable(['A', 'B'], distribution=Bernoulli, size=1, dist_kwargs=dk)
+        vars_[0].dist_kwargs['extra'].append(4)
+        assert vars_[1].dist_kwargs['extra'] == [1, 2, 3]
+
+
 if __name__ == '__main__':
     # Use pytest to run all tests (including non-unittest classes)
     import sys

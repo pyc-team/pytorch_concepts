@@ -75,6 +75,8 @@ class ProbabilisticModel(nn.Module):
         self.variables = variables
         self.factors = nn.ModuleDict()
         self.concept_to_variable: Dict[str, Variable] = {}
+        # Maps secondary concept names to the primary concept name of a shared CPD.
+        self._shared_cpd_map: Dict[str, str] = {}
         self._initialize_model(factors)
 
     # ---- properties --------------------------------------------------------
@@ -94,16 +96,38 @@ class ProbabilisticModel(nn.Module):
             self._initialize_directed(input_factors)
         else:
             for factor in input_factors:
-                concept = factor.concept
-                if concept in self.concept_to_variable:
-                    factor.variable = self.concept_to_variable[concept]
-                self.factors[concept] = factor
+                if getattr(factor, 'shared', False):
+                    self._register_shared_factor(factor)
+                else:
+                    concept = factor.concept
+                    if concept in self.concept_to_variable:
+                        factor.variable = self.concept_to_variable[concept]
+                    self.factors[str(concept)] = factor
+
+    def _register_shared_factor(self, factor):
+        """Register a shared CPD under its shared_name (if provided) or primary
+        concept and map the remaining concept names as lightweight string redirects."""
+        shared_name = getattr(factor, 'shared_name', None)
+        key = shared_name if shared_name else factor.concept
+        factor.variable = self.concept_to_variable.get(factor.concept)
+        self.factors[str(key)] = factor
+        for name in factor.concepts:
+            if name != key:
+                self._shared_cpd_map[name] = key
 
     def _initialize_directed(self, input_factors: List[ParametricFactor]):
         """Directed-model initialisation: lazy constructors + parent resolution."""
         from ...low.lazy import LazyConstructor
 
         for cpd in input_factors:
+            if getattr(cpd, 'shared', False):
+                # Shared CPD: register once, map secondary concept names.
+                if isinstance(cpd.parametrization, LazyConstructor):
+                    raise NotImplementedError(
+                        "LazyConstructor is not supported with shared=True CPDs.")
+                self._register_shared_factor(cpd)
+                continue
+
             concept = cpd.concept
             if concept in self.concept_to_variable:
                 cpd.variable = self.concept_to_variable[concept]
@@ -136,7 +160,7 @@ class ProbabilisticModel(nn.Module):
                 new_cpd.variable = cpd.variable
                 cpd = new_cpd
 
-            self.factors[concept] = cpd
+            self.factors[str(concept)] = cpd
 
         # resolve string parent references to Variable objects
         for concept, cpd in self.factors.items():
@@ -166,12 +190,20 @@ class ProbabilisticModel(nn.Module):
         return [var for var in self.variables if var.distribution is distribution_class]
 
     def get_module_of_concept(self, concept_name: str) -> Optional[ParametricFactor]:
-        """Return the factor for *concept_name*, or ``None``."""
-        return self.factors[concept_name] if concept_name in self.factors else None
+        """Return the factor for *concept_name*, or ``None``.
+
+        For shared CPDs, secondary concept names are transparently redirected
+        to the primary factor.
+        """
+        if str(concept_name) in self.factors:
+            return self.factors[str(concept_name)]
+        if concept_name in self._shared_cpd_map:
+            return self.factors[str(self._shared_cpd_map[concept_name])]
+        return None
 
     def get_variable_parents(self, concept_name: str) -> List[Variable]:
         """Return the parent variables of a concept (empty if none / undirected)."""
-        cpd = self.factors[concept_name] if concept_name in self.factors else None
+        cpd = self.get_module_of_concept(concept_name)
         return cpd.parents if cpd is not None and hasattr(cpd, 'parents') else []
 
     # ---- CPT / potential-table helpers (directed models) -------------------
@@ -184,20 +216,39 @@ class ProbabilisticModel(nn.Module):
             parametrization = module
         f = ParametricCPD(concepts=concept, parametrization=parametrization)
         f.variable = self.concept_to_variable[concept]
-        stored = self.factors[concept] if concept in self.factors else None
+        stored = self.factors[str(concept)] if str(concept) in self.factors else None
         f.parents = stored.parents if stored is not None else []
         return f
 
     def build_potentials(self):
-        """Build potential tables for all concepts."""
+        """Build potential tables for all concepts.
+        
+        Raises:
+            NotImplementedError: If the model contains shared CPDs.
+        """
+        self._reject_shared_cpds("build_potentials")
         return {
             concept: self._make_temp_parametric_cpd(concept, module).build_potential()
             for concept, module in self.factors.items()
         }
 
     def build_cpts(self):
-        """Build Conditional Probability Tables for all concepts."""
+        """Build Conditional Probability Tables for all concepts.
+        
+        Raises:
+            NotImplementedError: If the model contains shared CPDs.
+        """
+        self._reject_shared_cpds("build_cpts")
         return {
             concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
             for concept, module in self.factors.items()
         }
+
+    def _reject_shared_cpds(self, method_name: str) -> None:
+        """Raise if any factor is a shared CPD."""
+        if self._shared_cpd_map:
+            raise NotImplementedError(
+                f"{method_name}() does not support shared CPDs. "
+                f"Secondary concepts {list(self._shared_cpd_map.keys())} "
+                f"would be silently omitted."
+            )

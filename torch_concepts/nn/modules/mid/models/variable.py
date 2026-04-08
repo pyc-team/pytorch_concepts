@@ -5,6 +5,7 @@ This module defines the Variable class, which represents random variables in
 concept-based models. Variables can have different probability distributions
 and support hierarchical concept structures.
 """
+import copy
 import torch
 from functools import partial
 from torch.distributions import Distribution, Bernoulli, Categorical, MultivariateNormal, Normal, \
@@ -161,8 +162,8 @@ class Variable:
                 concepts=concepts[i],  # Pass as string to create single Variable
                 distribution=distribution_list[i],
                 size=size_list[i],
-                metadata=metadata.copy() if metadata else None,
-                dist_kwargs=dist_kwargs.copy() if dist_kwargs else None,
+                metadata=copy.deepcopy(metadata) if metadata else None,
+                dist_kwargs=copy.deepcopy(dist_kwargs) if dist_kwargs else None,
                 activation=activation,
             )
             new_vars.append(instance)

@@ -33,3 +33,4 @@ trainer:
 
 seed: 42
 notes: null
+debug: false

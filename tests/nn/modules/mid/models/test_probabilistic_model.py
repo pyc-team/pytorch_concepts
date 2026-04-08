@@ -219,7 +219,7 @@ class TestProbabilisticModel(unittest.TestCase):
 # Tests for ProbabilisticModel (directed model)
 # ===========================================================================
 
-class TestProbabilisticModel(unittest.TestCase):
+class TestProbabilisticModelDirected(unittest.TestCase):
     """Test ProbabilisticModel directed subclass."""
 
     def test_initialization(self):
@@ -420,6 +420,171 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
         """Test in_features returns 0 for root CPD."""
         cpd = ParametricCPD(concepts='root', parametrization=nn.Linear(10, 1))
         self.assertEqual(cpd.in_features, 0)
+
+
+# ===========================================================================
+# Tests for coverage gaps in ProbabilisticModel
+# ===========================================================================
+
+class TestProbabilisticModelCoverageGaps(unittest.TestCase):
+    """Tests targeting uncovered lines in probabilistic_model.py."""
+
+    # --- Line 70: mixed factor types TypeError ---
+
+    def test_mixed_factor_types_raises(self):
+        """Mixing ParametricCPD and ParametricFactor factors raises TypeError."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        factor = ParametricFactor(concepts='B', parametrization=nn.Linear(10, 1))
+        with self.assertRaises(TypeError):
+            ProbabilisticModel(variables=[var_a, var_b], factors=[cpd, factor])
+
+    # --- Lines 98-105: undirected _initialize_model with shared factor ---
+
+    def test_undirected_shared_factor(self):
+        """Undirected model with a shared ParametricFactor registers correctly."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        shared_factor = ParametricFactor(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 2))
+        # Mark as shared manually (ParametricFactor doesn't set it by default)
+        shared_factor.shared = True
+        model = ProbabilisticModel(
+            variables=[var_a, var_b], factors=[shared_factor])
+        # Primary concept registered in factors
+        self.assertIn('A', model.factors)
+        # Secondary concept mapped via _shared_cpd_map
+        self.assertIn('B', model._shared_cpd_map)
+        self.assertEqual(model._shared_cpd_map['B'], 'A')
+        # get_module_of_concept redirects secondary to primary
+        self.assertIs(model.get_module_of_concept('B'),
+                      model.get_module_of_concept('A'))
+
+    def test_undirected_nonshared_factor_linked_to_variable(self):
+        """Undirected non-shared factor is linked to its variable."""
+        var = Variable(concepts='A', distribution=Bernoulli, size=1)
+        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[factor])
+        self.assertIs(model.factors['A'].variable, var)
+
+    # --- Lines 128-133: directed shared CPD branch ---
+
+    def test_directed_shared_cpd(self):
+        """Directed model with shared=True CPD registers primary + maps secondary."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        var_c = Variable(concepts='C', distribution=Bernoulli, size=1)
+        shared_cpd = ParametricCPD(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
+        cpd_c = ParametricCPD(
+            concepts='C', parametrization=nn.Linear(2, 1), parents=['A'])
+        model = ProbabilisticModel(
+            variables=[var_a, var_b, var_c],
+            factors=[shared_cpd, cpd_c])
+        self.assertIn('A', model.factors)
+        self.assertIn('B', model._shared_cpd_map)
+        self.assertEqual(model._shared_cpd_map['B'], 'A')
+
+    def test_get_variable_parents_shared_secondary(self):
+        """get_variable_parents works for secondary concept names of shared CPDs."""
+        var_input = Variable(concepts='input', distribution=Delta, size=10)
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        cpd_input = ParametricCPD(
+            concepts='input', parametrization=nn.Identity())
+        shared_cpd = ParametricCPD(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 2),
+            shared=True, parents=['input'])
+        model = ProbabilisticModel(
+            variables=[var_input, var_a, var_b],
+            factors=[cpd_input, shared_cpd])
+        # Primary concept returns parents
+        parents_a = model.get_variable_parents('A')
+        self.assertEqual(len(parents_a), 1)
+        self.assertEqual(parents_a[0].concept, 'input')
+        # Secondary concept should also return the same parents
+        parents_b = model.get_variable_parents('B')
+        self.assertEqual(len(parents_b), 1)
+        self.assertEqual(parents_b[0].concept, 'input')
+
+    # --- Line 173: _resolve_parent_refs unknown parent ---
+
+    def test_resolve_unknown_string_parent_raises(self):
+        """String parent referencing nonexistent concept raises ValueError."""
+        var = Variable(concepts='A', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(
+            concepts='A', parametrization=nn.Linear(10, 1), parents=['MISSING'])
+        with self.assertRaises(ValueError):
+            ProbabilisticModel(variables=[var], factors=[cpd])
+
+    # --- Lines 177-178: hasattr(ref, 'concept') parent resolution ---
+
+    def test_resolve_parent_with_concept_attribute(self):
+        """Parent ref with .concept attribute is resolved to a Variable."""
+        var_p = Variable(concepts='P', distribution=Bernoulli, size=1)
+        var_c = Variable(concepts='C', distribution=Bernoulli, size=1)
+
+        # Create an object with a .concept attribute (e.g., a ParametricCPD)
+        parent_ref = ParametricCPD(
+            concepts='P', parametrization=nn.Linear(10, 1))
+        cpd_p = ParametricCPD(
+            concepts='P', parametrization=nn.Linear(10, 1))
+        cpd_c = ParametricCPD(
+            concepts='C', parametrization=nn.Linear(1, 1), parents=[parent_ref])
+        model = ProbabilisticModel(
+            variables=[var_p, var_c], factors=[cpd_p, cpd_c])
+        parents = model.get_variable_parents('C')
+        self.assertEqual(len(parents), 1)
+        self.assertEqual(parents[0].concept, 'P')
+
+    # --- Lines 179-180: invalid parent type raises TypeError ---
+
+    def test_resolve_invalid_parent_type_raises(self):
+        """Parent ref that is not str, Variable, or has .concept raises TypeError."""
+        var = Variable(concepts='A', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(
+            concepts='A', parametrization=nn.Linear(10, 1), parents=[42])
+        with self.assertRaises(TypeError):
+            ProbabilisticModel(variables=[var], factors=[cpd])
+
+    # --- Line 214: _make_temp_parametric_cpd with non-CPD module ---
+
+    def test_make_temp_cpd_with_plain_module(self):
+        """_make_temp_parametric_cpd works when passed a plain nn.Module."""
+        var = Variable(concepts='A', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
+        # Call with a plain nn.Module (not a ParametricCPD) to hit else branch
+        plain_module = nn.Linear(10, 1)
+        temp_cpd = model._make_temp_parametric_cpd('A', plain_module)
+        self.assertIsInstance(temp_cpd, ParametricCPD)
+        self.assertIs(temp_cpd.variable, var)
+        self.assertIs(temp_cpd.parametrization, plain_module)
+
+    # --- build_cpts / build_potentials reject shared CPDs ---
+
+    def test_build_cpts_rejects_shared_cpds(self):
+        """build_cpts raises NotImplementedError for models with shared CPDs."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        shared_cpd = ParametricCPD(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
+        model = ProbabilisticModel(
+            variables=[var_a, var_b], factors=[shared_cpd])
+        with self.assertRaises(NotImplementedError):
+            model.build_cpts()
+
+    def test_build_potentials_rejects_shared_cpds(self):
+        """build_potentials raises NotImplementedError for models with shared CPDs."""
+        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
+        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
+        shared_cpd = ParametricCPD(
+            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
+        model = ProbabilisticModel(
+            variables=[var_a, var_b], factors=[shared_cpd])
+        with self.assertRaises(NotImplementedError):
+            model.build_potentials()
 
 
 if __name__ == '__main__':

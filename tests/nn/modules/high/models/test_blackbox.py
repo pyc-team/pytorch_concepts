@@ -22,6 +22,8 @@ from torch.distributions import Bernoulli, Categorical
 
 from torch_concepts.nn.modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.nn.modules.loss import ConceptLoss
+from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -997,6 +999,100 @@ class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
         repr_str = repr(model)
         self.assertIsInstance(repr_str, str)
         self.assertIn('BlackBoxTaskOnly', repr_str)
+
+
+class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
+    """Test that BlackBoxTaskOnly rebuilds ConceptLoss with task-only annotations."""
+
+    def setUp(self):
+        self.ann = make_annotations(
+            ['c1', 'c2', 'task'],
+            [1, 2, 1]
+        )
+
+    def test_concept_loss_is_rebuilt_for_task_only(self):
+        """Test that passing a ConceptLoss triggers the rebuild branch."""
+        # All concepts are binary (cardinality 1), so only binary loss needed
+        ann = make_annotations(['c1', 'c2', 'task'], [1, 1, 1])
+        concept_loss = ConceptLoss(
+            annotations=ann,
+            binary=nn.BCEWithLogitsLoss(),
+        )
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=ann,
+            task_names='task',
+            loss=concept_loss,
+        )
+        # The rebuilt loss should use task-only annotations
+        self.assertIsInstance(model.loss, ConceptLoss)
+
+    def test_concept_loss_rebuild_with_categorical(self):
+        """Test ConceptLoss rebuild when task is categorical."""
+        ann = make_annotations(['c1', 'task'], [1, 3])
+        concept_loss = ConceptLoss(
+            annotations=ann,
+            binary=nn.BCEWithLogitsLoss(),
+            categorical=nn.CrossEntropyLoss(),
+        )
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=ann,
+            task_names='task',
+            loss=concept_loss,
+        )
+        self.assertIsInstance(model.loss, ConceptLoss)
+
+
+class TestBlackBoxTaskOnlySetupMetrics(unittest.TestCase):
+    """Test that setup_metrics rebuilds ConceptMetrics with task-only annotations."""
+
+    def setUp(self):
+        self.ann = make_annotations(
+            ['c1', 'task'],
+            [1, 1]
+        )
+
+    def test_setup_metrics_rebuilds_with_task_annotations(self):
+        """Test setup_metrics reconstructs metrics for task-only outputs."""
+        from torchmetrics.classification import BinaryAccuracy
+        metrics = ConceptMetrics(
+            annotations=self.ann,
+            binary={'accuracy': BinaryAccuracy()},
+            summary=False,
+            per_concept=True,
+        )
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=self.ann,
+            task_names='task',
+            metrics=metrics,
+        )
+        # After setup_metrics, model should have train/val/test metrics
+        self.assertTrue(hasattr(model, 'train_metrics'))
+        self.assertTrue(hasattr(model, 'val_metrics'))
+        self.assertTrue(hasattr(model, 'test_metrics'))
+
+    def test_setup_metrics_called_during_init(self):
+        """Test that setup_metrics is invoked during __init__ when metrics are provided."""
+        from torchmetrics.classification import BinaryAccuracy
+        metrics = ConceptMetrics(
+            annotations=self.ann,
+            binary={'accuracy': BinaryAccuracy()},
+            summary=True,
+            per_concept=False,
+        )
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=self.ann,
+            task_names='task',
+            metrics=metrics,
+        )
+        self.assertIsNotNone(model.train_metrics)
 
 
 # =============================================================================

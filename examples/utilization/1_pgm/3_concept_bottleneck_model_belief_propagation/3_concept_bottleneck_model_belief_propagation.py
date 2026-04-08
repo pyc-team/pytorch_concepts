@@ -37,24 +37,24 @@ def main():
 
 
     # Variable setup
-    emb = ExogenousVariable("emb", parents=[], size=2, distribution=Delta)
-    a = ConceptVariable("a", parents=["emb"], distribution=RelaxedBernoulli)
-    b = ConceptVariable("b", parents=["emb"], size=3, distribution=RelaxedOneHotCategorical)
-    c = ConceptVariable("c", parents=["a", "b"], distribution=RelaxedBernoulli)
+    emb = ExogenousVariable("emb", size=2, distribution=Delta)
+    a = ConceptVariable("a", distribution=RelaxedBernoulli)
+    b = ConceptVariable("b", size=3, distribution=RelaxedOneHotCategorical)
+    c = ConceptVariable("c", distribution=RelaxedBernoulli)
 
     # ParametricCPD setup
-    emb_cpd = ParametricCPD("emb", parametrization=torch.nn.Identity())
-    a_cpd = ParametricCPD("a",
+    emb_cpd = ParametricCPD("emb", parents=[], parametrization=torch.nn.Identity())
+    a_cpd = ParametricCPD("a", parents=["emb"],
                                  parametrization=torch.nn.Sequential(torch.nn.Linear(emb.size, hidden_size),
                                                                      torch.nn.ReLU(),
                                                                      torch.nn.Linear(hidden_size, a.size),
                                                                      torch.nn.Sigmoid()))
-    b_cpd = ParametricCPD("b",
+    b_cpd = ParametricCPD("b", parents=["emb"],
                                 parametrization=torch.nn.Sequential(torch.nn.Linear(emb.size, hidden_size),
                                                                      torch.nn.ReLU(),
                                                                      torch.nn.Linear(hidden_size, b.size),
                                                                      torch.nn.Softmax(dim=-1)))
-    c_cpd = ParametricCPD("c",
+    c_cpd = ParametricCPD("c", parents=["a", "b"],
                             parametrization=torch.nn.Sequential(torch.nn.Linear(a.size + b.size, hidden_size),
                                                                 torch.nn.ReLU(),
                                                                 torch.nn.Linear(hidden_size, c.size),

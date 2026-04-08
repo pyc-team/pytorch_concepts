@@ -160,8 +160,8 @@ def main():
         torch.randint(0, 4, (batch_size, 1)),  # cat2 (4 classes)
     ], dim=1)
     
-    metrics_mixed.update(endogenous, targets, split='train')
-    results = metrics_mixed.compute('train')
+    metrics_mixed.update(endogenous, targets)
+    results = metrics_mixed.compute()
     
     print(f"\nComputed metrics ({len(results)} total):")
     for key in sorted(results.keys()):

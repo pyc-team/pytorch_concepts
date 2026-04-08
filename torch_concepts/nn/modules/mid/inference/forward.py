@@ -47,6 +47,11 @@ class ForwardInference(BaseInference, ABC):
             Exogenous / latent variables keep their gradients. Default: False.
         lazy: If True, only compute variables that are ancestors of the queried
             concepts, skipping unrelated branches. Default: False.
+        p: Probability of propagating ground truth instead of the model's own
+            prediction for each concept. ``p=0`` (default) gives standard
+            forward inference; ``p=1`` gives fully independent training.
+            Intermediate values create a stochastic mix (per-sample Bernoulli
+            mask). Ground truth must be supplied at query time for ``p > 0``.
 
     Raises:
         RuntimeError: If the model contains cycles (not a DAG).
@@ -100,15 +105,20 @@ class ForwardInference(BaseInference, ABC):
         graph_learner: BaseGraphLearner = None, 
         detach: bool = False,
         lazy: bool = False,
+        p: float = 0.0,
         *args, 
         **kwargs
     ):
         super().__init__()
+        if not 0.0 <= p <= 1.0:
+            raise ValueError(f"p must be in [0, 1], got {p}")
         self.probabilistic_model = probabilistic_model
         self.graph_learner = graph_learner
         self.detach = detach
         self.lazy = lazy
+        self.p = p
         self.variable_map = {var.concept: var for var in probabilistic_model.variables}
+        self._index_cache: Tuple[None, Dict[str, int]] = (None, {})
 
         # topological order + levels (list of lists of Variables)
         self.sorted_variables, self.levels = self._topological_sort()
@@ -124,13 +134,23 @@ class ForwardInference(BaseInference, ABC):
         # calling inspect.signature() on every forward pass.
         self._cpd_allowed_params: Dict[str, Set[str]] = {}
         self._cached_parents: Dict[str, List] = {}
+        _cpd_id_to_allowed: Dict[int, Set[str]] = {}
         for var in self.probabilistic_model.variables:
             cpd = self.probabilistic_model.get_module_of_concept(var.concept)
             if cpd is not None:
-                self._cpd_allowed_params[var.concept] = self._get_allowed_params(cpd)
+                cpd_id = id(cpd)
+                if cpd_id not in _cpd_id_to_allowed:
+                    _cpd_id_to_allowed[cpd_id] = self._get_allowed_params(cpd)
+                self._cpd_allowed_params[var.concept] = _cpd_id_to_allowed[cpd_id]
                 self._cached_parents[var.concept] = getattr(cpd, 'parents', [])
             else:
                 self._cached_parents[var.concept] = []
+
+        # Build shared CPD registration keys for fast-path in _concatenate_results.
+        self._shared_cpd_primaries: Set[str] = set()
+        for key, cpd in self.probabilistic_model.factors.items():
+            if getattr(cpd, 'shared', False):
+                self._shared_cpd_primaries.add(key)
 
     @abstractmethod
     def activate(self, pred: torch.Tensor, variable: Variable) -> torch.Tensor:
@@ -246,9 +266,15 @@ class ForwardInference(BaseInference, ABC):
 
         # 1. Root nodes (no parents)
         if not parents:
-            if concept_name not in evidence:
+            # For shared CPDs with a shared_name, allow evidence under that name
+            shared_name = getattr(parametric_cpd, 'shared_name', None)
+            if shared_name and shared_name in evidence:
+                evidence_key = shared_name
+            else:
+                evidence_key = concept_name
+            if evidence_key not in evidence:
                 raise ValueError(f"Root variable '{concept_name}' requires an input tensor in the 'evidence' dictionary.")
-            input_tensor = evidence[concept_name]
+            input_tensor = evidence[evidence_key]
             parent_kwargs = self.get_parent_kwargs(parametric_cpd, [input_tensor], [])
             output_tensor = parametric_cpd.forward(**parent_kwargs)
 
@@ -311,46 +337,67 @@ class ForwardInference(BaseInference, ABC):
     ) -> Dict[str, torch.Tensor]:
         """
         Compute predictions for a single level.
-        
-        Args:
-            level: List of Variables in this level.
-            evidence: Dictionary mapping variable names to observed/input tensors.
-            results: Dictionary of already computed results (from previous levels).
-            debug: If True, runs sequentially for easier debugging.
-            use_cuda: Whether to use CUDA streams for parallelism.
-            
-        Returns:
-            Dictionary mapping concept names to their output tensors for this level.
+
+        Iterates over unique CPDs rather than variables.  Shared CPDs are
+        executed once and the output is sliced into per-concept tensors.
         """
         level_results = {}
 
-        # Sequential execution
-        if debug or len(level) <= 1:
-            for var in level:
-                concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+        # Deduplicate CPDs: collect unique (cpd_id -> (cpd, primary_var))
+        seen_cpd_ids: Set[int] = set()
+        unique_cpds: List[Tuple[Variable, object]] = []   # (representative var, cpd)
+        for var in level:
+            cpd = self.probabilistic_model.get_module_of_concept(var.concept)
+            if cpd is None:
+                raise RuntimeError(f"Missing parametric_cpd for variable/concept: {var.concept}")
+            cid = id(cpd)
+            if cid in seen_cpd_ids:
+                continue
+            seen_cpd_ids.add(cid)
+            # For shared CPDs the representative var is the primary (first concept)
+            rep_var = self.variable_map[cpd.concept] if getattr(cpd, 'shared', False) else var
+            unique_cpds.append((rep_var, cpd))
+
+        def _run_cpd(var, cpd):
+            concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
+            if getattr(cpd, 'shared', False):
+                offset = 0
+                for cname in cpd.concepts:
+                    var_size = self.variable_map[cname].size
+                    level_results[cname] = output_tensor[..., offset:offset + var_size]
+                    offset += var_size
+                if offset != output_tensor.shape[-1]:
+                    raise RuntimeError(
+                        "Shared CPD output feature dimension mismatch: "
+                        f"expected {offset} features from concepts {list(cpd.concepts)}, "
+                        f"but got {output_tensor.shape[-1]}."
+                    )
+            else:
                 level_results[concept_name] = output_tensor
+
+        # Sequential execution
+        if debug or len(unique_cpds) <= 1:
+            for var, cpd in unique_cpds:
+                _run_cpd(var, cpd)
             return level_results
 
         # Parallel execution
-        level_outputs = []
-
         if use_cuda:
-            # GPU: parallel via CUDA streams
-            streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in level]
-            for var, stream in zip(level, streams):
+            default_stream = torch.cuda.current_stream()
+            streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in unique_cpds]
+            for (var, cpd), stream in zip(unique_cpds, streams):
+                # Side stream must wait for default stream's prior work
+                stream.wait_stream(default_stream)
                 with torch.cuda.stream(stream):
-                    concept_name, output_tensor = self._compute_single_variable(var, evidence, results)
-                    level_outputs.append((concept_name, output_tensor))
-            torch.cuda.synchronize()
+                    _run_cpd(var, cpd)
+            # Default stream waits for all side streams before using results
+            for stream in streams:
+                default_stream.wait_stream(stream)
         else:
-            # CPU: parallel via threads
-            with ThreadPoolExecutor(max_workers=len(level)) as executor:
-                futures = [executor.submit(self._compute_single_variable, var, evidence, results) for var in level]
+            with ThreadPoolExecutor(max_workers=len(unique_cpds)) as executor:
+                futures = [executor.submit(_run_cpd, var, cpd) for var, cpd in unique_cpds]
                 for fut in futures:
-                    level_outputs.append(fut.result())
-
-        for concept_name, output_tensor in level_outputs:
-            level_results[concept_name] = output_tensor
+                    fut.result()
 
         return level_results
 
@@ -417,16 +464,19 @@ class ForwardInference(BaseInference, ABC):
 
                     # GPU: parallel via CUDA streams
                     if use_cuda:
+                        default_stream = torch.cuda.current_stream()
                         streams = [torch.cuda.Stream(device=torch.cuda.current_device()) for _ in global_wrappers]
 
                         for (concept_name, wrapper), stream in zip(global_wrappers, streams):
+                            stream.wait_stream(default_stream)
                             with torch.cuda.stream(stream):
                                 concept_name_out, intervened_output = self._apply_single_global_intervention(
                                     concept_name, wrapper, results
                                 )
                                 intervention_outputs.append((concept_name_out, intervened_output))
 
-                        torch.cuda.synchronize()
+                        for stream in streams:
+                            default_stream.wait_stream(stream)
 
                     # CPU: parallel via threads
                     else:
@@ -534,6 +584,10 @@ class ForwardInference(BaseInference, ABC):
         """
         Extract and concatenate predictions for queried concepts.
 
+        When all queried concepts belong to a single shared CPD and are
+        requested in their original order, the full output tensor is returned
+        directly (avoiding thousands of tiny ``torch.cat`` calls).
+
         Args:
             query_concepts: Ordered list of concept names to return.
             all_predictions: Dictionary mapping concept names to output tensors.
@@ -545,6 +599,23 @@ class ForwardInference(BaseInference, ABC):
             ValueError: If a queried concept is missing from predictions.
             RuntimeError: If batch sizes or feature dimensions are inconsistent.
         """
+        # --- fast path: entire shared CPD queried in order ---
+        if self._shared_cpd_primaries:
+            shared_map = self.probabilistic_model._shared_cpd_map
+            first = query_concepts[0]
+            primary = shared_map.get(first, first)
+            if primary in self._shared_cpd_primaries:
+                cpd = self.probabilistic_model.factors[str(primary)]
+                if query_concepts == list(cpd.concepts):
+                    # All concepts of this shared CPD in original order.
+                    # The per-concept slices are contiguous views of the
+                    # activated output; re-concatenating them is cheaper
+                    # than the general path (skips validation overhead).
+                    return torch.cat(
+                        [all_predictions[c] for c in cpd.concepts], dim=-1
+                    )
+
+        # --- general path ---
         result_tensors = []
         for concept_name in query_concepts:
             if concept_name not in all_predictions:
@@ -560,14 +631,24 @@ class ForwardInference(BaseInference, ABC):
 
         final_tensor = torch.cat(result_tensors, dim=-1)
 
-        expected_feature_dim = sum(self.variable_map[c].out_features for c in query_concepts)
-        if final_tensor.shape[1] != expected_feature_dim:
+        expected_feature_dim = sum(self.variable_map[c].size for c in query_concepts)
+        if final_tensor.shape[-1] != expected_feature_dim:
             raise RuntimeError(
                 f"Concatenation error. Expected total feature dimension of {expected_feature_dim}, "
-                f"but got {final_tensor.shape[1]}. Check Variable.out_features logic."
+                f"but got {final_tensor.shape[-1]}. Check Variable.size logic."
             )
 
         return final_tensor
+
+    def _get_index_map(self, concept_names: List[str]) -> Dict[str, int]:
+        """Get cached mapping from concept name to column index."""
+        key = tuple(concept_names)
+        if self._index_cache[0] == key:
+            return self._index_cache[1]
+
+        index_map = {name: i for i, name in enumerate(concept_names)}
+        self._index_cache = (key, index_map)
+        return index_map
 
     def _get_ancestors(self, query_concepts: List[str]) -> Set[str]:
         """
@@ -594,6 +675,8 @@ class ForwardInference(BaseInference, ABC):
         self, 
         query: List[str], 
         evidence: Dict[str, torch.Tensor], 
+        ground_truth: torch.Tensor = None,
+        concept_names: List[str] = None,
         debug: bool = False, 
         device: str = 'auto',
         return_logits: bool = False,
@@ -606,9 +689,19 @@ class ForwardInference(BaseInference, ABC):
         each level) and then extracts and concatenates only the requested concepts
         in the specified order.
 
+        When ``ground_truth`` and ``concept_names`` are provided and ``self.p > 0``,
+        each concept with available ground truth is propagated as GT (instead of
+        the model's own prediction) with probability ``self.p``.  This creates a
+        smooth bridge between pure forward inference (``p=0``) and fully
+        independent training (``p=1``).
+
         Args:
             query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
             evidence: Dictionary of {root_concept_name: input_tensor}.
+            ground_truth: Optional ground truth tensor in index format.
+                Shape: (batch, num_concepts). One column per concept.
+            concept_names: Ordered concept names matching ground_truth columns.
+                Required when ground_truth is provided.
             debug: If True, runs in debug mode (sequential execution).
             device: Device to use for computation. Options:
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
@@ -625,6 +718,7 @@ class ForwardInference(BaseInference, ABC):
 
         Raises:
             ValueError: If requested concept was not computed.
+            ValueError: If ground_truth is provided without concept_names.
             RuntimeError: If batch sizes don't match across concepts.
             RuntimeError: If concatenation produces unexpected feature dimension.
             RuntimeError: If device='cuda'/'gpu' is specified but CUDA is not available.
@@ -636,6 +730,14 @@ class ForwardInference(BaseInference, ABC):
         self._validate_evidence(evidence)
         use_cuda = self._resolve_device(device)
 
+        # Resolve ground-truth propagation
+        use_gt = ground_truth is not None and self.p > 0
+        if ground_truth is not None and concept_names is None:
+            raise ValueError("concept_names must be provided when ground_truth is given.")
+        if self.p > 0 and ground_truth is None:
+            raise ValueError("ground_truth must be provided when p > 0.")
+        index_map = self._get_index_map(concept_names) if concept_names is not None else {}
+
         # When lazy=True, restrict to the ancestor sub-graph of the query.
         levels = self.levels
         if self.lazy:
@@ -646,10 +748,12 @@ class ForwardInference(BaseInference, ABC):
         # Two dicts:
         #   `propagation` – activated values fed to children (detached when self.detach)
         #   `returned`    – allocated only when propagation can't serve as return
-        #                   (i.e. when return_logits or self.detach)
-        need_separate_return = return_logits or self.detach
+        #                   (i.e. when return_logits, self.detach, or GT propagation)
+        need_separate_return = return_logits or self.detach or use_gt
         returned: Dict[str, torch.Tensor] | None = {} if need_separate_return else None
         propagation: Dict[str, torch.Tensor] = dict(evidence)
+
+        query_set = set(query)
 
         for level in levels:
             level_output = self._predict_level(level, evidence, propagation, debug=debug, use_cuda=use_cuda)
@@ -663,11 +767,35 @@ class ForwardInference(BaseInference, ABC):
                     activated = self.activate(pred, variable)
                     if returned is not None:
                         returned[name] = pred if return_logits else activated
-                    propagation[name] = activated.detach() if self.detach else activated
+
+                    # Decide propagation value: GT override with probability p
+                    if use_gt and name in index_map:
+                        idx = index_map[name]
+                        gt_value = self.ground_truth_to_evidence(
+                            value=ground_truth[:, idx:idx+1],
+                            cardinality=variable.size,
+                        )
+                        if self.p >= 1.0:
+                            propagation[name] = gt_value
+                        else:
+                            # Bernoulli mask: per-sample decision
+                            mask = torch.bernoulli(
+                                torch.full((pred.shape[0], 1), self.p,
+                                           device=pred.device, dtype=pred.dtype)
+                            )
+                            pred_value = activated.detach() if self.detach else activated
+                            propagation[name] = mask * gt_value + (1 - mask) * pred_value
+                    else:
+                        propagation[name] = activated.detach() if self.detach else activated
                 else:
                     if returned is not None:
                         returned[name] = pred
                     propagation[name] = pred
+
+            # Early exit: stop if all queried variables have been computed
+            results_dict = returned if returned is not None else propagation
+            if query_set.issubset(results_dict):
+                break
 
         return self._concatenate_results(query, returned if returned is not None else propagation)
 
