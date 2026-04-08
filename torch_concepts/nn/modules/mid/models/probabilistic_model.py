@@ -16,6 +16,7 @@ from typing import List, Dict, Optional, Type, Union
 from .variable import Variable, ExogenousVariable, ConceptVariable
 from .parametric_factor import ParametricFactor
 from .parametric_cpd import ParametricCPD
+from .factor import Factor
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +253,43 @@ class ProbabilisticModel(nn.Module):
                 f"Secondary concepts {list(self._shared_cpd_map.keys())} "
                 f"would be silently omitted."
             )
+
+    # ---- Factor construction (for inference algorithms) ----------------
+
+    def build_factors(self, cardinalities: dict = None) -> List[Factor]:
+        """
+        Build :class:`Factor` instances for every factor in the model.
+
+        For directed models each :class:`ParametricCPD` produces a factor
+        over ``{parents ∪ child}``.  For undirected models each
+        :class:`ParametricFactor` produces a factor over its scope.
+
+        Parameters
+        ----------
+        cardinalities : dict, optional
+            Pre-computed ``{variable_name: num_states}`` mapping.  If
+            ``None`` the cardinalities are inferred from the
+            :class:`Variable` objects.
+
+        Returns
+        -------
+        List[Factor]
+            One :class:`Factor` per registered factor in the model.
+        """
+        if cardinalities is None:
+            cardinalities = {}
+
+        factors: List[Factor] = []
+        for concept, module in self.factors.items():
+            if isinstance(module, ParametricCPD):
+                factors.append(module.build_factor(cardinalities))
+            else:
+                scope_vars = [
+                    self.concept_to_variable[c]
+                    for c in module.concepts
+                    if c in self.concept_to_variable
+                ]
+                factors.append(
+                    module.build_factor(scope_vars, cardinalities)
+                )
+        return factors
