@@ -14,6 +14,11 @@ from typing import List, Dict, Any, Union, Optional, Type, Callable
 
 from .....distributions import Delta
 
+# Distribution type groups.
+_BINARY_DISTRIBUTIONS = {Bernoulli, RelaxedBernoulli}
+_CATEGORICAL_DISTRIBUTIONS = {Categorical, OneHotCategorical, RelaxedOneHotCategorical}
+_CONTINUOUS_DISTRIBUTIONS = {Normal, MultivariateNormal, Delta}
+
 # Default distributions per concept type group (binary / categorical / continuous).
 _DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
     'binary': Bernoulli,

@@ -435,12 +435,18 @@ class BaseModel(nn.Module, ABC):
         
     
     def filter_output_for_loss(self, forward_out, target):
-        """No filtering needed - return concepts for standard loss computation.
+        """Prepare model output for loss computation.
+
+        When *forward_out* is a dict (e.g., from an inference engine
+        that returns ``return_log_joint=True``), the ``'log_joint'``
+        entry is extracted for the loss.  Otherwise the raw tensor is
+        passed through unchanged.
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output concepts.
+        forward_out : torch.Tensor or dict
+            Model output — a tensor or a dict with ``'log_joint'`` and
+            ``'logits'`` keys.
         target : torch.Tensor
             Ground truth labels.
 
@@ -449,15 +455,21 @@ class BaseModel(nn.Module, ABC):
         dict
             Dict with 'input' and 'target' for loss computation.
         """
+        if isinstance(forward_out, dict):
+            return {'input': forward_out['log_joint'], 'target': target}
         return {'input': forward_out, 'target': target}
 
     def filter_output_for_metrics(self, forward_out, target):
-        """No filtering needed - return concepts for metric computation.
+        """Prepare model output for metric computation.
+
+        When *forward_out* is a dict, the ``'logits'`` entry is extracted
+        for metrics.  Otherwise the raw tensor is passed through unchanged.
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output concepts.
+        forward_out : torch.Tensor or dict
+            Model output — a tensor or a dict with ``'log_joint'`` and
+            ``'logits'`` keys.
         target : torch.Tensor
             Ground truth labels.
 
@@ -466,6 +478,8 @@ class BaseModel(nn.Module, ABC):
         dict
             Dict with 'preds' and 'target' for metric computation.
         """
+        if isinstance(forward_out, dict):
+            return {'preds': forward_out['logits'], 'target': target}
         return {'preds': forward_out, 'target': target}
 
     # ------------------------------------------------------------------

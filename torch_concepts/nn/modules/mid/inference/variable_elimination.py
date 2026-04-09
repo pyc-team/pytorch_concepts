@@ -8,12 +8,14 @@ flow back through the neural-network parameters that produced the factor
 potentials — enabling end-to-end training through inference.
 """
 
-from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
 from ..models.factor import Factor
 from ..models.probabilistic_model import ProbabilisticModel
+from ..models.variable import _BINARY_DISTRIBUTIONS, _CATEGORICAL_DISTRIBUTIONS
 from ...low.base.inference import BaseInference
 
 
@@ -46,104 +48,24 @@ def _min_degree_order(
     remaining = set(variables_to_eliminate)
     order: List[str] = []
 
-    # Build an adjacency-like structure: for each variable, which other
-    # variables share a factor with it?
-    def _neighbours(var: str) -> set:
-        nbrs: set = set()
-        for f in factors:
-            if var in f.variables:
-                nbrs.update(f.variables)
-        nbrs.discard(var)
-        return nbrs & remaining
+    # Pre-build adjacency: for each variable, the set of other
+    # variables that share at least one factor with it.
+    adj: dict = {v: set() for v in remaining}
+    for f in factors:
+        scope = [v for v in f.variables if v in remaining]
+        for v in scope:
+            for u in scope:
+                if u != v:
+                    adj[v].add(u)
 
     for _ in range(len(variables_to_eliminate)):
-        # pick the remaining variable with the fewest neighbours
-        best = min(remaining, key=lambda v: len(_neighbours(v)))
+        # Pick the remaining variable with the fewest active neighbours
+        best = min(remaining,
+                   key=lambda v: sum(1 for u in adj[v] if u in remaining))
         order.append(best)
         remaining.remove(best)
 
     return order
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Core VE routines
-# ──────────────────────────────────────────────────────────────────────
-
-def _eliminate_var(factors: List[Factor], variable: str) -> List[Factor]:
-    """
-    Eliminate a single variable from the factor set.
-
-    1. Collect all factors whose scope contains *variable* (Φ').
-    2. Multiply them together (ψ).
-    3. Marginalise *variable* out of ψ (τ).
-    4. Return the factors that did *not* mention *variable* plus τ.
-
-    Parameters
-    ----------
-    factors : List[Factor]
-        Current set of factors.
-    variable : str
-        Variable to eliminate.
-
-    Returns
-    -------
-    List[Factor]
-        Updated factor set with *variable* removed.
-    """
-    phi_prime: List[Factor] = []
-    phi_rest: List[Factor] = []
-    for f in factors:
-        if variable in f.variables:
-            phi_prime.append(f)
-        else:
-            phi_rest.append(f)
-
-    if not phi_prime:
-        return phi_rest
-
-    # multiply all factors that contain the variable
-    psi = phi_prime[0]
-    for f in phi_prime[1:]:
-        psi = psi.product(f)
-
-    # marginalise out the variable
-    tau = psi.marginalize(variable)
-
-    phi_rest.append(tau)
-    return phi_rest
-
-
-def _sum_product_ve(
-    factors: List[Factor],
-    elimination_order: List[str],
-) -> Factor:
-    """
-    Run Sum-Product Variable Elimination.
-
-    Parameters
-    ----------
-    factors : List[Factor]
-        Initial factor set Φ.
-    elimination_order : List[str]
-        Ordered list of hidden variables to eliminate.
-
-    Returns
-    -------
-    Factor
-        The product of all remaining factors after elimination (φ*).
-    """
-    for var in elimination_order:
-        factors = _eliminate_var(factors, var)
-
-    # multiply remaining factors
-    if not factors:
-        raise RuntimeError("No factors remain after variable elimination.")
-
-    result = factors[0]
-    for f in factors[1:]:
-        result = result.product(f)
-
-    return result
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -198,6 +120,9 @@ class VariableEliminationInference(BaseInference):
     >>> ve = VariableEliminationInference(model)
     >>> result = ve.query(query=['B'], evidence={'A': 1})
     >>> result.values  # normalised P(B | A=1)
+    >>>
+    >>> # With input embedding:
+    >>> result = ve.query(query=['B'], evidence={'input': x, 'A': 1})
     """
 
     def __init__(
@@ -219,36 +144,53 @@ class VariableEliminationInference(BaseInference):
         query: List[str],
         evidence: Optional[Dict[str, int]] = None,
         return_logits: bool = False,
-    ) -> Factor:
+        return_log_joint: bool = False,
+        **kwargs,
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Compute the conditional distribution ``P(query | evidence)``.
 
         Parameters
         ----------
         query : List[str]
-            Names of the query variables (𝒴).
-        evidence : Dict[str, int], optional
+            Names of the query variables.
+        evidence : dict, optional
             Mapping from observed variable names to their observed state
             index (0-based).  For example ``{'A': 1}`` means A is observed
-            in state 1.
+            in state 1.  The special key ``'input'`` may hold the input
+            embedding tensor of shape ``(batch, emb_dim)``.  When present,
+            each factor is conditioned on the input, yielding per-sample
+            distributions.
         return_logits : bool, optional
-            If ``True``, return log-probabilities (unnormalised) instead
+            If ``True``, return unnormalised log-potentials instead
             of normalised probabilities.  Useful during training when the
             loss expects log-scale values.  Default: ``False``.
+        return_log_joint : bool, optional
+            If ``True``, return a dict with keys ``'log_joint'`` (the
+            log of the normalised joint distribution, shape
+            ``(batch, *cardinalities)``) and ``'logits'`` (per-concept
+            marginal logits, shape ``(batch, n_features)``).  Intended
+            for use with :class:`JointNLLLoss`.  Takes precedence over
+            ``return_logits``.
 
         Returns
         -------
-        Factor
-            A factor over the query variables.  When ``return_logits`` is
-            ``False`` (default) the values are normalised probabilities
-            that sum to 1.  When ``True`` the values are
-            log-potentials (unnormalised).
+        torch.Tensor or dict
+            When ``return_log_joint=True``: a dict with ``'log_joint'``
+            and ``'logits'``.  Otherwise a ``(batch, n_features)`` tensor
+            (or ``(n_features,)`` when unbatched).
         """
         if evidence is None:
             evidence = {}
 
+        # Extract input embedding from evidence (if present)
+        input_tensor = evidence.pop('input', None) if isinstance(
+            evidence, dict) else None
+
         # 1. Build factors from the parametric model
-        factors: List[Factor] = self.probabilistic_model.build_factors()
+        # If input_tensor is not None, each factor will be conditioned on it.
+        factors: List[Factor] = self.probabilistic_model.build_factors(
+            input=input_tensor)
 
         # 2. Set evidence: replace each factor by its slice
         for var_name, state in evidence.items():
@@ -257,7 +199,7 @@ class VariableEliminationInference(BaseInference):
                 for f in factors
             ]
 
-        # 3. Determine hidden variables: X - Y - E
+        # 3. Determine hidden variables
         all_vars: set = set()
         for f in factors:
             all_vars.update(f.variables)
@@ -278,16 +220,19 @@ class VariableEliminationInference(BaseInference):
             self._order_cache[cache_key] = elim_order
 
         # 5. Sum-Product VE
-        phi_star = _sum_product_ve(factors, elim_order)
+        phi_star = self._sum_product_ve(factors, elim_order)
 
-        # 6. Return logits or normalised probabilities
-        if return_logits:
-            log_values = torch.log(phi_star.values.clamp(min=1e-10))
-            return Factor(log_values, phi_star.variables,
-                          phi_star.cardinalities)
-
+        # 6. Normalise
         _Z, normalised = phi_star.normalize()
-        return normalised
+
+        # 7. Return as log-joint dict or flat Tensor
+        if return_log_joint:
+            log_joint = torch.log(normalised.values.clamp(min=1e-10))
+            logits = self._factor_to_tensor(normalised, query,
+                                            return_logits=True)
+            return {'log_joint': log_joint, 'logits': logits}
+
+        return self._factor_to_tensor(normalised, query, return_logits)
 
     def ground_truth_to_evidence(
         self,
@@ -315,3 +260,158 @@ class VariableEliminationInference(BaseInference):
             The same integer indices.
         """
         return value
+
+    # ------------------------------------------------------------------
+    # Factor → Tensor conversion
+    # ------------------------------------------------------------------
+
+    def _factor_to_tensor(
+        self,
+        joint: Factor,
+        query: List[str],
+        return_logits: bool,
+    ) -> torch.Tensor:
+        """
+        Convert a normalised joint factor into a flat tensor.
+
+        For each query variable the joint is marginalised to a univariate
+        distribution and then converted to either a logit or a
+        probability column:
+
+        * **Binary** (cardinality 2): one column - the logit
+          ``log P(v=1) - log P(v=0)`` when *return_logits* is ``True``,
+          or ``P(v=1)`` otherwise.
+        * **Categorical** (cardinality K): *K* columns - the log-probs
+          when *return_logits* is ``True``, or the probabilities otherwise.
+
+        All marginals are computed directly on the raw tensor with
+        :func:`torch.sum` - no intermediate :class:`Factor` objects are
+        created.
+
+        Parameters
+        ----------
+        joint : Factor
+            Normalised factor over the query variables (possibly batched).
+        query : List[str]
+            Ordered concept names.
+        return_logits : bool
+            Whether to return logits or probabilities.
+
+        Returns
+        -------
+        torch.Tensor
+            Shape ``(batch, n_features)`` when batched, else
+            ``(n_features,)``.
+        """
+        concept_to_var = self.probabilistic_model.concept_to_variable
+        values = joint.values                        # (batch?, *var_cards)
+        offset = 1 if joint.batched else 0
+        eps = 1e-10
+        columns: List[torch.Tensor] = []
+
+        for var_name in query:
+            # Compute marginal by summing over all dims except batch + this var
+            var_dim = joint.variables.index(var_name) + offset
+            sum_dims = [d for d in range(offset, values.ndim) if d != var_dim]
+            probs = values.sum(dim=sum_dims) if sum_dims else values
+            # Re-normalise (floating-point drift)
+            probs = probs / probs.sum(dim=-1, keepdim=True)
+
+            var = concept_to_var[var_name]
+            if var.distribution in _BINARY_DISTRIBUTIONS:
+                if return_logits:
+                    col = (torch.log(probs[..., 1].clamp(min=eps))
+                           - torch.log(probs[..., 0].clamp(min=eps)))
+                else:
+                    col = probs[..., 1]
+                columns.append(col.unsqueeze(-1))
+            elif var.distribution in _CATEGORICAL_DISTRIBUTIONS:
+                if return_logits:
+                    columns.append(torch.log(probs.clamp(min=eps)))
+                else:
+                    columns.append(probs)
+            else:
+                raise NotImplementedError(
+                    f"_factor_to_tensor: unsupported distribution "
+                    f"{var.distribution.__name__} for variable '{var_name}'."
+                )
+
+        return torch.cat(columns, dim=-1)
+
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Core VE routines
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _sum_product_ve(
+        self,
+        factors: List[Factor],
+        elimination_order: List[str],
+    ) -> Factor:
+        """
+        Run Sum-Product Variable Elimination.
+
+        Uses a variable-to-factor index for O(degree) factor lookup
+        per elimination step instead of scanning all factors.
+
+        Parameters
+        ----------
+        factors : List[Factor]
+            Initial factor set Φ.
+        elimination_order : List[str]
+            Ordered list of hidden variables to eliminate.
+
+        Returns
+        -------
+        Factor
+            The product of all remaining factors after elimination (φ*).
+        """
+        # Build variable → factor-id index
+        var_to_fids: Dict[str, set] = defaultdict(set)
+        fid_to_factor: Dict[int, Factor] = {}
+        for i, f in enumerate(factors):
+            fid_to_factor[i] = f
+            for v in f.variables:
+                var_to_fids[v].add(i)
+        next_fid = len(factors)
+
+        for var in elimination_order:
+            # Collect factors mentioning var — O(degree) via index
+            fids = var_to_fids.pop(var, set())
+            phi_prime: List[Factor] = []
+            for fid in fids:
+                f = fid_to_factor.pop(fid, None)
+                if f is not None:
+                    phi_prime.append(f)
+                    # Remove this factor from index entries of other variables
+                    for v in f.variables:
+                        if v != var and v in var_to_fids:
+                            var_to_fids[v].discard(fid)
+
+            if not phi_prime:
+                continue
+
+            # Multiply all factors that contain the variable
+            psi = phi_prime[0]
+            for f in phi_prime[1:]:
+                psi = psi.product(f)
+
+            # Marginalise out the variable
+            tau = psi.marginalize(var)
+
+            # Register the new factor in the index
+            fid_to_factor[next_fid] = tau
+            for v in tau.variables:
+                var_to_fids[v].add(next_fid)
+            next_fid += 1
+
+        # Multiply remaining factors
+        remaining = list(fid_to_factor.values())
+        if not remaining:
+            raise RuntimeError("No factors remain after variable elimination.")
+
+        result = remaining[0]
+        for f in remaining[1:]:
+            result = result.product(f)
+
+        return result

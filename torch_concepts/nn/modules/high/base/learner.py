@@ -225,7 +225,8 @@ class BaseLearner(pl.LightningModule):
         return {
             'ground_truth': ground_truth,
             'concept_names': self.concept_annotations.labels,
-            'return_logits': True # pass logits to loss and metrics (before activation)
+            'return_logits': True, # pass logits to loss and metrics (before activation)
+            'return_log_joint': True, # inference engines (e.g., variable elimination) return log-joint dict; others ignore this
         }
 
     # TODO: implement input preprocessing with transforms from batch

@@ -303,49 +303,6 @@ class TestProbabilisticModelDirected(unittest.TestCase):
         model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(model.get_variable_parents('Z'), [])
 
-    def test_build_cpts_no_parents_delta(self):
-        """Test build_cpts for Delta variable with no parents."""
-        var = Variable(concepts='x', distribution=Delta, size=1)
-        module = nn.Linear(in_features=2, out_features=1)
-        cpd = ParametricCPD(concepts='x', parametrization=module)
-
-        model = ProbabilisticModel(variables=[var], factors=[cpd])
-        cpts = model.build_cpts()
-
-        self.assertIn('x', cpts)
-        self.assertIsInstance(cpts['x'], torch.Tensor)
-        self.assertGreaterEqual(cpts['x'].shape[-1], 1)
-
-    def test_build_potentials_no_parents_delta(self):
-        """Test build_potentials for Delta variable with no parents."""
-        var = Variable(concepts='x', distribution=Delta, size=1)
-        module = nn.Linear(in_features=2, out_features=1)
-        cpd = ParametricCPD(concepts='x', parametrization=module)
-
-        model = ProbabilisticModel(variables=[var], factors=[cpd])
-        pots = model.build_potentials()
-
-        self.assertIn('x', pots)
-        self.assertIsInstance(pots['x'], torch.Tensor)
-
-    def test_build_cpts_with_parent_bernoulli(self):
-        """Test build_cpts with parent-child Bernoulli structure."""
-        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
-        child = Variable(concepts='c', distribution=Bernoulli, size=1)
-
-        parent_cpd = ParametricCPD(concepts='p', parametrization=nn.Linear(1, 1))
-        child_cpd = ParametricCPD(concepts='c', parametrization=nn.Linear(1, 1), parents=['p'])
-
-        model = ProbabilisticModel(
-            variables=[parent, child],
-            factors=[parent_cpd, child_cpd]
-        )
-
-        cpts = model.build_cpts()
-        self.assertIn('c', cpts)
-        cpt_c = cpts['c']
-        self.assertGreaterEqual(cpt_c.shape[1], 1)
-
     def test_get_by_distribution(self):
         """Test that get_by_distribution works on ProbabilisticModel."""
         parent = Variable(concepts='p', distribution=Bernoulli, size=1)
@@ -547,44 +504,6 @@ class TestProbabilisticModelCoverageGaps(unittest.TestCase):
             concepts='A', parametrization=nn.Linear(10, 1), parents=[42])
         with self.assertRaises(TypeError):
             ProbabilisticModel(variables=[var], factors=[cpd])
-
-    # --- Line 214: _make_temp_parametric_cpd with non-CPD module ---
-
-    def test_make_temp_cpd_with_plain_module(self):
-        """_make_temp_parametric_cpd works when passed a plain nn.Module."""
-        var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[cpd])
-        # Call with a plain nn.Module (not a ParametricCPD) to hit else branch
-        plain_module = nn.Linear(10, 1)
-        temp_cpd = model._make_temp_parametric_cpd('A', plain_module)
-        self.assertIsInstance(temp_cpd, ParametricCPD)
-        self.assertIs(temp_cpd.variable, var)
-        self.assertIs(temp_cpd.parametrization, plain_module)
-
-    # --- build_cpts / build_potentials reject shared CPDs ---
-
-    def test_build_cpts_rejects_shared_cpds(self):
-        """build_cpts raises NotImplementedError for models with shared CPDs."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        shared_cpd = ParametricCPD(
-            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
-        model = ProbabilisticModel(
-            variables=[var_a, var_b], factors=[shared_cpd])
-        with self.assertRaises(NotImplementedError):
-            model.build_cpts()
-
-    def test_build_potentials_rejects_shared_cpds(self):
-        """build_potentials raises NotImplementedError for models with shared CPDs."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        shared_cpd = ParametricCPD(
-            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
-        model = ProbabilisticModel(
-            variables=[var_a, var_b], factors=[shared_cpd])
-        with self.assertRaises(NotImplementedError):
-            model.build_potentials()
 
 
 if __name__ == '__main__':

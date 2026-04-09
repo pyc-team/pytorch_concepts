@@ -18,6 +18,9 @@ identically.
 import torch
 from typing import Dict, List, Tuple
 
+# Subscript pool for einsum: a-z + A-Y = 51 chars (Z reserved for batch dim).
+_EINSUM_SUBSCRIPTS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY'
+
 
 class Factor:
     """
@@ -37,14 +40,19 @@ class Factor:
     ----------
     values : torch.Tensor
         The factor tensor.  Its shape must match the cardinalities of the
-        variables listed in *variables* (in the same order).
+        variables listed in *variables* (in the same order).  When
+        *batched* is ``True`` the first dimension is a batch dimension
+        and the variable axes start at dimension 1.
     variables : List[str]
         Ordered list of variable names — ``variables[i]`` labels axis *i* of
-        *values*.
+        *values* (or axis *i + 1* when *batched*).
     cardinalities : Dict[str, int]
         Mapping from every variable name that may appear in the model to its
         number of states.  The dict may contain entries for variables not
         currently in this factor's scope (they are simply ignored).
+    batched : bool, optional
+        If ``True`` the leading dimension of *values* is treated as a
+        batch dimension and all factor operations preserve it.
 
     Raises
     ------
@@ -58,22 +66,28 @@ class Factor:
         values: torch.Tensor,
         variables: List[str],
         cardinalities: Dict[str, int],
+        batched: bool = False,
     ):
-        if values.ndim != len(variables):
+        expected_ndim = len(variables) + (1 if batched else 0)
+        if values.ndim != expected_ndim:
             raise ValueError(
-                f"Tensor has {values.ndim} dimensions but {len(variables)} "
-                f"variable names were given."
+                f"Tensor has {values.ndim} dimensions but expected "
+                f"{expected_ndim} ({len(variables)} variables"
+                f"{' + 1 batch dim' if batched else ''})."
             )
+        offset = 1 if batched else 0
         for i, var in enumerate(variables):
-            if var in cardinalities and values.shape[i] != cardinalities[var]:
+            if var in cardinalities and values.shape[i + offset] != cardinalities[var]:
                 raise ValueError(
-                    f"Axis {i} ('{var}') has size {values.shape[i]} but "
+                    f"Axis {i + offset} ('{var}') has size "
+                    f"{values.shape[i + offset]} but "
                     f"cardinality is {cardinalities[var]}."
                 )
 
         self.values = values
         self.variables: List[str] = list(variables)
-        self.cardinalities: Dict[str, int] = dict(cardinalities)
+        self.cardinalities: Dict[str, int] = cardinalities
+        self.batched: bool = batched
 
     # ------------------------------------------------------------------
     # Core operations
@@ -106,13 +120,42 @@ class Factor:
             if v not in new_vars:
                 new_vars.append(v)
 
-        # Reshape self.values so that it has a dimension for every
-        # variable in new_vars (size-1 for variables not in self).
-        a = self._align(new_vars)
-        b = other._align(new_vars)
+        new_batched = self.batched or other.batched
 
-        new_cardinalities = {**self.cardinalities, **other.cardinalities}
-        return Factor(a * b, new_vars, new_cardinalities)
+        # --- einsum-based product ---
+        # Assign each variable a unique subscript letter.
+        if len(new_vars) > len(_EINSUM_SUBSCRIPTS):
+            raise ValueError(
+                f"Factor product scope has {len(new_vars)} variables, "
+                f"exceeding the einsum limit of {len(_EINSUM_SUBSCRIPTS)}."
+            )
+        var_to_sub = {v: _EINSUM_SUBSCRIPTS[i] for i, v in enumerate(new_vars)}
+        batch_sub = 'Z'
+
+        lhs = ''.join(var_to_sub[v] for v in self.variables)
+        rhs = ''.join(var_to_sub[v] for v in other.variables)
+        out = ''.join(var_to_sub[v] for v in new_vars)
+
+        a, b = self.values, other.values
+
+        if new_batched:
+            if self.batched:
+                lhs = batch_sub + lhs
+            if other.batched:
+                rhs = batch_sub + rhs
+            out = batch_sub + out
+            # Promote unbatched operand so einsum sees a matching batch dim
+            if self.batched and not other.batched:
+                b = b.unsqueeze(0).expand(a.shape[0], *b.shape)
+                rhs = batch_sub + rhs
+            elif other.batched and not self.batched:
+                a = a.unsqueeze(0).expand(b.shape[0], *a.shape)
+                lhs = batch_sub + lhs
+
+        result = torch.einsum(f'{lhs},{rhs}->{out}', a, b)
+
+        new_cardinalities = self.cardinalities if self.cardinalities is other.cardinalities else {**self.cardinalities, **other.cardinalities}
+        return Factor(result, new_vars, new_cardinalities, batched=new_batched)
 
     def marginalize(self, variable: str) -> "Factor":
         """
@@ -138,10 +181,12 @@ class Factor:
                 f"Variable '{variable}' is not in the factor scope "
                 f"{self.variables}."
             )
-        axis = self.variables.index(variable)
+        offset = 1 if self.batched else 0
+        axis = self.variables.index(variable) + offset
         new_values = self.values.sum(dim=axis)
         new_vars = [v for v in self.variables if v != variable]
-        return Factor(new_values, new_vars, self.cardinalities)
+        return Factor(new_values, new_vars, self.cardinalities,
+                      batched=self.batched)
 
     def set_evidence(self, variable: str, state: int) -> "Factor":
         """
@@ -172,7 +217,8 @@ class Factor:
                 f"Variable '{variable}' is not in the factor scope "
                 f"{self.variables}."
             )
-        axis = self.variables.index(variable)
+        offset = 1 if self.batched else 0
+        axis = self.variables.index(variable) + offset
         if state < 0 or state >= self.values.shape[axis]:
             raise ValueError(
                 f"State {state} is out of range for variable '{variable}' "
@@ -181,22 +227,34 @@ class Factor:
         # torch.select removes the dimension (like numpy basic indexing).
         new_values = self.values.select(axis, state)
         new_vars = [v for v in self.variables if v != variable]
-        return Factor(new_values, new_vars, self.cardinalities)
+        return Factor(new_values, new_vars, self.cardinalities,
+                      batched=self.batched)
 
     def normalize(self) -> Tuple[torch.Tensor, "Factor"]:
         """
         Normalise the factor so that its values sum to one.
 
+        When *batched* is ``True`` normalisation is performed
+        independently for each sample in the batch.
+
         Returns
         -------
         Z : torch.Tensor
-            The partition function (sum of all values), scalar tensor.
+            The partition function.  Scalar when unbatched, shape
+            ``(batch,)`` when batched.
         normalized : Factor
             A new factor with the same scope whose values sum to 1.
         """
-        Z = self.values.sum()
-        normalized_values = self.values / Z
-        return Z, Factor(normalized_values, list(self.variables), self.cardinalities)
+        if self.batched:
+            var_dims = list(range(1, self.values.ndim))
+            Z = self.values.sum(dim=var_dims, keepdim=True)
+            normalized_values = self.values / Z
+            Z_out = Z.reshape(self.values.size(0))
+        else:
+            Z_out = self.values.sum()
+            normalized_values = self.values / Z_out
+        return Z_out, Factor(normalized_values, self.variables,
+                             self.cardinalities, batched=self.batched)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -238,13 +296,25 @@ class Factor:
         # Which of target_vars are in self?
         present = [v for v in target_vars if v in source_index]
         perm = [source_index[v] for v in present]
-        t = self.values.permute(*perm) if perm != list(range(len(perm))) else self.values
 
-        # Now insert size-1 dims for missing variables.
-        result = t
-        for i, v in enumerate(target_vars):
-            if v not in source_index:
-                result = result.unsqueeze(i)
+        if self.batched:
+            # Batch dim stays at position 0; variable dims are offset by 1.
+            perm_full = [0] + [p + 1 for p in perm]
+            t = (self.values.permute(*perm_full)
+                 if perm_full != list(range(len(perm_full)))
+                 else self.values)
+            result = t
+            for i, v in enumerate(target_vars):
+                if v not in source_index:
+                    result = result.unsqueeze(i + 1)
+        else:
+            t = (self.values.permute(*perm)
+                 if perm != list(range(len(perm)))
+                 else self.values)
+            result = t
+            for i, v in enumerate(target_vars):
+                if v not in source_index:
+                    result = result.unsqueeze(i)
 
         return result
 

@@ -9,11 +9,12 @@ the factors are plain :class:`ParametricFactor` instances, the model stores
 them without directed-graph semantics.
 """
 
+import torch
 from torch import nn
 from torch.distributions import Distribution
 from typing import List, Dict, Optional, Type, Union
 
-from .variable import Variable, ExogenousVariable, ConceptVariable
+from .variable import Variable, ExogenousVariable, ConceptVariable, _CONTINUOUS_DISTRIBUTIONS
 from .parametric_factor import ParametricFactor
 from .parametric_cpd import ParametricCPD
 from .factor import Factor
@@ -207,56 +208,10 @@ class ProbabilisticModel(nn.Module):
         cpd = self.get_module_of_concept(concept_name)
         return cpd.parents if cpd is not None and hasattr(cpd, 'parents') else []
 
-    # ---- CPT / potential-table helpers (directed models) -------------------
-
-    def _make_temp_parametric_cpd(self, concept: str, module: nn.Module) -> ParametricCPD:
-        """Create a temporary ParametricCPD for table-building helpers."""
-        if isinstance(module, ParametricCPD):
-            parametrization = module.parametrization
-        else:
-            parametrization = module
-        f = ParametricCPD(concepts=concept, parametrization=parametrization)
-        f.variable = self.concept_to_variable[concept]
-        stored = self.factors[str(concept)] if str(concept) in self.factors else None
-        f.parents = stored.parents if stored is not None else []
-        return f
-
-    def build_potentials(self):
-        """Build potential tables for all concepts.
-        
-        Raises:
-            NotImplementedError: If the model contains shared CPDs.
-        """
-        self._reject_shared_cpds("build_potentials")
-        return {
-            concept: self._make_temp_parametric_cpd(concept, module).build_potential()
-            for concept, module in self.factors.items()
-        }
-
-    def build_cpts(self):
-        """Build Conditional Probability Tables for all concepts.
-        
-        Raises:
-            NotImplementedError: If the model contains shared CPDs.
-        """
-        self._reject_shared_cpds("build_cpts")
-        return {
-            concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
-            for concept, module in self.factors.items()
-        }
-
-    def _reject_shared_cpds(self, method_name: str) -> None:
-        """Raise if any factor is a shared CPD."""
-        if self._shared_cpd_map:
-            raise NotImplementedError(
-                f"{method_name}() does not support shared CPDs. "
-                f"Secondary concepts {list(self._shared_cpd_map.keys())} "
-                f"would be silently omitted."
-            )
-
     # ---- Factor construction (for inference algorithms) ----------------
 
-    def build_factors(self, cardinalities: dict = None) -> List[Factor]:
+    def build_factors(self, cardinalities: dict = None,
+                      input: "torch.Tensor | None" = None) -> List[Factor]:
         """
         Build :class:`Factor` instances for every factor in the model.
 
@@ -270,6 +225,10 @@ class ProbabilisticModel(nn.Module):
             Pre-computed ``{variable_name: num_states}`` mapping.  If
             ``None`` the cardinalities are inferred from the
             :class:`Variable` objects.
+        input : torch.Tensor, optional
+            Input embedding of shape ``(batch, emb_dim)``.  Passed
+            through to each :class:`ParametricCPD`'s ``build_factor``
+            so that factor values are conditioned on the input.
 
         Returns
         -------
@@ -282,7 +241,12 @@ class ProbabilisticModel(nn.Module):
         factors: List[Factor] = []
         for concept, module in self.factors.items():
             if isinstance(module, ParametricCPD):
-                factors.append(module.build_factor(cardinalities))
+                # Skip continuous/latent variables — they are embeddings,
+                # not discrete states that can be represented as factors.
+                if module.variable.distribution in _CONTINUOUS_DISTRIBUTIONS:
+                    continue
+                factors.append(module.build_factor(cardinalities,
+                                                   input=input))
             else:
                 scope_vars = [
                     self.concept_to_variable[c]

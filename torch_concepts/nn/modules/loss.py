@@ -626,3 +626,50 @@ class L1LogitRegularizer(nn.Module):
         if mask.any():
             return self.scale * input[mask].abs().mean()
         return torch.tensor(0.0, device=input.device)
+
+
+class JointNLLLoss(nn.Module):
+    """Negative log-likelihood loss on the joint distribution.
+
+    Designed for inference engines (e.g., variable elimination) that
+    return a dict with key ``'log_joint'`` containing the log of the
+    normalised joint distribution over all query variables, shaped
+    ``(batch, card_1, card_2, ..., card_n)``.
+
+    This loss indexes into the log-joint using the ground-truth state
+    indices and returns the mean NLL:
+
+    .. math::
+
+        \\mathcal{L} = -\\frac{1}{B}\\sum_{i=1}^{B}
+        \\log P(c_1^{(i)}, c_2^{(i)}, \\ldots, c_n^{(i)} \\mid x^{(i)})
+
+    When the model's eval inference returns a flat ``(batch, n_features)``
+    tensor instead of a log-joint, the loss falls back to
+    ``BCEWithLogitsLoss`` so that validation / test metrics remain valid.
+
+    Args:
+        **kwargs: Must include ``input`` (log-joint tensor of shape
+            ``(batch, *cardinalities)`` or flat logits ``(batch, n_features)``)
+            and ``target`` (integer state indices or float labels of shape
+            ``(batch, n_concepts)``).
+
+    Returns:
+        torch.Tensor: Scalar NLL loss.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._bce_fallback = nn.BCEWithLogitsLoss()
+
+    def forward(self, **kwargs) -> torch.Tensor:
+        input = kwargs['input']
+        target = kwargs['target']
+
+        # Flat 2D tensor → fallback to BCE (eval inference path)
+        if input.ndim == 2:
+            return self._bce_fallback(input, target.float())
+
+        # Multi-dim log-joint from inference engine
+        idx = (torch.arange(input.size(0), device=input.device), *target.long().unbind(1))
+        return -input[idx].mean()

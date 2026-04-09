@@ -8,15 +8,19 @@ notion of **parents** — giving the factor directed semantics.
 """
 import copy
 import torch
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Optional, Tuple, Union
 from itertools import product
 
 import torch.nn as nn
 
+from .factor import Factor
 from .parametric_factor import ParametricFactor
-from .variable import Variable
-from .....distributions import Delta
+from .variable import (
+    Variable,
+    _BINARY_DISTRIBUTIONS,
+    _CATEGORICAL_DISTRIBUTIONS,
+    _CONTINUOUS_DISTRIBUTIONS,
+)
 
 
 class ParametricCPD(ParametricFactor):
@@ -160,9 +164,9 @@ class ParametricCPD(ParametricFactor):
         # --- guard against combinatorial explosion ---
         total_bits = 0
         for p in self.parents:
-            if p.distribution in [Bernoulli, RelaxedBernoulli]:
+            if p.distribution in _BINARY_DISTRIBUTIONS:
                 total_bits += p.size
-            elif p.distribution in [Categorical, RelaxedOneHotCategorical]:
+            elif p.distribution in _CATEGORICAL_DISTRIBUTIONS:
                 total_bits += p.size  # one-hot dims
         if total_bits > self._MAX_DISCRETE_BITS:
             raise RuntimeError(
@@ -176,16 +180,15 @@ class ParametricCPD(ParametricFactor):
         continuous_tensors = []
 
         for parent_var in self.parents:
-            if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
-                                           Categorical, RelaxedOneHotCategorical]:
+            if parent_var.distribution in _BINARY_DISTRIBUTIONS | _CATEGORICAL_DISTRIBUTIONS:
                 out_dim = parent_var.size
                 input_combinations = []
                 state_combinations = []
 
-                if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
+                if parent_var.distribution in _BINARY_DISTRIBUTIONS:
                     input_combinations = list(product([0.0, 1.0], repeat=out_dim))
                     state_combinations = input_combinations
-                elif parent_var.distribution in [Categorical, RelaxedOneHotCategorical]:
+                elif parent_var.distribution in _CATEGORICAL_DISTRIBUTIONS:
                     for i in range(out_dim):
                         one_hot = torch.zeros(out_dim)
                         one_hot[i] = 1.0
@@ -197,7 +200,7 @@ class ParametricCPD(ParametricFactor):
                 discrete_state_vectors_list.append(
                     [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
 
-            elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
+            elif parent_var.distribution in _CONTINUOUS_DISTRIBUTIONS:
                 fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
                 continuous_tensors.append(fixed_value)
             else:
@@ -227,110 +230,128 @@ class ParametricCPD(ParametricFactor):
         return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
 
     # ------------------------------------------------------------------
-    # CPT / potential-table construction
+    # Factor construction (for inference algorithms)
     # ------------------------------------------------------------------
 
-    def build_cpt(self) -> torch.Tensor:
-        if self.shared:
+    @staticmethod
+    def _variable_cardinality(var: Variable) -> int:
+        """Return the number of discrete states for a variable."""
+        if var.distribution in _BINARY_DISTRIBUTIONS:
+            return 2
+        elif var.distribution in _CATEGORICAL_DISTRIBUTIONS:
+            return var.size
+        elif var.distribution in _CONTINUOUS_DISTRIBUTIONS:
+            raise ValueError(
+                f"Continuous variable '{var.concept}' "
+                f"(distribution={var.distribution.__name__}, size={var.size}) "
+                f"cannot be discretized into a factor."
+            )
+        else:
             raise NotImplementedError(
-                "build_cpt() is not supported for shared CPDs. "
-                "Shared CPDs output concatenated logits for multiple concepts "
-                "and cannot be decomposed into per-variable CPTs."
-            )
-        if not self.variable:
-            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
-
-        all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-
-        input_batch = all_full_inputs
-
-        if input_batch.shape[-1] != self.parametrization.in_features:
-            raise RuntimeError(
-                f"Input tensor dimension mismatch for CPT building. "
-                f"ParametricCPD module expects {self.parametrization.in_features} features, "
-                f"but parent combinations resulted in {input_batch.shape[-1]} features. "
-                f"Check Variable definition and ProbabilisticModel resolution."
+                f"Cannot determine cardinality for distribution "
+                f"{var.distribution.__name__}."
             )
 
-        endogenous = self.parametrization(input=input_batch)
-        probabilities = None
+    def build_factor(self, cardinalities: dict = None,
+                     input: torch.Tensor = None) -> "Factor":
+        """
+        Build a :class:`Factor` representing this CPD as a multi-dimensional
+        tensor ``P(child | parents)``.
 
-        if self.variable.distribution is Bernoulli:
-            # Traditional P(X=1) output
-            p_c1 = torch.sigmoid(endogenous)
+        The tensor has one axis per variable in ``{parents} ∪ {child}``,
+        and is filled by evaluating the parametrization over every
+        parent-state combination followed by sigmoid (Bernoulli) or
+        softmax (Categorical).
 
-            # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
-            probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
+        Parameters
+        ----------
+        cardinalities : dict, optional
+            Pre-computed ``{variable_name: num_states}`` mapping.  If
+            ``None`` the cardinalities are inferred from the
+            :class:`Variable` objects.
+        input : torch.Tensor, optional
+            Input embedding of shape ``(batch, emb_dim)``.  Only used for
+            root nodes (CPDs with no parents).  When provided, the
+            embedding is fed to the parametrization to produce per-sample
+            factor values (returned :class:`Factor` has ``batched=True``).
+            Child nodes ignore this parameter — their factors are
+            determined entirely by parent-state combinations.
 
-        elif self.variable.distribution is Categorical:
-            probabilities = torch.softmax(endogenous, dim=-1)
+        Returns
+        -------
+        Factor
+            A factor over ``[*parent_names, child_name]``.
+        """
+        if cardinalities is None:
+            cardinalities = {}
 
-        elif self.variable.distribution is Delta:
-            probabilities = endogenous
+        # --- determine variable names and cardinalities -----------------
+        child_name = self.concept
+        child_var = self.variable
+        child_card = cardinalities.get(
+            child_name, self._variable_cardinality(child_var)
+        )
+        cardinalities[child_name] = child_card
 
+        parent_names = []
+        parent_cards = []
+        for p in self.parents:
+            # Continuous parents (Delta, Normal, …) are held at fixed values
+            # during table construction and do not contribute discrete axes.
+            if p.distribution in _CONTINUOUS_DISTRIBUTIONS:
+                continue
+            pname = p.concept
+            pcard = cardinalities.get(
+                pname, self._variable_cardinality(p)
+            )
+            cardinalities[pname] = pcard
+            parent_names.append(pname)
+            parent_cards.append(pcard)
+
+        # --- evaluate the neural network over all parent combinations ---
+        if input is not None and not parent_names:
+            # Input-conditioned mode for root nodes (no discrete parents):
+            # produce per-sample factors.
+            B = input.size(0)
+            logits = self.parametrization(input).unsqueeze(1)  # (B, 1, out)
+
+            if child_var.distribution in _BINARY_DISTRIBUTIONS | _CONTINUOUS_DISTRIBUTIONS:
+                p1 = torch.sigmoid(logits)
+                probs = torch.cat([1.0 - p1, p1], dim=-1)  # (B, 1, 2)
+            elif child_var.distribution in _CATEGORICAL_DISTRIBUTIONS:
+                probs = torch.softmax(logits, dim=-1)
+            else:
+                raise NotImplementedError(
+                    f"build_factor() not supported for "
+                    f"{child_var.distribution.__name__}."
+                )
+
+            values = probs.reshape([B, child_card])
+            variables = parent_names + [child_name]
+            return Factor(values, variables, cardinalities, batched=True)
+
+        # --- non-batched path (for child nodes, or when input is None) --
+        all_inputs, _ = self._get_parent_combinations()
+        logits = self.parametrization(all_inputs)  # (n_combos, out)
+
+        if child_var.distribution in _BINARY_DISTRIBUTIONS | _CONTINUOUS_DISTRIBUTIONS:
+            p1 = torch.sigmoid(logits)  # P(child=1 | parents)
+            probs = torch.cat([1.0 - p1, p1], dim=-1)  # (n_combos, 2)
+        elif child_var.distribution in _CATEGORICAL_DISTRIBUTIONS:
+            probs = torch.softmax(logits, dim=-1)  # (n_combos, K)
         else:
-            raise NotImplementedError(f"CPT for {self.variable.distribution.__name__} not supported.")
-
-        return probabilities
-
-    def build_potential(self) -> torch.Tensor:
-        if self.shared:
             raise NotImplementedError(
-                "build_potential() is not supported for shared CPDs. "
-                "Shared CPDs output concatenated logits for multiple concepts "
-                "and cannot be decomposed into per-variable potential tables."
+                f"build_factor() not supported for "
+                f"{child_var.distribution.__name__}."
             )
-        if not self.variable:
-            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
-        # We need the core probability part for potential calculation
-        all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-        endogenous = self.parametrization(input=all_full_inputs)
-
-        if self.variable.distribution is Bernoulli:
-            cpt_core = torch.sigmoid(endogenous)
-        elif self.variable.distribution is Categorical:
-            cpt_core = torch.softmax(endogenous, dim=-1)
-        elif self.variable.distribution is Delta:
-            cpt_core = endogenous
+        # --- reshape into multi-dimensional tensor ----------------------
+        # Shape: (*parent_cards, child_card)
+        if parent_cards:
+            shape = parent_cards + [child_card]
         else:
-            raise NotImplementedError("Potential table construction not supported for this distribution.")
+            shape = [child_card]
+        values = probs.reshape(shape)
 
-        # --- Potential Table Construction ---
-
-        if self.variable.distribution is Bernoulli:
-            p_c1 = cpt_core
-            p_c0 = 1.0 - cpt_core
-
-            child_states_c0 = torch.zeros_like(p_c0)
-            child_states_c1 = torch.ones_like(p_c1)
-
-            # Rows for X=1: [Parent States | Child State (1) | P(X=1)]
-            rows_c1 = torch.cat([discrete_state_vectors, child_states_c1, p_c1], dim=-1)
-            # Rows for X=0: [Parent States | Child State (0) | P(X=0)]
-            rows_c0 = torch.cat([discrete_state_vectors, child_states_c0, p_c0], dim=-1)
-
-            potential_table = torch.cat([rows_c1, rows_c0], dim=0)
-
-        elif self.variable.distribution is Categorical:
-            n_classes = self.variable.size
-            all_rows = []
-            for i in range(n_classes):
-                child_state_col = torch.full((cpt_core.shape[0], 1), float(i), dtype=torch.float32)
-                prob_col = cpt_core[:, i].unsqueeze(-1)
-
-                # [Parent States | Child State (i) | P(X=i)]
-                rows_ci = torch.cat([discrete_state_vectors, child_state_col, prob_col], dim=-1)
-                all_rows.append(rows_ci)
-
-            potential_table = torch.cat(all_rows, dim=0)
-
-        elif self.variable.distribution is Delta:
-            # [Parent States | Child Value]
-            child_value = cpt_core
-            potential_table = torch.cat([discrete_state_vectors, child_value], dim=-1)
-
-        else:
-            raise NotImplementedError("Potential table construction not supported for this distribution.")
-
-        return potential_table
+        variables = parent_names + [child_name]
+        return Factor(values, variables, cardinalities)
