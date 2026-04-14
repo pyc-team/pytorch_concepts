@@ -11,7 +11,7 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable
 from torch_concepts.nn.modules.mid.models.variable import Variable
@@ -61,7 +61,7 @@ class TestIndependentInferenceBasic:
         )
 
         # Result should be (batch_size, 3) - one feature per concept
-        assert result.shape == (batch_size, 3)
+        assert result.probs.shape == (batch_size, 3)
 
     def test_query_single_concept(self):
         """Test querying a single concept."""
@@ -80,7 +80,7 @@ class TestIndependentInferenceBasic:
             concept_names=['A']
         )
 
-        assert result.shape == (batch_size, 1)
+        assert result.probs.shape == (batch_size, 1)
 
     def test_query_preserves_order(self):
         """Test that query results are in the requested order."""
@@ -107,9 +107,9 @@ class TestIndependentInferenceBasic:
         result_ba = inference.query(['B', 'A'], {'input': x}, ground_truth=gt, concept_names=['A', 'B'])
 
         # First column of result_ab (A) should equal second column of result_ba
-        torch.testing.assert_close(result_ab[:, 0:1], result_ba[:, 1:2])
+        torch.testing.assert_close(result_ab.probs[:, 0:1], result_ba.probs[:, 1:2])
         # Second column of result_ab (B) should equal first column of result_ba
-        torch.testing.assert_close(result_ab[:, 1:2], result_ba[:, 0:1])
+        torch.testing.assert_close(result_ab.probs[:, 1:2], result_ba.probs[:, 0:1])
 
     def test_empty_query_raises_error(self):
         """Test that empty query raises ValueError."""
@@ -170,7 +170,7 @@ class TestIndependentInferenceGroundTruthPropagation:
         )
 
         # Results should be different because B depends on A
-        assert not torch.allclose(result_with_zeros, result_with_ones)
+        assert not torch.allclose(result_with_zeros.probs, result_with_ones.probs)
 
     def test_predictions_independent_of_gt(self):
         """Test that returned predictions are model outputs, not GT values."""
@@ -190,7 +190,7 @@ class TestIndependentInferenceGroundTruthPropagation:
         )
 
         # Result should NOT be 999 - it should be the model's prediction
-        assert not torch.allclose(result, torch.full((batch_size, 1), 999.0))
+        assert not torch.allclose(result.probs, torch.full((batch_size, 1), 999.0))
 
 
 class TestIndependentInferenceGradientFlow:
@@ -248,7 +248,7 @@ class TestIndependentInferenceGradientFlow:
         )
         
         # Extract task prediction and compute loss
-        task_pred = result[:, 2:]  # Last column is task
+        task_pred = result.probs[:, 2:]  # Last column is task
         task_target = torch.zeros(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(task_pred, task_target)
         
@@ -284,7 +284,7 @@ class TestIndependentInferenceGradientFlow:
         )
         
         # Compute loss on A (direct relationship with input)
-        a_pred = result[:, 0:1]  # First column is A
+        a_pred = result.probs[:, 0:1]  # First column is A
         a_target = torch.ones(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(a_pred, a_target)
         
@@ -320,7 +320,7 @@ class TestIndependentInferenceGradientFlow:
         )
         
         # Compute loss ONLY on B
-        b_pred = result[:, 1:2]  # Second column is B
+        b_pred = result.probs[:, 1:2]  # Second column is B
         b_target = torch.zeros(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(b_pred, b_target)
         
@@ -343,7 +343,7 @@ class TestIndependentInferenceWithCategorical:
     def _make_categorical_model(self):
         """Create model with categorical concept."""
         input_var = InputVariable('input', distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', distribution=Categorical, size=4)  # 4-class
+        var_A = EndogenousVariable('A', distribution=OneHotCategorical, size=4)  # 4-class
         var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
@@ -375,7 +375,7 @@ class TestIndependentInferenceWithCategorical:
         )
 
         # A has 4 features, B has 1
-        assert result.shape == (batch_size, 5)
+        assert result.probs.shape == (batch_size, 5)
 
 
 class TestIndependentInferenceWithExogenous:
@@ -445,7 +445,7 @@ class TestIndependentInferenceWithExogenous:
         )
 
         # A has 1 feature, B has 1 feature
-        assert result.shape == (batch_size, 2)
+        assert result.probs.shape == (batch_size, 2)
 
     def test_exogenous_not_in_ground_truth(self):
         """Test that exogenous variables are not replaced by GT even when computed."""
@@ -465,7 +465,7 @@ class TestIndependentInferenceWithExogenous:
             concept_names=['A']
         )
 
-        assert result.shape == (batch_size, 2)
+        assert result.probs.shape == (batch_size, 2)
 
     def test_exogenous_always_computed_never_replaced(self):
         """Test that exogenous values are model outputs, never replaced by GT.
@@ -499,7 +499,7 @@ class TestIndependentInferenceWithExogenous:
         
         # A predictions should be the same (GT affects propagation, not prediction)
         # But B predictions should differ because GT for A is used in propagation
-        assert not torch.allclose(result_gt_zero[:, 1:], result_gt_one[:, 1:]), \
+        assert not torch.allclose(result_gt_zero.probs[:, 1:], result_gt_one.probs[:, 1:]), \
             "B should differ when GT for A differs"
 
     def test_exogenous_receives_gradients_when_loss_on_downstream(self):
@@ -530,7 +530,7 @@ class TestIndependentInferenceWithExogenous:
         )
         
         # Compute loss on A (first output)
-        a_pred = result[:, 0:1]
+        a_pred = result.probs[:, 0:1]
         a_target = torch.zeros(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(a_pred, a_target)
         
@@ -575,7 +575,7 @@ class TestIndependentInferenceWithExogenous:
         )
         
         # Compute loss ONLY on B
-        b_pred = result[:, 1:2]
+        b_pred = result.probs[:, 1:2]
         b_target = torch.zeros(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(b_pred, b_target)
         
@@ -628,7 +628,7 @@ class TestIndependentInferenceWithExogenous:
             concept_names=['A']
         )
 
-        assert result.shape == (batch_size, 2)
+        assert result.probs.shape == (batch_size, 2)
 
     def test_cem_like_architecture(self):
         """Test CEM-like architecture with shared exogenous.
@@ -674,7 +674,7 @@ class TestIndependentInferenceWithExogenous:
         )
 
         # c1 (1) + c2 (1) + task (1) = 3
-        assert result.shape == (batch_size, 3)
+        assert result.probs.shape == (batch_size, 3)
 
     def test_cem_gradient_flow_with_shared_exogenous(self):
         """Test gradient flow in CEM-like architecture.
@@ -721,7 +721,7 @@ class TestIndependentInferenceWithExogenous:
         )
         
         # Loss on task only
-        task_pred = result[:, 1:2]
+        task_pred = result.probs[:, 1:2]
         task_target = torch.zeros(batch_size, 1)
         loss = nn.functional.binary_cross_entropy_with_logits(task_pred, task_target)
         loss.backward()
@@ -768,7 +768,7 @@ class TestIndependentInferenceDeviceModes:
 
         result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], device='cpu')
 
-        assert result.shape == (4, 1)
+        assert result.probs.shape == (4, 1)
 
     def test_auto_mode(self):
         """Test auto device detection."""
@@ -780,7 +780,7 @@ class TestIndependentInferenceDeviceModes:
 
         result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], device='auto')
 
-        assert result.shape == (4, 1)
+        assert result.probs.shape == (4, 1)
 
     def test_debug_mode(self):
         """Test debug mode (sequential execution)."""
@@ -792,7 +792,7 @@ class TestIndependentInferenceDeviceModes:
 
         result = inference.query(['A'], {'input': x}, ground_truth=gt, concept_names=['A'], debug=True)
 
-        assert result.shape == (4, 1)
+        assert result.probs.shape == (4, 1)
 
 
 class TestIndependentInferenceErrorHandling:
@@ -875,7 +875,7 @@ class TestIndependentVsDeterministicInference:
 
         # Results should differ because Independent uses GT for propagation
         # while Deterministic uses predicted A
-        assert not torch.allclose(result_independent, result_deterministic, atol=1e-2)
+        assert not torch.allclose(result_independent.probs, result_deterministic.probs, atol=1e-2)
 
     def test_same_results_same_gt(self):
         """Test that Independent and Deterministic give same A predictions (GT only affects propagation)."""
@@ -898,7 +898,7 @@ class TestIndependentVsDeterministicInference:
         result_deterministic = deterministic.query(['A'], {'input': x})
 
         # A predictions should be identical (GT doesn't affect the prediction itself)
-        torch.testing.assert_close(result_independent, result_deterministic)
+        torch.testing.assert_close(result_independent.probs, result_deterministic.probs)
 
 
 class TestConceptMapping:
@@ -947,7 +947,7 @@ class TestConceptMapping:
             concept_names=['A', 'B']
         )
         
-        assert result.shape == (4, 2)
+        assert result.probs.shape == (4, 2)
 
     def test_query_accepts_extra_kwargs(self):
         """Test query accepts and ignores unknown kwargs from BaseLearner."""
@@ -967,7 +967,7 @@ class TestConceptMapping:
             another_one=123
         )
         
-        assert result.shape == (4, 2)
+        assert result.probs.shape == (4, 2)
 
 
 if __name__ == '__main__':

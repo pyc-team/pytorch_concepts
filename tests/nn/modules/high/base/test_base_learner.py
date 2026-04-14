@@ -22,7 +22,7 @@ from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.nn.modules.outputs import ModelOutput
 
 
 class MockLearner(BaseLearner):
@@ -43,8 +43,8 @@ class FullMockLearner(BaseLearner):
     """Mock that satisfies all shared_step requirements.
 
     Mimics the interface that BaseModel normally provides:
-    concept_names, concept_annotations, filter_output_for_loss,
-    filter_output_for_metrics, and a full forward(x, query, evidence, **kw).
+    concept_names, concept_annotations, prepare_target,
+    and a full forward(x, query, evidence, **kw).
     """
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
@@ -55,13 +55,11 @@ class FullMockLearner(BaseLearner):
         self.dummy_param = nn.Parameter(torch.randn(1))
 
     def forward(self, x, query=None, evidence=None, **kwargs):
-        return torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+        logits = torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+        return ModelOutput(logits=logits)
 
-    def filter_output_for_loss(self, forward_out, target):
-        return {'input': forward_out, 'target': target}
-
-    def filter_output_for_metrics(self, forward_out, target):
-        return {'preds': forward_out, 'target': target}
+    def prepare_target(self, target):
+        return target
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -180,21 +178,25 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
         
-        # Create dummy predictions and targets (2 samples, 2 concepts)
-        preds = torch.tensor([[0.8, 0.7], [0.2, 0.3]])
-        targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
+            target=torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        )
         
         # Update metrics - should not raise error
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, step='train')
 
     def test_update_metrics_with_none(self):
         """Test update_metrics when metrics is None."""
         learner = MockLearner(metrics=None)
         
         # Should not raise error even with None metrics
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
-        learner.update_metrics(preds, targets, step='train')
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
+        learner.update_metrics(out, step='train')
 
 
 class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
@@ -221,14 +223,14 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
         
-        # Create metrics args (2 samples, 2 concepts)
-        metrics_args = {
-            'preds': torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
-            'target': torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        }
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
+            target=torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        )
         
         # Should not raise error
-        learner.update_and_log_metrics(metrics_args, step='train', batch_size=2)
+        learner.update_and_log_metrics(out, step='train', batch_size=2)
 
 
 class TestBaseLearnerBatchHandling(unittest.TestCase):
@@ -386,10 +388,12 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
     def test_update_metrics_invalid_type_is_noop(self):
         """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
         # Should not raise — train_metrics is None so nothing happens
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, step='train')
 
 
 # ======================================================================

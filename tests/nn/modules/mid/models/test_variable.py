@@ -6,7 +6,7 @@ Tests for Variable, ParametricCPD, and ProbabilisticModel.
 import unittest
 import pytest
 import torch
-from torch.distributions import Bernoulli, Categorical, Normal, RelaxedBernoulli
+from torch.distributions import Bernoulli, Categorical, Normal, OneHotCategorical, RelaxedBernoulli
 
 from torch_concepts.nn.modules.mid.models.variable import (
     Variable,
@@ -51,13 +51,13 @@ class TestVariable(unittest.TestCase):
         self.assertEqual(var.distribution, Delta)
 
     def test_variable_with_categorical_distribution(self):
-        """Test variable with Categorical distribution."""
+        """Test variable with OneHotCategorical distribution."""
         var = Variable(
             concepts='color',
-            distribution=Categorical,
+            distribution=OneHotCategorical,
             size=3
         )
-        self.assertEqual(var.distribution, Categorical)
+        self.assertEqual(var.distribution, OneHotCategorical)
         self.assertEqual(var.size, 3)
 
     def test_variable_with_normal_distribution(self):
@@ -74,7 +74,7 @@ class TestVariable(unittest.TestCase):
         var_binary = Variable(concepts='binary', distribution=Bernoulli, size=1)
         self.assertEqual(var_binary.out_features, 1)
 
-        var_cat = Variable(concepts='category', distribution=Categorical, size=5)
+        var_cat = Variable(concepts='category', distribution=OneHotCategorical, size=5)
         self.assertEqual(var_cat.out_features, 5)
 
     def test_variable_with_metadata(self):
@@ -92,18 +92,18 @@ class TestVariable(unittest.TestCase):
         """Test multiple concepts with different distributions."""
         vars_list = Variable(
             concepts=['A', 'B', 'C'],
-            distribution=[Bernoulli, Categorical, Delta],
+            distribution=[Bernoulli, OneHotCategorical, Delta],
             size=[1, 3, 1]
         )
         self.assertEqual(vars_list[0].distribution, Bernoulli)
-        self.assertEqual(vars_list[1].distribution, Categorical)
+        self.assertEqual(vars_list[1].distribution, OneHotCategorical)
         self.assertEqual(vars_list[2].distribution, Delta)
 
     def test_multiple_concepts_with_different_sizes(self):
         """Test multiple concepts with different sizes."""
         vars_list = Variable(
             concepts=['A', 'B', 'C'],
-            distribution=Categorical,
+            distribution=OneHotCategorical,
             size=[2, 3, 4]
         )
         self.assertEqual(vars_list[0].size, 2)
@@ -125,7 +125,7 @@ class TestVariable(unittest.TestCase):
         with self.assertRaises(ValueError):
             Variable(
                 concepts=['A', 'B', 'C'],
-                distribution=[Bernoulli, Categorical],  # Only 2, need 3
+                distribution=[Bernoulli, OneHotCategorical],  # Only 2, need 3
                 size=1
             )
 
@@ -150,13 +150,13 @@ class TestVariableMultiConceptCreation:
         """Test multi-concept with per-concept distributions."""
         vars_list = Variable(
             concepts=['a', 'b', 'c'],
-            distribution=[Bernoulli, Delta, Categorical],
+            distribution=[Bernoulli, Delta, OneHotCategorical],
             size=[1, 2, 3]
         )
         assert len(vars_list) == 3
         assert vars_list[0].distribution is Bernoulli
         assert vars_list[1].distribution is Delta
-        assert vars_list[2].distribution is Categorical
+        assert vars_list[2].distribution is OneHotCategorical
 
     def test_multi_concept_distribution_length_mismatch_raises_error(self):
         """Test that mismatched distribution list length raises error."""
@@ -180,13 +180,13 @@ class TestVariableMultiConceptCreation:
 class TestVariableValidation:
     """Test Variable validation logic."""
 
-    def test_categorical_with_size_one_raises_error(self):
-        """Test that Categorical with size=1 raises error."""
-        with pytest.raises(ValueError, match="Categorical Variable must have a size > 1"):
+    def test_categorical_raises_error(self):
+        """Test that Categorical always raises error (use OneHotCategorical)."""
+        with pytest.raises(ValueError, match="Use OneHotCategorical"):
             Variable(
                 concepts='cat',
                 distribution=Categorical,
-                size=1
+                size=3
             )
 
     def test_bernoulli_with_size_not_one_raises_error(self):
@@ -223,8 +223,8 @@ class TestVariableOutFeatures:
         assert var.out_features == 1
 
     def test_out_features_categorical(self):
-        """Test out_features for Categorical distribution."""
-        var = Variable(concepts='c', distribution=Categorical, size=5)
+        """Test out_features for OneHotCategorical distribution."""
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=5)
         assert var.out_features == 5
 
     def test_out_features_normal(self):

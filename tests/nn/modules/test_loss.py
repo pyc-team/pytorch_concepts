@@ -10,6 +10,7 @@ import unittest
 import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
+from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -73,7 +74,7 @@ class TestConceptLoss(unittest.TestCase):
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
@@ -90,7 +91,7 @@ class TestConceptLoss(unittest.TestCase):
             torch.randint(0, 5, (16, 1))
         ], dim=1)
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
@@ -117,7 +118,7 @@ class TestConceptLoss(unittest.TestCase):
             torch.randint(0, 4, (16, 1)),  # cat2
         ], dim=1)
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
@@ -130,7 +131,7 @@ class TestConceptLoss(unittest.TestCase):
         endogenous = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         loss.backward()
         
         self.assertIsNotNone(endogenous.grad)
@@ -223,7 +224,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
         endogenous = torch.randn(16, 5)
         targets = torch.randint(0, 2, (16, 5)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
@@ -242,7 +243,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         self.assertTrue(loss >= 0)
 
     def test_task_only_weight(self):
@@ -258,7 +259,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         self.assertTrue(loss >= 0)
 
     def test_different_weights(self):
@@ -283,8 +284,8 @@ class TestWeightedConceptLoss(unittest.TestCase):
             binary=nn.BCEWithLogitsLoss()
         )
         
-        loss_high_concept = loss_fn_high_concept(input=endogenous, target=targets)
-        loss_high_task = loss_fn_high_task(input=endogenous, target=targets)
+        loss_high_concept = loss_fn_high_concept(ModelOutput(logits=endogenous, target=targets))
+        loss_high_task = loss_fn_high_task(ModelOutput(logits=endogenous, target=targets))
         
         # Losses should be different
         self.assertNotAlmostEqual(loss_high_concept.item(), loss_high_task.item(), places=3)
@@ -310,7 +311,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
             torch.randint(0, 4, (16, 1)),  # t2 categorical
         ], dim=1)
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
@@ -329,7 +330,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
         endogenous = torch.randn(8, 5, requires_grad=True)
         targets = torch.randint(0, 2, (8, 5)).float()
         
-        loss = loss_fn(input=endogenous, target=targets)
+        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
         loss.backward()
         
         self.assertIsNotNone(endogenous.grad)
@@ -366,7 +367,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
                 binary=nn.BCEWithLogitsLoss()
             )
             
-            loss = loss_fn(input=endogenous, target=targets)
+            loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
             self.assertTrue(loss >= 0, f"Loss should be non-negative for concept_weight={concept_weight}")
 
 
@@ -490,7 +491,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
 
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -510,8 +511,8 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             source_weight=2.0, depth_decay=1.0,
             binary=nn.BCEWithLogitsLoss()
         )
-        loss1 = loss_fn_1(input=preds, target=targets)
-        loss2 = loss_fn_2(input=preds, target=targets)
+        loss1 = loss_fn_1(ModelOutput(logits=preds, target=targets))
+        loss2 = loss_fn_2(ModelOutput(logits=preds, target=targets))
         self.assertTrue(torch.allclose(loss2, 2.0 * loss1, atol=1e-5))
 
     def test_depth_decay_down_weights_deeper(self):
@@ -526,13 +527,12 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             source_weight=1.0, depth_decay=0.01,  # heavily down-weight deeper
             binary=nn.BCEWithLogitsLoss()
         )
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
 
         # Compare with loss coming only from root (depth 0)
         root_ann = Annotations({1: self.axis.subset(['A'])})
         root_loss_fn = ConceptLoss(root_ann, binary=nn.BCEWithLogitsLoss())
-        root_loss = root_loss_fn(input=preds[:, 0:1], target=targets[:, 0:1])
-
+        root_loss = root_loss_fn(ModelOutput(logits=preds[:, 0:1], target=targets[:, 0:1]))
         # Loss should be dominated by root; difference from root should be small
         relative_diff = (loss - root_loss).abs() / root_loss
         self.assertTrue(relative_diff < 0.05)
@@ -549,7 +549,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         preds = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
 
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         loss.backward()
 
         self.assertIsNotNone(preds.grad)
@@ -563,14 +563,14 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_mixed_binary_categorical(self):
         """Works with a mix of binary and categorical concepts."""
-        from torch.distributions import Bernoulli, Categorical
+        from torch.distributions import Bernoulli, OneHotCategorical
 
         axis = AxisAnnotation(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
             metadata={
                 'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Categorical},
+                'B': {'type': 'discrete', 'distribution': OneHotCategorical},
                 'C': {'type': 'discrete', 'distribution': Bernoulli},
             }
         )
@@ -594,7 +594,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             torch.randint(0, 3, (8, 1)).float(),
             torch.randint(0, 2, (8, 1)).float(),
         ], dim=1)
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
 
     # ------------------------------------------------------------------
@@ -638,7 +638,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
 
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
 
     # ------------------------------------------------------------------
@@ -727,7 +727,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         # Forward should work
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
 
 
@@ -813,8 +813,8 @@ class TestConceptLossComposite(unittest.TestCase):
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
 
-        l1 = loss_single(input=preds, target=targets)
-        l2 = loss_list(input=preds, target=targets)
+        l1 = loss_single(ModelOutput(logits=preds, target=targets))
+        l2 = loss_list(ModelOutput(logits=preds, target=targets))
         self.assertTrue(torch.allclose(l1, l2))
 
     def test_binary_list_with_regularizer(self):
@@ -833,7 +833,7 @@ class TestConceptLossComposite(unittest.TestCase):
 
         # Compute expected
         expected = 1.0 * bce(preds, targets) + 0.5 * reg(preds)
-        actual = loss_fn(input=preds, target=targets)
+        actual = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertTrue(torch.allclose(expected, actual))
 
     def test_binary_list_default_weights(self):
@@ -850,7 +850,7 @@ class TestConceptLossComposite(unittest.TestCase):
         targets = torch.randint(0, 2, (8, 3)).float()
 
         expected = bce(preds, targets) + reg(preds)
-        actual = loss_fn(input=preds, target=targets)
+        actual = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertTrue(torch.allclose(expected, actual))
 
     def test_weight_count_mismatch_raises(self):
@@ -879,7 +879,7 @@ class TestConceptLossComposite(unittest.TestCase):
             torch.randint(0, 4, (16, 1)),
         ], dim=1)
 
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -898,7 +898,7 @@ class TestConceptLossComposite(unittest.TestCase):
         preds = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
 
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         loss.backward()
 
         self.assertIsNotNone(preds.grad)
@@ -1044,7 +1044,7 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(input=preds, target=targets, embeddings=emb)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
     def test_extra_kwarg_ignored_when_not_in_sig(self):
@@ -1052,14 +1052,14 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         # Should not raise even though BCEWithLogitsLoss doesn't take 'embeddings'
-        loss = loss_fn(input=preds, target=targets, embeddings=torch.randn(4, 8))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': torch.randn(4, 8)}))
         self.assertEqual(loss.shape, ())
 
     def test_var_kwargs_term_receives_everything(self):
         loss_fn = ConceptLoss(self.ann, binary=_VarKwargsLoss())
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
-        loss = loss_fn(input=preds, target=targets, extra_data=torch.ones(3))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'extra_data': torch.ones(3)}))
         self.assertEqual(loss.shape, ())
 
     def test_composite_mixed_signatures(self):
@@ -1072,10 +1072,10 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(input=preds, target=targets, embeddings=emb)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
         # Verify embeddings affect the loss
-        loss_zero = loss_fn(input=preds, target=targets, embeddings=torch.zeros(4, 8))
+        loss_zero = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': torch.zeros(4, 8)}))
         self.assertNotEqual(loss.item(), loss_zero.item())
 
 
@@ -1104,7 +1104,7 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 3)
         targets = torch.randint(0, 2, (4, 3)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(input=preds, target=targets, embeddings=emb)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
 
@@ -1134,7 +1134,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(input=preds, target=targets, embeddings=emb)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
 
@@ -1164,7 +1164,7 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
             torch.randint(0, 3, (8, 1)),
             torch.randint(0, 5, (8, 1)),
         ], dim=1)
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1178,7 +1178,7 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
             torch.randint(0, 3, (8, 1)),
             torch.randint(0, 5, (8, 1)),
         ], dim=1)
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         loss.backward()
         self.assertIsNotNone(preds.grad)
 
@@ -1206,7 +1206,7 @@ class TestMixedCompositeBothTypes(unittest.TestCase):
             torch.randint(0, 2, (8, 1)).float(),
             torch.randint(0, 4, (8, 1)),
         ], dim=1)
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1240,7 +1240,7 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1271,7 +1271,7 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(input=preds, target=targets)
+        loss = loss_fn(ModelOutput(logits=preds, target=targets))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 

@@ -17,7 +17,7 @@ from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn import BipartiteModel, LinearConceptToConcept
 from torch_concepts.nn import LazyConstructor
 from torch_concepts.nn.modules.low.encoders.exogenous import LinearLatentToExogenous
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 
 class TestExogenousPrefixMatching(unittest.TestCase):
@@ -34,9 +34,9 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         
         # Create annotations with different cardinalities to make exogenous counts distinct
         metadata = {
-            'Car': {'distribution': Categorical, 'type': 'discrete'},
-            'CarCost': {'distribution': Categorical, 'type': 'discrete'},
-            'Driver': {'distribution': Categorical, 'type': 'discrete'},
+            'Car': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'CarCost': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'Driver': {'distribution': OneHotCategorical, 'type': 'discrete'},
             'Task': {'distribution': Bernoulli, 'type': 'discrete'}
         }
         cardinalities = (2, 4, 3, 1)
@@ -107,9 +107,9 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         concept_names = ['A', 'AB', 'ABC', 'Task']
         
         metadata = {
-            'A': {'distribution': Categorical, 'type': 'discrete'},
-            'AB': {'distribution': Categorical, 'type': 'discrete'},
-            'ABC': {'distribution': Categorical, 'type': 'discrete'},
+            'A': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'AB': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'ABC': {'distribution': OneHotCategorical, 'type': 'discrete'},
             'Task': {'distribution': Bernoulli, 'type': 'discrete'}
         }
         cardinalities = (2, 3, 4, 1)
@@ -163,8 +163,8 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         concept_names = ['Age_Group', 'Age_Group_Risk', 'Task']
         
         metadata = {
-            'Age_Group': {'distribution': Categorical, 'type': 'discrete'},
-            'Age_Group_Risk': {'distribution': Categorical, 'type': 'discrete'},
+            'Age_Group': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'Age_Group_Risk': {'distribution': OneHotCategorical, 'type': 'discrete'},
             'Task': {'distribution': Bernoulli, 'type': 'discrete'}
         }
         cardinalities = (3, 5, 1)
@@ -215,10 +215,10 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         concept_names = ['Other', 'OtherCar', 'OtherCarCost', 'Task']
         
         metadata = {
-            'Other': {'distribution': Categorical, 'type': 'discrete'},
-            'OtherCar': {'distribution': Categorical, 'type': 'discrete'},
-            'OtherCarCost': {'distribution': Categorical, 'type': 'discrete'},
-            'Task': {'distribution': Categorical, 'type': 'discrete'}
+            'Other': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'OtherCar': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'OtherCarCost': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'Task': {'distribution': OneHotCategorical, 'type': 'discrete'}
         }
         cardinalities = (2, 3, 4, 2)
         
@@ -272,8 +272,8 @@ class TestExogenousPrefixMatching(unittest.TestCase):
         concept_names = ['Car', 'CarCost', 'Task']
         
         metadata = {
-            'Car': {'distribution': Categorical, 'type': 'discrete'},
-            'CarCost': {'distribution': Categorical, 'type': 'discrete'},
+            'Car': {'distribution': OneHotCategorical, 'type': 'discrete'},
+            'CarCost': {'distribution': OneHotCategorical, 'type': 'discrete'},
             'Task': {'distribution': Bernoulli, 'type': 'discrete'}
         }
         cardinalities = (2, 4, 1)
