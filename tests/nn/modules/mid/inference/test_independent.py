@@ -9,6 +9,8 @@ Tests cover:
 - Edge cases and error handling
 """
 import pytest
+import logging
+from contextlib import contextmanager, nullcontext
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical
@@ -20,6 +22,22 @@ from torch_concepts.nn.modules.mid.models.probabilistic_model import Probabilist
 from torch_concepts.nn.modules.mid.inference.independent import IndependentInference
 from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
 from torch_concepts.distributions import Delta
+
+
+@contextmanager
+def caplog_workaround(logger):
+    """Capture log records from a specific logger."""
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)
+    logger.addHandler(handler)
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
 
 
 class TestIndependentInferenceBasic:
@@ -42,6 +60,30 @@ class TestIndependentInferenceBasic:
             factors=[cpd_input, cpd_A, cpd_B, cpd_task]
         )
         return model
+
+    def test_p_is_always_one(self):
+        """Test that p is forced to 1.0 regardless of what is passed."""
+        model = self._make_simple_model()
+        inference = IndependentInference(model)
+        assert inference.p == 1.0
+
+    def test_explicit_p_overridden_with_warning(self):
+        """Test that passing p != 1.0 logs a warning and overrides to 1.0."""
+        model = self._make_simple_model()
+        logger = logging.getLogger('torch_concepts.nn.modules.mid.inference.independent')
+        with caplog_workaround(logger) as log_records:
+            inference = IndependentInference(model, p=0.4)
+        assert inference.p == 1.0
+        assert any("overrides p=0.4" in r.message for r in log_records)
+
+    def test_explicit_p_one_no_warning(self):
+        """Test that passing p=1.0 does not log a warning."""
+        model = self._make_simple_model()
+        logger = logging.getLogger('torch_concepts.nn.modules.mid.inference.independent')
+        with caplog_workaround(logger) as log_records:
+            inference = IndependentInference(model, p=1.0)
+        assert inference.p == 1.0
+        assert not any("overrides" in r.message for r in log_records)
 
     def test_query_with_ground_truth(self):
         """Test that IndependentInference returns predictions while using GT for propagation."""
