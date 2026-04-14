@@ -67,6 +67,11 @@ DEFAULT_CLIP_CONCEPT_PROMPTS: Dict[str, str] = {
     "Young":                "a photo of a young person",
 }
 
+SIGMOID_TEMP_PARAMS = {"ViT-SO400M-14-SigLIP-384":{"t":58, "b":-7.54},
+                              "ViT-L-16-SigLIP-384":{"t":60, "b":-5.4},
+                              "ViT-L-14-336":{"t":58, "b":-14.5},
+                              "ViT-B-16-SigLIP2":{"t":64, "b":-8.32}}
+
 
 class CelebACLIPDataset(CelebADataset):
     """CelebA dataset with CLIP-generated concept pseudo-labels.
@@ -244,6 +249,15 @@ class CelebACLIPDataset(CelebADataset):
         tokenizer = open_clip.get_tokenizer(self._clip_model_name)
         model.eval()
 
+        # Use temperature parameters tuned on imagenet classes + superclasses
+        # SigLIP default params tend to result in 0 activations for almost all concepts
+        if self._clip_model_name in SIGMOID_TEMP_PARAMS:
+            sigmoid_t = SIGMOID_TEMP_PARAMS[self._clip_model_name]["t"]
+            sigmoid_b = SIGMOID_TEMP_PARAMS[self._clip_model_name]["b"]
+        else:
+            sigmoid_t = model.logit_scale.exp()
+            sigmoid_b = model.logit_bias
+
         concept_names = list(self._concept_prompts.keys())
         prompts = list(self._concept_prompts.values())
 
@@ -283,9 +297,8 @@ class CelebACLIPDataset(CelebADataset):
                 img_features = model.encode_image(batch_tensor)
                 img_features = img_features / img_features.norm(dim=-1, keepdim=True)
                 # Cosine similarity: (B, n_concepts)
-                logits = img_features @ text_features.T * model.logit_scale.exp() + model.logit_bias
+                logits = img_features @ text_features.T * sigmoid_t + sigmoid_b
                 probs = torch.sigmoid(logits)
-
             pseudo_labels[start:end] = probs.cpu()
 
         # Save as DataFrame so the parent's set_concepts() path (which expects
