@@ -57,6 +57,16 @@ class BaseLearner(pl.LightningModule):
 
         # loss function
         self.loss = loss
+        self._loss_takes_model_output = False
+        if loss is not None:
+            import inspect
+            sig = inspect.signature(loss.forward)
+            n_pos = sum(
+                1 for p in sig.parameters.values()
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                              inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            )
+            self._loss_takes_model_output = (n_pos == 1)
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -310,11 +320,9 @@ class BaseLearner(pl.LightningModule):
 
         # --- Compute loss ---
         if self.loss is not None:
-            from ...loss import ConceptLoss
-            if isinstance(self.loss, ConceptLoss):
+            if self._loss_takes_model_output:
                 loss = self.loss(out)
             else:
-                # Standard PyTorch loss (e.g. BCEWithLogitsLoss): pass tensors
                 loss = self.loss(out.logits, out.target)
             self.log_loss(step, loss, batch_size=batch_size)
 
