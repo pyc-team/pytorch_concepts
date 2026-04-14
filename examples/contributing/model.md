@@ -333,7 +333,7 @@ concept = Variable("smoking", parents=['embedding'],
 
 # Categorical concept with 5 classes
 concept = Variable("diagnosis", parents=['embedding'], 
-                  distribution=Categorical, size=5)
+                  distribution=OneHotCategorical, size=5)
 
 # Multiple concepts at once
 concepts = Variable(['age', 'gender', 'bmi'], 
