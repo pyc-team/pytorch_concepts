@@ -319,6 +319,7 @@ class BaseLearner(pl.LightningModule):
         #     c_hat = batch.transform['c'].inverse_transform(c_hat)
 
         # --- Compute loss ---
+        loss = None
         if self.loss is not None:
             if self._loss_takes_model_output:
                 loss = self.loss(out)
