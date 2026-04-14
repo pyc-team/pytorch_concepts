@@ -494,17 +494,14 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         self.assertIn('train_loss', learner._logged)
 
     def test_shared_step_no_loss(self):
-        """shared_step with loss=None still returns (the uninitialized variable raises)."""
+        """shared_step with loss=None returns None."""
         learner = FullMockLearner(
             self.annotations, n_concepts=2,
             loss=None,
         )
         self._patch_logging(learner)
-        # loss local variable is never assigned when self.loss is None,
-        # so returning it raises UnboundLocalError — this is the current
-        # behaviour and we document it.
-        with self.assertRaises(UnboundLocalError):
-            learner.shared_step(self.batch, step='train')
+        result = learner.shared_step(self.batch, step='train')
+        self.assertIsNone(result)
 
     def test_shared_step_with_composite_loss(self):
         """shared_step works when loss uses per-type composition."""
@@ -566,6 +563,60 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         learner.log_loss('train', fake_loss, batch_size=8)
         self.assertIn('train_loss', learner._logged)
         self.assertAlmostEqual(learner._logged['train_loss'].item(), 0.42, places=5)
+
+    def test_shared_step_standard_loss(self):
+        """shared_step dispatches standard PyTorch loss as loss(logits, target)."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=nn.MSELoss(),
+        )
+        self._patch_logging(learner)
+        loss = learner.shared_step(self.batch, step='train')
+        self.assertEqual(loss.shape, ())
+        self.assertIn('train_loss', learner._logged)
+
+
+class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
+    """Cover ConceptMetrics with empty collection and log_metrics else branch."""
+
+    def setUp(self):
+        self.annotations = Annotations({
+            1: AxisAnnotation(
+                labels=('C1', 'C2'),
+                metadata={
+                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
+                }
+            )
+        })
+
+    def test_concept_metrics_no_collection(self):
+        """ConceptMetrics with empty collection sets split metrics to None."""
+        metrics = ConceptMetrics(
+            annotations=self.annotations,
+            summary=True,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+        )
+        # Simulate an empty collection (all sub-collections cleared)
+        metrics.binary = torchmetrics.MetricCollection({})
+        learner = MockLearner(n_concepts=2, metrics=metrics)
+        self.assertIsNone(learner.train_metrics)
+        self.assertIsNone(learner.val_metrics)
+        self.assertIsNone(learner.test_metrics)
+
+    def test_log_metrics_non_concept_metrics(self):
+        """log_metrics with a plain MetricCollection uses the else branch."""
+        learner = MockLearner(n_concepts=2)
+        learner._logged = {}
+        def _fake_log_dict(d, **kw):
+            learner._logged.update(d)
+        learner.log_dict = _fake_log_dict
+
+        coll = torchmetrics.MetricCollection({
+            'acc': torchmetrics.classification.BinaryAccuracy(),
+        })
+        # Should go through the else branch (not ConceptMetrics)
+        learner.log_metrics(coll)
 
 
 if __name__ == '__main__':
