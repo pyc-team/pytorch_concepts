@@ -5,11 +5,11 @@ from typing import List, Mapping, Optional, Union
 import torch
 from torch import nn
 
-from ...nn.modules.utils import GroupConfig
+from .utils import GroupConfig, check_collection
+from .outputs import ModelOutput
 from ...annotations import Annotations, AxisAnnotation
 from ...utils import instantiate_from_string
-from ...nn.modules.utils import check_collection
-from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
+from .mid.constructors.concept_graph import ConceptGraph
 
 
 def _get_forward_signature(module: nn.Module):
@@ -101,14 +101,14 @@ class ConceptLoss(nn.Module):
         >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
         >>> from torch_concepts import Annotations, AxisAnnotation
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch.distributions import Bernoulli, Categorical
+        >>> from torch.distributions import Bernoulli, OneHotCategorical
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['is_round', 'color'],
         ...     cardinalities=[1, 3],
         ...     metadata={
         ...         'is_round': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'color': {'type': 'discrete', 'distribution': Categorical}
+        ...         'color': {'type': 'discrete', 'distribution': OneHotCategorical}
         ...     }
         ... )})
         >>>
@@ -271,25 +271,23 @@ class ConceptLoss(nn.Module):
         cat_targets = target[:, cat_concept_idx].T.reshape(-1).long()
         return cat_logits, cat_targets, cat_mask
 
-    def forward(self, **kwargs) -> torch.Tensor:
+    def forward(self, output: ModelOutput) -> torch.Tensor:
         """Compute total loss across all concept types.
         
-        Splits ``input`` and ``target`` by concept type, merges them with any
-        extra kwargs, computes individual losses (each a weighted sum of its
-        terms dispatched by signature), and sums them.
-        
+        Splits ``output.logits`` and ``output.target`` by concept type,
+        merges them with any extras, computes individual losses (each a
+        weighted sum of its terms dispatched by signature), and sums them.
+
         Args:
-            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
-                Any additional kwargs (e.g. ``embeddings``, ``model``) are
-                forwarded to loss terms whose ``forward()`` signature accepts
-                them.
+            output (ModelOutput): Structured model output containing
+                ``logits``, ``target``, and optionally ``extras``.
             
         Returns:
             torch.Tensor: Total computed loss (scalar).
         """
-        input = kwargs['input']
-        target = kwargs['target']
-        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        input = output.logits
+        target = output.target
+        extra = dict(output.extras) if output.extras else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         
@@ -387,27 +385,27 @@ class WeightedConceptLoss(nn.Module):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(fn_collection={self.fn_collection})"
     
-    def forward(self, **kwargs) -> torch.Tensor:
+    def forward(self, output: ModelOutput) -> torch.Tensor:
         """Compute weighted loss for concepts and tasks.
-        
+
         Args:
-            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
-                Extra kwargs are forwarded to the inner ConceptLoss instances.
+            output (ModelOutput): Structured model output containing
+                ``logits``, ``target``, and optionally ``extras``.
         
         Returns:
             torch.Tensor: Weighted combination of concept and task losses (scalar).
         """
-        input = kwargs['input']
-        target = kwargs['target']
-        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        input = output.logits
+        target = output.target
+        extra = dict(output.extras) if output.extras else {}
         
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
         task_input = input[:, self.input_t_idx]
         task_target = target[:, self.target_t_idx]
         
-        c_loss = self.concept_loss(input=concept_input, target=concept_target, **extra)
-        t_loss = self.task_loss(input=task_input, target=task_target, **extra)
+        c_loss = self.concept_loss(ModelOutput(logits=concept_input, target=concept_target, extras=extra or None))
+        t_loss = self.task_loss(ModelOutput(logits=task_input, target=task_target, extras=extra or None))
         
         return c_loss * self.concept_weight + t_loss * self.task_weight
 
@@ -562,19 +560,19 @@ class DepthWeightedConceptLoss(nn.Module):
     # ------------------------------------------------------------------
     # forward
     # ------------------------------------------------------------------
-    def forward(self, **kwargs) -> torch.Tensor:
+    def forward(self, output: ModelOutput) -> torch.Tensor:
         """Compute depth-weighted loss across all concept depths.
 
         Args:
-            **kwargs: Must include ``input`` (logits) and ``target`` (labels).
-                Extra kwargs are forwarded to the inner ConceptLoss instances.
+            output (ModelOutput): Structured model output containing
+                ``logits``, ``target``, and optionally ``extras``.
 
         Returns:
             torch.Tensor: Total depth-weighted loss (scalar).
         """
-        input = kwargs['input']
-        target = kwargs['target']
-        extra = {k: v for k, v in kwargs.items() if k not in ('input', 'target')}
+        input = output.logits
+        target = output.target
+        extra = dict(output.extras) if output.extras else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         for i, d in enumerate(self._depth_levels):
@@ -582,7 +580,7 @@ class DepthWeightedConceptLoss(nn.Module):
             sub_target = target[:, self._target_idx[i]]
             sub_loss = getattr(self, f"loss_depth_{d}")
             total_loss = total_loss + self._depth_weights_list[i] * sub_loss(
-                input=sub_input, target=sub_target, **extra
+                ModelOutput(logits=sub_input, target=sub_target, extras=extra or None)
             )
         return total_loss
 

@@ -6,8 +6,8 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from ...nn.modules.utils import GroupConfig
-from ...nn.modules.utils import check_collection
+from .outputs import ModelOutput
+from .utils import GroupConfig, check_collection
 
 
 def clone_metric(metric):
@@ -296,16 +296,23 @@ class ConceptMetrics(nn.Module):
         cat_target = target[:, cat_concept_idx].T.reshape(-1).long()
         return cat_pred, cat_target
     
-    def update(self, preds: torch.Tensor, target: torch.Tensor):
+    def update(self, preds, target: torch.Tensor = None):
         """Update metrics by routing predictions to the correct type collection.
         
         Summary metrics receive aggregated data for all concepts of a type.
         Per-concept metrics receive individual concept data.
         
         Args:
-            preds: Model predictions (logits). Shape ``(batch, logits_dim)``.
+            preds: Model predictions (logits) as a ``torch.Tensor`` of shape
+                ``(batch, logits_dim)``, or a ``ModelOutput`` whose ``.logits``
+                and ``.target`` fields will be used.
             target: Ground truth values. Shape ``(batch, n_concepts)``.
+                Required when *preds* is a plain tensor; ignored when *preds*
+                is a ``ModelOutput``.
         """
+        if isinstance(preds, ModelOutput):
+            target = preds.target
+            preds = preds.logits
         if preds.shape[0] == 0:
             return
         
@@ -445,8 +452,8 @@ def compute_cace(
         ):
             out_low = model(x=x, query=[target_concept])
 
-        all_high.append(out_high)
-        all_low.append(out_low)
+        all_high.append(out_high.probs)
+        all_low.append(out_low.probs)
 
     if was_training:
         model.train()

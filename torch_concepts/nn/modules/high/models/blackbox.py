@@ -6,6 +6,7 @@ from .....data.utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
 from ...loss import ConceptLoss
+from ...outputs import ModelOutput
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
@@ -51,7 +52,7 @@ class BlackBox(BaseModel):
         query: List[str] = None,
         evidence: torch.Tensor = None,
         **kwargs
-    ) -> torch.Tensor:
+    ) -> ModelOutput:
         """Forward pass through the BlackBox model.
         
         Parameters
@@ -68,8 +69,8 @@ class BlackBox(BaseModel):
         
         Returns
         -------
-        torch.Tensor
-            Predictions for queried concepts.
+        ModelOutput
+            Structured output with ``.logits``.
         """
         features = self.maybe_apply_backbone(x)
         endogenous = self.latent_encoder(features)
@@ -78,7 +79,7 @@ class BlackBox(BaseModel):
         if query is not None:
             output = self.concept_annotations.slice_tensor(output, query)
 
-        return output
+        return ModelOutput(logits=output)
 
 
 class BlackBoxTaskOnly(BaseModel):
@@ -133,7 +134,7 @@ class BlackBoxTaskOnly(BaseModel):
         )
 
         # Rebuild loss with task-only annotations so index slicing matches
-        # the task-only tensors produced by filter_output_for_loss.
+        # the task-only tensors produced by prepare_target.
         if isinstance(getattr(self, 'loss', None), ConceptLoss):
             task_ann = Annotations({1: self.task_annotations})
             self.loss = ConceptLoss(
@@ -155,7 +156,7 @@ class BlackBoxTaskOnly(BaseModel):
                 query: List[str] = None,
                 evidence: torch.Tensor = None,
                 **kwargs
-        ) -> torch.Tensor:
+        ) -> ModelOutput:
         """Forward pass through the BlackBoxTaskOnly model.
         
         Parameters
@@ -169,49 +170,31 @@ class BlackBoxTaskOnly(BaseModel):
             Evidence tensor (ignored).
         **kwargs
             Additional arguments (ignored).
+        
+        Returns
+        -------
+        ModelOutput
+            Structured output with ``.logits`` containing task predictions.
         """
         features = self.maybe_apply_backbone(x)
         endogenous = self.latent_encoder(features)
         output = self.linear(endogenous)
-        return output
+        return ModelOutput(logits=output)
 
-    def filter_output_for_loss(self, forward_out, target):
-        """Slice target to task columns to match the task-only predictions.
-
-        Parameters
-        ----------
-        forward_out : torch.Tensor
-            Model output containing task predictions only.
-        target : torch.Tensor
-            Ground truth labels (full concept-level tensor).
-
-        Returns
-        -------
-        dict
-            Dict with 'input' (task predictions) and 'target' (task-only
-            ground-truth columns) for loss computation.
-        """
-        task_target = target[:, self.task_concept_idx]
-        return {'input': forward_out, 'target': task_target}
-
-    def filter_output_for_metrics(self, forward_out, target):
-        """Slice target to task columns to match the task-only predictions.
+    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+        """Slice target to task-only columns.
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output containing task predictions only.
         target : torch.Tensor
-            Ground truth labels (full concept-level tensor).
+            Full concept-level ground truth labels.
 
         Returns
         -------
-        dict
-            Dict with 'preds' (task predictions) and 'target' (task-only
-            ground-truth columns) for metric computation.
+        torch.Tensor
+            Target sliced to task columns only.
         """
-        task_target = target[:, self.task_concept_idx]
-        return {'preds': forward_out, 'target': task_target}
+        return target[:, self.task_concept_idx]
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.
@@ -221,7 +204,7 @@ class BlackBoxTaskOnly(BaseModel):
         ``BlackBoxTaskOnly`` outputs only task logits, the internal index
         mappings would be misaligned.  This override reconstructs the
         metrics using ``task_annotations`` so that indices match the
-        task-only tensors produced by ``filter_output_for_*``.
+        task-only output.
         """
         task_ann = Annotations({1: self.task_annotations})
         task_metrics = ConceptMetrics(
