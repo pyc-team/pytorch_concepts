@@ -7,7 +7,7 @@ Tests cover:
 - Training modes (manual PyTorch and Lightning)
 - Backbone integration
 - Distribution handling
-- Filter methods for loss and metrics
+- Target preparation (prepare_target)
 - Edge cases and error handling
 - Device consistency
 - Gradient flow
@@ -208,7 +208,7 @@ class TestBlackBoxForward(unittest.TestCase):
         
         # Output size is sum of cardinalities: 1 + 3 + 2 = 6
         expected_output_size = sum(self.ann[1].cardinalities)
-        self.assertEqual(out.shape, (2, expected_output_size))
+        self.assertEqual(out.logits.shape, (2, expected_output_size))
     
     def test_forward_batch_sizes(self):
         """Test forward pass with different batch sizes."""
@@ -217,7 +217,7 @@ class TestBlackBoxForward(unittest.TestCase):
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             out = model(x)
-            self.assertEqual(out.shape[0], batch_size)
+            self.assertEqual(out.logits.shape[0], batch_size)
     
     def test_forward_query_filters_output(self):
         """Test that query selects only the queried concept columns."""
@@ -226,23 +226,23 @@ class TestBlackBoxForward(unittest.TestCase):
         x = torch.randn(2, 8)
         # Annotations: c1(1), c2(3), task(2) — total 6
         out_all = model(x)
-        self.assertEqual(out_all.shape, (2, 6))
+        self.assertEqual(out_all.logits.shape, (2, 6))
         
         # Query single binary concept
         out_c1 = model(x, query=['c1'])
-        self.assertEqual(out_c1.shape, (2, 1))
-        self.assertTrue(torch.allclose(out_c1, out_all[:, 0:1]))
+        self.assertEqual(out_c1.logits.shape, (2, 1))
+        self.assertTrue(torch.allclose(out_c1.logits, out_all.logits[:, 0:1]))
         
         # Query single categorical concept
         out_c2 = model(x, query=['c2'])
-        self.assertEqual(out_c2.shape, (2, 3))
-        self.assertTrue(torch.allclose(out_c2, out_all[:, 1:4]))
+        self.assertEqual(out_c2.logits.shape, (2, 3))
+        self.assertTrue(torch.allclose(out_c2.logits, out_all.logits[:, 1:4]))
         
         # Query subset
         out_subset = model(x, query=['c1', 'task'])
-        self.assertEqual(out_subset.shape, (2, 3))  # 1 + 2
-        self.assertTrue(torch.allclose(out_subset[:, 0:1], out_all[:, 0:1]))
-        self.assertTrue(torch.allclose(out_subset[:, 1:3], out_all[:, 4:6]))
+        self.assertEqual(out_subset.logits.shape, (2, 3))  # 1 + 2
+        self.assertTrue(torch.allclose(out_subset.logits[:, 0:1], out_all.logits[:, 0:1]))
+        self.assertTrue(torch.allclose(out_subset.logits[:, 1:3], out_all.logits[:, 4:6]))
     
     def test_forward_query_all_same_as_none(self):
         """Test that querying all concepts returns same as query=None."""
@@ -253,8 +253,8 @@ class TestBlackBoxForward(unittest.TestCase):
         out_none = model(x)
         out_all = model(x, query=['c1', 'c2', 'task'])
         
-        self.assertEqual(out_none.shape, out_all.shape)
-        self.assertTrue(torch.allclose(out_none, out_all))
+        self.assertEqual(out_none.logits.shape, out_all.logits.shape)
+        self.assertTrue(torch.allclose(out_none.logits, out_all.logits))
     
     def test_forward_query_single_concept(self):
         """Test querying a single concept with large cardinality."""
@@ -262,7 +262,7 @@ class TestBlackBoxForward(unittest.TestCase):
         
         x = torch.randn(4, 8)
         out = model(x, query=['task'])
-        self.assertEqual(out.shape, (4, 2))
+        self.assertEqual(out.logits.shape, (4, 2))
     
     def test_forward_with_evidence_ignored(self):
         """Test that evidence parameter is accepted but doesn't affect output."""
@@ -272,7 +272,7 @@ class TestBlackBoxForward(unittest.TestCase):
         out1 = model(x)
         out2 = model(x, evidence=torch.randn(2, 4))
         
-        self.assertEqual(out1.shape, out2.shape)
+        self.assertEqual(out1.logits.shape, out2.logits.shape)
     
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic with same input."""
@@ -283,7 +283,7 @@ class TestBlackBoxForward(unittest.TestCase):
         out1 = model(x)
         out2 = model(x)
         
-        self.assertTrue(torch.allclose(out1, out2))
+        self.assertTrue(torch.allclose(out1.logits, out2.logits))
     
     def test_forward_no_backbone(self):
         """Test forward pass with no backbone (identity)."""
@@ -291,7 +291,7 @@ class TestBlackBoxForward(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 6))
+        self.assertEqual(out.logits.shape, (2, 6))
     
     def test_forward_no_latent_encoder(self):
         """Test forward pass with identity latent encoder."""
@@ -299,8 +299,8 @@ class TestBlackBoxForward(unittest.TestCase):
         x = torch.randn(3, 8)
         out = model(x)
         
-        self.assertEqual(out.shape[0], 3)
-        self.assertEqual(out.shape[1], sum(self.ann[1].cardinalities))
+        self.assertEqual(out.logits.shape[0], 3)
+        self.assertEqual(out.logits.shape[1], sum(self.ann[1].cardinalities))
     
     def test_forward_extra_kwargs_ignored(self):
         """Test that extra kwargs in forward are silently ignored."""
@@ -308,11 +308,11 @@ class TestBlackBoxForward(unittest.TestCase):
         x = torch.randn(2, 8)
         # These kwargs should be captured by **kwargs and ignored
         out = model(x, ground_truth=torch.ones(2, 6), concept_names=['a'])
-        self.assertEqual(out.shape, (2, 6))
+        self.assertEqual(out.logits.shape, (2, 6))
 
 
-class TestBlackBoxFilterMethods(unittest.TestCase):
-    """Test BlackBox filter methods inherited from BaseModel."""
+class TestBlackBoxPrepareTarget(unittest.TestCase):
+    """Test BlackBox prepare_target inherited from BaseModel."""
     
     def setUp(self):
         """Set up test fixtures."""
@@ -325,42 +325,21 @@ class TestBlackBoxFilterMethods(unittest.TestCase):
             latent_encoder_kwargs={'hidden_size': 4}
         )
     
-    def test_filter_output_for_loss(self):
-        """Test filter_output_for_loss returns correct format."""
+    def test_prepare_target(self):
+        """Test prepare_target returns target unchanged for BlackBox."""
         x = torch.randn(2, 8)
         out = self.model(x)
-        target = torch.randint(0, 2, out.shape)
+        target = torch.randint(0, 2, out.logits.shape)
         
-        loss_dict = self.model.filter_output_for_loss(out, target)
-        
-        self.assertIn('input', loss_dict)
-        self.assertIn('target', loss_dict)
-        self.assertTrue(torch.allclose(loss_dict['input'], out))
-        self.assertTrue(torch.allclose(loss_dict['target'], target))
-    
-    def test_filter_output_for_metrics(self):
-        """Test filter_output_for_metrics returns correct format."""
-        x = torch.randn(2, 8)
-        out = self.model(x)
-        target = torch.randint(0, 2, out.shape)
-        
-        metric_dict = self.model.filter_output_for_metrics(out, target)
-        
-        self.assertIn('preds', metric_dict)
-        self.assertIn('target', metric_dict)
-        self.assertTrue(torch.allclose(metric_dict['preds'], out))
-        self.assertTrue(torch.allclose(metric_dict['target'], target))
-    
-    def test_filter_methods_inherited_from_base(self):
-        """Test that filter methods are inherited from BaseModel (not overridden)."""
-        # After cleanup, BlackBox should not have its own filter methods
+        prepared = self.model.prepare_target(target)
+        self.assertTrue(torch.allclose(prepared, target))
+
+    def test_prepare_target_inherited_from_base(self):
+        """Test that prepare_target is inherited from BaseModel (not overridden)."""
+        # After cleanup, BlackBox should not have its own prepare_target method
         self.assertNotIn(
-            'filter_output_for_loss', BlackBox.__dict__,
-            "BlackBox should not override filter_output_for_loss"
-        )
-        self.assertNotIn(
-            'filter_output_for_metrics', BlackBox.__dict__,
-            "BlackBox should not override filter_output_for_metrics"
+            'prepare_target', BlackBox.__dict__,
+            "BlackBox should not override prepare_target"
         )
 
 
@@ -430,7 +409,7 @@ class TestBlackBoxLightning(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 2))
+        self.assertEqual(out.logits.shape, (2, 2))
     
     def test_lightning_training_step(self):
         """Test Lightning training_step works for BlackBox."""
@@ -678,7 +657,7 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
         out = model(x)
         
         # Only task1 output (cardinality 1)
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
     
     def test_forward_shape_multiple_tasks(self):
         """Test forward pass output shape with multiple tasks."""
@@ -687,7 +666,7 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
         out = model(x)
         
         # task1(1) + task2(3) = 4
-        self.assertEqual(out.shape, (2, 4))
+        self.assertEqual(out.logits.shape, (2, 4))
     
     def test_forward_batch_sizes(self):
         """Test forward pass with different batch sizes."""
@@ -696,7 +675,7 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             out = model(x)
-            self.assertEqual(out.shape[0], batch_size)
+            self.assertEqual(out.logits.shape[0], batch_size)
     
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic."""
@@ -707,18 +686,18 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
         out1 = model(x)
         out2 = model(x)
         
-        self.assertTrue(torch.allclose(out1, out2))
+        self.assertTrue(torch.allclose(out1.logits, out2.logits))
     
     def test_forward_extra_kwargs_ignored(self):
         """Test that extra kwargs in forward are silently ignored."""
         model = self._make_model()
         x = torch.randn(2, 8)
         out = model(x, ground_truth=torch.ones(2, 1), concept_names=['a'])
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
 
 
-class TestBlackBoxTaskOnlyFilterMethods(unittest.TestCase):
-    """Test BlackBoxTaskOnly filter methods with padding logic."""
+class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
+    """Test BlackBoxTaskOnly prepare_target with padding logic."""
     
     def setUp(self):
         """Set up test fixtures."""
@@ -735,51 +714,24 @@ class TestBlackBoxTaskOnlyFilterMethods(unittest.TestCase):
             latent_encoder_kwargs={'hidden_size': 4}
         )
     
-    def test_filter_output_for_loss_slices_target(self):
-        """Test filter_output_for_loss slices target to task columns."""
-        x = torch.randn(2, 8)
-        out = self.model(x)  # Shape: (2, 1) for task1 only
+    def test_prepare_target_slices_target(self):
+        """Test prepare_target slices target to task columns."""
         # Full concept-level target: c1, c2, task1
         target = torch.tensor([[0., 1., 1.],
                                [1., 0., 0.]])
         
-        loss_dict = self.model.filter_output_for_loss(out, target)
-        
-        self.assertIn('input', loss_dict)
-        self.assertIn('target', loss_dict)
-        
-        # Input should be the raw model output (task-only)
-        self.assertEqual(loss_dict['input'].shape, (2, 1))
-        self.assertTrue(torch.allclose(loss_dict['input'], out))
+        prepared = self.model.prepare_target(target)
         
         # Target should be sliced to task1 column (concept index 2)
-        self.assertEqual(loss_dict['target'].shape, (2, 1))
-        self.assertTrue(torch.allclose(loss_dict['target'], target[:, 2:3]))
+        self.assertEqual(prepared.shape, (2, 1))
+        self.assertTrue(torch.allclose(prepared, target[:, 2:3]))
     
-    def test_filter_output_for_metrics_slices_target(self):
-        """Test filter_output_for_metrics slices target to task columns."""
-        x = torch.randn(2, 8)
-        out = self.model(x)
-        target = torch.tensor([[0., 1., 1.],
-                               [1., 0., 0.]])
-        
-        metric_dict = self.model.filter_output_for_metrics(out, target)
-        
-        self.assertIn('preds', metric_dict)
-        self.assertIn('target', metric_dict)
-        
-        # Preds should be the raw model output (task-only)
-        self.assertEqual(metric_dict['preds'].shape, (2, 1))
-        # Target should be sliced to task1 column
-        self.assertEqual(metric_dict['target'].shape, (2, 1))
-    
-    def test_filter_loss_preserves_gradients(self):
-        """Test that filter operation preserves gradient flow."""
+    def test_forward_preserves_gradients(self):
+        """Test that forward pass preserves gradient flow."""
         x = torch.randn(2, 8)
         out = self.model(x)
         
-        loss_dict = self.model.filter_output_for_loss(out, torch.zeros(2, 3))
-        loss = loss_dict['input'].sum()
+        loss = out.logits.sum()
         loss.backward()
         
         # Check gradients exist on model parameters
@@ -787,7 +739,7 @@ class TestBlackBoxTaskOnlyFilterMethods(unittest.TestCase):
             if param.requires_grad:
                 self.assertIsNotNone(param.grad)
     
-    def test_filter_loss_multiple_tasks_slicing(self):
+    def test_prepare_target_multiple_tasks_slicing(self):
         """Test target slicing with multiple tasks."""
         ann = make_annotations(
             ['c1', 'task1', 'task2'],
@@ -799,42 +751,20 @@ class TestBlackBoxTaskOnlyFilterMethods(unittest.TestCase):
             task_names=['task1', 'task2'],
         )
         
-        x = torch.randn(3, 8)
-        out = model(x)  # Shape: (3, 4) for task1(1) + task2(3)
-        self.assertEqual(out.shape, (3, 4))
-        
         # Full concept-level target: c1, task1, task2
         target = torch.tensor([[0., 1., 2.],
                                [1., 0., 1.],
                                [0., 1., 0.]])
         
-        loss_dict = model.filter_output_for_loss(out, target)
-        
-        # Input is the raw task-only output
-        self.assertEqual(loss_dict['input'].shape, (3, 4))
-        self.assertTrue(torch.allclose(loss_dict['input'], out))
+        prepared = model.prepare_target(target)
         
         # Target sliced to task1 (idx 1) and task2 (idx 2)
-        self.assertEqual(loss_dict['target'].shape, (3, 2))
-        self.assertTrue(torch.allclose(loss_dict['target'], target[:, [1, 2]]))
+        self.assertEqual(prepared.shape, (3, 2))
+        self.assertTrue(torch.allclose(prepared, target[:, [1, 2]]))
     
-    def test_filter_metrics_uses_same_slicing(self):
-        """Test that metrics filter uses same target-slicing logic as loss filter."""
-        x = torch.randn(4, 8)
-        out = self.model(x)
-        target = torch.zeros(4, 3)  # concept-level: c1, c2, task1
-        
-        loss_dict = self.model.filter_output_for_loss(out, target)
-        metric_dict = self.model.filter_output_for_metrics(out, target)
-        
-        # Both should produce same results (just different keys)
-        self.assertTrue(torch.allclose(loss_dict['input'], metric_dict['preds']))
-        self.assertTrue(torch.allclose(loss_dict['target'], metric_dict['target']))
-    
-    def test_filter_overrides_base_model(self):
-        """Test that BlackBoxTaskOnly overrides BaseModel filter methods."""
-        self.assertIn('filter_output_for_loss', BlackBoxTaskOnly.__dict__)
-        self.assertIn('filter_output_for_metrics', BlackBoxTaskOnly.__dict__)
+    def test_prepare_target_overrides_base_model(self):
+        """Test that BlackBoxTaskOnly overrides BaseModel prepare_target."""
+        self.assertIn('prepare_target', BlackBoxTaskOnly.__dict__)
 
 
 class TestBlackBoxTaskOnlyMultipleTasks(unittest.TestCase):
@@ -1118,7 +1048,7 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         x = torch.randn(2, 8, device=device)
         out = model(x)
         
-        self.assertEqual(out.device.type, device.type)
+        self.assertEqual(out.logits.device.type, device.type)
     
     def test_blackbox_task_only_device_consistency(self):
         """Test that BlackBoxTaskOnly maintains device consistency."""
@@ -1136,10 +1066,10 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         x = torch.randn(2, 8, device=device)
         out = model(x)
         
-        self.assertEqual(out.device.type, device.type)
+        self.assertEqual(out.logits.device.type, device.type)
     
-    def test_blackbox_task_only_filter_preserves_device(self):
-        """Test that filter methods preserve tensor device."""
+    def test_blackbox_task_only_prepare_target_preserves_device(self):
+        """Test that prepare_target preserves tensor device."""
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
         
@@ -1155,9 +1085,9 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         out = model(x)
         target = torch.zeros(2, 2, device=device)
         
-        loss_dict = model.filter_output_for_loss(out, target)
+        prepared = model.prepare_target(target)
         
-        self.assertEqual(loss_dict['input'].device.type, device.type)
+        self.assertEqual(prepared.device.type, device.type)
 
 
 # =============================================================================
@@ -1174,7 +1104,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
     
     def test_large_cardinalities(self):
         """Test with large cardinalities."""
@@ -1183,7 +1113,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 150))
+        self.assertEqual(out.logits.shape, (2, 150))
     
     def test_batch_size_one(self):
         """Test with batch size of 1."""
@@ -1192,7 +1122,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         x = torch.randn(1, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (1, 1))
+        self.assertEqual(out.logits.shape, (1, 1))
     
     def test_gradient_flow(self):
         """Test that gradients flow through the model."""
@@ -1200,7 +1130,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(2, 8, requires_grad=True)
         out = model(x)
-        loss = out.sum()
+        loss = out.logits.sum()
         loss.backward()
         
         self.assertIsNotNone(x.grad)
@@ -1216,7 +1146,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 20))
+        self.assertEqual(out.logits.shape, (2, 20))
     
     def test_large_input_size(self):
         """Test with large input size."""
@@ -1225,7 +1155,7 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         x = torch.randn(2, 512)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
 
 
 class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
@@ -1242,28 +1172,11 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         x = torch.randn(2, 8, requires_grad=True)
         out = model(x)
-        loss = out.sum()
+        loss = out.logits.sum()
         loss.backward()
         
         self.assertIsNotNone(x.grad)
         self.assertFalse(torch.all(x.grad == 0))
-    
-    def test_gradient_flow_through_filter(self):
-        """Test that gradients flow through filter output."""
-        ann = make_annotations(['c1', 'task'], [1, 1])
-        model = BlackBoxTaskOnly(
-            input_size=8,
-            annotations=ann,
-            task_names='task'
-        )
-        
-        x = torch.randn(2, 8, requires_grad=True)
-        out = model(x)
-        loss_dict = model.filter_output_for_loss(out, torch.zeros(2, 2))
-        loss = loss_dict['input'].sum()
-        loss.backward()
-        
-        self.assertIsNotNone(x.grad)
     
     def test_large_task_cardinality(self):
         """Test with large task cardinality."""
@@ -1277,15 +1190,13 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         x = torch.randn(2, 8)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 50))
+        self.assertEqual(out.logits.shape, (2, 50))
         
         # Full target has 2 concept-level columns (c1, task)
         target = torch.zeros(2, 2)
-        loss_dict = model.filter_output_for_loss(out, target)
-        # Input stays task-only
-        self.assertEqual(loss_dict['input'].shape, (2, 50))
+        prepared = model.prepare_target(target)
         # Target sliced to task column only
-        self.assertEqual(loss_dict['target'].shape, (2, 1))
+        self.assertEqual(prepared.shape, (2, 1))
     
     def test_single_task_is_only_concept(self):
         """Test when the only concept is also the task."""
@@ -1300,13 +1211,12 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         x = torch.randn(2, 8)
         out = model(x)
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
         
-        # When task is the only concept, filter is identity on both sides
+        # When task is the only concept, prepare_target is identity
         target = torch.zeros(2, 1)
-        loss_dict = model.filter_output_for_loss(out, target)
-        self.assertTrue(torch.allclose(loss_dict['input'], out))
-        self.assertTrue(torch.allclose(loss_dict['target'], target))
+        prepared = model.prepare_target(target)
+        self.assertTrue(torch.allclose(prepared, target))
     
     def test_batch_size_one(self):
         """Test with batch size of 1."""
@@ -1319,13 +1229,12 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         x = torch.randn(1, 8)
         out = model(x)
-        self.assertEqual(out.shape, (1, 1))
+        self.assertEqual(out.logits.shape, (1, 1))
         
         # Full target has 2 concept-level columns
         target = torch.zeros(1, 2)
-        loss_dict = model.filter_output_for_loss(out, target)
-        self.assertEqual(loss_dict['input'].shape, (1, 1))
-        self.assertEqual(loss_dict['target'].shape, (1, 1))
+        prepared = model.prepare_target(target)
+        self.assertEqual(prepared.shape, (1, 1))
 
 
 # =============================================================================
@@ -1351,10 +1260,10 @@ class TestBlackBoxTraining(unittest.TestCase):
         
         # Forward pass
         out = model(x)
-        loss_dict = model.filter_output_for_loss(out, target)
+        prepared = model.prepare_target(target)
         loss = nn.functional.binary_cross_entropy_with_logits(
-            loss_dict['input'], 
-            loss_dict['target']
+            out.logits, 
+            prepared
         )
         
         # Backward pass
@@ -1375,7 +1284,7 @@ class TestBlackBoxTraining(unittest.TestCase):
         with torch.no_grad():
             out = model(x)
         
-        self.assertFalse(out.requires_grad)
+        self.assertFalse(out.logits.requires_grad)
     
     def test_train_eval_toggle(self):
         """Test toggling between train and eval modes."""
@@ -1406,10 +1315,10 @@ class TestBlackBoxTraining(unittest.TestCase):
         target = torch.zeros(4, 2)
         
         out = model(x)
-        loss_dict = model.filter_output_for_loss(out, target)
+        prepared = model.prepare_target(target)
         loss = nn.functional.binary_cross_entropy_with_logits(
-            loss_dict['input'], 
-            loss_dict['target']
+            out.logits, 
+            prepared
         )
         
         optimizer.zero_grad()
@@ -1432,7 +1341,7 @@ class TestBlackBoxTraining(unittest.TestCase):
         target = torch.ones(2, 1)
         
         out = model(x)
-        loss = nn.functional.mse_loss(out, target)
+        loss = nn.functional.mse_loss(out.logits, target)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1463,7 +1372,7 @@ class TestBlackBoxBackboneIntegration(unittest.TestCase):
         x = torch.randn(2, 100)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
     
     def test_task_only_with_backbone(self):
         """Test BlackBoxTaskOnly with backbone."""
@@ -1480,7 +1389,7 @@ class TestBlackBoxBackboneIntegration(unittest.TestCase):
         x = torch.randn(2, 50)
         out = model(x)
         
-        self.assertEqual(out.shape, (2, 1))
+        self.assertEqual(out.logits.shape, (2, 1))
     
     def test_no_backbone_uses_identity(self):
         """Test that no backbone means identity transform."""

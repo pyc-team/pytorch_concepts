@@ -4,7 +4,7 @@ import unittest
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.variable import Variable, ConceptVariable
@@ -83,7 +83,7 @@ class TestParametricCPDParentCombinations:
 
     def test_single_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts='p', distribution=Categorical, size=3)
+        parent_var = Variable(concepts='p', distribution=OneHotCategorical, size=3)
         child_var = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(3, 1)
@@ -185,7 +185,7 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_categorical(self):
         """Test build_cpt for Categorical variable."""
-        var = Variable(concepts='c', distribution=Categorical, size=3)
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
         module = nn.Linear(2, 3)
         cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
@@ -254,7 +254,7 @@ class TestParametricCPDBuildPotential:
 
     def test_build_potential_categorical(self):
         """Test build_potential for Categorical variable."""
-        var = Variable(concepts='c', distribution=Categorical, size=3)
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
         module = nn.Linear(2, 3)
         cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
@@ -391,7 +391,7 @@ class TestParametricCPD(unittest.TestCase):
 
     def test_get_parent_combinations_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts='parent', distribution=Categorical, size=3)
+        parent_var = Variable(concepts='parent', distribution=OneHotCategorical, size=3)
         module = nn.Linear(3, 1)
         cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
         child_var = Variable(concepts='child', distribution=Bernoulli, size=1)

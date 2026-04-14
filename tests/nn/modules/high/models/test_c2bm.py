@@ -9,7 +9,7 @@ Tests cover:
 - Graph structure handling (chain, diamond, multi-output)
 - Training: manual PyTorch loop and Lightning integration
 - Gradient flow
-- Filter methods for loss and metrics
+- Target preparation (prepare_target)
 - Edge cases
 """
 import pytest
@@ -261,35 +261,35 @@ class TestC2BMForward:
 
     def test_query_all(self):
         out = self.model(query=['A', 'B', 'C'], x=self.x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
     def test_query_subset(self):
         out = self.model(query=['B', 'C'], x=self.x)
-        assert out.shape == (4, 2)
+        assert out.probs.shape == (4, 2)
 
     def test_query_single(self):
         out = self.model(query=['A'], x=self.x)
-        assert out.shape == (4, 1)
+        assert out.probs.shape == (4, 1)
 
     def test_query_leaf_only(self):
         out = self.model(query=['C'], x=self.x)
-        assert out.shape == (4, 1)
+        assert out.probs.shape == (4, 1)
 
     def test_query_order_matters(self):
         """Output columns follow query order, not graph order."""
         out_ab = self.model(query=['A', 'B'], x=self.x)
         out_ba = self.model(query=['B', 'A'], x=self.x)
         # Columns should be swapped
-        assert torch.allclose(out_ab[:, 0], out_ba[:, 1])
-        assert torch.allclose(out_ab[:, 1], out_ba[:, 0])
+        assert torch.allclose(out_ab.probs[:, 0], out_ba.probs[:, 1])
+        assert torch.allclose(out_ab.probs[:, 1], out_ba.probs[:, 0])
 
     def test_batch_size_one(self):
         out = self.model(query=['A', 'B', 'C'], x=torch.randn(1, 8))
-        assert out.shape == (1, 3)
+        assert out.probs.shape == (1, 3)
 
     def test_large_batch(self):
         out = self.model(query=['A', 'B', 'C'], x=torch.randn(128, 8))
-        assert out.shape == (128, 3)
+        assert out.probs.shape == (128, 3)
 
 
 class TestC2BMForwardDiamond:
@@ -306,11 +306,11 @@ class TestC2BMForwardDiamond:
 
     def test_query_all(self):
         out = self.model(query=['A', 'B', 'C', 'D'], x=self.x)
-        assert out.shape == (4, 4)
+        assert out.probs.shape == (4, 4)
 
     def test_query_leaf(self):
         out = self.model(query=['D'], x=self.x)
-        assert out.shape == (4, 1)
+        assert out.probs.shape == (4, 1)
 
 
 class TestC2BMForwardMixed:
@@ -328,11 +328,11 @@ class TestC2BMForwardMixed:
     def test_output_dim(self):
         out = self.model(query=['A', 'B', 'C'], x=self.x)
         # A=1, B=3, C=1 → total 5
-        assert out.shape == (4, 5)
+        assert out.probs.shape == (4, 5)
 
     def test_categorical_only(self):
         out = self.model(query=['B'], x=self.x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
 
 # ===========================================================================
@@ -381,15 +381,14 @@ class TestC2BMReturnLogits:
 
     def test_return_logits_shape(self):
         out = self.model(query=['A', 'B', 'C'], x=self.x, return_logits=True)
-        assert out.shape == (4, 3)
+        assert out.logits.shape == (4, 3)
 
     def test_return_logits_vs_activated(self):
         """With return_logits the output is *not* squeezed through sigmoid."""
-        logits = self.model(query=['A'], x=self.x, return_logits=True)
-        probs = self.model(query=['A'], x=self.x, return_logits=False)
+        out = self.model(query=['A'], x=self.x, return_logits=False)
         # Logits can be outside [0, 1], probs are in [0, 1]
-        assert probs.min() >= 0.0
-        assert probs.max() <= 1.0
+        assert out.probs.min() >= 0.0
+        assert out.probs.max() <= 1.0
 
 
 # ===========================================================================
@@ -407,7 +406,7 @@ class TestC2BMGradients:
         )
         x = torch.randn(4, 8, requires_grad=True)
         out = model(query=['A', 'B', 'C'], x=x)
-        out.sum().backward()
+        out.probs.sum().backward()
         assert x.grad is not None
         assert (x.grad != 0).any()
 
@@ -419,7 +418,7 @@ class TestC2BMGradients:
         )
         x = torch.randn(4, 8, requires_grad=True)
         out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-        out.sum().backward()
+        out.logits.sum().backward()
         assert x.grad is not None
 
     def test_detach_blocks_cross_level_gradients(self, chain_graph, binary_chain_ann):
@@ -433,7 +432,7 @@ class TestC2BMGradients:
         )
         x = torch.randn(4, 8, requires_grad=True)
         out = model(query=['A', 'B', 'C'], x=x)
-        out.sum().backward()
+        out.probs.sum().backward()
         # Gradients should still flow to x (through at least root A)
         assert x.grad is not None
 
@@ -459,7 +458,7 @@ class TestC2BMManualTraining:
         y = torch.randint(0, 2, (4, 3)).float()
 
         out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-        loss = loss_fn(out, y)
+        loss = loss_fn(out.logits, y)
         loss.backward()
         optimizer.step()
         assert loss.item() >= 0
@@ -483,7 +482,7 @@ class TestC2BMManualTraining:
         for _ in range(30):
             optimizer.zero_grad()
             out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-            loss = loss_fn(out, y)
+            loss = loss_fn(out.logits, y)
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
@@ -515,13 +514,13 @@ class TestC2BMIndependentInference:
             query=['A', 'B', 'C'], x=self.x,
             ground_truth=self.gt, concept_names=['A', 'B', 'C'],
         )
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
     def test_forward_eval_no_gt(self):
         """Eval mode falls back to DeterministicInference — no GT needed."""
         self.model.eval()
         out = self.model(query=['A', 'B', 'C'], x=self.x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
     def test_independent_return_logits(self):
         self.model.train()
@@ -530,7 +529,7 @@ class TestC2BMIndependentInference:
             ground_truth=self.gt, concept_names=['A', 'B', 'C'],
             return_logits=True,
         )
-        assert out.shape == (4, 3)
+        assert out.logits.shape == (4, 3)
 
 
 # ===========================================================================
@@ -550,7 +549,7 @@ class TestC2BMAncestralInference:
         model.eval()
         x = torch.randn(4, 8)
         out = model(query=['A', 'B', 'C'], x=x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
     def test_sampling_stochastic(self, chain_graph, binary_chain_ann):
         """Multiple forward passes should (in general) differ."""
@@ -564,15 +563,15 @@ class TestC2BMAncestralInference:
         x = torch.randn(8, 8)
         results = [model(query=['A'], x=x) for _ in range(10)]
         # At least one pair should differ (highly unlikely all 10 are identical)
-        any_different = any(not torch.equal(results[0], r) for r in results[1:])
+        any_different = any(not torch.equal(results[0].probs, r.probs) for r in results[1:])
         assert any_different, "Ancestral sampling should produce varying outputs"
 
 
 # ===========================================================================
-# Filter methods
+# Target preparation
 # ===========================================================================
 
-class TestC2BMFilterMethods:
+class TestC2BMPrepareTarget:
 
     @pytest.fixture(autouse=True)
     def _setup(self, chain_graph, binary_chain_ann):
@@ -582,23 +581,10 @@ class TestC2BMFilterMethods:
             graph=chain_graph,
         )
 
-    def test_filter_output_for_loss(self):
-        out = torch.randn(4, 3)
+    def test_prepare_target(self):
         target = torch.randint(0, 2, (4, 3)).float()
-        filtered = self.model.filter_output_for_loss(out, target)
-        assert 'input' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['input'], out)
-        assert torch.equal(filtered['target'], target)
-
-    def test_filter_output_for_metrics(self):
-        out = torch.randn(4, 3)
-        target = torch.randint(0, 2, (4, 3)).float()
-        filtered = self.model.filter_output_for_metrics(out, target)
-        assert 'preds' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['preds'], out)
-        assert torch.equal(filtered['target'], target)
+        prepared = self.model.prepare_target(target)
+        assert torch.equal(prepared, target)
 
 
 # ===========================================================================
@@ -691,7 +677,7 @@ class TestC2BMBackbone:
         # Raw input larger than input_size, backbone projects down
         x = torch.randn(4, 32)
         out = model(query=['A', 'B', 'C'], x=x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
     def test_backbone_plus_latent_encoder(self, chain_graph, binary_chain_ann):
         backbone = DummyBackbone(out_features=16)
@@ -704,7 +690,7 @@ class TestC2BMBackbone:
         )
         x = torch.randn(4, 64)
         out = model(query=['A', 'B', 'C'], x=x)
-        assert out.shape == (4, 3)
+        assert out.probs.shape == (4, 3)
 
 
 # ===========================================================================

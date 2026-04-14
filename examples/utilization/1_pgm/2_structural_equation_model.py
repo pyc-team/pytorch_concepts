@@ -44,13 +44,13 @@ def main():
     results = inference_engine.query(query_concepts, evidence=initial_input)
 
     print("Genotype Predictions (first 5 samples):")
-    print(results[:, 0][:5])
+    print(results.probs[:, 0][:5])
     print("Smoking Predictions (first 5 samples):")
-    print(results[:, 1][:5])
+    print(results.probs[:, 1][:5])
     print("Tar Predictions (first 5 samples):")
-    print(results[:, 2][:5])
+    print(results.probs[:, 2][:5])
     print("Cancer Predictions (first 5 samples):")
-    print(results[:, 3][:5])
+    print(results.probs[:, 3][:5])
 
     # Original predictions (observational)
     original_results = inference_engine.query(
@@ -72,7 +72,7 @@ def main():
             ["genotype", "smoking", "tar", "cancer"],
             evidence=initial_input,
         )
-        cancer_do_smoking_0 = intervened_results[:, 3]
+        cancer_do_smoking_0 = intervened_results.probs[:, 3]
 
     # Intervention: Force smoking to 1 (promote smoking)
     smoking_strategy_1 = DoIntervention(
@@ -88,7 +88,7 @@ def main():
             ["genotype", "smoking", "tar", "cancer"],
             evidence=initial_input,
         )
-        cancer_do_smoking_1 = intervened_results[:, 3]
+        cancer_do_smoking_1 = intervened_results.probs[:, 3]
 
     ace_cancer_do_smoking = cace_score(cancer_do_smoking_0, cancer_do_smoking_1)
     print(f"ACE of smoking on cancer: {ace_cancer_do_smoking:.3f}")

@@ -8,7 +8,7 @@ notion of **parents** — giving the factor directed semantics.
 """
 import copy
 import torch
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Optional, Tuple, Union
 from itertools import product
 
@@ -162,7 +162,7 @@ class ParametricCPD(ParametricFactor):
         for p in self.parents:
             if p.distribution in [Bernoulli, RelaxedBernoulli]:
                 total_bits += p.size
-            elif p.distribution in [Categorical, RelaxedOneHotCategorical]:
+            elif p.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                 total_bits += p.size  # one-hot dims
         if total_bits > self._MAX_DISCRETE_BITS:
             raise RuntimeError(
@@ -177,7 +177,7 @@ class ParametricCPD(ParametricFactor):
 
         for parent_var in self.parents:
             if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
-                                           Categorical, RelaxedOneHotCategorical]:
+                                           Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                 out_dim = parent_var.size
                 input_combinations = []
                 state_combinations = []
@@ -185,7 +185,7 @@ class ParametricCPD(ParametricFactor):
                 if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
                     input_combinations = list(product([0.0, 1.0], repeat=out_dim))
                     state_combinations = input_combinations
-                elif parent_var.distribution in [Categorical, RelaxedOneHotCategorical]:
+                elif parent_var.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                     for i in range(out_dim):
                         one_hot = torch.zeros(out_dim)
                         one_hot[i] = 1.0
@@ -262,7 +262,7 @@ class ParametricCPD(ParametricFactor):
             # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
             probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
 
-        elif self.variable.distribution is Categorical:
+        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
             probabilities = torch.softmax(endogenous, dim=-1)
 
         elif self.variable.distribution is Delta:
@@ -289,7 +289,7 @@ class ParametricCPD(ParametricFactor):
 
         if self.variable.distribution is Bernoulli:
             cpt_core = torch.sigmoid(endogenous)
-        elif self.variable.distribution is Categorical:
+        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
             cpt_core = torch.softmax(endogenous, dim=-1)
         elif self.variable.distribution is Delta:
             cpt_core = endogenous
@@ -312,7 +312,7 @@ class ParametricCPD(ParametricFactor):
 
             potential_table = torch.cat([rows_c1, rows_c0], dim=0)
 
-        elif self.variable.distribution is Categorical:
+        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
             n_classes = self.variable.size
             all_rows = []
             for i in range(n_classes):

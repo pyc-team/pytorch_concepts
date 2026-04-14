@@ -17,7 +17,7 @@ from torch_concepts.nn import (
     LinearExogenousToConcept,
     HyperlinearConceptExogenousToConcept,
 )
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 
 class TestGraphModel(unittest.TestCase):
@@ -201,7 +201,7 @@ class TestGraphModel(unittest.TestCase):
         # OtherCar: binary (cardinality=1), OtherCarCost: categorical with 4 classes
         metadata = {
             'OtherCar': {'distribution': Bernoulli},
-            'OtherCarCost': {'distribution': Categorical},
+            'OtherCarCost': {'distribution': OneHotCategorical},
         }
         annotations = Annotations({
             1: AxisAnnotation(
@@ -253,8 +253,8 @@ class TestGraphModel(unittest.TestCase):
         x = torch.randn(4, latent_dim)
         result = inference.query(['OtherCar', 'OtherCarCost'], evidence={'input': x})
         # OtherCar: 1 output, OtherCarCost: 4 outputs => total 5
-        self.assertEqual(result.shape, (4, 5),
-                         f"Expected output shape (4, 5), got {result.shape}")
+        self.assertEqual(result.probs.shape, (4, 5),
+                         f"Expected output shape (4, 5), got {result.probs.shape}")
 
     def test_substring_concept_names_with_source_exogenous_only(self):
         """Test substring safety when using use_source_exogenous=True (no internal exogenous).
@@ -274,7 +274,7 @@ class TestGraphModel(unittest.TestCase):
 
         metadata = {
             'OtherCar': {'distribution': Bernoulli},
-            'OtherCarCost': {'distribution': Categorical},
+            'OtherCarCost': {'distribution': OneHotCategorical},
         }
         annotations = Annotations({
             1: AxisAnnotation(
