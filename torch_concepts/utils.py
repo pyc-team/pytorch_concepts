@@ -364,9 +364,9 @@ def add_distribution_to_annotations(
         Updated annotations with ``'distribution'`` added to each concept's metadata.
 
     Example:
-        >>> from torch.distributions import Bernoulli, Categorical
+        >>> from torch.distributions import Bernoulli, OneHotCategorical
         >>> from torch_concepts import GroupConfig
-        >>> distributions = GroupConfig(binary=Bernoulli, categorical=Categorical)
+        >>> distributions = GroupConfig(binary=Bernoulli, categorical=OneHotCategorical)
         >>> annotations = add_distribution_to_annotations(annotations, distributions)
     """
     return add_property_to_annotations(annotations, distributions, 'distribution')
