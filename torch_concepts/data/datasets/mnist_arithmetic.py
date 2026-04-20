@@ -23,7 +23,6 @@ def _generate_arithmetic_data(
     mnist_root: str,
     train: bool,
     num_samples: int,
-    operators: Tuple[str, ...],
     img_size: int,
     seed: int,
     filename_offset: int = 0,
@@ -35,7 +34,6 @@ def _generate_arithmetic_data(
         mnist_root: Root for MNIST download.
         train: Whether to use MNIST train split.
         num_samples: Number of samples to generate.
-        operators: Tuple of operator strings ('+', '-', 'x', '/').
         img_size: Output image size (square).
         seed: Random seed.
         filename_offset: Starting index for filenames (to avoid collisions).
@@ -59,6 +57,8 @@ def _generate_arithmetic_data(
         font = ImageFont.load_default()
 
     os.makedirs(img_dir, exist_ok=True)
+
+    operators = ('+', '-', 'x', '/')
 
     operator_list = [random.choice(operators) for _ in range(num_samples)]
 
@@ -141,8 +141,6 @@ class MNISTArithmeticDataset(ConceptDataset):
     ----------
     root : str, optional
         Root directory to store/load the dataset. Default: ``'./data/mnist_arithmetic'``.
-    mnist_root : str, optional
-        Root directory for MNIST download. Default: ``'./data'``.
     num_train_samples : int, optional
         Number of composite samples from MNIST train split (used for
         train + validation). Default: 10000.
@@ -152,31 +150,18 @@ class MNISTArithmeticDataset(ConceptDataset):
         Fraction of the train pool to use as validation. Default: 0.1.
     img_size : int, optional
         Output image size (square). Default: 224.
-    operators : tuple of str, optional
-        Arithmetic operators to randomly sample from. Default: ('+', '-', 'x', '/').
     seed : int, optional
         Random seed for reproducible generation. Default: 42.
-    concept_subset : list of str, optional
-        Subset of concept names. Default: None (all).
-
-    Examples
-    --------
-    >>> from torch_concepts.data.datasets import MNISTArithmeticDataset
-    >>> dataset = MNISTArithmeticDataset(num_train_samples=100, num_test_samples=20, img_size=64)
-    >>> sample = dataset[0]
-    >>> x = sample['inputs']['x']  # image tensor (C, H, W)
-    >>> c = sample['concepts']['c']  # [first_digit, second_digit, result]
+    label_descriptions: Optional dict mapping concept names to descriptions.
     """
 
     def __init__(
         self,
         root: str = None,
-        mnist_root: str = None,
         num_train_samples: int = 10000,
         num_test_samples: int = 2000,
         val_size: float = 0.1,
         img_size: int = 224,
-        operators: Tuple[str, ...] = ('+', '-', 'x', '/'),
         seed: int = 42,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
@@ -186,16 +171,15 @@ class MNISTArithmeticDataset(ConceptDataset):
         self.val_size = val_size
         self.label_descriptions = label_descriptions
         self.img_size = img_size
-        self.operators = operators
         self.seed = seed
+
+        self.operators = ('+', '-', 'x', '/')
 
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'mnist_arithmetic')
         self.root = root
 
-        if mnist_root is None:
-            mnist_root = os.path.join(os.getcwd(), 'data')
-        self.mnist_root = mnist_root
+        self.mnist_root = os.path.join(self.root, "mnist_data")
 
         filenames, concepts, annotations, graph = self.load()
 
@@ -214,25 +198,27 @@ class MNISTArithmeticDataset(ConceptDataset):
 
     @property
     def processed_filenames(self) -> List[str]:
-        ops = "".join(sorted(self.operators))
         return [
-            f"filenames_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}_ops_{ops}.txt",
-            f"concepts_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}_ops_{ops}.pt",
+            f"filenames_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}.txt",
+            f"concepts_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}.pt",
             "annotations.pt",
             "split_mapping.h5",
         ]
 
     def download(self):
-        pass
+        """Download MNIST dataset (handled by torchvision)."""
+        datasets.MNIST(root=self.mnist_root, train=True, download=True)
+        datasets.MNIST(root=self.mnist_root, train=False, download=True)
+
+    def maybe_download(self):
+        """Download and extract the dataset if needed."""
+        super().maybe_download()
 
     def build(self):
-        """Generate composite arithmetic images from both MNIST splits and save metadata.
+        """Generate composite arithmetic images from both MNIST splits and save metadata."""
 
-        Composites from MNIST train are assigned to train/val; composites from
-        MNIST test are assigned to test. The train/val boundary is determined
-        by ``val_size`` and stored in ``split_mapping.h5`` for use with
-        ``NativeSplitter``.
-        """
+        self.maybe_download()
+
         logger.info(f"Generating MNIST arithmetic dataset "
                      f"(train={self.num_train_samples}, test={self.num_test_samples}, seed={self.seed})")
 
@@ -244,7 +230,6 @@ class MNISTArithmeticDataset(ConceptDataset):
             mnist_root=self.mnist_root,
             train=True,
             num_samples=self.num_train_samples,
-            operators=self.operators,
             img_size=self.img_size,
             seed=self.seed,
             filename_offset=0,
@@ -256,7 +241,6 @@ class MNISTArithmeticDataset(ConceptDataset):
             mnist_root=self.mnist_root,
             train=False,
             num_samples=self.num_test_samples,
-            operators=self.operators,
             img_size=self.img_size,
             seed=self.seed + 1,
             filename_offset=self.num_train_samples,
@@ -310,7 +294,9 @@ class MNISTArithmeticDataset(ConceptDataset):
                      f"(train={self.num_train_samples - n_val}, val={n_val}, test={self.num_test_samples})")
 
     def load_raw(self):
+        """Load raw processed files for the current split."""
         self.maybe_build()
+
         logger.info(f"Loading MNIST arithmetic dataset from {self.root_dir}")
 
         with open(self.processed_paths[0], 'r') as f:
