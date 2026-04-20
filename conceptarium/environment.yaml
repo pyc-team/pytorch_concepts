@@ -28,8 +28,8 @@ dependencies:
   - pip:
     - bnlearn # library for Bayesian networks
     - gdown # to download files from Google Drive (CelebA dataset)
-    - transformers # State-of-the-art pretrained models for backbones
+    - transformers # State-of-the-art pretrained models
     - hydra-list-sweeper
-    - datasets # HuggingFace datasets (DSprites regression dataset)
-    - sympy # symbolic math (DSprites regression dataset)
-    - sympytorch # sympy to pytorch conversion (DSprites regression dataset)
+    - datasets # HuggingFace datasets
+    - sympy # symbolic math 
+    - sympytorch # sympy to pytorch conversion 

@@ -182,6 +182,7 @@ class PendulumDataset(ConceptDataset):
         ]
 
     def download(self):
+        """This dataset is procedurally generated."""
         pass
 
     def build(self):

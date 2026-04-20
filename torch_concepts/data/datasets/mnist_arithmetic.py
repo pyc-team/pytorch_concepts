@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 CONCEPT_NAMES = ['first_digit', 'second_digit']
 TASK_NAMES = ['result']
 
-
 def _generate_arithmetic_data(
     img_dir: str,
     mnist_root: str,
@@ -41,25 +40,28 @@ def _generate_arithmetic_data(
     Returns:
         Tuple of (filenames, concepts, tasks) lists.
     """
+    # Fix the seed for reproducibility
     random.seed(seed)
     np.random.seed(seed)
 
-    mnist = datasets.MNIST(root=mnist_root, train=train, download=True, transform=None)
+    mnist = datasets.MNIST(root=mnist_root, train=train, download=False, transform=None)
 
+    # Note: MNIST digits are 28x28. 
+    # The composite canvas is (84x28) before resizing to (img_size, img_size).
     resize_transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.Grayscale(num_output_channels=3),
     ])
 
+    # REDUCED FONT SIZE: 20-24 is ideal for a 28x28 pixel block.
     try:
-        font = ImageFont.truetype("arial.ttf", 200)
+        font = ImageFont.truetype("arial.ttf", 22) 
     except OSError:
         font = ImageFont.load_default()
 
     os.makedirs(img_dir, exist_ok=True)
 
     operators = ('+', '-', 'x', '/')
-
     operator_list = [random.choice(operators) for _ in range(num_samples)]
 
     filenames = []
@@ -83,6 +85,7 @@ def _generate_arithmetic_data(
 
         op = operator_list[idx]
 
+        # Arithmetic Logic
         if op == '+':
             result = a + b
         elif op == '-':
@@ -94,26 +97,30 @@ def _generate_arithmetic_data(
         else:
             raise ValueError(f"Unknown operator: {op}")
 
-        # Create composite image
-        canvas = Image.new("L", (84, 28), color=255)
+        # --- COMPOSITE IMAGE GENERATION ---
+        
+        # 1. Create the main black canvas
+        canvas = Image.new("L", (84, 28), color=0)
         canvas.paste(img1, (0, 0))
 
+        # 2. Create the operator block
         op_canvas = Image.new("L", (28, 28), color=0)
         draw = ImageDraw.Draw(op_canvas)
-        try:
-            bbox = draw.textbbox((0, 0), op, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-        except AttributeError:
-            text_width, text_height = draw.textsize(op, font=font)
-        x_pos = (28 - text_width) // 2
-        y_pos = (28 - text_height) // 2
-        draw.text((x_pos, y_pos), op, fill=255, font=font)
 
+        if op == '-':
+            # Draw a thick rectangle: [left, top, right, bottom]
+            # This makes a nice, bold minus sign that won't look like a dot
+            draw.rectangle([7, 13, 21, 14], fill=255)
+        else:
+            # Draw +, x, or / using the font
+            # anchor="mm" ensures it's perfectly centered in the 28x28 block
+            draw.text((14, 14), op, fill=255, font=font, anchor="mm")
+
+        # 3. Assemble the equation
         canvas.paste(op_canvas, (28, 0))
         canvas.paste(img2, (56, 0))
 
-        # Resize to final size
+        # Apply final resize and grayscale transforms
         final_img = resize_transform(canvas)
 
         fname = f"sample_{filename_offset + idx}.png"
@@ -179,8 +186,6 @@ class MNISTArithmeticDataset(ConceptDataset):
             root = os.path.join(os.getcwd(), 'data', 'mnist_arithmetic')
         self.root = root
 
-        self.mnist_root = os.path.join(self.root, "mnist_data")
-
         filenames, concepts, annotations, graph = self.load()
 
         super().__init__(
@@ -194,7 +199,12 @@ class MNISTArithmeticDataset(ConceptDataset):
 
     @property
     def raw_filenames(self) -> List[str]:
-        return []
+        return [
+            "MNIST/raw/t10k-images-idx3-ubyte", # MNIST test images
+            "MNIST/raw/t10k-labels-idx1-ubyte", # MNIST test labels
+            "MNIST/raw/train-images-idx3-ubyte", # MNIST train images
+            "MNIST/raw/train-labels-idx1-ubyte"  # MNIST train labels
+        ]
 
     @property
     def processed_filenames(self) -> List[str]:
@@ -206,9 +216,18 @@ class MNISTArithmeticDataset(ConceptDataset):
         ]
 
     def download(self):
-        """Download MNIST dataset (handled by torchvision)."""
-        datasets.MNIST(root=self.mnist_root, train=True, download=True)
-        datasets.MNIST(root=self.mnist_root, train=False, download=True)
+        """setup MNIST root and trigger MNIST download."""
+        datasets.MNIST(root=self.root, train=True, download=True)
+        datasets.MNIST(root=self.root, train=False, download=True)
+
+        # remove zipped raw files to save space
+        for fname in self.raw_filenames:
+            path = os.path.join(self.root, fname + ".gz")
+            if os.path.exists(path):
+                os.remove(path)
+
+        raw_mnist_path = os.path.join(self.root, "MNIST/raw")
+        logger.info(f"MNIST files downloaded to {raw_mnist_path}.")
 
     def maybe_download(self):
         """Download and extract the dataset if needed."""
@@ -227,7 +246,7 @@ class MNISTArithmeticDataset(ConceptDataset):
         # Generate from MNIST train split
         train_filenames, train_concepts, train_tasks = _generate_arithmetic_data(
             img_dir=img_dir,
-            mnist_root=self.mnist_root,
+            mnist_root=self.root,
             train=True,
             num_samples=self.num_train_samples,
             img_size=self.img_size,
@@ -238,7 +257,7 @@ class MNISTArithmeticDataset(ConceptDataset):
         # Generate from MNIST test split (use different seed to avoid identical operator sequence)
         test_filenames, test_concepts, test_tasks = _generate_arithmetic_data(
             img_dir=img_dir,
-            mnist_root=self.mnist_root,
+            mnist_root=self.root,
             train=False,
             num_samples=self.num_test_samples,
             img_size=self.img_size,
