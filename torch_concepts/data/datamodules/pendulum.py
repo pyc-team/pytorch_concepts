@@ -1,4 +1,4 @@
-from ..datasets import PendulumDataset
+from ..datasets.pendulum import PendulumDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
@@ -46,7 +46,7 @@ class PendulumDataModule(ConceptDataModule):
 
     Examples
     --------
-    >>> from torch_concepts.data.datamodules import PendulumDataModule
+    >>> from torch_concepts.data import PendulumDataModule
     >>>
     >>> dm = PendulumDataModule(
     ...     root='./data/pendulum',

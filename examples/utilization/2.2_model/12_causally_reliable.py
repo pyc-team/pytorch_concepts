@@ -12,7 +12,7 @@ from torch_concepts.nn import CausallyReliableConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.data.datamodules import BnLearnDataModule
+from torch_concepts.data import BnLearnDataModule
 from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
 
 def main():

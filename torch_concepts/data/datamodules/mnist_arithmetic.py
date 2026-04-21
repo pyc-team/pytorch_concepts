@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from ..datasets import MNISTArithmeticDataset
+from ..datasets.mnist_arithmetic import MNISTArithmeticDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
@@ -47,7 +47,7 @@ class MNISTArithmeticDataModule(ConceptDataModule):
 
     Examples
     --------
-    >>> from torch_concepts.data.datamodules import MNISTArithmeticDataModule
+    >>> from torch_concepts.data import MNISTArithmeticDataModule
     >>>
     >>> dm = MNISTArithmeticDataModule(
     ...     num_train_samples=1000,

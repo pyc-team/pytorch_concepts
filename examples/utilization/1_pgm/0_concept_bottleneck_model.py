@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Annotations, AxisAnnotation, Variable, LatentVariable, ConceptVariable
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, LazyConstructor
 

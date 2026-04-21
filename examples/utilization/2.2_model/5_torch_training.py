@@ -16,7 +16,7 @@ from torch import nn
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 
 from torchmetrics.classification import BinaryAccuracy
 

@@ -132,7 +132,7 @@ class PendulumDataset(ConceptDataset):
 
     Examples
     --------
-    >>> from torch_concepts.data.datasets import PendulumDataset
+    >>> from torch_concepts.data import PendulumDataset
     >>> dataset = PendulumDataset(root='./data/pendulum', n_theta=10, n_phi=10)
     >>> sample = dataset[0]
     >>> x = sample['inputs']['x']  # image tensor (C, H, W)

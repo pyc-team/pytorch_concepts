@@ -10,7 +10,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
     LinearExogenousToConcept, HyperlinearConceptExogenousToConcept

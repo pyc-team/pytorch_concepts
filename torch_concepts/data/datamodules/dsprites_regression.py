@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 
-from ..datasets import DSpritesRegressionDataset
+from ..datasets.dsprites_regression import DSpritesRegressionDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType

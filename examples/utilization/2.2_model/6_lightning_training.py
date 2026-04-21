@@ -15,7 +15,7 @@ The model uses:
 import torch
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
 
