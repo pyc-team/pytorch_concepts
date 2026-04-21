@@ -10,8 +10,12 @@ seed: ${seed}
 
 # dataset parameters
 num_samples: null
-concepts: null
-formulas: null
+concept_subset: null
+# Formulas for the dataset
+formulas: 
+  circle: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
+  square: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
+  heart: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
 
 # backbone handling and embedding precomputation
 backbone: null
@@ -22,9 +26,10 @@ force_recompute: False
 default_task_names: [target]
 
 label_descriptions:
-  value_shape: "Shape type (1=square, 2=circle, 3=heart)"
-  value_scale: "Scale of the shape"
-  value_orientation: "Orientation angle of the shape"
-  value_x_position: "X position of the shape center"
-  value_y_position: "Y position of the shape center"
+  color: "Color of the shape (fixed to 0 in dsprites)"
+  shape: "Shape type (1=square, 2=circle, 3=heart)"
+  scale: "Scale of the shape"
+  orientation: "Orientation angle of the shape"
+  x_position: "X position of the shape center"
+  y_position: "Y position of the shape center"
   target: "Formula-computed regression target"
