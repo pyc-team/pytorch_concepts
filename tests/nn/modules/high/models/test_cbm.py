@@ -7,14 +7,14 @@ Tests cover:
 - Training modes (joint, independent)
 - Backbone integration
 - Distribution handling
-- Filter methods
+- Target preparation (prepare_target)
 - Factory function behavior
 """
 import pytest
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
@@ -61,14 +61,14 @@ class TestCBMInitialization(unittest.TestCase):
         self.assertEqual(model.concept_names, ['color', 'shape', 'size', 'task1'])
         # Defaults should have been filled in
         meta = model.concept_annotations.metadata
-        self.assertEqual(meta['color']['distribution'], Categorical)
+        self.assertEqual(meta['color']['distribution'], OneHotCategorical)
         self.assertEqual(meta['size']['distribution'], Bernoulli)
     
     def test_init_with_variable_distributions_param(self):
         """Test initialization passing variable_distributions to the model constructor."""
         custom_dists = {
-            'color': Categorical,
-            'shape': Categorical,
+            'color': OneHotCategorical,
+            'shape': OneHotCategorical,
             'size': RelaxedBernoulli,
             'task1': RelaxedBernoulli,
         }
@@ -156,8 +156,8 @@ class TestCBMForward(unittest.TestCase):
         out = self.model(query=query, x=x)
         
         # Output shape: batch_size x sum(cardinalities for queried variables)
-        self.assertEqual(out.shape[0], 2)
-        self.assertEqual(out.shape[1], 3 + 2 + 1)  # color + shape + size
+        self.assertEqual(out.probs.shape[0], 2)
+        self.assertEqual(out.probs.shape[1], 3 + 2 + 1)  # color + shape + size
     
     def test_forward_all_concepts(self):
         """Test forward with all concepts."""
@@ -165,8 +165,8 @@ class TestCBMForward(unittest.TestCase):
         query = ['color', 'shape', 'size', 'task1']
         out = self.model(query=query, x=x)
         
-        self.assertEqual(out.shape[0], 4)
-        self.assertEqual(out.shape[1], 3 + 2 + 1 + 1)
+        self.assertEqual(out.probs.shape[0], 4)
+        self.assertEqual(out.probs.shape[1], 3 + 2 + 1 + 1)
     
     def test_forward_single_concept(self):
         """Test forward with single concept."""
@@ -174,8 +174,8 @@ class TestCBMForward(unittest.TestCase):
         query = ['color']
         out = self.model(query=query, x=x)
         
-        self.assertEqual(out.shape[0], 2)
-        self.assertEqual(out.shape[1], 3)
+        self.assertEqual(out.probs.shape[0], 2)
+        self.assertEqual(out.probs.shape[1], 3)
     
     def test_forward_with_backbone(self):
         """Test forward pass with backbone."""
@@ -191,12 +191,12 @@ class TestCBMForward(unittest.TestCase):
         query = ['color', 'shape']
         out = model(query=query, x=x)
         
-        self.assertEqual(out.shape[0], 2)
-        self.assertEqual(out.shape[1], 3 + 2)
+        self.assertEqual(out.probs.shape[0], 2)
+        self.assertEqual(out.probs.shape[1], 3 + 2)
 
 
-class TestCBMFilterMethods(unittest.TestCase):
-    """Test CBM filter methods."""
+class TestCBMPrepareTarget(unittest.TestCase):
+    """Test CBM prepare_target."""
     
     def setUp(self):
         """Set up test fixtures."""
@@ -218,35 +218,12 @@ class TestCBMFilterMethods(unittest.TestCase):
             task_names=['task']
         )
     
-    def test_filter_output_for_loss(self):
-        """Test filter_output_for_loss returns correct format."""
-        x = torch.randn(2, 8)
-        query = ['c1', 'c2', 'task']
-        out = self.model(query=query, x=x)
-        target = torch.randint(0, 2, out.shape).float()
+    def test_prepare_target(self):
+        """Test prepare_target returns target unchanged for CBM."""
+        target = torch.randint(0, 2, (2, 3)).float()
         
-        filtered = self.model.filter_output_for_loss(out, target)
-        
-        self.assertIsInstance(filtered, dict)
-        self.assertIn('input', filtered)
-        self.assertIn('target', filtered)
-        self.assertTrue(torch.allclose(filtered['input'], out))
-        self.assertTrue(torch.allclose(filtered['target'], target))
-    
-    def test_filter_output_for_metrics(self):
-        """Test filter_output_for_metrics returns correct format."""
-        x = torch.randn(2, 8)
-        query = ['c1', 'c2', 'task']
-        out = self.model(query=query, x=x)
-        target = torch.randint(0, 2, out.shape).float()
-        
-        filtered = self.model.filter_output_for_metrics(out, target)
-        
-        self.assertIsInstance(filtered, dict)
-        self.assertIn('preds', filtered)
-        self.assertIn('target', filtered)
-        self.assertTrue(torch.allclose(filtered['preds'], out))
-        self.assertTrue(torch.allclose(filtered['target'], target))
+        prepared = self.model.prepare_target(target)
+        self.assertTrue(torch.allclose(prepared, target))
 
 
 class TestCBMTraining(unittest.TestCase):
@@ -285,8 +262,8 @@ class TestCBMTraining(unittest.TestCase):
         y = torch.randint(0, 2, (4, 3)).float()
         
         model.train()
-        out = model(query=['c1', 'c2', 'task'], x=x)
-        loss = loss_fn(out, y)
+        out = model(query=['c1', 'c2', 'task'], x=x, return_logits=True)
+        loss = loss_fn(out.logits, y)
         
         self.assertTrue(loss.requires_grad)
     
@@ -300,7 +277,7 @@ class TestCBMTraining(unittest.TestCase):
         
         x = torch.randn(4, 8, requires_grad=True)
         out = model(query=['c1', 'c2', 'task'], x=x)
-        loss = out.sum()
+        loss = out.probs.sum()
         loss.backward()
         
         self.assertIsNotNone(x.grad)
@@ -436,7 +413,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
         )
         
         out = model(x=self.x, query=['c1', 'c2', 'task'])
-        self.assertEqual(out.shape, (4, 3))
+        self.assertEqual(out.probs.shape, (4, 3))
     
     def test_forward_with_evidence(self):
         """Test forward with combined x and evidence dict."""
@@ -452,7 +429,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
         evidence = {'extra_key': torch.randn(4, 1)}  # Additional evidence
         out = model(x=self.x, query=['c1', 'c2', 'task'], evidence=evidence)
         
-        self.assertEqual(out.shape, (4, 3))
+        self.assertEqual(out.probs.shape, (4, 3))
     
     def test_forward_same_output_all_modes(self):
         """Test Lightning and pure PyTorch modes produce same forward output shape."""
@@ -465,7 +442,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
             )
             
             out = model(x=self.x, query=['c1', 'c2', 'task'])
-            self.assertEqual(out.shape, (4, 3), f"Failed for lightning_mode: {lightning_mode}")
+            self.assertEqual(out.probs.shape, (4, 3), f"Failed for lightning_mode: {lightning_mode}")
 
 
 class TestTrainingModes(unittest.TestCase):
@@ -497,7 +474,7 @@ class TestTrainingModes(unittest.TestCase):
         self.assertIsInstance(model, BaseLearner)
         x = torch.randn(2, 8)
         out = model(x=x, query=['c1', 'c2', 'task'])
-        self.assertEqual(out.shape, (2, 3))
+        self.assertEqual(out.probs.shape, (2, 3))
     
     def test_independent_mode_works(self):
         """Test ConceptBottleneckModel with Lightning training and IndependentInference."""
@@ -509,7 +486,7 @@ class TestTrainingModes(unittest.TestCase):
         # IndependentInference.query() requires ground_truth tensor with concept_names
         ground_truth = torch.randint(0, 2, (2, 3)).float()  # (batch, total_concepts)
         out = model(x=x, query=['c1', 'c2', 'task'], ground_truth=ground_truth, concept_names=['c1', 'c2', 'task'])
-        self.assertEqual(out.shape, (2, 3))
+        self.assertEqual(out.probs.shape, (2, 3))
 
 
 class TestLearnerIntegration(unittest.TestCase):

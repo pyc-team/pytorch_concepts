@@ -6,6 +6,7 @@ import torch
 
 from ..models.variable import Variable, ConceptVariable
 from ...low.base.graph import BaseGraphLearner
+from ...outputs import InferenceOutput
 from typing import List, Dict, Union, Tuple, Set
 
 from ...low.inference.intervention import _InterventionWrapper, _GlobalPolicyInterventionWrapper
@@ -680,8 +681,9 @@ class ForwardInference(BaseInference, ABC):
         debug: bool = False, 
         device: str = 'auto',
         return_logits: bool = False,
+        return_probs: bool = True,
         **kwargs
-    ) -> torch.Tensor:
+    ) -> InferenceOutput:
         """
         Execute forward pass and return only specified concepts concatenated.
 
@@ -689,11 +691,12 @@ class ForwardInference(BaseInference, ABC):
         each level) and then extracts and concatenates only the requested concepts
         in the specified order.
 
+        Always returns an :class:`InferenceOutput`. Which fields are populated
+        is controlled by the ``return_*`` parameters.
+
         When ``ground_truth`` and ``concept_names`` are provided and ``self.p > 0``,
         each concept with available ground truth is propagated as GT (instead of
-        the model's own prediction) with probability ``self.p``.  This creates a
-        smooth bridge between pure forward inference (``p=0``) and fully
-        independent training (``p=1``).
+        the model's own prediction) with probability ``self.p``.
 
         Args:
             query: List of concept names to retrieve (e.g., ["C", "B", "A"]).
@@ -707,14 +710,16 @@ class ForwardInference(BaseInference, ABC):
                 - 'auto' (default): Automatically detect and use CUDA if available, else CPU
                 - 'cuda' or 'gpu': Force use of CUDA (will raise error if not available)
                 - 'cpu': Force use of CPU even if CUDA is available
-            return_logits: If True, return raw CPD outputs (logits) instead of
-                activated values.  Useful during training when the loss expects
-                logits (e.g. ``BCEWithLogitsLoss``).
+            return_logits: If True, populate ``InferenceOutput.logits`` with
+                raw CPD outputs (before activation). Useful for losses that require logits.
+            return_probs: If True (default), populate ``InferenceOutput.probs``
+                with activated predictions.
             **kwargs: Additional keyword arguments (ignored for forward compatibility).
 
         Returns:
-            Single tensor containing concatenated predictions for requested concepts,
-            ordered as requested (Batch x TotalFeatures).
+            InferenceOutput:
+                Structured output with ``.logits``, ``.probs``, and/or ``.joint``
+                populated according to the ``return_*`` flags.
 
         Raises:
             ValueError: If requested concept was not computed.
@@ -745,15 +750,14 @@ class ForwardInference(BaseInference, ABC):
             levels = [[v for v in lvl if v.concept in needed] for lvl in levels]
             levels = [lvl for lvl in levels if lvl]
 
-        # Two dicts:
-        #   `propagation` – activated values fed to children (detached when self.detach)
-        #   `returned`    – allocated only when propagation can't serve as return
-        #                   (i.e. when return_logits, self.detach, or GT propagation)
-        need_separate_return = return_logits or self.detach or use_gt
-        returned: Dict[str, torch.Tensor] | None = {} if need_separate_return else None
+        # Separate dicts for logits and probs return values.
+        # propagation always holds activated (and possibly detached / GT-mixed)
+        # values used as input to children.
+        returned_logits: Dict[str, torch.Tensor] | None = {} if return_logits else None
+        returned_probs: Dict[str, torch.Tensor] | None = {} if return_probs else None
         propagation: Dict[str, torch.Tensor] = dict(evidence)
-
         query_set = set(query)
+        computed_queries: set = set()
 
         for level in levels:
             level_output = self._predict_level(level, evidence, propagation, debug=debug, use_cuda=use_cuda)
@@ -765,8 +769,14 @@ class ForwardInference(BaseInference, ABC):
                 variable = self.variable_map.get(name)
                 if isinstance(variable, ConceptVariable):
                     activated = self.activate(pred, variable)
-                    if returned is not None:
-                        returned[name] = pred if return_logits else activated
+
+                    # Store for return (only queried concepts)
+                    if name in query_set:
+                        if returned_logits is not None:
+                            returned_logits[name] = pred
+                        if returned_probs is not None:
+                            returned_probs[name] = activated
+                        computed_queries.add(name)
 
                     # Decide propagation value: GT override with probability p
                     if use_gt and name in index_map:
@@ -788,16 +798,26 @@ class ForwardInference(BaseInference, ABC):
                     else:
                         propagation[name] = activated.detach() if self.detach else activated
                 else:
-                    if returned is not None:
-                        returned[name] = pred
+                    if name in query_set:
+                        if returned_logits is not None:
+                            returned_logits[name] = pred
+                        if returned_probs is not None:
+                            returned_probs[name] = pred
+                        computed_queries.add(name)
                     propagation[name] = pred
 
             # Early exit: stop if all queried variables have been computed
-            results_dict = returned if returned is not None else propagation
-            if query_set.issubset(results_dict):
+            if computed_queries >= query_set:
                 break
 
-        return self._concatenate_results(query, returned if returned is not None else propagation)
+        logits_tensor = self._concatenate_results(query, returned_logits) if returned_logits is not None else None
+        probs_tensor = self._concatenate_results(query, returned_probs) if returned_probs is not None else None
+
+        return InferenceOutput(
+            logits=logits_tensor,
+            probs=probs_tensor,
+            joint=None,
+        )
 
     @property
     def available_query_vars(self) -> Set[str]:

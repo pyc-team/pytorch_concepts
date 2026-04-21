@@ -59,8 +59,8 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, return_logits=True)
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+        c_pred = cy_pred.logits[:, :c_train.shape[1]]
+        y_pred = cy_pred.logits[:, c_train.shape[1]:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -76,7 +76,7 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    print(cy_pred[:5])
+    print(cy_pred.logits[:5])
 
     emb = encoder(x_train)
 
@@ -85,8 +85,11 @@ def main():
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):
+        # intervention affect the layer output 
+        # -> the parametrization of the distribution 
+        # -> the logits for discrete variables
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, return_logits=True)
-        print(cy_pred[:5])
+        print(cy_pred.logits[:5])
 
     return
 

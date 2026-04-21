@@ -22,7 +22,7 @@ _CONTINUOUS_DISTRIBUTIONS = {Normal, MultivariateNormal, Delta}
 # Default distributions per concept type group (binary / categorical / continuous).
 _DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
     'binary': Bernoulli,
-    'categorical': Categorical,
+    'categorical': OneHotCategorical,
     # 'continuous': Normal,  # TODO: add when continuous concepts are supported
 }
 
@@ -81,7 +81,7 @@ class Variable:
         >>> # Create a categorical variable with 3 color classes
         >>> var_color = Variable(
         ...     concepts=['color'],
-        ...     distribution=Categorical,
+        ...     distribution=OneHotCategorical,
         ...     size=3  # red, green, blue
         ... )
         >>> print(var_color.out_features)  # 3
@@ -205,8 +205,11 @@ class Variable:
             distribution = Delta
 
         if distribution is Categorical:
-            if size <= 1:
-                raise ValueError("Categorical Variable must have a size > 1 (number of classes).")
+            raise ValueError(
+                "Categorical.sample() returns a class index, not a one-hot vector, "
+                "which is incompatible with Variable. "
+                "Use OneHotCategorical (or RelaxedOneHotCategorical) instead."
+            )
 
         if distribution is Bernoulli and size != 1:
             raise ValueError("Bernoulli Variable must have size=1 as it represents a binary outcome per concept.")
@@ -288,7 +291,7 @@ class ConceptVariable(Variable):
         >>> # Observable categorical concept (e.g., color)
         >>> color = ConceptVariable(
         ...     concepts=['color'],
-        ...     distribution=Categorical,
+        ...     distribution=OneHotCategorical,
         ...     size=3  # red, green, blue
         ... )
     """

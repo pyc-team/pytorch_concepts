@@ -8,7 +8,7 @@ Tests cover three layers:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts import ConceptVariable, LatentVariable
 from torch_concepts.distributions import Delta
@@ -44,7 +44,7 @@ def _build_shared_pgm(encoder, task_head):
     """PGM with a single shared CPD for all concepts."""
     input_var = LatentVariable("input", distribution=Delta, size=LATENT_DIM)
     concept_vars = ConceptVariable(CONCEPT_NAMES, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=Categorical, size=N_CLASSES)
+    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=N_CLASSES)
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
     cpd_concepts = ParametricCPD(
@@ -65,7 +65,7 @@ def _build_single_pgm(encoder, task_head):
     """
     input_var = LatentVariable("input", distribution=Delta, size=LATENT_DIM)
     concept_vars = ConceptVariable(CONCEPT_NAMES, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=Categorical, size=N_CLASSES)
+    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=N_CLASSES)
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
 
@@ -246,7 +246,7 @@ class TestSharedCPDInferenceEquivalence:
         r_shared = inf_shared.query(query, evidence={"input": x}, debug=True)
         r_single = inf_single.query(query, evidence={"input": x}, debug=True)
 
-        assert torch.allclose(r_shared, r_single, atol=1e-6)
+        assert torch.allclose(r_shared.probs, r_single.probs, atol=1e-6)
 
     def test_concept_only_query(self, models, x):
         pgm_shared, pgm_single = models
@@ -256,7 +256,7 @@ class TestSharedCPDInferenceEquivalence:
         r_shared = inf_shared.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
         r_single = inf_single.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
 
-        assert torch.allclose(r_shared, r_single, atol=1e-6)
+        assert torch.allclose(r_shared.probs, r_single.probs, atol=1e-6)
 
 
 # ======================================================================
@@ -278,29 +278,29 @@ class TestSharedCPDSubsetQuery:
 
     def test_single_concept_query(self, inf, x):
         result = inf.query(["c2"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 1)
+        assert result.probs.shape == (BATCH, 1)
 
     def test_subset_query(self, inf, x):
         result = inf.query(["c1", "c3"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 2)
+        assert result.probs.shape == (BATCH, 2)
 
     def test_reordered_query(self, inf, x):
         """Querying in reversed order should return correct values."""
         fwd = inf.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
         rev = inf.query(list(reversed(CONCEPT_NAMES)), evidence={"input": x}, debug=True)
-        assert torch.allclose(fwd, rev.flip(-1), atol=1e-6)
+        assert torch.allclose(fwd.probs, rev.probs.flip(-1), atol=1e-6)
 
     def test_subset_matches_full(self, inf, x):
         full = inf.query(CONCEPT_NAMES + ["task"], evidence={"input": x}, debug=True)
         subset = inf.query(["c1", "c3"], evidence={"input": x}, debug=True)
         # c1 is index 1, c3 is index 3 in full output
-        assert torch.allclose(subset[:, 0:1], full[:, 1:2], atol=1e-6)
-        assert torch.allclose(subset[:, 1:2], full[:, 3:4], atol=1e-6)
+        assert torch.allclose(subset.probs[:, 0:1], full.probs[:, 1:2], atol=1e-6)
+        assert torch.allclose(subset.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
 
     def test_task_only_query(self, inf, x):
         """Querying only the task still works (shared concepts computed as ancestors)."""
         result = inf.query(["task"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, N_CLASSES)
+        assert result.probs.shape == (BATCH, N_CLASSES)
 
 
 # ======================================================================
@@ -320,7 +320,7 @@ class TestMixedSharedAndIndividualCPDs:
         input_var = LatentVariable("input", distribution=Delta, size=8)
         shared_vars = ConceptVariable(shared_names, distribution=Bernoulli)
         indiv_vars = ConceptVariable(indiv_names, distribution=Bernoulli)
-        task_var = ConceptVariable("task", distribution=Categorical, size=3)
+        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=3)
 
         cpd_input = ParametricCPD("input", parametrization=nn.Identity())
         cpd_shared = ParametricCPD(
@@ -354,17 +354,17 @@ class TestMixedSharedAndIndividualCPDs:
     def test_full_query(self, setup):
         inf, _, x, _, _, all_names = setup
         result = inf.query(all_names + ["task"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 5 + 3)  # 5 concepts (3 shared + 2 indiv) + 3 task classes
+        assert result.probs.shape == (BATCH, 5 + 3)  # 5 concepts (3 shared + 2 indiv) + 3 task classes
 
     def test_shared_only_query(self, setup):
         inf, _, x, shared_names, _, _ = setup
         result = inf.query(shared_names, evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 3)
+        assert result.probs.shape == (BATCH, 3)
 
     def test_individual_only_query(self, setup):
         inf, _, x, _, indiv_names, _ = setup
         result = inf.query(indiv_names, evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 2)
+        assert result.probs.shape == (BATCH, 2)
 
     def test_cross_query(self, setup):
         """Query mixing shared and individual concepts."""
@@ -372,15 +372,15 @@ class TestMixedSharedAndIndividualCPDs:
         full = inf.query(all_names, evidence={"input": x}, debug=True)
         mixed = inf.query(["s0", "a", "s2"], evidence={"input": x}, debug=True)
         # s0 = col 0, a = col 3, s2 = col 2 in full
-        assert torch.allclose(mixed[:, 0:1], full[:, 0:1], atol=1e-6)
-        assert torch.allclose(mixed[:, 1:2], full[:, 3:4], atol=1e-6)
-        assert torch.allclose(mixed[:, 2:3], full[:, 2:3], atol=1e-6)
+        assert torch.allclose(mixed.probs[:, 0:1], full.probs[:, 0:1], atol=1e-6)
+        assert torch.allclose(mixed.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
+        assert torch.allclose(mixed.probs[:, 2:3], full.probs[:, 2:3], atol=1e-6)
 
     def test_task_query_uses_all_parents(self, setup):
         """Task depends on all 5 concepts; querying task alone should work."""
         inf, _, x, _, _, _ = setup
         result = inf.query(["task"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 3)
+        assert result.probs.shape == (BATCH, 3)
 
 
 # ======================================================================
@@ -398,7 +398,7 @@ class TestSharedCPDGradientFlow:
 
         x = torch.randn(BATCH, LATENT_DIM)
         result = inf.query(CONCEPT_NAMES + ["task"], evidence={"input": x}, debug=True)
-        loss = result.sum()
+        loss = result.probs.sum()
         loss.backward()
 
         assert encoder.encoder.weight.grad is not None
@@ -422,8 +422,8 @@ class TestSharedCPDGradientFlow:
         r_shared = inf_shared.query(query, evidence={"input": x}, debug=True)
         r_single = inf_single.query(query, evidence={"input": x}, debug=True)
 
-        r_shared.sum().backward()
-        r_single.sum().backward()
+        r_shared.probs.sum().backward()
+        r_single.probs.sum().backward()
 
         # Task head is the same object in both PGMs, so gradients accumulate.
         # Compare encoder gradients: shared encoder grad vs sum of individual encoder grads.
@@ -455,7 +455,7 @@ class TestMultipleSharedGroups:
         input_var = LatentVariable("input", distribution=Delta, size=8)
         vars_a = ConceptVariable(group_a, distribution=Bernoulli)
         vars_b = ConceptVariable(group_b, distribution=Bernoulli)
-        task_var = ConceptVariable("task", distribution=Categorical, size=3)
+        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=3)
 
         cpd_input = ParametricCPD("input", parametrization=nn.Identity())
         cpd_a = ParametricCPD(
@@ -494,14 +494,14 @@ class TestMultipleSharedGroups:
     def test_full_query(self, setup):
         inf, _, x, _, _, all_concepts = setup
         result = inf.query(all_concepts + ["task"], evidence={"input": x}, debug=True)
-        assert result.shape == (BATCH, 5 + 3)
+        assert result.probs.shape == (BATCH, 5 + 3)
 
     def test_cross_group_query(self, setup):
         inf, _, x, _, _, all_concepts = setup
         full = inf.query(all_concepts, evidence={"input": x}, debug=True)
         cross = inf.query(["a2", "b0"], evidence={"input": x}, debug=True)
-        assert torch.allclose(cross[:, 0:1], full[:, 2:3], atol=1e-6)
-        assert torch.allclose(cross[:, 1:2], full[:, 3:4], atol=1e-6)
+        assert torch.allclose(cross.probs[:, 0:1], full.probs[:, 2:3], atol=1e-6)
+        assert torch.allclose(cross.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
 
 
 # ======================================================================
@@ -516,8 +516,8 @@ class TestSharedCPDCategoricalConcepts:
         torch.manual_seed(77)
         names = ["color", "shape"]  # each has 3 classes
         input_var = LatentVariable("input", distribution=Delta, size=8)
-        concept_vars = ConceptVariable(names, distribution=Categorical, size=3)
-        task_var = ConceptVariable("task", distribution=Categorical, size=2)
+        concept_vars = ConceptVariable(names, distribution=OneHotCategorical, size=3)
+        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=2)
 
         encoder = nn.Linear(8, 6)  # 3 + 3 = 6
         cpd_input = ParametricCPD("input", parametrization=nn.Identity())
@@ -540,7 +540,7 @@ class TestSharedCPDCategoricalConcepts:
         inf, _, x, names, _ = setup
         result = inf.query(names + ["task"], evidence={"input": x}, debug=True)
         # color(3) + shape(3) + task(2) = 8
-        assert result.shape == (BATCH, 8)
+        assert result.probs.shape == (BATCH, 8)
 
     def test_slicing_categorical(self, setup):
         inf, _, x, names, encoder = setup
@@ -548,8 +548,8 @@ class TestSharedCPDCategoricalConcepts:
         color_only = inf.query(["color"], evidence={"input": x}, debug=True)
         shape_only = inf.query(["shape"], evidence={"input": x}, debug=True)
         # color is first 3 cols, shape is next 3
-        assert torch.allclose(color_only, full[:, :3], atol=1e-6)
-        assert torch.allclose(shape_only, full[:, 3:6], atol=1e-6)
+        assert torch.allclose(color_only.probs, full.probs[:, :3], atol=1e-6)
+        assert torch.allclose(shape_only.probs, full.probs[:, 3:6], atol=1e-6)
 
 
 # ======================================================================
@@ -572,7 +572,7 @@ class TestSharedCPDParallelExecution:
         r_debug = inf.query(query, evidence={"input": x}, debug=True)
         r_parallel = inf.query(query, evidence={"input": x}, debug=False)
 
-        assert torch.allclose(r_debug, r_parallel, atol=1e-6)
+        assert torch.allclose(r_debug.probs, r_parallel.probs, atol=1e-6)
 
 
 # ======================================================================
@@ -606,7 +606,7 @@ class TestSharedCPDEdgeCases:
         )
         inf = DeterministicInference(pgm)
         result = inf.query(["x"], evidence={"input": torch.randn(2, 8)}, debug=True)
-        assert result.shape == (2, 1)
+        assert result.probs.shape == (2, 1)
 
     def test_integer_concept_names(self):
         """Shared CPD with integer concept names (requires str() conversion)."""
@@ -625,4 +625,4 @@ class TestSharedCPDEdgeCases:
         )
         inf = DeterministicInference(pgm)
         result = inf.query(names, evidence={"input": torch.randn(2, 4)}, debug=True)
-        assert result.shape == (2, 3)
+        assert result.probs.shape == (2, 3)

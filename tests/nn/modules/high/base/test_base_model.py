@@ -12,7 +12,7 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn.modules.utils import GroupConfig
@@ -27,16 +27,6 @@ class ConcreteModel(BaseModel):
         features = self.maybe_apply_backbone(x)
         latent = self.latent_encoder(features)
         return latent
-    
-    def filter_output_for_loss(self, forward_out, target=None):
-        if target is None:
-            return forward_out
-        return {'input': forward_out, 'target': target}
-    
-    def filter_output_for_metrics(self, forward_out, target=None):
-        if target is None:
-            return forward_out
-        return {'preds': forward_out, 'target': target}
 
 
 class DummyBackbone(nn.Module):
@@ -160,7 +150,7 @@ class TestBaseModelInitialization:
             annotations=mixed_annotations,
             variable_distributions=GroupConfig(
                 binary=RelaxedBernoulli,
-                categorical=Categorical,
+                categorical=OneHotCategorical,
             ),
         )
         
@@ -168,7 +158,7 @@ class TestBaseModelInitialization:
         assert model.concept_annotations.has_metadata('distribution')
         meta = model.concept_annotations.metadata
         assert meta['binary_c']['distribution'] == RelaxedBernoulli
-        assert meta['cat_c']['distribution'] == Categorical
+        assert meta['cat_c']['distribution'] == OneHotCategorical
     
     def test_init_with_variable_activations_dict(
         self, annotations_without_distributions
@@ -373,69 +363,20 @@ class TestBaseModelForward:
             assert out.shape[0] == batch_size
 
 
-# Filter Methods Tests
-class TestBaseModelFilterMethods:
-    """Test filter_output methods."""
+# Prepare Target Tests
+class TestBaseModelPrepareTarget:
+    """Test prepare_target method."""
     
-    def test_filter_output_for_loss_with_target(self, annotations_with_distributions):
-        """Test filter_output_for_loss returns correct format with target."""
+    def test_prepare_target_returns_identity(self, annotations_with_distributions):
+        """Test prepare_target returns target unchanged for base models."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
         
-        forward_out = torch.randn(4, 3)
         target = torch.randint(0, 2, (4, 3)).float()
-        
-        filtered = model.filter_output_for_loss(forward_out, target)
-        
-        assert isinstance(filtered, dict)
-        assert 'input' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['input'], forward_out)
-        assert torch.equal(filtered['target'], target)
-    
-    def test_filter_output_for_loss_without_target(self, annotations_with_distributions):
-        """Test filter_output_for_loss without target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        filtered = model.filter_output_for_loss(forward_out)
-        
-        assert torch.equal(filtered, forward_out)
-    
-    def test_filter_output_for_metrics_with_target(self, annotations_with_distributions):
-        """Test filter_output_for_metrics returns correct format with target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        target = torch.randint(0, 2, (4, 3)).float()
-        
-        filtered = model.filter_output_for_metrics(forward_out, target)
-        
-        assert isinstance(filtered, dict)
-        assert 'preds' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['preds'], forward_out)
-        assert torch.equal(filtered['target'], target)
-    
-    def test_filter_output_for_metrics_without_target(self, annotations_with_distributions):
-        """Test filter_output_for_metrics without target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        filtered = model.filter_output_for_metrics(forward_out)
-        
-        assert torch.equal(filtered, forward_out)
+        prepared = model.prepare_target(target)
+        assert torch.equal(prepared, target)
 
 
 # Properties Tests
@@ -582,16 +523,10 @@ class TestBaseModelIntegration:
         out = model(x)
         assert out.shape == (8, 32)
         
-        # Filter for loss
+        # prepare_target returns identity for base models
         target = torch.randint(0, 2, (8, 3)).float()
-        loss_input = model.filter_output_for_loss(out, target)
-        assert isinstance(loss_input, dict)
-        assert 'input' in loss_input and 'target' in loss_input
-        
-        # Filter for metrics
-        metrics_input = model.filter_output_for_metrics(out, target)
-        assert isinstance(metrics_input, dict)
-        assert 'preds' in metrics_input and 'target' in metrics_input
+        prepared = model.prepare_target(target)
+        assert torch.equal(prepared, target)
     
     def test_minimal_model_pipeline(self, annotations_with_distributions):
         """Test minimal model with no backbone or encoder."""

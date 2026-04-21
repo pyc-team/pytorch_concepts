@@ -8,7 +8,7 @@ import unittest
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.parametric_factor import ParametricFactor
 from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
@@ -146,7 +146,7 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_concept_to_variable_mapping(self):
         """Test concept name to variable mapping."""
         var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Categorical, size=3)
+        var_b = Variable(concepts='B', distribution=OneHotCategorical, size=3)
         model = ProbabilisticModel(variables=[var_a, var_b], factors=[])
         self.assertIn('A', model.concept_to_variable)
         self.assertIn('B', model.concept_to_variable)
@@ -174,7 +174,7 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_get_by_distribution(self):
         """Test get_by_distribution method."""
         var_bern = Variable(concepts='b', distribution=Bernoulli, size=1)
-        var_cat = Variable(concepts='c', distribution=Categorical, size=3)
+        var_cat = Variable(concepts='c', distribution=OneHotCategorical, size=3)
         model = ProbabilisticModel(variables=[var_bern, var_cat], factors=[])
         bern_vars = model.get_by_distribution(Bernoulli)
         self.assertEqual(len(bern_vars), 1)
@@ -201,7 +201,7 @@ class TestProbabilisticModel(unittest.TestCase):
         """Test model with mixed distribution types."""
         var_delta = Variable(concepts='emb', distribution=Delta, size=10)
         var_bern = Variable(concepts='binary', distribution=Bernoulli, size=1)
-        var_cat = Variable(concepts='multi', distribution=Categorical, size=3)
+        var_cat = Variable(concepts='multi', distribution=OneHotCategorical, size=3)
 
         f_delta = ParametricFactor(concepts='emb', parametrization=nn.Identity())
         f_bern = ParametricFactor(concepts='binary', parametrization=nn.Linear(10, 1))
@@ -357,7 +357,7 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
     def test_parent_child_feature_matching(self):
         """Test that child input features match parent output features."""
-        parent = Variable(concepts='parent', distribution=Categorical, size=3)
+        parent = Variable(concepts='parent', distribution=OneHotCategorical, size=3)
         child = Variable(concepts='child', distribution=Bernoulli, size=1)
 
         child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(3, 1), parents=[parent])
@@ -369,7 +369,7 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
     def test_in_features_with_parents(self):
         """Test in_features property on ParametricCPD."""
         p1 = Variable(concepts='p1', distribution=Bernoulli, size=1)
-        p2 = Variable(concepts='p2', distribution=Categorical, size=3)
+        p2 = Variable(concepts='p2', distribution=OneHotCategorical, size=3)
         cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(4, 1), parents=[p1, p2])
         self.assertEqual(cpd.in_features, 4)
 

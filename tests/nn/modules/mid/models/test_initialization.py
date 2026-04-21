@@ -8,7 +8,7 @@ validation of other parameters.
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts.nn.modules.mid.models.variable import (
     Variable,
@@ -80,18 +80,18 @@ class TestVariableInitializationContract:
         """Distribution list assigns per-concept distributions."""
         result = Variable(
             concepts=['a', 'b', 'c'],
-            distribution=[Bernoulli, Categorical, Delta],
+            distribution=[Bernoulli, OneHotCategorical, Delta],
             size=[1, 3, 1]
         )
         assert result[0].distribution is Bernoulli
-        assert result[1].distribution is Categorical
+        assert result[1].distribution is OneHotCategorical
         assert result[2].distribution is Delta
 
     def test_list_concept_with_size_list(self):
         """Size list assigns per-concept sizes."""
         result = Variable(
             concepts=['a', 'b', 'c'],
-            distribution=Categorical,
+            distribution=OneHotCategorical,
             size=[2, 3, 4]
         )
         assert result[0].size == 2

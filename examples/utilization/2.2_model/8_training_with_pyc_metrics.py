@@ -105,10 +105,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
+        concepts = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
+    print(f"Output concepts shape: {concepts.probs.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -148,9 +148,9 @@ def main():
     c_test = dataset.concepts[test_idxs]
     
     with torch.no_grad():
-        out = model(x=x_test, query=concept_names)
+        out = model(x=x_test, query=concept_names, return_logits=True)
 
-    eval_metrics.update(preds=out, target=c_test)
+    eval_metrics.update(out.logits, c_test.int())
     print(f"Evaluation results with custom metrics: {eval_metrics.compute()}")
 
     # Compute CaCE for every concept on the task

@@ -63,7 +63,7 @@ class TestForwardInferenceQuery:
         batch_input = torch.randn(4, 10)
         result = inference.query(['A'], {'input': batch_input})
 
-        assert result.shape == (4, 3)
+        assert result.probs.shape == (4, 3)
 
     def test_query_multiple_concepts(self):
         """Test querying multiple concepts."""
@@ -87,7 +87,7 @@ class TestForwardInferenceQuery:
         result = inference.query(['A', 'B'], {'input': batch_input})
 
         # Should concatenate A (3 features) and B (2 features)
-        assert result.shape == (4, 5)
+        assert result.probs.shape == (4, 5)
 
     def test_query_with_specific_order(self):
         """Test that query respects the order of concepts."""
@@ -112,8 +112,8 @@ class TestForwardInferenceQuery:
         result_AB = inference.query(['A', 'B'], {'input': batch_input})
         result_BA = inference.query(['B', 'A'], {'input': batch_input})
 
-        assert result_AB.shape == (4, 5)
-        assert result_BA.shape == (4, 5)
+        assert result_AB.probs.shape == (4, 5)
+        assert result_BA.probs.shape == (4, 5)
 
     def test_query_missing_concept_raises_error(self):
         """Test that querying a non-existent concept raises error."""
@@ -172,7 +172,7 @@ class TestForwardInferenceQuery:
         batch_input = torch.randn(4, 10)
         result = inference.query(['A'], {'input': batch_input}, debug=True)
 
-        assert result.shape == (4, 3)
+        assert result.probs.shape == (4, 3)
 
 
 class TestForwardInferencePredictDevices:
@@ -197,7 +197,7 @@ class TestForwardInferencePredictDevices:
         result = inference.query(['A'], {'input': batch_input}, device='cpu')
 
         # A has size=3
-        assert result.shape == (4, 3)
+        assert result.probs.shape == (4, 3)
 
     def test_predict_device_auto(self):
         """Test predict with auto device detection."""
@@ -218,7 +218,7 @@ class TestForwardInferencePredictDevices:
         result = inference.query(['A'], {'input': batch_input}, device='auto')
 
         # A has size=1
-        assert result.shape == (4, 1)
+        assert result.probs.shape == (4, 1)
 
     def test_predict_device_invalid_raises_error(self):
         """Test that invalid device raises error."""
@@ -263,7 +263,7 @@ class TestForwardInferencePredictDevices:
         result = inference.query(['A', 'B', 'C'], {'input': batch_input}, device='cpu')
 
         # A (size=3) + B (size=2) + C (size=1) = 6
-        assert result.shape == (4, 6)
+        assert result.probs.shape == (4, 6)
 
 
 class TestForwardInferenceComputeSingleVariable:
@@ -456,7 +456,7 @@ class TestForwardInferenceComplexHierarchy:
         result = inference.query(['C'], {'input': batch_input})
 
         # C has size=1
-        assert result.shape == (4, 1)
+        assert result.probs.shape == (4, 1)
 
     def test_multi_level_hierarchy(self):
         """Test multi-level hierarchy."""
@@ -487,7 +487,7 @@ class TestForwardInferenceComplexHierarchy:
         result = inference.query(['A', 'B', 'C', 'D'], {'input': batch_input})
 
         # A, B, C, D each size=1 = 4 total
-        assert result.shape == (4, 4)
+        assert result.probs.shape == (4, 4)
 
 
 class TestForwardInferenceDebugMode:
@@ -514,7 +514,7 @@ class TestForwardInferenceDebugMode:
         result = inference.query(['A', 'B'], {'input': batch_input}, debug=True)
 
         # A (size=3) + B (size=2) = 5
-        assert result.shape == (4, 5)
+        assert result.probs.shape == (4, 5)
 
 
 class SimpleForwardInference(ForwardInference):
@@ -662,7 +662,7 @@ class TestForwardInferencePredict:
         results = inference.query(['A'], external_inputs)
 
         # A has size=1
-        assert results.shape == (batch_size, 1)
+        assert results.probs.shape == (batch_size, 1)
 
     def test_predict_chain_model(self):
         """Test predict with a chain model."""
@@ -690,7 +690,7 @@ class TestForwardInferencePredict:
         results = inference.query(['A', 'B'], external_inputs)
 
         # A (size=1) + B (size=1) = 2
-        assert results.shape == (batch_size, 2)
+        assert results.probs.shape == (batch_size, 2)
 
     def test_predict_debug_mode(self):
         """Test predict with debug=True (sequential execution)."""
@@ -717,7 +717,7 @@ class TestForwardInferencePredict:
         results = inference.query(['A', 'B'], external_inputs, debug=True)
 
         # A (size=1) + B (size=1) = 2
-        assert results.shape == (2, 2)
+        assert results.probs.shape == (2, 2)
 
     def test_predict_device_cpu(self):
         """Test predict with explicit CPU device."""
@@ -739,7 +739,7 @@ class TestForwardInferencePredict:
         external_inputs = {'input': torch.randn(2, 5)}
         results = inference.query(['A'], external_inputs, device='cpu')
 
-        assert results.device.type == 'cpu'
+        assert results.probs.device.type == 'cpu'
 
     def test_predict_device_auto(self):
         """Test predict with device='auto'."""
@@ -762,7 +762,7 @@ class TestForwardInferencePredict:
         results = inference.query(['A'], external_inputs, device='auto')
 
         # Should work regardless of CUDA availability
-        assert results.shape == (2, 1)
+        assert results.probs.shape == (2, 1)
 
     def test_predict_invalid_device(self):
         """Test predict with invalid device raises error."""
@@ -859,7 +859,7 @@ class TestForwardInferenceEdgeCases:
         results = inference.query(['A', 'B', 'C', 'D'], external_inputs, device='cpu')
 
         # A, B, C, D each size=1 = 4 total
-        assert results.shape == (3, 4)
+        assert results.probs.shape == (3, 4)
 
     def test_complex_dag_structure(self):
         """Test complex DAG with multiple dependencies."""
@@ -893,7 +893,7 @@ class TestForwardInferenceEdgeCases:
         results = inference.query(['A', 'B', 'C', 'D'], external_inputs)
 
         # A, B, C, D each size=1 = 4 total
-        assert results.shape == (2, 4)
+        assert results.probs.shape == (2, 4)
 
 class SimpleForwardInference(ForwardInference):
     """Concrete implementation for testing."""
@@ -995,7 +995,7 @@ class TestForwardInference(unittest.TestCase):
         results = inference.query(['A'], external_inputs)
 
         # A has size=1
-        self.assertEqual(results.shape, (4, 1))
+        self.assertEqual(results.probs.shape, (4, 1))
 
     def test_predict_with_debug_mode(self):
         """Test predict with debug mode (sequential execution)."""
@@ -1016,7 +1016,7 @@ class TestForwardInference(unittest.TestCase):
         results = inference.query(['A'], external_inputs, debug=True)
 
         # A has size=1
-        self.assertEqual(results.shape, (4, 1))
+        self.assertEqual(results.probs.shape, (4, 1))
 
     def test_predict_diamond_structure(self):
         """Test predict with diamond structure (parallel computation)."""
@@ -1041,7 +1041,7 @@ class TestForwardInference(unittest.TestCase):
         results = inference.query(['A', 'B', 'C'], external_inputs)
 
         # A (size=1) + B (size=1) + C (size=1) = 3
-        self.assertEqual(results.shape, (4, 3))
+        self.assertEqual(results.probs.shape, (4, 3))
 
     def test_compute_single_variable_root(self):
         """Test _compute_single_variable for root variable."""
@@ -1174,7 +1174,7 @@ class TestForwardInference(unittest.TestCase):
     def test_categorical_parent(self):
         """Test with categorical parent variable."""
         input_var = Variable('input', distribution=Delta, size=10)
-        var_a = Variable('A', distribution=Categorical, size=3)
+        var_a = Variable('A', distribution=OneHotCategorical, size=3)
         var_b = Variable('B', distribution=Bernoulli, size=1)
 
         latent_cpd = ParametricCPD('input', parametrization=nn.Identity())
@@ -1192,7 +1192,7 @@ class TestForwardInference(unittest.TestCase):
         results = inference.query(['B'], external_inputs)
 
         # B has size=1
-        self.assertEqual(results.shape, (4, 1))
+        self.assertEqual(results.probs.shape, (4, 1))
 
     def test_multiple_children_same_parent(self):
         """Test multiple children depending on same parent."""
@@ -1308,7 +1308,7 @@ class TestForwardInference(unittest.TestCase):
         inference_engine = AncestralSamplingInference(concept_model_new)
         cy_pred_after_unrolling = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True)
 
-        self.assertTrue(cy_pred_after_unrolling.shape == c_train_one_hot.shape)
+        self.assertTrue(cy_pred_after_unrolling.probs.shape == c_train_one_hot.shape)
 
 
 class TestAncestralSamplingCoverage(unittest.TestCase):
@@ -1335,9 +1335,9 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         x = torch.randn(4, 5)
         result = inference.query(['A'], evidence={'input': x})
 
-        self.assertEqual(result.shape, (4, 1))
+        self.assertEqual(result.probs.shape, (4, 1))
         # Bernoulli .sample() returns 0 or 1
-        self.assertTrue(torch.all((result == 0) | (result == 1)))
+        self.assertTrue(torch.all((result.probs == 0) | (result.probs == 1)))
 
     # --- activate: OneHotCategorical .sample() (line 146-147) ---
 
@@ -1361,10 +1361,10 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         x = torch.randn(4, 5)
         result = inference.query(['A'], evidence={'input': x})
 
-        self.assertEqual(result.shape, (4, 3))
+        self.assertEqual(result.probs.shape, (4, 3))
         # Each row should be a one-hot vector (sums to 1, values in {0, 1})
-        self.assertTrue(torch.allclose(result.sum(dim=-1), torch.ones(4)))
-        self.assertTrue(torch.all((result == 0) | (result == 1)))
+        self.assertTrue(torch.allclose(result.probs.sum(dim=-1), torch.ones(4)))
+        self.assertTrue(torch.all((result.probs == 0) | (result.probs == 1)))
 
     # --- activate: generic fallback .rsample() (line 154) ---
 
@@ -1391,9 +1391,9 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         x = torch.randn(4, 5)
         result = inference.query(['A'], evidence={'input': x})
 
-        self.assertEqual(result.shape, (4, 1))
+        self.assertEqual(result.probs.shape, (4, 1))
         # Normal .rsample() produces real-valued outputs (not bounded to [0,1])
-        self.assertTrue(result.dtype == torch.float32)
+        self.assertTrue(result.probs.dtype == torch.float32)
 
     # --- ground_truth_to_evidence: categorical branch (lines 177-180) ---
 
@@ -1485,33 +1485,33 @@ class TestDeterministicInference(unittest.TestCase):
         results = self.inference.query(['A', 'B'], {'input': self.x})
         
         # Should have A (size=1) + B (size=1) = 2 features
-        self.assertEqual(results.shape, (self.batch_size, 2))
+        self.assertEqual(results.probs.shape, (self.batch_size, 2))
         
         # Probabilities should be in [0, 1] (sigmoid output)
-        self.assertTrue(torch.all(results >= 0))
-        self.assertTrue(torch.all(results <= 1))
+        self.assertTrue(torch.all(results.probs >= 0))
+        self.assertTrue(torch.all(results.probs <= 1))
     
     def test_return_logits_returns_raw_outputs(self):
         """Test that return_logits=True returns raw CPD outputs."""
         logits = self.inference.query(['A', 'B'], evidence={'input': self.x}, return_logits=True)
         probs = self.inference.query(['A', 'B'], evidence={'input': self.x})
         
-        self.assertEqual(logits.shape, (self.batch_size, 2))
-        self.assertEqual(probs.shape, (self.batch_size, 2))
+        self.assertEqual(logits.logits.shape, (self.batch_size, 2))
+        self.assertEqual(probs.probs.shape, (self.batch_size, 2))
         
         # Logits can be any real value; probabilities in [0, 1]
-        self.assertTrue(torch.all(probs >= 0))
-        self.assertTrue(torch.all(probs <= 1))
+        self.assertTrue(torch.all(probs.probs >= 0))
+        self.assertTrue(torch.all(probs.probs <= 1))
         
         # They should not be identical (sigmoid transforms them)
-        self.assertFalse(torch.allclose(logits, probs))
+        self.assertFalse(torch.allclose(logits.logits, probs.probs))
     
     def test_deterministic_gradient_flow(self):
         """Test that gradients flow through deterministic inference."""
         x = self.x.clone().requires_grad_(True)
         
         output = self.inference.query(['A', 'B'], evidence={'input': x})
-        loss = output.sum()
+        loss = output.probs.sum()
         loss.backward()
         
         # Gradient should reach input
@@ -1530,14 +1530,14 @@ class TestDeterministicInference(unittest.TestCase):
         
         # Deterministic returns logits, sampling returns samples
         # Deterministic values should be continuous
-        det_unique = det_output.unique()
+        det_unique = det_output.probs.unique()
         self.assertGreater(len(det_unique), 2)  # More than binary
         
         # Sampling from Bernoulli returns binary (0/1)
-        samp_unique = samp_output.unique()
+        samp_unique = samp_output.probs.unique()
         # Sampling should give samples in [0, 1] range
-        self.assertTrue(torch.all(samp_output >= 0))
-        self.assertTrue(torch.all(samp_output <= 1))
+        self.assertTrue(torch.all(samp_output.probs >= 0))
+        self.assertTrue(torch.all(samp_output.probs <= 1))
 
 
 # ---------------------------------------------------------------------------
@@ -1614,7 +1614,7 @@ class TestParallelisationIsHappening:
         result_par = inference.query(['A', 'B', 'C'], {'input': batch_input}, device='cpu', debug=False)
 
         # Result is now a tensor of shape (4, 6) - A(2) + B(2) + C(2)
-        torch.testing.assert_close(result_seq, result_par)
+        torch.testing.assert_close(result_seq.probs, result_par.probs)
 
 
 class TestExogenousVariableInference:
@@ -1652,7 +1652,7 @@ class TestExogenousVariableInference:
         batch_input = torch.randn(4, 6)
         result = inference.query(['A'], {'input': batch_input}, device='cpu')
 
-        assert result.shape == (4, 3)
+        assert result.probs.shape == (4, 3)
 
     def test_mixed_concept_and_exogenous_parents(self):
         """A variable can have both ConceptVariable and ExogenousVariable parents."""
@@ -1686,7 +1686,7 @@ class TestExogenousVariableInference:
         batch_input = torch.randn(4, 6)
         result = inference.query(['A'], {'input': batch_input}, device='cpu')
 
-        assert result.shape == (4, 3)
+        assert result.probs.shape == (4, 3)
 
 
 class TestLazyInferenceSkipsDownstreamVariables:
@@ -1734,7 +1734,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
         with patch.object(inference, '_compute_single_variable', side_effect=tracking_compute):
             result = inference.query(['B'], evidence={'input': batch_input}, device='cpu')
 
-        assert result.shape == (4, 2)
+        assert result.probs.shape == (4, 2)
         assert 'input' in computed_vars, "Lazy inference must compute 'input'"
         assert 'A' in computed_vars, "Lazy inference must compute 'A' (ancestor of B)"
         assert 'B' in computed_vars, "Lazy inference must compute 'B' (queried)"
@@ -1763,7 +1763,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
         result = inference.query(['B', 'C'], evidence={'input': batch_input}, device='cpu')
 
         # B(2) + C(2) = 4 features
-        assert result.shape == (4, 4)
+        assert result.probs.shape == (4, 4)
 
     def test_lazy_vs_full_same_result(self):
         """ForwardInference(lazy=True).query must produce the same output as ForwardInference.query."""
@@ -1782,7 +1782,7 @@ class TestLazyInferenceSkipsDownstreamVariables:
         result_lazy = lazy_inf.query(['B'], evidence={'input': batch_input}, device='cpu')
         result_full = full_inf.query(['B'], evidence={'input': batch_input}, device='cpu')
 
-        torch.testing.assert_close(result_lazy, result_full)
+        torch.testing.assert_close(result_lazy.probs, result_full.probs)
 
     def test_get_ancestors_returns_correct_set(self):
         """_get_ancestors for B should return {input, A, B}."""
@@ -1819,7 +1819,7 @@ class TestEvidenceBypassSkipsCPD:
         result_A = inference.query(['A'], {'input': batch_input, 'A': evidence_A}, device='cpu')
 
         # A's result should be exactly the evidence tensor
-        torch.testing.assert_close(result_A, evidence_A)
+        torch.testing.assert_close(result_A.probs, evidence_A)
 
     def test_evidence_cpd_not_called(self):
         """The CPD forward of a variable with evidence must never be executed."""
@@ -1875,7 +1875,7 @@ class TestEvidenceBypassSkipsCPD:
         result_with_ev = inference.query(['B'], {'input': batch_input, 'A': evidence_A}, device='cpu')
 
         # B should differ because A was overridden with evidence
-        assert not torch.allclose(result_no_ev, result_with_ev), \
+        assert not torch.allclose(result_no_ev.probs, result_with_ev.probs), \
             "B should change when evidence is provided for its parent A"
 
     def test_root_variable_evidence_still_uses_cpd(self):
@@ -1896,7 +1896,7 @@ class TestEvidenceBypassSkipsCPD:
         result_input = inference.query(['input'], {'input': batch_input}, device='cpu')
 
         # Root 'input' goes through Identity CPD -> output == input
-        torch.testing.assert_close(result_input, batch_input)
+        torch.testing.assert_close(result_input.probs, batch_input)
 
 
 class TestForwardVsLazyInferenceParity:
@@ -2093,7 +2093,7 @@ class TestForwardVsLazyInferenceParity:
         result_lazy = lazy_inf.query(query_concepts, evidence={'input': batch_input}, device='cpu')
 
         torch.testing.assert_close(
-            result_full, result_lazy,
+            result_full.probs, result_lazy.probs,
             msg=f"Mismatch for {builder} with query={query_concepts}"
         )
 
@@ -2240,7 +2240,7 @@ class TestForwardVsLazyInferenceParity:
         result_full = full_inf.query(all_concepts, evidence={'input': batch_input}, device='cpu')
         result_lazy = lazy_inf.query(all_concepts, evidence={'input': batch_input}, device='cpu')
 
-        torch.testing.assert_close(result_full, result_lazy)
+        torch.testing.assert_close(result_full.probs, result_lazy.probs)
 
     def test_lazy_handles_single_variable_model(self):
         """Degenerate case: model with only root variable."""
@@ -2257,7 +2257,7 @@ class TestForwardVsLazyInferenceParity:
 
         # Querying the root should work
         result = lazy_inf.query(['input'], evidence={'input': batch_input}, device='cpu')
-        torch.testing.assert_close(result, batch_input)
+        torch.testing.assert_close(result.probs, batch_input)
 
     def test_lazy_vs_full_with_debug_mode(self):
         """Both should produce same results in debug mode (sequential execution)."""
@@ -2274,7 +2274,7 @@ class TestForwardVsLazyInferenceParity:
         result_full = full_inf.query(['C'], evidence={'input': batch_input}, device='cpu', debug=True)
         result_lazy = lazy_inf.query(['C'], evidence={'input': batch_input}, device='cpu', debug=True)
 
-        torch.testing.assert_close(result_full, result_lazy)
+        torch.testing.assert_close(result_full.probs, result_lazy.probs)
 
 
 class TestGroundTruthProbabilisticPropagation:
@@ -2347,7 +2347,7 @@ class TestGroundTruthProbabilisticPropagation:
             ground_truth=gt_ones, concept_names=['A'],
         )
         # Both should be identical — GT is ignored when p=0
-        torch.testing.assert_close(result_gt0, result_gt1)
+        torch.testing.assert_close(result_gt0.probs, result_gt1.probs)
 
     def test_p0_same_as_no_gt(self):
         """With p=0, results should match a plain query without GT."""
@@ -2362,7 +2362,7 @@ class TestGroundTruthProbabilisticPropagation:
             ground_truth=gt, concept_names=['A', 'B'],
         )
         result_no_gt = inference.query(['A', 'B', 'task'], {'input': x})
-        torch.testing.assert_close(result_with_gt, result_no_gt)
+        torch.testing.assert_close(result_with_gt.probs, result_no_gt.probs)
 
     # ---- p=1: fully independent training ----
 
@@ -2383,7 +2383,7 @@ class TestGroundTruthProbabilisticPropagation:
             ['B'], {'input': x},
             ground_truth=gt_ones, concept_names=['A'],
         )
-        assert not torch.allclose(result_gt0, result_gt1), \
+        assert not torch.allclose(result_gt0.probs, result_gt1.probs), \
             "p=1 should use GT for propagation, giving different downstream results"
 
     def test_p1_returns_model_predictions_not_gt(self):
@@ -2398,7 +2398,7 @@ class TestGroundTruthProbabilisticPropagation:
             ['A'], {'input': x},
             ground_truth=gt, concept_names=['A'],
         )
-        assert not torch.allclose(result, torch.full((8, 1), 999.0)), \
+        assert not torch.allclose(result.probs, torch.full((8, 1), 999.0)), \
             "Returned predictions should be from the model, not GT"
 
     def test_p1_gradient_isolation(self):
@@ -2416,7 +2416,7 @@ class TestGroundTruthProbabilisticPropagation:
             ['A', 'B', 'task'], {'input': x},
             ground_truth=gt, concept_names=['A', 'B'],
         )
-        task_pred = result[:, 2:]
+        task_pred = result.probs[:, 2:]
         loss = nn.functional.binary_cross_entropy_with_logits(
             task_pred, torch.zeros(8, 1)
         )
@@ -2444,7 +2444,7 @@ class TestGroundTruthProbabilisticPropagation:
             ['A', 'B', 'task'], {'input': x},
             ground_truth=gt, concept_names=['A', 'B'],
         )
-        torch.testing.assert_close(result_forward, result_indep)
+        torch.testing.assert_close(result_forward.probs, result_indep.probs)
 
     # ---- 0 < p < 1: stochastic mixing ----
 
@@ -2467,7 +2467,7 @@ class TestGroundTruthProbabilisticPropagation:
             ground_truth=gt, concept_names=['A'],
         )
         # With different seeds the Bernoulli masks differ, so results should differ
-        assert not torch.allclose(r1, r2), \
+        assert not torch.allclose(r1.probs, r2.probs), \
             "Intermediate p should produce stochastic results across seeds"
 
     def test_intermediate_p_between_extremes(self):
@@ -2481,13 +2481,13 @@ class TestGroundTruthProbabilisticPropagation:
         inf_p1 = DeterministicInference(model, p=1.0)
         inf_mid = DeterministicInference(model, p=0.5)
 
-        r0 = inf_p0.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
-        r1 = inf_p1.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
+        r0 = inf_p0.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).probs.mean()
+        r1 = inf_p1.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).probs.mean()
 
         # Average over many runs at p=0.5
         torch.manual_seed(42)
         runs = [
-            inf_mid.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).mean()
+            inf_mid.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).probs.mean()
             for _ in range(20)
         ]
         r_mid = torch.stack(runs).mean()
@@ -2524,7 +2524,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p1_with_categorical(self):
         """p=1 should work correctly with categorical (multi-class) concepts."""
         input_var = InputVariable('input', distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', distribution=Categorical, size=4)
+        var_A = EndogenousVariable('A', distribution=OneHotCategorical, size=4)
         var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
@@ -2544,7 +2544,7 @@ class TestGroundTruthProbabilisticPropagation:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape == (8, 5)  # A=4 + B=1
+        assert result.probs.shape == (8, 5)  # A=4 + B=1
 
     # ---- p with return_logits ----
 
@@ -2567,8 +2567,8 @@ class TestGroundTruthProbabilisticPropagation:
             return_logits=False,
         )
         # Logits and activated should differ (sigmoid applied)
-        assert not torch.allclose(result_logits, result_activated, atol=1e-6) or \
-            torch.allclose(result_logits, torch.zeros_like(result_logits), atol=1e-6), \
+        assert not torch.allclose(result_logits.logits, result_activated.probs, atol=1e-6) or \
+            torch.allclose(result_logits.logits, torch.zeros_like(result_logits), atol=1e-6), \
             "return_logits should give raw outputs, not activated"
 
 
@@ -2717,7 +2717,7 @@ class TestAncestralSamplingWithP:
         r1 = inference.query(['B'], {'input': x}, ground_truth=gt_ones, concept_names=['A'])
 
         # Same seed, p=0 → GT is ignored, so identical sampling → same results
-        torch.testing.assert_close(r0, r1)
+        torch.testing.assert_close(r0.probs, r1.probs)
 
     def test_p0_same_as_no_gt(self):
         """With p=0, results should match a query without GT (same seed)."""
@@ -2735,7 +2735,7 @@ class TestAncestralSamplingWithP:
         torch.manual_seed(42)
         r_no_gt = inference.query(['A', 'B'], {'input': x})
 
-        torch.testing.assert_close(r_with_gt, r_no_gt)
+        torch.testing.assert_close(r_with_gt.probs, r_no_gt.probs)
 
     # ------------------------------------------------------------------
     # p=1: fully independent (GT always propagated)
@@ -2758,8 +2758,8 @@ class TestAncestralSamplingWithP:
         # B receives different input (GT=0 vs GT=1) → distribution differs
         # Because sampling is stochastic, test that the *distributions* differ
         # by checking mean over larger batch
-        assert r0.float().mean() != r1.float().mean() or \
-            not torch.equal(r0, r1), \
+        assert r0.probs.float().mean() != r1.probs.float().mean() or \
+            not torch.equal(r0.probs, r1.probs), \
             "p=1 should use GT for propagation, producing different B distributions"
 
     def test_p1_returns_model_samples_not_gt(self):
@@ -2775,7 +2775,7 @@ class TestAncestralSamplingWithP:
             ground_truth=gt, concept_names=['A'],
         )
         # Bernoulli samples are 0 or 1, never 999
-        assert torch.all((result == 0) | (result == 1)), \
+        assert torch.all((result.probs == 0) | (result.probs == 1)), \
             "Returned values should be Bernoulli samples, not GT"
 
     def test_p1_output_is_binary_samples(self):
@@ -2790,8 +2790,8 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt, concept_names=['A'],
         )
-        assert result.shape == (32, 2)
-        assert torch.all((result == 0) | (result == 1))
+        assert result.probs.shape == (32, 2)
+        assert torch.all((result.probs == 0) | (result.probs == 1))
 
     def test_p1_gt_for_multiple_concepts(self):
         """p=1 with GT for multiple concepts in a chain."""
@@ -2805,9 +2805,9 @@ class TestAncestralSamplingWithP:
             ['A', 'B', 'task'], {'input': x},
             ground_truth=gt, concept_names=['A', 'B'],
         )
-        assert result.shape == (8, 3)
+        assert result.probs.shape == (8, 3)
         # All outputs are Bernoulli samples
-        assert torch.all((result == 0) | (result == 1))
+        assert torch.all((result.probs == 0) | (result.probs == 1))
 
     def test_p1_partial_gt_coverage(self):
         """p=1 with GT only for A, not B — B should use its own prediction for propagation."""
@@ -2821,7 +2821,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B', 'task'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape == (8, 3)
+        assert result.probs.shape == (8, 3)
 
     # ------------------------------------------------------------------
     # 0 < p < 1: stochastic mixing
@@ -2840,7 +2840,7 @@ class TestAncestralSamplingWithP:
         torch.manual_seed(1)
         r2 = inference.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A'])
 
-        assert not torch.equal(r1, r2), \
+        assert not torch.equal(r1.probs, r2.probs), \
             "Intermediate p should produce different results with different seeds"
 
     def test_intermediate_p_shape(self):
@@ -2855,22 +2855,16 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt, concept_names=['A'],
         )
-        assert result.shape == (16, 2)
+        assert result.probs.shape == (16, 2)
 
     # ------------------------------------------------------------------
     # Categorical variables
     # ------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        reason="Categorical.sample() returns class index (size 1) but variable "
-               "declares size=4; _concatenate_results expects 4 features. "
-               "Pre-existing incompatibility — use OneHotCategorical instead.",
-        raises=RuntimeError,
-    )
     def test_p1_with_categorical_standalone(self):
         """p=1 with categorical (multi-class) concept and ancestral sampling."""
         input_var = InputVariable('input', distribution=Delta, size=10)
-        var_A = EndogenousVariable('A', distribution=Categorical, size=4)
+        var_A = EndogenousVariable('A', distribution=OneHotCategorical, size=4)
         var_B = EndogenousVariable('B', distribution=Bernoulli, size=1)
 
         cpd_input = ParametricCPD('input', parametrization=nn.Identity())
@@ -2891,7 +2885,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape[0] == 8
+        assert result.probs.shape[0] == 8
 
     def test_p1_one_hot_categorical_gt_affects_downstream(self):
         """Different categorical GT should produce different downstream results.
@@ -2923,7 +2917,7 @@ class TestAncestralSamplingWithP:
         torch.manual_seed(42)
         r3 = inference.query(['B'], {'input': x}, ground_truth=gt_class3, concept_names=['A'])
 
-        assert not torch.equal(r0, r3), \
+        assert not torch.equal(r0.probs, r3.probs), \
             "Different categorical GT should produce different B sampling distributions"
 
     # ------------------------------------------------------------------
@@ -2953,7 +2947,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape[0] == 8
+        assert result.probs.shape[0] == 8
 
     # ------------------------------------------------------------------
     # Relaxed distributions (continuous samples, reparameterizable)
@@ -2986,9 +2980,9 @@ class TestAncestralSamplingWithP:
             ground_truth=gt_a, concept_names=['A'],
         )
         # A is continuous relaxed sample, B is binary
-        assert result.shape == (8, 2)
+        assert result.probs.shape == (8, 2)
         # A values should be continuous in (0,1), not just {0,1}
-        a_vals = result[:, 0]
+        a_vals = result.probs[:, 0]
         assert not torch.all((a_vals == 0) | (a_vals == 1)), \
             "RelaxedBernoulli should produce continuous values"
 
@@ -3021,9 +3015,9 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape == (8, 2)
+        assert result.probs.shape == (8, 2)
         # A and B are Bernoulli samples
-        assert torch.all((result == 0) | (result == 1))
+        assert torch.all((result.probs == 0) | (result.probs == 1))
 
     def test_p05_with_exogenous(self):
         """Intermediate p with exogenous variables should work."""
@@ -3050,7 +3044,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape == (16, 2)
+        assert result.probs.shape == (16, 2)
 
     # ------------------------------------------------------------------
     # log_probs flag interaction with p
@@ -3085,8 +3079,8 @@ class TestAncestralSamplingWithP:
             ['A', 'B'], {'input': x},
             ground_truth=gt_a, concept_names=['A'],
         )
-        assert result.shape == (8, 2)
-        assert torch.all((result == 0) | (result == 1))
+        assert result.probs.shape == (8, 2)
+        assert torch.all((result.probs == 0) | (result.probs == 1))
 
     # ------------------------------------------------------------------
     # return_logits with p
@@ -3106,7 +3100,7 @@ class TestAncestralSamplingWithP:
             return_logits=True,
         )
         # Logits can be any real value, not just {0, 1}
-        assert result.shape == (8, 1)
+        assert result.logits.shape == (8, 1)
 
     # ------------------------------------------------------------------
     # detach interaction with p
@@ -3124,7 +3118,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B', 'task'], {'input': x},
             ground_truth=gt, concept_names=['A', 'B'],
         )
-        assert result.shape == (8, 3)
+        assert result.probs.shape == (8, 3)
 
     # ------------------------------------------------------------------
     # lazy mode interaction with p
@@ -3142,7 +3136,7 @@ class TestAncestralSamplingWithP:
             ['B'], {'input': x},
             ground_truth=gt, concept_names=['A'],
         )
-        assert result.shape == (8, 1)
+        assert result.probs.shape == (8, 1)
 
     # ------------------------------------------------------------------
     # ground_truth_to_evidence shape correctness
@@ -3229,7 +3223,7 @@ class TestAncestralSamplingWithP:
             ['A', 'B', 'C'], {'input': x},
             ground_truth=gt, concept_names=['A', 'B'],
         )
-        assert result.shape == (8, 3)
+        assert result.probs.shape == (8, 3)
 
     # ------------------------------------------------------------------
     # Debug mode with p
@@ -3248,8 +3242,8 @@ class TestAncestralSamplingWithP:
             ground_truth=gt, concept_names=['A'],
             debug=True,
         )
-        assert result.shape == (8, 2)
-        assert torch.all((result == 0) | (result == 1))
+        assert result.probs.shape == (8, 2)
+        assert torch.all((result.probs == 0) | (result.probs == 1))
 
 
 class TestSharedCPDDimensionValidation(unittest.TestCase):
@@ -3317,7 +3311,7 @@ class TestEarlyExitOnQuerySatisfied(unittest.TestCase):
         result = inference.query(['input'], {'input': x})
         self.assertEqual(call_count['value'], 0,
                          "B's CPD should not be called when only 'input' is queried")
-        self.assertEqual(result.shape, (2, 4))
+        self.assertEqual(result.probs.shape, (2, 4))
 
     def test_query_mid_level_skips_deeper(self):
         """Querying level-1 variable should not compute level-2 CPDs."""
@@ -3328,7 +3322,7 @@ class TestEarlyExitOnQuerySatisfied(unittest.TestCase):
         result = inference.query(['A'], {'input': x})
         self.assertEqual(call_count['value'], 0,
                          "B's CPD should not be called when only 'A' is queried")
-        self.assertEqual(result.shape, (2, 3))
+        self.assertEqual(result.probs.shape, (2, 3))
 
     def test_query_leaf_computes_all(self):
         """Querying the leaf variable should compute all levels."""
@@ -3339,7 +3333,7 @@ class TestEarlyExitOnQuerySatisfied(unittest.TestCase):
         result = inference.query(['B'], {'input': x})
         self.assertEqual(call_count['value'], 1,
                          "B's CPD should be called exactly once")
-        self.assertEqual(result.shape, (2, 2))
+        self.assertEqual(result.probs.shape, (2, 2))
 
     def test_query_all_computes_all(self):
         """Querying all variables should compute everything."""
@@ -3349,7 +3343,7 @@ class TestEarlyExitOnQuerySatisfied(unittest.TestCase):
 
         result = inference.query(['input', 'A', 'B'], {'input': x})
         self.assertEqual(call_count['value'], 1)
-        self.assertEqual(result.shape, (2, 4 + 3 + 2))
+        self.assertEqual(result.probs.shape, (2, 4 + 3 + 2))
 
 
 if __name__ == "__main__":

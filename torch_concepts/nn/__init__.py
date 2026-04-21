@@ -43,6 +43,9 @@ from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConcept
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
 
+# Output containers
+from .modules.outputs import ModelOutput, InferenceOutput
+
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
@@ -129,6 +132,10 @@ __all__ = [
     # Metrics
     "ConceptMetrics",
     "compute_cace",
+
+    # Output containers
+    "ModelOutput",
+    "InferenceOutput",
 
     # Models (high-level)
     "BlackBox",

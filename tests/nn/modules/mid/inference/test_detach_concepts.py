@@ -95,7 +95,7 @@ class TestDetachConceptsForwardValues:
         out_normal = inf_normal.query(["A"], evidence={"input": x})
         out_detach = inf_detach.query(["A"], evidence={"input": x})
 
-        torch.testing.assert_close(out_normal, out_detach)
+        torch.testing.assert_close(out_normal.probs, out_detach.probs)
 
     def test_deterministic_child_output_differs(self):
         """Child concept B sees different parent representations
@@ -110,23 +110,23 @@ class TestDetachConceptsForwardValues:
         out_detach = inf_detach.query(["A", "B"], evidence={"input": x})
 
         # A column (idx 0) should match
-        torch.testing.assert_close(out_normal[:, :1], out_detach[:, :1])
+        torch.testing.assert_close(out_normal.probs[:, :1], out_detach.probs[:, :1])
         # B column (idx 1) is allowed to differ
-        assert out_normal.shape == out_detach.shape
+        assert out_normal.probs.shape == out_detach.probs.shape
 
     def test_output_shape(self):
         pgm, _, _ = _build_chain_pgm()
         x = torch.randn(8, 4)
         inf = DeterministicInference(pgm, detach=True)
         out = inf.query(["A", "B"], evidence={"input": x})
-        assert out.shape == (8, 2)
+        assert out.probs.shape == (8, 2)
 
     def test_single_query_concept(self):
         pgm, _, _ = _build_chain_pgm()
         x = torch.randn(4, 4)
         inf = DeterministicInference(pgm, detach=True)
         out = inf.query(["B"], evidence={"input": x})
-        assert out.shape == (4, 1)
+        assert out.probs.shape == (4, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ class TestDetachConceptsGradientFlow:
         inf = DeterministicInference(pgm, detach=True)
         out = inf.query(["B"], evidence={"input": x})
 
-        loss = out.sum()
+        loss = out.probs.sum()
         loss.backward()
 
         # linear_B should have gradients (it directly produces B)
@@ -163,7 +163,7 @@ class TestDetachConceptsGradientFlow:
         inf = DeterministicInference(pgm, detach=False)
         out = inf.query(["B"], evidence={"input": x})
 
-        loss = out.sum()
+        loss = out.probs.sum()
         loss.backward()
 
         # Both should have gradients
@@ -180,7 +180,7 @@ class TestDetachConceptsGradientFlow:
         inf = DeterministicInference(pgm, detach=True)
         out = inf.query(["A"], evidence={"input": x})
 
-        loss = out.sum()
+        loss = out.probs.sum()
         loss.backward()
 
         assert linear_A.weight.grad is not None
@@ -195,7 +195,7 @@ class TestDetachConceptsGradientFlow:
         inf = DeterministicInference(pgm, detach=True)
         out = inf.query(["A", "B"], evidence={"input": x, "exog": u})
 
-        loss_A = out[:, :1].sum()
+        loss_A = out.probs[:, :1].sum()
         loss_A.backward(retain_graph=True)
 
         # exogenous encoder should receive gradient through A
@@ -220,7 +220,7 @@ class TestDefaultBehaviourUnchanged:
 
         inf = DeterministicInference(pgm)
         out = inf.query(["A", "B"], evidence={"input": x})
-        out.sum().backward()
+        out.probs.sum().backward()
 
         assert linear_A.weight.grad is not None
         assert (linear_A.weight.grad != 0).any()

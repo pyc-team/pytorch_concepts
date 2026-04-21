@@ -3,17 +3,17 @@ Comprehensive tests for DeterministicInference.
 
 Tests cover:
 - activate() with each distribution type (Bernoulli, RelaxedBernoulli,
-  Categorical, RelaxedOneHotCategorical, Delta, unknown)
+  OneHotCategorical, RelaxedOneHotCategorical, Delta, unknown)
 - ground_truth_to_evidence() with binary and categorical cardinalities,
   1D and 2D inputs, and invalid shapes
-- Integration: DeterministicInference query with Categorical variables,
+- Integration: DeterministicInference query with OneHotCategorical variables,
   return_logits, gradient flow, and detach mode
 """
 import pytest
 import torch
 import torch.nn as nn
 from torch.distributions import (
-    Bernoulli, Categorical, Normal,
+    Bernoulli, Normal, OneHotCategorical,
     RelaxedBernoulli, RelaxedOneHotCategorical,
 )
 
@@ -96,17 +96,17 @@ class TestActivateRelaxedBernoulli:
 
 
 class TestActivateCategorical:
-    """activate with Categorical → softmax."""
+    """activate with OneHotCategorical → softmax."""
 
     def test_output_sums_to_one(self):
-        var = _make_variable('c', Categorical, size=5)
+        var = _make_variable('c', OneHotCategorical, size=5)
         inf = DeterministicInference.__new__(DeterministicInference)
         pred = torch.randn(8, 5)
         out = inf.activate(pred, var)
         torch.testing.assert_close(out.sum(dim=-1), torch.ones(8))
 
     def test_matches_softmax(self):
-        var = _make_variable('c', Categorical, size=3)
+        var = _make_variable('c', OneHotCategorical, size=3)
         inf = DeterministicInference.__new__(DeterministicInference)
         pred = torch.randn(4, 3)
         torch.testing.assert_close(inf.activate(pred, var), torch.softmax(pred, dim=-1))
@@ -262,37 +262,37 @@ class TestDeterministicQueryBernoulli:
 
     def test_shape(self):
         out = self.inf.query(['A', 'B'], evidence={'input': self.x})
-        assert out.shape == (4, 2)
+        assert out.probs.shape == (4, 2)
 
     def test_probabilities(self):
         out = self.inf.query(['A', 'B'], evidence={'input': self.x})
-        assert out.min() >= 0.0
-        assert out.max() <= 1.0
+        assert out.probs.min() >= 0.0
+        assert out.probs.max() <= 1.0
 
     def test_return_logits(self):
         logits = self.inf.query(['A', 'B'], evidence={'input': self.x}, return_logits=True)
         probs = self.inf.query(['A', 'B'], evidence={'input': self.x})
-        assert not torch.allclose(logits, probs)
+        assert not torch.allclose(logits.logits, probs.probs)
 
 
 class TestDeterministicQueryCategorical:
-    """End-to-end query with Categorical variables."""
+    """End-to-end query with OneHotCategorical variables."""
 
     @pytest.fixture(autouse=True)
     def _setup(self):
-        self.pgm = _make_chain_pgm(Categorical, 5, Bernoulli, 1, latent=10)
+        self.pgm = _make_chain_pgm(OneHotCategorical, 5, Bernoulli, 1, latent=10)
         self.inf = DeterministicInference(self.pgm)
         self.x = torch.randn(4, 10)
 
     def test_shape(self):
         out = self.inf.query(['A', 'B'], evidence={'input': self.x})
         # A (softmax, 5) + B (sigmoid, 1) = 6
-        assert out.shape == (4, 6)
+        assert out.probs.shape == (4, 6)
 
     def test_softmax_for_A(self):
         out = self.inf.query(['A'], evidence={'input': self.x})
         # Each row sums to 1 (softmax)
-        torch.testing.assert_close(out.sum(dim=-1), torch.ones(4))
+        torch.testing.assert_close(out.probs.sum(dim=-1), torch.ones(4))
 
 
 class TestDeterministicQueryRelaxedBernoulli:
@@ -303,9 +303,9 @@ class TestDeterministicQueryRelaxedBernoulli:
         inf = DeterministicInference(pgm)
         x = torch.randn(4, 10)
         out = inf.query(['A', 'B'], evidence={'input': x})
-        assert out.shape == (4, 2)
-        assert out.min() >= 0.0
-        assert out.max() <= 1.0
+        assert out.probs.shape == (4, 2)
+        assert out.probs.min() >= 0.0
+        assert out.probs.max() <= 1.0
 
 
 class TestDeterministicQueryRelaxedOneHotCategorical:
@@ -316,8 +316,8 @@ class TestDeterministicQueryRelaxedOneHotCategorical:
         inf = DeterministicInference(pgm)
         x = torch.randn(4, 10)
         out = inf.query(['A'], evidence={'input': x})
-        assert out.shape == (4, 4)
-        torch.testing.assert_close(out.sum(dim=-1), torch.ones(4))
+        assert out.probs.shape == (4, 4)
+        torch.testing.assert_close(out.probs.sum(dim=-1), torch.ones(4))
 
 
 class TestDeterministicQueryDelta:
@@ -331,34 +331,34 @@ class TestDeterministicQueryDelta:
         logits = inf.query(['A'], evidence={'input': x}, return_logits=True)
         activated = inf.query(['A'], evidence={'input': x})
         # For Delta, activate is identity, so logits == activated
-        torch.testing.assert_close(logits, activated)
+        torch.testing.assert_close(logits.logits, activated.probs)
 
 
 class TestDeterministicQueryMixed:
-    """Chain with mixed dist types: Categorical → Bernoulli."""
+    """Chain with mixed dist types: OneHotCategorical → Bernoulli."""
 
     def test_gradient_flow(self):
-        pgm = _make_chain_pgm(Categorical, 3, Bernoulli, 1)
+        pgm = _make_chain_pgm(OneHotCategorical, 3, Bernoulli, 1)
         inf = DeterministicInference(pgm)
         x = torch.randn(4, 10, requires_grad=True)
         out = inf.query(['B'], evidence={'input': x})
-        out.sum().backward()
+        out.probs.sum().backward()
         assert x.grad is not None
         assert (x.grad != 0).any()
 
     def test_detach_mode(self):
-        pgm = _make_chain_pgm(Categorical, 3, Bernoulli, 1)
+        pgm = _make_chain_pgm(OneHotCategorical, 3, Bernoulli, 1)
         inf = DeterministicInference(pgm, detach=True)
         x = torch.randn(4, 10, requires_grad=True)
         out = inf.query(['A', 'B'], evidence={'input': x})
-        assert out.shape == (4, 4)  # A(3) + B(1)
+        assert out.probs.shape == (4, 4)  # A(3) + B(1)
 
     def test_return_logits_with_detach(self):
-        pgm = _make_chain_pgm(Categorical, 3, Bernoulli, 1)
+        pgm = _make_chain_pgm(OneHotCategorical, 3, Bernoulli, 1)
         inf = DeterministicInference(pgm, detach=True)
         x = torch.randn(4, 10)
         logits = inf.query(['A', 'B'], evidence={'input': x}, return_logits=True)
-        assert logits.shape == (4, 4)
+        assert logits.logits.shape == (4, 4)
 
 
 class TestDeterministicQueryLazy:
@@ -369,7 +369,7 @@ class TestDeterministicQueryLazy:
         inf = DeterministicInference(pgm, lazy=True)
         x = torch.randn(4, 10)
         out = inf.query(['A'], evidence={'input': x})
-        assert out.shape == (4, 1)
+        assert out.probs.shape == (4, 1)
 
     def test_lazy_matches_non_lazy(self):
         torch.manual_seed(42)
@@ -382,8 +382,8 @@ class TestDeterministicQueryLazy:
 
         x = torch.randn(4, 10)
         torch.testing.assert_close(
-            inf_full.query(['B'], evidence={'input': x}),
-            inf_lazy.query(['B'], evidence={'input': x}),
+            inf_full.query(['B'], evidence={'input': x}).probs,
+            inf_lazy.query(['B'], evidence={'input': x}).probs,
         )
 
 

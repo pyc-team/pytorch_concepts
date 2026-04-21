@@ -90,10 +90,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
+        out = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
+    print(f"Output concept probs shape: {out.probs.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -123,9 +123,9 @@ def main():
     with torch.no_grad():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
-            endogenous = model(x=batch['inputs']['x'], query=query)
-            c_pred = endogenous[:, :n_concepts]
-            y_pred = endogenous[:, n_concepts:]
+            out = model(x=batch['inputs']['x'], query=query)
+            c_pred = out.probs[:, :n_concepts]
+            y_pred = out.probs[:, n_concepts:]
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]

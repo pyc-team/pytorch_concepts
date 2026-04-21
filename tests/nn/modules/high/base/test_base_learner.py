@@ -22,7 +22,7 @@ from torch_concepts.annotations import Annotations, AxisAnnotation
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.nn.modules.outputs import ModelOutput
 
 
 class MockLearner(BaseLearner):
@@ -43,8 +43,8 @@ class FullMockLearner(BaseLearner):
     """Mock that satisfies all shared_step requirements.
 
     Mimics the interface that BaseModel normally provides:
-    concept_names, concept_annotations, filter_output_for_loss,
-    filter_output_for_metrics, and a full forward(x, query, evidence, **kw).
+    concept_names, concept_annotations, prepare_target,
+    and a full forward(x, query, evidence, **kw).
     """
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
@@ -55,13 +55,11 @@ class FullMockLearner(BaseLearner):
         self.dummy_param = nn.Parameter(torch.randn(1))
 
     def forward(self, x, query=None, evidence=None, **kwargs):
-        return torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+        logits = torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+        return ModelOutput(logits=logits)
 
-    def filter_output_for_loss(self, forward_out, target):
-        return {'input': forward_out, 'target': target}
-
-    def filter_output_for_metrics(self, forward_out, target):
-        return {'preds': forward_out, 'target': target}
+    def prepare_target(self, target):
+        return target
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -180,21 +178,25 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
         
-        # Create dummy predictions and targets (2 samples, 2 concepts)
-        preds = torch.tensor([[0.8, 0.7], [0.2, 0.3]])
-        targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
+            target=torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        )
         
         # Update metrics - should not raise error
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, step='train')
 
     def test_update_metrics_with_none(self):
         """Test update_metrics when metrics is None."""
         learner = MockLearner(metrics=None)
         
         # Should not raise error even with None metrics
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
-        learner.update_metrics(preds, targets, step='train')
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
+        learner.update_metrics(out, step='train')
 
 
 class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
@@ -221,14 +223,14 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
         
-        # Create metrics args (2 samples, 2 concepts)
-        metrics_args = {
-            'preds': torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
-            'target': torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        }
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
+            target=torch.tensor([[1.0, 1.0], [0.0, 0.0]])
+        )
         
         # Should not raise error
-        learner.update_and_log_metrics(metrics_args, step='train', batch_size=2)
+        learner.update_and_log_metrics(out, step='train', batch_size=2)
 
 
 class TestBaseLearnerBatchHandling(unittest.TestCase):
@@ -386,10 +388,12 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
     def test_update_metrics_invalid_type_is_noop(self):
         """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
         # Should not raise — train_metrics is None so nothing happens
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, step='train')
 
 
 # ======================================================================
@@ -490,17 +494,14 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         self.assertIn('train_loss', learner._logged)
 
     def test_shared_step_no_loss(self):
-        """shared_step with loss=None still returns (the uninitialized variable raises)."""
+        """shared_step with loss=None returns None."""
         learner = FullMockLearner(
             self.annotations, n_concepts=2,
             loss=None,
         )
         self._patch_logging(learner)
-        # loss local variable is never assigned when self.loss is None,
-        # so returning it raises UnboundLocalError — this is the current
-        # behaviour and we document it.
-        with self.assertRaises(UnboundLocalError):
-            learner.shared_step(self.batch, step='train')
+        result = learner.shared_step(self.batch, step='train')
+        self.assertIsNone(result)
 
     def test_shared_step_with_composite_loss(self):
         """shared_step works when loss uses per-type composition."""
@@ -562,6 +563,60 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         learner.log_loss('train', fake_loss, batch_size=8)
         self.assertIn('train_loss', learner._logged)
         self.assertAlmostEqual(learner._logged['train_loss'].item(), 0.42, places=5)
+
+    def test_shared_step_standard_loss(self):
+        """shared_step dispatches standard PyTorch loss as loss(logits, target)."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=nn.MSELoss(),
+        )
+        self._patch_logging(learner)
+        loss = learner.shared_step(self.batch, step='train')
+        self.assertEqual(loss.shape, ())
+        self.assertIn('train_loss', learner._logged)
+
+
+class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
+    """Cover ConceptMetrics with empty collection and log_metrics else branch."""
+
+    def setUp(self):
+        self.annotations = Annotations({
+            1: AxisAnnotation(
+                labels=('C1', 'C2'),
+                metadata={
+                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
+                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
+                }
+            )
+        })
+
+    def test_concept_metrics_no_collection(self):
+        """ConceptMetrics with empty collection sets split metrics to None."""
+        metrics = ConceptMetrics(
+            annotations=self.annotations,
+            summary=True,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+        )
+        # Simulate an empty collection (all sub-collections cleared)
+        metrics.binary = torchmetrics.MetricCollection({})
+        learner = MockLearner(n_concepts=2, metrics=metrics)
+        self.assertIsNone(learner.train_metrics)
+        self.assertIsNone(learner.val_metrics)
+        self.assertIsNone(learner.test_metrics)
+
+    def test_log_metrics_non_concept_metrics(self):
+        """log_metrics with a plain MetricCollection uses the else branch."""
+        learner = MockLearner(n_concepts=2)
+        learner._logged = {}
+        def _fake_log_dict(d, **kw):
+            learner._logged.update(d)
+        learner.log_dict = _fake_log_dict
+
+        coll = torchmetrics.MetricCollection({
+            'acc': torchmetrics.classification.BinaryAccuracy(),
+        })
+        # Should go through the else branch (not ConceptMetrics)
+        learner.log_metrics(coll)
 
 
 if __name__ == '__main__':

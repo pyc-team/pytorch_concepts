@@ -18,7 +18,7 @@ and variable attributes from the old CPD to the new CPD:
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts.nn.modules.mid.models.variable import Variable
 from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
@@ -237,7 +237,7 @@ class TestCPDParentPreservation(unittest.TestCase):
         calculations that depend on parent references.
         """
         # Create parent with higher cardinality
-        parent = Variable(concepts='parent', distribution=Categorical, size=5)
+        parent = Variable(concepts='parent', distribution=OneHotCategorical, size=5)
         child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs
@@ -336,8 +336,8 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         This calculation depends on having correct parent references.
         """
         # Create parents with different sizes
-        parent1 = Variable(concepts='p1', distribution=Categorical, size=3)
-        parent2 = Variable(concepts='p2', distribution=Categorical, size=5)
+        parent1 = Variable(concepts='p1', distribution=OneHotCategorical, size=3)
+        parent2 = Variable(concepts='p2', distribution=OneHotCategorical, size=5)
         child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs
@@ -380,7 +380,7 @@ class TestCPDParentInFeatureCalculation(unittest.TestCase):
         that doesn't actually run a forward pass, just verifies parent preservation.
         """
         # Create simple parent-child structure
-        parent = Variable(concepts='parent', distribution=Categorical, size=4)
+        parent = Variable(concepts='parent', distribution=OneHotCategorical, size=4)
         child = Variable(concepts='child', distribution=Bernoulli, size=1)
         
         # Create CPDs with lazy constructors

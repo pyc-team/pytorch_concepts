@@ -4,7 +4,7 @@ import unittest
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts.nn.modules.mid.models.parametric_cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.variable import Variable, ConceptVariable
@@ -83,7 +83,7 @@ class TestParametricCPDParentCombinations:
 
     def test_single_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts='p', distribution=Categorical, size=3)
+        parent_var = Variable(concepts='p', distribution=OneHotCategorical, size=3)
         child_var = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(3, 1)
@@ -133,6 +133,152 @@ class TestParametricCPDParentCombinations:
         assert discrete_states.shape == (2, 1)
         # First 2 rows should differ only in the discrete part
         assert torch.allclose(all_inputs[:, 1:], torch.zeros((2, 2)))
+
+
+class TestParametricCPDBuildCPT:
+    """Test build_cpt method."""
+
+    def test_build_cpt_delta_no_parents(self):
+        """Test build_cpt for Delta variable with no parents."""
+        var = Variable(concepts='c', distribution=Delta, size=1)
+        module = nn.Linear(2, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        cpt = cpd.build_cpt()
+        # For Delta, CPT is just the output
+        assert cpt.shape[0] == 1
+        assert cpt.shape[1] == 1
+
+    def test_build_cpt_bernoulli_no_parents(self):
+        """Test build_cpt for Bernoulli variable with no parents."""
+        var = Variable(concepts='c', distribution=Bernoulli, size=1)
+        module = nn.Linear(1, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        cpt = cpd.build_cpt()
+        # For Bernoulli with no parents: [P(X=1)]
+        assert cpt.shape[0] == 1
+        # CPT should be [discrete_state_vectors (0 cols) | P(X=1) (1 col)]
+        assert cpt.shape[1] == 1
+
+    def test_build_cpt_bernoulli_with_parent(self):
+        """Test build_cpt for Bernoulli variable with Bernoulli parent."""
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
+
+        module = nn.Linear(1, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = child
+        cpd.parents = [parent]
+
+        cpt = cpd.build_cpt()
+        # 2 parent states, CPT: [Parent State | P(C=1)]
+        assert cpt.shape == (2, 2)
+        # First column should be parent states [0, 1]
+        assert torch.allclose(cpt[:, 0], torch.tensor([0.0, 1.0]))
+        # Second column should be probabilities in [0, 1]
+        assert torch.all((cpt[:, 1] >= 0.0) & (cpt[:, 1] <= 1.0))
+
+    def test_build_cpt_categorical(self):
+        """Test build_cpt for Categorical variable."""
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
+        module = nn.Linear(2, 3)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        cpt = cpd.build_cpt()
+        # Categorical: CPT is softmax probabilities
+        assert cpt.shape == (1, 3)
+        # Probabilities should sum to 1
+        assert torch.allclose(cpt.sum(dim=-1), torch.tensor([1.0]))
+
+    def test_build_cpt_input_mismatch_raises_error(self):
+        """Test build_cpt raises error when input dimensions mismatch."""
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
+
+        # Module expects 5 features but parent only provides 1
+        module = nn.Linear(5, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = child
+        cpd.parents = [parent]
+
+        with pytest.raises(RuntimeError, match="Input tensor dimension mismatch"):
+            cpd.build_cpt()
+
+
+class TestParametricCPDBuildPotential:
+    """Test build_potential method."""
+
+    def test_build_potential_bernoulli_no_parents(self):
+        """Test build_potential for Bernoulli variable with no parents."""
+        var = Variable(concepts='c', distribution=Bernoulli, size=1)
+        module = nn.Linear(1, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        pot = cpd.build_potential()
+        # Potential for Bernoulli: [Parent States (0 cols) | Child State | P(X=state)]
+        # Two rows: one for X=1, one for X=0
+        assert pot.shape == (2, 2)
+        # Child state column should have [1, 0]
+        assert torch.allclose(pot[:, 0], torch.tensor([1.0, 0.0]))
+        # Probabilities should sum to 1
+        assert torch.allclose(pot[:, 1].sum(), torch.tensor(1.0), atol=1e-5)
+
+    def test_build_potential_bernoulli_with_parent(self):
+        """Test build_potential for Bernoulli with Bernoulli parent."""
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
+
+        module = nn.Linear(1, 1)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = child
+        cpd.parents = [parent]
+
+        pot = cpd.build_potential()
+        # 2 parent states × 2 child states = 4 rows
+        # [Parent State | Child State | P(C=child_state | P=parent_state)]
+        assert pot.shape == (4, 3)
+        # Child states should be [1, 1, 0, 0] (ordered by child first, then parent varies)
+        # Actually the implementation does [c=1 for all parents], [c=0 for all parents]
+        # So first 2 rows: child=1, last 2 rows: child=0
+        assert torch.allclose(pot[:2, 1], torch.tensor([1.0, 1.0]))
+        assert torch.allclose(pot[2:, 1], torch.tensor([0.0, 0.0]))
+
+    def test_build_potential_categorical(self):
+        """Test build_potential for Categorical variable."""
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
+        module = nn.Linear(2, 3)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        pot = cpd.build_potential()
+        # 3 classes: 3 rows [Parent States (0) | Child State | P(X=i)]
+        assert pot.shape == (3, 2)
+        # Child state column should be [0, 1, 2]
+        assert torch.allclose(pot[:, 0], torch.tensor([0.0, 1.0, 2.0]))
+        # Probabilities should sum to 1 across all rows
+        assert torch.allclose(pot[:, 1].sum(), torch.tensor(1.0), atol=1e-5)
+
+    def test_build_potential_delta(self):
+        """Test build_potential for Delta variable."""
+        var = Variable(concepts='c', distribution=Delta, size=2)
+        module = nn.Linear(3, 2)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
+        cpd.variable = var
+        cpd.parents = []
+
+        pot = cpd.build_potential()
+        # Delta: [Parent States (0) | Child Value (2 dims)]
+        assert pot.shape == (1, 2)
 
 
 class TestParametricCPDRepr:
@@ -245,7 +391,7 @@ class TestParametricCPD(unittest.TestCase):
 
     def test_get_parent_combinations_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts='parent', distribution=Categorical, size=3)
+        parent_var = Variable(concepts='parent', distribution=OneHotCategorical, size=3)
         module = nn.Linear(3, 1)
         cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
         child_var = Variable(concepts='child', distribution=Bernoulli, size=1)

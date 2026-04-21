@@ -1,10 +1,13 @@
 """Independent training inference."""
 
+import logging
 from typing import List, Dict
 
 import torch
 
 from .deterministic import DeterministicInference
+
+logger = logging.getLogger(__name__)
 
 
 class IndependentInference(DeterministicInference):
@@ -42,5 +45,10 @@ class IndependentInference(DeterministicInference):
     """
     
     def __init__(self, *args, **kwargs):
+        if 'p' in kwargs and kwargs['p'] != 1.0:
+            logger.warning(
+                f"IndependentInference overrides p={kwargs['p']} to p=1.0. "
+                f"Use DeterministicInference if you need a different p."
+            )
         kwargs['p'] = 1.0
         super().__init__(*args, **kwargs)

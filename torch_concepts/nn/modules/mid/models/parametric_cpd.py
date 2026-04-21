@@ -8,6 +8,7 @@ notion of **parents** — giving the factor directed semantics.
 """
 import copy
 import torch
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from typing import List, Optional, Tuple, Union
 from itertools import product
 
@@ -166,7 +167,7 @@ class ParametricCPD(ParametricFactor):
         for p in self.parents:
             if p.distribution in _BINARY_DISTRIBUTIONS:
                 total_bits += p.size
-            elif p.distribution in _CATEGORICAL_DISTRIBUTIONS:
+            elif p.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                 total_bits += p.size  # one-hot dims
         if total_bits > self._MAX_DISCRETE_BITS:
             raise RuntimeError(
@@ -180,7 +181,8 @@ class ParametricCPD(ParametricFactor):
         continuous_tensors = []
 
         for parent_var in self.parents:
-            if parent_var.distribution in _BINARY_DISTRIBUTIONS | _CATEGORICAL_DISTRIBUTIONS:
+            if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
+                                           Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                 out_dim = parent_var.size
                 input_combinations = []
                 state_combinations = []
@@ -188,7 +190,7 @@ class ParametricCPD(ParametricFactor):
                 if parent_var.distribution in _BINARY_DISTRIBUTIONS:
                     input_combinations = list(product([0.0, 1.0], repeat=out_dim))
                     state_combinations = input_combinations
-                elif parent_var.distribution in _CATEGORICAL_DISTRIBUTIONS:
+                elif parent_var.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
                     for i in range(out_dim):
                         one_hot = torch.zeros(out_dim)
                         one_hot[i] = 1.0
