@@ -148,8 +148,7 @@ class DSpritesRegressionDataset(ConceptDataset):
         # Load dsprties npz file
         dsprites_path = os.path.join(self.root, self.raw_filenames[0])
         dsprites_data = np.load(dsprites_path, allow_pickle=True)
-        N = 10
-        # NOTE uncomment N = dsprites_data['imgs'].shape[0]
+        N = dsprites_data['imgs'].shape[0]
 
         # Concept order: color, shape, scale, orientation, x_pos, y_pos
         concepts = dsprites_data['latents_values']
@@ -241,7 +240,7 @@ class DSpritesRegressionDataset(ConceptDataset):
 
     @property
     def n_samples(self) -> int:
-        return 10 # NOTE self.input_data.shape[0]
+        return self.input_data.shape[0]
 
     @property
     def n_features(self) -> tuple:
