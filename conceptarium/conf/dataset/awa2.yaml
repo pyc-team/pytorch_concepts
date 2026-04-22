@@ -107,4 +107,4 @@ label_descriptions:
   solitary: "Animal is solitary"
   nestspot: "Animal has a nest spot"
   domestic: "Animal can be domesticated"
-  class: "Animal class (species)"
+  class: "Animal species"
