@@ -9,11 +9,15 @@ name: awa2
 seed: ${seed}
 
 # Split parameters
-val_size: 0.1
+train_size: 0.6
+val_size: 0.2
 test_size: 0.2
 
-# Subset of concepts to use (null for all)
-concept_subset: null
+
+# the incomplete version of the AWA2 dataset is obtained selecting 
+# the same concepts as in "Avoiding Leakage Poisoning: Concept Interventions Under Distribution Shifts"
+# link: https://arxiv.org/pdf/2504.17921v1.
+concept_subset: [black, gray, stripes, hairless, flippers, paws, plains, fierce, solitary]
 
 # backbone handling and embedding precomputation
 backbone: resnet50

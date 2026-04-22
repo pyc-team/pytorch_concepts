@@ -13,6 +13,9 @@ force_recompute: false
 
 default_task_names: [Attractive]
 
+# Subset of concepts to use (null for all)
+concept_subset: null
+
 # splitter
 splitter: 
   _target_: torch_concepts.data.splitters.native.NativeSplitter
