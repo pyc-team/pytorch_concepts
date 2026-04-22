@@ -5,6 +5,9 @@ from ...typing import BackboneType
 from ..base.splitter import Splitter
 from ..splitters.native import NativeSplitter
 
+# TODO: make the dataloader work for this dataset. 
+# Since it has a textual input, we have to modify the backbone code in order to allow more structured inputs
+# (e.g. dicts with 'input_ids', 'attention_mask' ...) 
 
 class CEBaBDataModule(ConceptDataModule):
     """DataModule for CEBaB (Causal Estimation of Sentiment Polarity).
