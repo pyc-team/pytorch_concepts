@@ -15,6 +15,14 @@
   <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html">💻 User guide</a>
 </p>
 
+<table>
+  <tr>
+    <td bgcolor="#f8d461" style="color: #000000;">
+      <strong>Warning:</strong> Alpha software. PyC is currently under active development, and public APIs may change and be unstable between releases.
+    </td>
+  </tr>
+</table>
+
 <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
 The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
 
