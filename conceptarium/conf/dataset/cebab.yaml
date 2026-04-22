@@ -1,0 +1,34 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.cebab.CEBaBDataModule
+
+name: cebab
+
+seed: ${seed}
+
+# Tokeniser settings
+pre_trained_model_name: bert-base-uncased
+max_length: 512
+
+# backbone handling and embedding precomputation
+# NLP: set backbone to a text encoder if desired; leave null for raw tokens
+backbone: null
+precompute_embs: false
+force_recompute: false
+
+# downstream task - overall review star rating (0-4)
+default_task_names: [review_majority]
+
+# splitter - uses the HuggingFace author-provided train / val / test splits
+splitter:
+  _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+# Human-readable descriptions for each concept
+label_descriptions:
+  food_aspect_majority: "Quality of food at the restaurant"
+  ambiance_aspect_majority: "Ambiance and atmosphere of the restaurant"
+  service_aspect_majority: "Quality of service at the restaurant"
+  noise_aspect_majority: "Noise level at the restaurant"
+  review_majority: "Overall star rating of the restaurant (0-4, original 1-5)"
