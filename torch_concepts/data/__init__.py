@@ -32,7 +32,6 @@ from .datasets.pendulum import PendulumDataset
 from .datasets.mnist_arithmetic import MNISTArithmeticDataset
 from .datasets.dsprites_regression import DSpritesRegressionDataset
 from .datasets.awa2 import AWA2Dataset
-from .datasets.cebab import CEBaBDataset
 
 # Re-export datamodules for convenient access
 from .datamodules.bnlearn import BnLearnDataModule
@@ -43,7 +42,6 @@ from .datamodules.pendulum import PendulumDataModule
 from .datamodules.mnist_arithmetic import MNISTArithmeticDataModule
 from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
-from .datamodules.cebab import CEBaBDataModule
 
 __all__ = [
     # Submodules
@@ -68,7 +66,6 @@ __all__ = [
     "MNISTArithmeticDataset",
     "DSpritesRegressionDataset",
     "AWA2Dataset",
-    "CEBaBDataset",
     
     # DataModules
     "BnLearnDataModule",
@@ -79,5 +76,4 @@ __all__ = [
     "MNISTArithmeticDataModule",
     "DSpritesRegressionDataModule",
     "AWA2DataModule",
-    "CEBaBDataModule",
 ]
