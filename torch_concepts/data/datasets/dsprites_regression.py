@@ -56,6 +56,7 @@ class DSpritesRegressionDataset(ConceptDataset):
 
         self.seed = seed
         self.label_descriptions = label_descriptions
+        self.concept_subset = concept_subset
 
         if formulas is None:
             raise ValueError("Formulas must be provided for DSpritesRegressionDataset.")
@@ -167,7 +168,9 @@ class DSpritesRegressionDataset(ConceptDataset):
             var_dict = dict(zip(self._concept_columns, [concept_values[i] for i in range(len(self._concept_columns))]))
             target = self._torch_formulas[shape_name](**var_dict)
 
-            concept_values = torch.tensor([var_dict[c] for c in self._concept_columns], dtype=torch.float32)
+            # select the subset of concepts if specified
+            if self.concept_subset is not None:
+                concept_values = torch.tensor([var_dict[c] for c in self.concept_subset], dtype=torch.float32)
 
             concepts_list.append(concept_values.unsqueeze(0))  # (1, n_concepts)
             targets_list.append([target.item()])
@@ -177,7 +180,12 @@ class DSpritesRegressionDataset(ConceptDataset):
 
         # Combine concepts + target
         cy = torch.cat([concepts_tensor, targets_tensor], dim=1)
-        cy_names = list(self._concept_columns) + ['target']
+
+        # Update concepts with the subset selected by the user, if specified
+        if self.concept_subset is not None:
+            cy_names = list(self.concept_subset) + ['target'] 
+        else:
+            cy_names = list(self._concept_columns) + ['target']
         
         concept_metadata = {name: {'type': 'continuous'} for name in cy_names}
         cardinalities = tuple([1] * len(cy_names))

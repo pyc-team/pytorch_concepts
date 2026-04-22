@@ -11,15 +11,11 @@ Configuration can be customized by setting environment variables:
 - XDG_CACHE_HOME: Base cache directory (follows XDG Base Directory spec)
 """
 
-import os
 from os import environ as env
 from pathlib import Path
 
 # Project name used for logging and caching
 PROJECT_NAME = "conceptarium" 
-
-# Set this env variable to 1 to get the hydra full error
-os.environ["HYDRA_FULL_ERROR"] = "1"
 
 # W&B entity/username for experiment tracking
 # Set this to your W&B username or team name
