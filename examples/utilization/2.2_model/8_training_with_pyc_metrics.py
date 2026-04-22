@@ -18,7 +18,7 @@ import torchmetrics
 from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 
 def main():

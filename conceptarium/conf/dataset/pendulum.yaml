@@ -1,0 +1,25 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.pendulum.PendulumDataModule
+
+name: pendulum
+
+seed: ${seed}
+
+# generation parameters
+n_theta: 100
+n_phi: 1000
+# backbone handling and embedding precomputation
+backbone: null
+precompute_embs: false
+force_recompute: false
+
+# Task label - pendulum x-coordinate regression
+default_task_names: ["pendulum_x"]
+
+label_descriptions:
+  theta: "Pendulum angle in radians"
+  phi: "Light source angle in radians"
+  pendulum_x: "X-coordinate of the pendulum ball"

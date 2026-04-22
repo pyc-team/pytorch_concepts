@@ -23,6 +23,24 @@ from . import backbone
 # IO utilities
 from . import io
 
+# Re-export datasets for convenient access
+from .datasets.bnlearn import BnLearnDataset
+from .datasets.toy import ToyDataset, CompletenessDataset
+from .datasets.categorical_toy_dag import ToyDAGDataset
+from .datasets.celeba import CelebADataset
+from .datasets.pendulum import PendulumDataset
+from .datasets.mnist_arithmetic import MNISTArithmeticDataset
+from .datasets.dsprites_regression import DSpritesRegressionDataset
+
+# Re-export datamodules for convenient access
+from .datamodules.bnlearn import BnLearnDataModule
+from .datamodules.categorical_toy_dag import ToyDAGDataModule
+from .datamodules.completeness import CompletenessDataModule
+from .datamodules.celeba import CelebADataModule
+from .datamodules.pendulum import PendulumDataModule
+from .datamodules.mnist_arithmetic import MNISTArithmeticDataModule
+from .datamodules.dsprites_regression import DSpritesRegressionDataModule
+
 __all__ = [
     # Submodules
     "base",
@@ -35,4 +53,23 @@ __all__ = [
     "utils",
     "backbone",
     "io",
+    
+    # Datasets
+    "BnLearnDataset",
+    "ToyDataset",
+    "CompletenessDataset",
+    "ToyDAGDataset",
+    "CelebADataset",
+    "PendulumDataset",
+    "MNISTArithmeticDataset",
+    "DSpritesRegressionDataset",
+    
+    # DataModules
+    "BnLearnDataModule",
+    "ToyDAGDataModule",
+    "CompletenessDataModule",
+    "CelebADataModule",
+    "PendulumDataModule",
+    "MNISTArithmeticDataModule",
+    "DSpritesRegressionDataModule",
 ]

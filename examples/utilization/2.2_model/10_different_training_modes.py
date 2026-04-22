@@ -28,7 +28,7 @@ from torch_concepts.nn.modules.mid.inference import (
     DeterministicInference,
     IndependentInference
 )
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
 

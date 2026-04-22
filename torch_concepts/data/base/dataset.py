@@ -112,15 +112,7 @@ class ConceptDataset(Dataset):
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
             
-            
-        # sanity check on unsupported concept types     
-        if axis_annotation.metadata is not None:
-            for name, meta in axis_annotation.metadata.items():
-                # raise error if type metadata contain 'continuous': this is not supported yet
-                # TODO: implement continuous concept types
-                if meta['type'] == 'continuous':
-                    raise NotImplementedError("Continuous concept types are not supported yet.")
-
+        # NOTE: both 'discrete' and 'continuous' concept types are supported.
 
         # set concept annotations
         # this defines self.annotations property

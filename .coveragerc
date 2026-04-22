@@ -6,6 +6,15 @@ source = template
 include = */template/*
 omit =
     */setup.py
+    # Exclude datasets from coverage as those files imply to download and store data.
+    # Excluding both torch_concepts/data/datasets/dataset_file.py
+    */torch_concepts/data/datasets/dsprites_regression.py
+    */torch_concepts/data/datasets/mnist_arithmetic.py
+    */torch_concepts/data/datasets/pendulum.py
+    # Exluding torch_concepts/data/datamodules/dataset_file.py
+    */torch_concepts/data/datamodules/dsprites_regression.py
+    */torch_concepts/data/datamodules/mnist_arithmetic.py
+    */torch_concepts/data/datamodules/pendulum.py
 
 [report]
 exclude_lines =

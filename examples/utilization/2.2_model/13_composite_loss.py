@@ -18,7 +18,7 @@ from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, L1LogitRegularizer
-from torch_concepts.data.datamodules import BnLearnDataModule
+from torch_concepts.data import BnLearnDataModule
 
 
 def main():
