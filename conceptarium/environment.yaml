@@ -1,14 +1,12 @@
 name: conceptarium
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
-  - defaults
+  - nodefaults
 dependencies:
   - python=3.12.*
-
-  - pytorch:pytorch
-  - pytorch:pytorch-cuda
+  
+  # Conda-forge's metapackage for PyTorch with CUDA support
+  - pytorch-gpu
   - torchvision>=0.17.1
   - torchmetrics>=0.7
 
@@ -21,7 +19,6 @@ dependencies:
   - tqdm
   - scikit-learn
   - scipy
-  - tqdm
   - openpyxl
 
   - pip
