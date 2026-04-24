@@ -12,11 +12,14 @@ omit =
     */torch_concepts/data/datasets/mnist_arithmetic.py
     */torch_concepts/data/datasets/pendulum.py
     */torch_concepts/data/datasets/awa2.py
+    */torch_concepts/data/datasets/cub.py
+
     # Exluding torch_concepts/data/datamodules/dataset_file.py
     */torch_concepts/data/datamodules/dsprites_regression.py
     */torch_concepts/data/datamodules/mnist_arithmetic.py
     */torch_concepts/data/datamodules/pendulum.py
     */torch_concepts/data/datamodules/awa2.py
+    */torch_concepts/data/datamodules/cub.py
 
 [report]
 exclude_lines =
