@@ -9,12 +9,10 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: dag_asia, dag_sachs, dag_insurance
-      model: cbm, cem, c2bm
+      dataset: cub, cub_incomplete, awa2, awa2_incomplete
+      model: cbm, cem
       model.train_inference._target_:
-        torch_concepts.nn.DeterministicInference,
-        torch_concepts.nn.IndependentInference,
-        torch_concepts.nn.AncestralSamplingInference
+        torch_concepts.nn.DeterministicInference
       # --- inference params
       # +model.train_inference.detach: false, true
       # +model.train_inference.p: 0.4
@@ -24,7 +22,7 @@ hydra:
       # loss.task_weight: 1
 
 dataset:
-  batch_size: 2048
+  batch_size: 128
   # concept_subset: ['Attractive', 'Bald', 'Big_Nose', 'Black_Hair']  # for celeba
 
 model:
@@ -45,7 +43,7 @@ trainer:
   # logger: wandb
   # log_model: true   # whether to save checkpoint on wandb
   save_top_k: 1.    # whether to save checkpoint locally
-  max_epochs: 200
+  max_epochs: 2
   patience: 20
 
 matmul_precision: medium
