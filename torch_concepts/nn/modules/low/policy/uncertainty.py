@@ -7,16 +7,16 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
     """
     Uncertainty-based intervention policy using distance from a maximum uncertainty point.
 
-    This policy measures uncertainty as the distance of concept endogenous from a
+    This policy measures uncertainty as the distance of concepts from a
     maximum uncertainty point. Values closer to this point are considered more uncertain,
     while values further from this point are considered more certain.
 
     Attributes:
-        out_features (int): Number of output features.
+        out_concepts (int): Number of output concepts.
         max_uncertainty_point (float): The point where uncertainty is maximum.
 
     Args:
-        out_features: Number of output concept features.
+        out_concepts: Number of output concepts.
         max_uncertainty_point: The value representing maximum uncertainty (default: 0.0).
             Values closer to this point are more uncertain, values further away are more certain.
 
@@ -25,16 +25,16 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         >>> from torch_concepts.nn import UncertaintyInterventionPolicy
         >>>
         >>> # Create uncertainty policy with default max uncertainty point (0.0)
-        >>> policy = UncertaintyInterventionPolicy(out_features=10)
+        >>> policy = UncertaintyInterventionPolicy(out_concepts=10)
         >>>
-        >>> # Generate concept endogenous with varying confidence
-        >>> endogenous = torch.tensor([
+        >>> # Generate concepts with varying confidence
+        >>> concepts = torch.tensor([
         ...     [3.0, -2.5, 0.1, -0.2, 4.0],  # High confidence for 1st, 2nd, 5th
         ...     [0.5, 0.3, -0.4, 2.0, -1.5]   # Mixed confidence
         ... ])
         >>>
         >>> # Apply policy - returns distance from max uncertainty point (certainty scores)
-        >>> scores = policy(endogenous)
+        >>> scores = policy(concepts)
         >>> print(scores)
         >>> # tensor([[3.0, 2.5, 0.1, 0.2, 4.0],
         >>> #         [0.5, 0.3, 0.4, 2.0, 1.5]])
@@ -45,7 +45,7 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
         >>> print(scores[0].argmax())  # tensor(4) - most certain concept
         >>>
         >>> # Use custom max uncertainty point (e.g., 0.5 for probabilities)
-        >>> policy_prob = UncertaintyInterventionPolicy(out_features=5, max_uncertainty_point=0.5)
+        >>> policy_prob = UncertaintyInterventionPolicy(out_concepts=5, max_uncertainty_point=0.5)
         >>> probs = torch.tensor([[0.1, 0.5, 0.9, 0.45, 0.55]])
         >>> certainty = policy_prob(probs)
         >>> print(certainty)
@@ -55,27 +55,27 @@ class UncertaintyInterventionPolicy(BaseConceptLayer):
 
     def __init__(
         self,
-        out_features: int,
+        out_concepts: int,
         max_uncertainty_point: float = 0.0,
     ):
         super().__init__(
-            out_features=out_features,
+            out_concepts=out_concepts,
         )
         self.max_uncertainty_point = max_uncertainty_point
 
     def forward(
         self,
-        endogenous: torch.Tensor
+        concepts: torch.Tensor
     ) -> torch.Tensor:
         """
         Compute certainty scores as distance from maximum uncertainty point.
 
         Args:
-            endogenous: Input concept endogenous of shape (batch_size, n_concepts).
+            concepts: Input concepts of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Distance from max uncertainty point (certainty scores) of same shape as input.
                 Higher values indicate higher certainty (further from max uncertainty point).
                 Lower values indicate higher uncertainty (closer to max uncertainty point).
         """
-        return (endogenous - self.max_uncertainty_point).abs()
+        return (concepts - self.max_uncertainty_point).abs()

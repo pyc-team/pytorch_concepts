@@ -25,6 +25,7 @@ Summary
    completeness_score
    intervention_score
    cace_score
+   residual_concept_causal_effect
 
 
 Class Documentation
@@ -49,8 +50,10 @@ Functional Metrics
    completeness_score
    intervention_score
    cace_score
+   residual_concept_causal_effect
 
 .. autofunction:: completeness_score
 .. autofunction:: intervention_score
 .. autofunction:: cace_score
+.. autofunction:: residual_concept_causal_effect
 

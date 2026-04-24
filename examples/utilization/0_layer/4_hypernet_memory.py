@@ -1,30 +1,34 @@
 import torch
 from sklearn.metrics import accuracy_score
 
-from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.data.datasets import ToyDataset
-from torch_concepts.nn import LinearZC, HyperLinearCUC, SelectorZU
+from torch_concepts import seed_everything
+from torch_concepts.data import ToyDataset
+from torch_concepts.nn import (
+    LinearLatentToConcept,
+    HyperlinearConceptExogenousToConcept,
+    SelectorLatentToExogenous,
+)
 
 
 def main():
     latent_dims = 30
+    exog_dims = 30
+    memory_size = 11
     n_epochs = 2000
     n_samples = 1000
-    memory_size = 11
-
     concept_reg = 0.5
+
+    seed_everything(42)
+
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
     concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
     task_idx = list(dataset.graph.edge_index[1].unique().numpy())
     c_train = dataset.concepts[:, concept_idx]
     y_train = dataset.concepts[:, task_idx]
-    concept_names = [dataset.concept_names[i] for i in concept_idx]
-    task_names = [dataset.concept_names[i] for i in task_idx]
     n_features = x_train.shape[1]
-
-    c_annotations = Annotations({1: AxisAnnotation(concept_names)})
-    y_annotations = Annotations({1: AxisAnnotation(task_names)})
+    n_concepts = c_train.shape[1]
+    n_tasks = y_train.shape[1]
 
     encoder = torch.nn.Sequential(
         torch.nn.Linear(n_features, latent_dims),
@@ -32,16 +36,22 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    encoder_layer = LinearZC(in_features=latent_dims,
-                                       out_features=c_annotations.shape[1])
-    selector = SelectorZU(in_features=latent_dims,
-                              memory_size=memory_size,
-                              exogenous_size=latent_dims,
-                              out_features=y_annotations.shape[1])
-    y_predictor = HyperLinearCUC(in_features_endogenous=c_annotations.shape[1],
-                                       in_features_exogenous=latent_dims,
-                                       embedding_size=latent_dims)
-    model = torch.nn.Sequential(encoder, selector, encoder_layer, y_predictor)
+    concept_encoder = LinearLatentToConcept(
+        in_latent=latent_dims,
+        out_concepts=n_concepts
+    )
+    selector = SelectorLatentToExogenous(
+        in_latent=latent_dims,
+        memory_size=memory_size,
+        out_exogenous=exog_dims,
+        out_concepts=n_tasks
+    )
+    task_predictor = HyperlinearConceptExogenousToConcept(
+        in_concepts=n_concepts,
+        in_exogenous=exog_dims,
+        hidden_size=latent_dims
+    )
+    model = torch.nn.Sequential(encoder, selector, concept_encoder, task_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -50,11 +60,11 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        emb = encoder(x_train)
-        c_pred = encoder_layer(input=emb)
-        emb_rule = selector(input=emb, sampling=False)
-        emb_rule = torch.nn.functional.leaky_relu(emb_rule)
-        y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
+        latent = encoder(x_train)
+        c_pred = concept_encoder(latent=latent)
+        exog = selector(latent=latent, sampling=False)
+        exog = torch.nn.functional.leaky_relu(exog)
+        y_pred = task_predictor(concepts=c_pred, exogenous=exog)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -65,14 +75,14 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
 
-            emb_rule = selector(input=emb, sampling=True)
-            emb_rule = torch.nn.functional.leaky_relu(emb_rule)
-            y_pred = y_predictor(endogenous=c_pred, exogenous=emb_rule)
+            exog_sampled = selector(latent=latent, sampling=True)
+            exog_sampled = torch.nn.functional.leaky_relu(exog_sampled)
+            y_pred_sampled = task_predictor(concepts=c_pred, exogenous=exog_sampled)
 
-            task_accuracy_sampling = accuracy_score(y_train, y_pred > 0.)
+            task_accuracy_sampling = accuracy_score(y_train, y_pred_sampled.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f} | Task Acc w/ Sampling: {task_accuracy_sampling:.2f}")
 
     return

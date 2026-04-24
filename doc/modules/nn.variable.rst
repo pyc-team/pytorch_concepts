@@ -15,9 +15,9 @@ Summary
    :nosignatures:
 
    Variable
-   EndogenousVariable
+   ConceptVariable
    ExogenousVariable
-   InputVariable
+   LatentVariable
 
 
 Class Documentation
@@ -28,7 +28,7 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: EndogenousVariable
+.. autoclass:: ConceptVariable
    :members:
    :undoc-members:
    :show-inheritance:
@@ -38,7 +38,7 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: InputVariable
+.. autoclass:: LatentVariable
    :members:
    :undoc-members:
    :show-inheritance:

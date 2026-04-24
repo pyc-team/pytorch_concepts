@@ -1,11 +1,11 @@
 import torch
 
 from ..base.layer import BasePredictor
-from ....functional import grouped_concept_exogenous_mixture
-from typing import List, Callable
+from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
+from typing import List
 
 
-class MixCUC(BasePredictor):
+class MixConceptExogegnousToConcept(BasePredictor):
     """
     Concept exogenous predictor with mixture of concept activations and exogenous features.
 
@@ -16,50 +16,50 @@ class MixCUC(BasePredictor):
     Trade-Off" (Espinosa Zarlenga et al., NeurIPS 2022).
 
     Attributes:
-        in_features_endogenous (int): Number of input concept endogenous.
-        in_features_exogenous (int): Number of exogenous features.
-        out_features (int): Number of output features.
+        in_concepts (int): Number of input concepts.
+        in_exogenous (int): Number of exogenous features.
+        out_concepts (int): Number of output concepts.
         cardinalities (List[int]): Cardinalities for grouped concepts.
         predictor (nn.Module): Linear predictor module.
 
     Args:
-        in_features_endogenous: Number of input concept endogenous.
-        in_features_exogenous: Number of exogenous features (must be even).
-        out_features: Number of output task features.
-        in_activation: Activation function for concept endogenous (default: sigmoid).
+        in_concepts: Number of input concepts.
+        in_exogenous: Number of exogenous features (must be even).
+        out_concepts: Number of output concepts.
+        activation: Activation function for concept logits (default: sigmoid).
         cardinalities: List of concept group cardinalities (optional).
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import MixCUC
+        >>> from torch_concepts.nn import MixConceptExogegnousToConcept
         >>>
-        >>> # Create predictor with 10 concepts, 20 exogenous dims, 3 tasks
-        >>> predictor = MixCUC(
-        ...     in_features_endogenous=10,
-        ...     in_features_exogenous=10,  # Must be half of exogenous latent size when no cardinalities are provided
-        ...     out_features=3,
-        ...     in_activation=torch.sigmoid
+        >>> # Create predictor with 10 concepts, 20 exogenous dims, 3 output concepts
+        >>> predictor = MixConceptExogegnousToConcept(
+        ...     in_concepts=10,
+        ...     in_exogenous=10,  # Must be half of exogenous latent size when no cardinalities are provided
+        ...     out_concepts=3,
+        ...     activation=torch.sigmoid
         ... )
         >>>
         >>> # Generate random inputs
-        >>> concept_endogenous = torch.randn(4, 10)  # batch_size=4, n_concepts=10
+        >>> concepts = torch.randn(4, 10)  # batch_size=4, n_concepts=10
         >>> exogenous = torch.randn(4, 10, 20)  # (batch, n_concepts, emb_size)
         >>>
         >>> # Forward pass
-        >>> task_endogenous = predictor(endogenous=concept_endogenous, exogenous=exogenous)
-        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
+        >>> output = predictor(concepts=concepts, exogenous=exogenous)
+        >>> print(output.shape)  # torch.Size([4, 3])
         >>>
         >>> # With concept groups (e.g., color has 3 values, shape has 4, etc.)
-        >>> predictor_grouped = MixCUC(
-        ...     in_features_endogenous=10,
-        ...     in_features_exogenous=20, # Must be equal to exogenous latent size when cardinalities are provided
-        ...     out_features=3,
+        >>> predictor_grouped = MixConceptExogegnousToConcept(
+        ...     in_concepts=10,
+        ...     in_exogenous=20, # Must be equal to exogenous latent size when cardinalities are provided
+        ...     out_concepts=3,
         ...     cardinalities=[3, 4, 3]  # 3 groups summing to 10
         ... )
         >>>
         >>> # Forward pass with grouped concepts
-        >>> task_endogenous = predictor_grouped(endogenous=concept_endogenous, exogenous=exogenous)
-        >>> print(task_endogenous.shape)  # torch.Size([4, 3])
+        >>> output = predictor_grouped(concepts=concepts, exogenous=exogenous)
+        >>> print(output.shape)  # torch.Size([4, 3])
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -68,50 +68,72 @@ class MixCUC(BasePredictor):
     """
     def __init__(
         self,
-        in_features_endogenous: int,
-        in_features_exogenous: int,
-        out_features: int,
-        in_activation: Callable = torch.sigmoid,
-        cardinalities: List[int] = None
+        in_concepts: int,
+        in_exogenous: int,
+        out_concepts: int,
+        cardinalities: List[int],
+        **kwargs,
     ):
         super().__init__(
-            in_features_endogenous=in_features_endogenous,
-            in_features_exogenous=in_features_exogenous,
-            out_features=out_features,
-            in_activation=in_activation,
+            in_concepts=in_concepts,
+            in_exogenous=in_exogenous,
+            out_concepts=out_concepts,
         )
-        assert in_features_exogenous % 2 == 0, "in_features_exogenous must be divisible by 2."
         if cardinalities is None:
-            self.cardinalities = [1] * in_features_endogenous
-            predictor_in_features = in_features_exogenous*in_features_endogenous
+            # assume all binary
+            self.cardinalities = [1] * in_concepts
         else:
             self.cardinalities = cardinalities
-            assert sum(self.cardinalities) == in_features_endogenous
-            predictor_in_features = (in_features_exogenous//2)*len(self.cardinalities)
+            assert sum(self.cardinalities) == in_concepts
 
+        # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
+        self.cardinalities_expanded = torch.tensor(cardinalities)
+        cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
+        start_positions = cumsum - self.cardinalities_expanded
+        self.mask_cardinality_1 = start_positions[self.cardinalities_expanded == 1]
+        self.cardinalities_expanded[self.cardinalities_expanded == 1] = 2
+
+        self.bernoulli_to_categorical_exogenous_splitter = torch.nn.Sequential(
+            torch.nn.Linear(in_exogenous, in_exogenous*2),
+            torch.nn.LeakyReLU(),
+            torch.nn.Unflatten(-1, (-1, in_exogenous)),
+        )
         self.predictor = torch.nn.Sequential(
             torch.nn.Linear(
-                predictor_in_features,
-                out_features
+                in_exogenous * len(self.cardinalities),
+                out_concepts
             ),
-            torch.nn.Unflatten(-1, (out_features,)),
+            torch.nn.Unflatten(-1, (out_concepts,)),
         )
 
     def forward(
         self,
-        endogenous: torch.Tensor,
+        concepts: torch.Tensor,
         exogenous: torch.Tensor
     ) -> torch.Tensor:
         """
         Forward pass through the predictor.
 
         Args:
-            endogenous: Concept endogenous of shape (batch_size, n_concepts).
-            exogenous: Concept exogenous of shape (batch_size, n_concepts, emb_size).
+            concepts: Concept of shape (batch_size, in_concepts).
+            exogenous: Concept exogenous of shape (batch_size, in_concepts, exogenous_dim).
 
         Returns:
-            torch.Tensor: Task predictions of shape (batch_size, out_features).
+            torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
-        in_probs = self.in_activation(endogenous)
-        c_mix = grouped_concept_exogenous_mixture(exogenous, in_probs, groups=self.cardinalities)
+        # For concepts with cardinality 1, split the Bernoulli probability into a categorical distribution
+        if len(self.mask_cardinality_1) > 0:
+            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
+            concepts_split = torch.cat([
+                concepts[:, self.mask_cardinality_1[:, None]],
+                1-concepts[:, self.mask_cardinality_1[:, None]],
+            ], dim=-1)
+            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
+            concepts = replace_expand_cols(concepts, self.mask_cardinality_1, concepts_split)
+
+        c_mix = grouped_concept_exogenous_mixture(
+            exogenous,
+            concepts,
+            groups=list(self.cardinalities_expanded),
+        )
         return self.predictor(c_mix.flatten(start_dim=1))

@@ -27,11 +27,11 @@ Probabilistic Models
 
 At this API level, models are represented as probabilistic models where:
 
-- ``Variable`` objects represent random variables in the probabilistic model. Variables are defined by their name, parents, and distribution type. For instance we can define a list of three concepts as:
+- ``Variable`` objects represent random variables in the probabilistic model. Variables are defined by their name, parents, and distribution type. For instance we can create a list of three concept variables as:
 
   .. code-block:: python
 
-     concepts = pyc.EndogenousVariable(
+     concepts = pyc.ConceptVariable(
         concepts=["c1", "c2", "c3"],
         parents=[],
         distribution=torch.distributions.RelaxedBernoulli
@@ -43,7 +43,7 @@ At this API level, models are represented as probabilistic models where:
 
      concept_cpd = pyc.nn.ParametricCPD(
         concepts=["c1", "c2", "c3"],
-        parametrization=pyc.nn.LinearZC(in_features=10, out_features=3)
+        parametrization=pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=1)
      )
 
 - ``ProbabilisticModel`` objects are a collection of variables and CPDs. For instance we can define a model as:
@@ -65,7 +65,6 @@ Inference is performed using efficient tensorial probabilistic inference algorit
    inference_engine = pyc.nn.AncestralSamplingInference(
        probabilistic_model=probabilistic_model,
        graph_learner=wanda,
-       temperature=1.
    )
    predictions = inference_engine.query(["c1"], evidence={'input': x})
 
@@ -104,20 +103,20 @@ Detailed Guides
     .. code-block:: python
 
        # Define input variable
-       input_var = pyc.InputVariable(
+       input_var = pyc.LatentVariable(
            concepts=["input"],
            parents=[],
        )
 
        # Define concept variables
-       concepts = pyc.EndogenousVariable(
+       concepts = pyc.ConceptVariable(
            concepts=["round", "smooth", "bright"],
            parents=["input"],
            distribution=torch.distributions.RelaxedBernoulli
        )
 
        # Define task variables
-       tasks = pyc.EndogenousVariable(
+       tasks = pyc.ConceptVariable(
            concepts=["class_A", "class_B"],
            parents=["round", "smooth", "bright"],
            distribution=torch.distributions.RelaxedBernoulli
@@ -139,18 +138,18 @@ Detailed Guides
        # ParametricCPD for concepts (from input)
        concept_cpd = pyc.nn.ParametricCPD(
            concepts=["round", "smooth", "bright"],
-           parametrization=pyc.nn.LinearZC(
-               in_features=input_dim,
-               out_features=1
+           parametrization=pyc.nn.LinearLatentToConcept(
+               in_latent=input_dim,
+               out_concepts=1
            )
        )
 
        # ParametricCPD for tasks (from concepts)
        task_cpd = pyc.nn.ParametricCPD(
-           concepts=["class_A", "class_B"],
-           parametrization=pyc.nn.LinearCC(
-               in_features_endogenous=3,
-               out_features=1
+           concepts=["task_1", "task_2"],
+           parametrization=pyc.nn.LinearConceptToConcept(
+               in_concepts=3,
+               out_concepts=1
            )
        )
 
@@ -189,7 +188,7 @@ Detailed Guides
 
        # Query task predictions given concepts
        task_predictions = inference_engine.query(
-           query_concepts=["class_A", "class_B"],
+           query_concepts=["task_1", "task_2"],
            evidence={
                'input': x,
                'round': concept_predictions[:, 0],
@@ -212,7 +211,6 @@ Detailed Guides
        # Create inference engine
        inference_engine = pyc.nn.AncestralSamplingInference(
            probabilistic_model=prob_model,
-           temperature=1.0
        )
 
        # Query concept predictions
@@ -223,7 +221,7 @@ Detailed Guides
 
        # Query task predictions given concepts
        task_predictions = inference_engine.query(
-           query_concepts=["class_A", "class_B"],
+           query_concepts=["task_1", "task_2"],
            evidence={
                'input': x,
                'round': concept_predictions[:, 0],
@@ -251,7 +249,7 @@ Detailed Guides
        policy = UniformPolicy(out_features=prob_model.concept_to_variable["round"].size)
 
        original_predictions = inference_engine.query(
-           query_concepts=["round", "smooth", "bright", "class_A", "class_B"],
+           query_concepts=["round", "smooth", "bright", "task_1", "task_2"],
            evidence={'input': x}
        )
 
@@ -262,12 +260,12 @@ Detailed Guides
            target_concepts=["round", "smooth"]
        ):
            intervened_predictions = inference_engine.query(
-               query_concepts=["round", "smooth", "bright", "class_A", "class_B"],
+               query_concepts=["round", "smooth", "bright", "task_1", "task_2"],
                evidence={'input': x}
            )
 
-       print(f"Original endogenous: {original_predictions[0]}")
-       print(f"Intervened endogenous: {intervened_predictions[0]}")
+       print(f"Original concepts: {original_predictions[0]}")
+       print(f"Intervened concepts: {intervened_predictions[0]}")
 
 
 Next Steps

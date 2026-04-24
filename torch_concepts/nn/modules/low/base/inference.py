@@ -4,6 +4,7 @@ Base inference and intervention classes for concept-based models.
 This module provides abstract base classes for implementing inference mechanisms
 and intervention strategies in concept-based models.
 """
+import inspect
 from abc import ABC, abstractmethod
 
 import torch
@@ -68,6 +69,68 @@ class BaseInference(torch.nn.Module):
         """
         return self.query(x, *args, **kwargs)
 
+    def _validate_evidence(self, evidence) -> None:
+        """
+        Validate that evidence contains the required 'input' key.
+        
+        Call this at the beginning of every ``query`` implementation
+        that receives an evidence dictionary.
+        
+        Args:
+            evidence: Evidence dictionary to validate.
+            
+        Raises:
+            AssertionError: If evidence is a dict but missing the 'input' key.
+        """
+        if isinstance(evidence, dict):
+            assert 'input' in evidence, (
+                "Evidence must contain an 'input' key with the input tensor. "
+                f"Got keys: {list(evidence.keys())}"
+            )
+
+    @property
+    def query_kwargs(self) -> frozenset:
+        """Return the set of keyword argument names accepted by :meth:`query`.
+        
+        Automatically derived from the signature of :meth:`query` by
+        inspecting its ``POSITIONAL_OR_KEYWORD`` and ``KEYWORD_ONLY``
+        parameters (excluding ``self``, ``*args``, and ``**kwargs``).
+        
+        Returns
+        -------
+        frozenset
+            Names of accepted keyword arguments.
+        """
+        sig = inspect.signature(self.query)
+        return frozenset(
+            name
+            for name, p in sig.parameters.items()
+            if name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        )
+    
+    def _filter_kwargs(self, kwargs: dict) -> dict:
+        """Filter kwargs to only include those accepted by this inference.
+        
+        Inspects the signature of :meth:`query` (like
+        :meth:`AncestralSamplingInference.activate` does for distribution
+        constructors) to determine which keyword arguments are accepted.
+        
+        Parameters
+        ----------
+        kwargs : dict
+            All keyword arguments passed to query.
+            
+        Returns
+        -------
+        dict
+            Filtered kwargs containing only keys present in the
+            :meth:`query` signature.
+        """
+        return {k: v for k, v in kwargs.items() if k in self.query_kwargs}
+
     @abstractmethod
     def query(self,
               *args,
@@ -87,6 +150,32 @@ class BaseInference(torch.nn.Module):
 
         Raises:
             NotImplementedError: This is an abstract method.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+        """
+        Convert ground truth value to evidence format expected by this inference.
+        
+        Different inference types expect evidence in different formats:
+        - Deterministic/Forward inference: logits
+        - Ancestral sampling: raw states (0/1 for binary, class indices for categorical)
+        
+        This method must be implemented by subclasses.
+        
+        Parameters
+        ----------
+        value : torch.Tensor
+            Ground truth value tensor. Shape: (batch_size,) containing class indices
+            (0/1 for binary, 0..K-1 for K-class categorical).
+        cardinality : int
+            Number of classes (1 for binary, >1 for categorical).
+            
+        Returns
+        -------
+        torch.Tensor
+            Evidence tensor in the format expected by this inference.
         """
         raise NotImplementedError
 

@@ -1,9 +1,10 @@
 Contributing Guide
-=================
+==================
 
 We welcome contributions to PyC! This guide will help you contribute effectively.
 
 Thank you for your interest in contributing! The PyC Team welcomes all contributions, whether small bug fixes or major features.
+
 
 Join Our Community
 ------------------
@@ -14,17 +15,28 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
    :target: https://join.slack.com/t/pyc-yu37757/shared_invite/zt-3jdcsex5t-LqkU6Plj5rxFemh5bRhe_Q
    :alt: Slack
 
+
 How to Contribute
 -----------------
 
-1. **Fork the repository** - Create your own fork of the PyC repository on GitHub.
-2. **Use the** ``dev`` **branch** - Write and test your contributions locally on the ``dev`` branch.
-3. **Create a new branch** - Make a new branch for your specific contribution.
-4. **Make your changes** - Implement your changes with clear, descriptive commit messages.
-5. **Use Gitmoji** - Add emojis to your commit messages using `Gitmoji <https://gitmoji.dev/>`_ for better clarity.
-6. **Write documentation and tests** - Ensure your contributions include appropriate documentation and tests.
-7. **Run all tests** - Make sure all tests pass before submitting your pull request.
-8. **Submit a Pull Request** - Open a PR to the ``main`` branch describing your changes.
+1. **Fork the repository** — Create your own fork of the `PyC repository <https://github.com/pyc-team/pytorch_concepts>`_ on GitHub.
+
+2. **Create your branch from** ``dev`` — Clone your fork and create a new branch based on the upstream ``dev`` branch to track the latest changes:
+
+   .. code-block:: bash
+
+      git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
+      cd pytorch_concepts
+      git remote add upstream https://github.com/pyc-team/pytorch_concepts.git
+      git fetch upstream
+      git checkout -b my-feature upstream/dev
+
+3. **Make your changes** — Implement your changes locally with clear, descriptive commit messages. Use `Gitmoji <https://gitmoji.dev/>`_ for better clarity (e.g., ``✨ Add new feature``).
+
+4. **Write documentation & tests** — Update docstrings and ``.rst`` files, add unit tests, and verify all tests pass locally.
+
+5. **Submit a Pull Request** — Push your branch and open a PR to the ``dev`` branch:
+
 
 Development Setup
 -----------------
@@ -37,20 +49,18 @@ Prerequisites
 
 Installation
 ^^^^^^^^^^^^
-
-Install PyC and its dependencies:
-
-.. code-block:: bash
-
-   pip install --pre pytorch-concepts
-
-For development, you may want to install in editable mode:
+For development, you may want to install PyC in editable mode and have the complete conda environment with all dependencies to test all functionalities:
 
 .. code-block:: bash
 
-   git clone https://github.com/pyc-team/pytorch_concepts.git
+   git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
    cd pytorch_concepts
+   # install and activate conda environment (use environment_silicon for Apple Silicon chips)
+   conda env create -f conceptarium/environment.yaml
+   conda activate conceptarium
+   # install your local pyc
    pip install -e .
+
 
 Reporting Issues
 ----------------
@@ -64,27 +74,27 @@ When reporting issues, please include:
 - Expected vs. actual behavior
 - Your environment (Python version, PyTorch version, OS, etc.)
 
+
 Code Style
 ----------
 
 Please follow these guidelines when contributing code:
 
-- **PEP 8** - Follow `PEP 8 <https://pep8.org/>`_ style guidelines for Python code.
-- **Type hints** - Use type hints where appropriate to improve code clarity.
-- **Docstrings** - Write clear docstrings for all public functions and classes.
-- **Tests** - Write tests for new features and bug fixes when possible.
-- **Documentation** - Update documentation to reflect your changes.
+.. list-table::
+   :widths: 20 80
+   :header-rows: 0
 
-Pull Request Process
---------------------
+   * - **PEP 8**
+     - Follow `PEP 8 <https://pep8.org/>`_ style guidelines for Python code.
+   * - **Type hints**
+     - Use type hints where appropriate to improve code clarity.
+   * - **Docstrings**
+     - Write clear docstrings for all public functions and classes.
+   * - **Tests**
+     - Write tests for new features and bug fixes.
+   * - **Documentation**
+     - Update documentation to reflect your changes.
 
-1. Ensure your code follows the style guidelines above.
-2. Update the documentation if you've made changes to the API.
-3. Add tests for new functionality.
-4. Make sure all tests pass locally.
-5. Write a clear PR description explaining what changes you made and why.
-6. Link any related issues in your PR description.
-7. Wait for review from the maintainers.
 
 Thank You!
 ----------

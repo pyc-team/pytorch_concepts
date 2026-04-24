@@ -1,23 +1,23 @@
 """
 Comprehensive tests for torch_concepts.nn.modules.low.predictors.call
 
-Tests the CallableCC module with various callable functions.
+Tests the CallableConceptToConcept module with various callable functions.
 """
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn import CallableCC
+from torch_concepts.nn import CallableConceptToConcept
 
 
-class TestCallableCCInitialization(unittest.TestCase):
-    """Test CallableCC initialization."""
+class TestCallableConceptToConceptInitialization(unittest.TestCase):
+    """Test CallableConceptToConcept initialization."""
 
     def test_basic_initialization(self):
         """Test basic predictor initialization."""
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func
         )
         self.assertTrue(predictor.use_bias)
@@ -28,7 +28,7 @@ class TestCallableCCInitialization(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=False
         )
@@ -39,7 +39,7 @@ class TestCallableCCInitialization(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             init_bias_mean=1.0,
             init_bias_std=0.5,
@@ -48,27 +48,16 @@ class TestCallableCCInitialization(unittest.TestCase):
         self.assertAlmostEqual(predictor.bias_mean.item(), 1.0, places=5)
         self.assertEqual(predictor.min_std, 1e-5)
 
-    def test_initialization_with_custom_activation(self):
-        """Test initialization with custom activation function."""
-        def simple_func(probs):
-            return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
-            func=simple_func,
-            in_activation=torch.sigmoid
-        )
-        self.assertTrue(predictor.use_bias)
-
-
-class TestCallableCCForward(unittest.TestCase):
-    """Test CallableCC forward pass."""
+class TestCallableConceptToConceptForward(unittest.TestCase):
+    """Test CallableConceptToConcept forward pass."""
 
     def test_forward_simple_sum(self):
         """Test forward pass with simple sum function."""
         def sum_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=sum_func,
             use_bias=False
         )
@@ -78,24 +67,6 @@ class TestCallableCCForward(unittest.TestCase):
 
         self.assertEqual(output.shape, (4, 1))
 
-    def test_forward_with_activation(self):
-        """Test forward pass with input activation."""
-        def sum_func(probs):
-            return probs.sum(dim=1, keepdim=True)
-
-        predictor = CallableCC(
-            func=sum_func,
-            in_activation=torch.sigmoid,
-            use_bias=False
-        )
-
-        endogenous = torch.randn(4, 5)
-        output = predictor(endogenous)
-
-        # Verify output is sum of sigmoid(endogenous)
-        expected = torch.sigmoid(endogenous).sum(dim=1, keepdim=True)
-        torch.testing.assert_close(output, expected)
-
     def test_forward_quadratic_function(self):
         """Test forward pass with quadratic function (from docstring example)."""
         def quadratic_predictor(probs):
@@ -104,7 +75,7 @@ class TestCallableCCForward(unittest.TestCase):
             output2 = 2.0*c0 - 1.0*c1**2 + 0.5*c2**3
             return torch.cat([output1, output2], dim=1)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=quadratic_predictor,
             use_bias=False
         )
@@ -120,7 +91,7 @@ class TestCallableCCForward(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True
         )
@@ -145,7 +116,7 @@ class TestCallableCCForward(unittest.TestCase):
             max_out = probs.max(dim=1, keepdim=True)[0]
             return torch.cat([sum_out, mean_out, max_out], dim=1)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=multi_output_func,
             use_bias=False
         )
@@ -162,7 +133,7 @@ class TestCallableCCForward(unittest.TestCase):
                 weights = torch.ones(probs.shape[1])
             return (probs * weights).sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=weighted_sum,
             use_bias=False
         )
@@ -178,7 +149,7 @@ class TestCallableCCForward(unittest.TestCase):
         def parameterized_func(probs, scale):
             return probs.sum(dim=1, keepdim=True) * scale
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=parameterized_func,
             use_bias=False
         )
@@ -190,15 +161,15 @@ class TestCallableCCForward(unittest.TestCase):
         self.assertEqual(output.shape, (4, 1))
 
 
-class TestCallableCCGradients(unittest.TestCase):
-    """Test gradient flow through CallableCC."""
+class TestCallableConceptToConceptGradients(unittest.TestCase):
+    """Test gradient flow through CallableConceptToConcept."""
 
     def test_gradient_flow(self):
         """Test gradient flow through predictor."""
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=False
         )
@@ -216,7 +187,7 @@ class TestCallableCCGradients(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True
         )
@@ -235,7 +206,7 @@ class TestCallableCCGradients(unittest.TestCase):
         def quadratic_func(probs):
             return (probs ** 2).sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=quadratic_func,
             use_bias=False
         )
@@ -248,7 +219,7 @@ class TestCallableCCGradients(unittest.TestCase):
         self.assertIsNotNone(endogenous.grad)
 
 
-class TestCallableCCBiasStd(unittest.TestCase):
+class TestCallableConceptToConceptBiasStd(unittest.TestCase):
     """Test bias standard deviation computation."""
 
     def test_bias_std_positive(self):
@@ -256,7 +227,7 @@ class TestCallableCCBiasStd(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True
         )
@@ -270,7 +241,7 @@ class TestCallableCCBiasStd(unittest.TestCase):
             return probs.sum(dim=1, keepdim=True)
 
         min_std = 1e-4
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True,
             min_std=min_std
@@ -285,7 +256,7 @@ class TestCallableCCBiasStd(unittest.TestCase):
             return probs.sum(dim=1, keepdim=True)
 
         init_std = 0.1
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True,
             init_bias_std=init_std,
@@ -297,7 +268,7 @@ class TestCallableCCBiasStd(unittest.TestCase):
         self.assertAlmostEqual(std.item(), init_std, places=2)
 
 
-class TestCallableCCEdgeCases(unittest.TestCase):
+class TestCallableConceptToConceptEdgeCases(unittest.TestCase):
     """Test edge cases and special scenarios."""
 
     def test_single_sample(self):
@@ -305,7 +276,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=False
         )
@@ -320,7 +291,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.mean(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=False
         )
@@ -336,7 +307,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
         def identity_func(probs):
             return probs
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=identity_func,
             use_bias=False
         )
@@ -356,7 +327,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
             squared = activated ** 2
             return squared
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=complex_func,
             use_bias=False
         )
@@ -371,7 +342,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=False
         )
@@ -385,7 +356,7 @@ class TestCallableCCEdgeCases(unittest.TestCase):
         torch.testing.assert_close(output1, output2)
 
 
-class TestCallableCCDeviceCompatibility(unittest.TestCase):
+class TestCallableConceptToConceptDeviceCompatibility(unittest.TestCase):
     """Test device compatibility."""
 
     def test_cpu_device(self):
@@ -393,7 +364,7 @@ class TestCallableCCDeviceCompatibility(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True
         )
@@ -409,7 +380,7 @@ class TestCallableCCDeviceCompatibility(unittest.TestCase):
         def simple_func(probs):
             return probs.sum(dim=1, keepdim=True)
 
-        predictor = CallableCC(
+        predictor = CallableConceptToConcept(
             func=simple_func,
             use_bias=True
         ).cuda()

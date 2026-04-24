@@ -2,7 +2,7 @@
 import unittest
 import torch
 from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn import BipartiteModel, LinearCC
+from torch_concepts.nn import BipartiteModel, LinearConceptToConcept
 from torch_concepts.nn import LazyConstructor
 from torch.distributions import Bernoulli
 
@@ -33,7 +33,7 @@ class TestBipartiteModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         self.assertIsNotNone(model)
         self.assertEqual(model.task_names, self.task_names)
@@ -46,7 +46,7 @@ class TestBipartiteModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         # In bipartite model, concepts should point to tasks
         # Tasks should not point to themselves
@@ -60,7 +60,7 @@ class TestBipartiteModel(unittest.TestCase):
             input_size=784,
             annotations=self.annotations,
             encoder=LazyConstructor(torch.nn.Linear),
-            predictor=LazyConstructor(LinearCC)
+            predictor=LazyConstructor(LinearConceptToConcept)
         )
         self.assertEqual(model.task_names, ['task1'])
 

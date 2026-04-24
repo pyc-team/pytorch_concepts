@@ -19,9 +19,9 @@ Overview of Data Representations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 In |pyc_logo| PyC, we distinguish between three types of data representations:
 
-- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
-- **Exogenous**: Representations that are direct causes of endogenous variables
-- **Endogenous**: Representations of observable quantities of interest
+- **Latent**: High-dimensional (input) representations where exogenous and concept information is entangled
+- **Exogenous**: Representations that are direct causes of concept variables
+- **Concepts**: Representations of observable quantities of interest
 
 
 Layer Types
@@ -29,8 +29,8 @@ Layer Types
 
 In |pyc_logo| PyC you will find three types of layers whose interfaces reflect the distinction between data representations:
 
-- ``Encoder`` layers: Never take as input endogenous variables
-- ``Predictor`` layers: Must take as input a set of endogenous variables
+- ``Encoder`` layers: Never take as input concept variables
+- ``Predictor`` layers: Must take as input a set of concept variables
 - Special layers: Perform operations like memory selection or graph learning
 
 
@@ -45,32 +45,26 @@ Each layer name follows the format:
 where:
 
 - ``LayerType``: describes the type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
-- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. |pyc_logo| PyC uses the following abbreviations:
+- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. 
 
-  - ``Z``: Input
-  - ``U``: Exogenous
-  - ``C``: Endogenous
-
-
-For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
-``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
-as input any endogenous variables, it is an encoder layer.
+For instance, a layer named ``LinearLatentToConcept`` is a linear layer that takes as input a
+``Latent`` representation and produces a ``Concepts`` representation. Since it does not take
+as input any concept variables, it is an encoder layer.
 
 .. code-block:: python
 
- pyc.nn.LinearZC(in_features=10, out_features=3)
+ pyc.nn.LinearLatentToConcept(in_latent=64, out_concepts=3)
 
-As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
-takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
-``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
+As another example, a layer named ``HyperlinearConceptExogenousToConcept`` is a hyper-network layer that
+takes as input both ``Concepts`` and ``Exogenous`` representations and produces a
+``Concepts`` representation. Since it takes as input concept variables, it is a predictor layer.
 
 .. code-block:: python
 
- pyc.nn.HyperLinearCUC(
-    in_features_endogenous=10,
-    in_features_exogenous=7,
-    embedding_size=24,
-    out_features=3
+ pyc.nn.HyperlinearConceptExogenousToConcept(
+    in_concepts=3,
+    in_exogenous=8,
+    hidden_size=32
  )
 
 As a final example, graph learners are a special layers that learn relationships between concepts.
@@ -129,13 +123,13 @@ Detailed Guides
 
        # Create model using ModuleDict
        model = torch.nn.ModuleDict({
-           'encoder': pyc.nn.LinearZC(
-               in_features=input_dim,
-               out_features=n_concepts
+           'encoder': pyc.nn.LinearLatentToConcept(
+               in_latent=input_dim,
+               out_concepts=n_concepts
            ),
-           'predictor': pyc.nn.LinearCC(
-               in_features_endogenous=n_concepts,
-               out_features=n_tasks
+           'predictor': pyc.nn.LinearConceptToConcept(
+               in_concepts=n_concepts,
+               out_concepts=n_tasks
            ),
        })
 
@@ -150,14 +144,14 @@ Detailed Guides
 
     .. code-block:: python
 
-       # Get concept endogenous from input
-       concept_endogenous = model['encoder'](input=x)
+       # Get concept predictions from input
+       concept_preds = model['encoder'](latent=x)
 
-       # Get task predictions from concept endogenous
-       task_endogenous = model['predictor'](endogenous=concept_endogenous)
+       # Get task predictions from concept predictions
+       task_preds = model['predictor'](concepts=concept_preds)
 
-       print(f"Concept endogenous shape: {concept_endogenous.shape}")  # [32, 5]
-       print(f"Task endogenous shape: {task_endogenous.shape}")        # [32, 3]
+       print(f"Concept predictions shape: {concept_preds.shape}")  # [32, 5]
+       print(f"Task predictions shape: {task_preds.shape}")        # [32, 3]
 
     **Compute Loss and Train**
 
@@ -168,8 +162,8 @@ Detailed Guides
        import torch.nn.functional as F
 
        # Compute losses
-       concept_loss = F.binary_cross_entropy(torch.sigmoid(concept_endogenous), concept_labels)
-       task_loss = F.cross_entropy(task_endogenous, task_labels)
+       concept_loss = F.binary_cross_entropy(torch.sigmoid(concept_preds), concept_labels)
+       task_loss = F.cross_entropy(task_preds, task_labels)
        total_loss = task_loss + 0.5 * concept_loss
 
        # Backpropagation
@@ -185,7 +179,7 @@ Detailed Guides
     Intervene using the ``intervention`` context manager which replaces the encoder layer temporarily.
     The context manager takes two main arguments: **strategies** and **policies**.
 
-    - Intervention strategies define how the layer behaves during the intervention, e.g., setting concept endogenous to ground truth values.
+    - Intervention strategies define how the layer behaves during the intervention, e.g., setting concepts to ground truth values.
     - Intervention policies define the priority/order of concepts to intervene on.
 
     .. code-block:: python
@@ -193,9 +187,9 @@ Detailed Guides
        from torch_concepts.nn import GroundTruthIntervention, UniformPolicy
        from torch_concepts.nn import intervention
 
-       ground_truth = 10 * torch.rand_like(concept_endogenous)
+       ground_truth = 10 * torch.rand_like(concept_preds)
        strategy = GroundTruthIntervention(model=model['encoder'], ground_truth=ground_truth)
-       policy = UniformPolicy(out_features=n_concepts)
+       policy = UniformPolicy(out_concepts=n_concepts)
 
        # Apply intervention to encoder
        with intervention(
@@ -203,12 +197,12 @@ Detailed Guides
            strategies=strategy,
            target_concepts=[0, 2]
        ) as new_encoder_layer:
-           intervened_concepts = new_encoder_layer(input=x)
-           intervened_tasks = model['predictor'](endogenous=intervened_concepts)
+           intervened_concepts = new_encoder_layer(latent=x)
+           intervened_tasks = model['predictor'](concepts=intervened_concepts)
 
-       print(f"Original concept endogenous: {concept_endogenous[0]}")
-       print(f"Original task predictions: {task_endogenous[0]}")
-       print(f"Intervened concept endogenous: {intervened_concepts[0]}")
+       print(f"Original concept predictions: {concept_preds[0]}")
+       print(f"Original task predictions: {task_preds[0]}")
+       print(f"Intervened concept predictions: {intervened_concepts[0]}")
        print(f"Intervened task predictions: {intervened_tasks[0]}")
 
 
@@ -245,28 +239,28 @@ Detailed Guides
 
     .. code-block:: python
 
-       from torch_concepts.nn import LinearZC, SelectorZU, HyperLinearCUC
+       from torch_concepts.nn import LinearLatentToConcept, SelectorLatentToExogenous, HyperlinearConceptExogenousToConcept
 
        memory_size = 7
        exogenous_size = 16
-       embedding_size = 5
+       hidden_size = 5
 
        # Create model using ModuleDict
        model = torch.nn.ModuleDict({
-           'encoder': LinearZC(
-               in_features=input_dim,
-               out_features=n_concepts
+           'encoder': LinearLatentToConcept(
+               in_latent=input_dim,
+               out_concepts=n_concepts
            ),
-           'selector': SelectorZU(
-               in_features=input_dim,
+           'selector': SelectorLatentToExogenous(
+               in_latent=input_dim,
                memory_size=memory_size,
-               exogenous_size=exogenous_size,
-               out_features=n_tasks
+               out_exogenous=exogenous_size,
+               out_concepts=n_tasks
            ),
-           'predictor': HyperLinearCUC(
-               in_features_endogenous=n_concepts,
-               in_features_exogenous=exogenous_size,
-               embedding_size=embedding_size,
+           'predictor': HyperlinearConceptExogenousToConcept(
+               in_concepts=n_concepts,
+               in_exogenous=exogenous_size,
+               hidden_size=hidden_size,
            )
        })
 

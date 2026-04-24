@@ -19,16 +19,16 @@ from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.exogenous import LinearZU
-from .modules.low.encoders.linear import LinearZC, LinearUC
-from .modules.low.encoders.stochastic import StochasticZC
-from .modules.low.encoders.selector import SelectorZU
+from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
+from .modules.low.encoders.exogenous import LinearLatentToExogenous
+from .modules.low.encoders.stochastic import StochasticLatentToConcept
+from .modules.low.encoders.selector import SelectorLatentToExogenous
 
 # Predictors
-from .modules.low.predictors.linear import LinearCC
-from .modules.low.predictors.exogenous import MixCUC
-from .modules.low.predictors.hypernet import HyperLinearCUC
-from .modules.low.predictors.call import CallableCC
+from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept
+from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
+from .modules.low.predictors.call import CallableConceptToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
@@ -37,30 +37,36 @@ from .modules.low.dense_layers import Dense, ResidualMLP, MLP
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss
+from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
+    L1LogitRegularizer
 
 # Metrics
-from .modules.metrics import ConceptMetrics
+from .modules.metrics import ConceptMetrics, compute_cace
+
+# Output containers
+from .modules.outputs import ModelOutput, InferenceOutput
 
 # Models (high-level)
-from .modules.high.models.blackbox import BlackBox
-from .modules.high.models.cbm import ConceptBottleneckModel, \
-    ConceptBottleneckModel_Joint
+from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from .modules.high.models.cbm import ConceptBottleneckModel
+from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
-# Learners (high-level)
-from .modules.high.learners.joint import JointLearner
+
 
 # Models (mid-level)
+from .modules.mid.models.factor import ParametricFactor
 from .modules.mid.models.cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.constructors.bipartite import BipartiteModel
 from .modules.mid.constructors.graph import GraphModel
 
 # Inference (mid-level)
-from .modules.mid.inference.forward import (
+from .modules.mid.inference import (
     ForwardInference,
     DeterministicInference,
     AncestralSamplingInference,
+    IndependentInference,
 )
 
 # Interventions (low-level)
@@ -92,25 +98,25 @@ __all__ = [
     "LazyConstructor",
     
     # Exogenous encoder classes
-    "LinearZU",
+    "LinearLatentToExogenous",
 
     # Encoder classes
-    "LinearZC",
-    "LinearUC",
-    "StochasticZC",
+    "LinearLatentToConcept",
+    "LinearExogenousToConcept",
+    "StochasticLatentToConcept",
 
     # Predictor classes
-    "LinearCC",
-    "MixCUC",
-    "HyperLinearCUC",
-    "CallableCC",
+    "LinearConceptToConcept",
+    "MixConceptExogegnousToConcept",
+    "HyperlinearConceptExogenousToConcept",
+    "CallableConceptToConcept",
 
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
 
-    "SelectorZU",
+    "SelectorLatentToExogenous",
 
     # COSMO
     "WANDAGraphLearner",
@@ -118,19 +124,23 @@ __all__ = [
     # Loss functions
     "ConceptLoss",
     "WeightedConceptLoss",
+    "DepthWeightedConceptLoss",
+    "L1LogitRegularizer",
 
     # Metrics
     "ConceptMetrics",
+    "compute_cace",
+
+    # Output containers
+    "ModelOutput",
+    "InferenceOutput",
 
     # Models (high-level)
     "BlackBox",
-    # "BlackBox_torch",
+    "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
-    "ConceptBottleneckModel_Joint",
-    "ConceptBottleneckModel_Independent",
-
-    # Learners (high-level)
-    "JointLearner",
+    "CausallyReliableConceptBottleneckModel",
+    "ConceptEmbeddingModel",
 
     # Models (mid-level)
     "ParametricCPD",
@@ -142,6 +152,7 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
+    "IndependentInference",
 
     # Interventions
     "RewiringIntervention",

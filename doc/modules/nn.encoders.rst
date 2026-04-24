@@ -14,37 +14,37 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   LinearZC
-   LinearUC
-   StochasticZC
-   LinearZU
-   SelectorZU
+   LinearLatentToConcept
+   LinearExogenousToConcept
+   StochasticLatentToConcept
+   LinearLatentToExogenous
+   SelectorLatentToExogenous
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: LinearZC
+.. autoclass:: LinearLatentToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: LinearUC
+.. autoclass:: LinearExogenousToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: StochasticZC
+.. autoclass:: StochasticLatentToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: LinearZU
+.. autoclass:: LinearLatentToExogenous
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: SelectorZU
+.. autoclass:: SelectorLatentToExogenous
    :members:
    :undoc-members:
    :show-inheritance:

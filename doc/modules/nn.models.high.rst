@@ -1,7 +1,7 @@
 High-Level Models
 ===============================
 
-Ready-to-use concept-based models with automatic or manual training support.
+Ready-to-use concept-based models with automatic (lightning) or manual training support.
 
 .. currentmodule:: torch_concepts.nn
 
@@ -15,8 +15,9 @@ Summary
    :nosignatures:
 
    ConceptBottleneckModel
-   ConceptBottleneckModel_Joint
+   ConceptEmbeddingModel
    BlackBox
+   BlackBoxTaskOnly
 
 
 Class Documentation
@@ -27,12 +28,17 @@ Class Documentation
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: ConceptBottleneckModel_Joint
+.. autoclass:: ConceptEmbeddingModel
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: BlackBox
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: BlackBoxTaskOnly
    :members:
    :undoc-members:
    :show-inheritance:

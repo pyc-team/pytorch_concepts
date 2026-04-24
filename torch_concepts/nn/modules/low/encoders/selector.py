@@ -12,9 +12,9 @@ import torch.nn.functional as F
 from ..base.layer import BaseEncoder
 
 
-class SelectorZU(BaseEncoder):
+class SelectorLatentToExogenous(BaseEncoder):
     """
-    Memory-based selector for concept exogenous with attention mechanism.
+    Memory-based selector for exogenous variables with attention mechanism.
 
     This module maintains a learnable memory bank of exogenous and uses an
     attention mechanism to select relevant exogenous based on input. It
@@ -23,29 +23,29 @@ class SelectorZU(BaseEncoder):
     Attributes:
         temperature (float): Temperature for softmax/Gumbel-softmax.
         memory_size (int): Number of memory slots per concept.
-        exogenous_size (int): Dimension of each memory exogenous.
+        out_exogenous (int): Dimension of each memory exogenous.
         memory (nn.Embedding): Learnable memory bank.
         selector (nn.Sequential): Attention network for memory selection.
 
     Args:
-        in_features: Number of input latent features.
+        in_latent: Number of input latent features.
         memory_size: Number of memory slots per concept.
-        exogenous_size: Dimension of each memory exogenous.
-        out_features: Number of output concepts.
+        out_exogenous: Dimension of each memory exogenous.
+        out_concepts: Number of output concept representations.
         temperature: Temperature parameter for selection (default: 1.0).
         *args: Additional arguments for the linear layer.
         **kwargs: Additional keyword arguments for the linear layer.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import SelectorZU
+        >>> from torch_concepts.nn import SelectorLatentToExogenous
         >>>
         >>> # Create memory selector
-        >>> selector = SelectorZU(
-        ...     in_features=64,
+        >>> selector = SelectorLatentToExogenous(
+        ...     in_latent=64,
         ...     memory_size=10,
-        ...     exogenous_size=32,
-        ...     out_features=5,
+        ...     out_exogenous=32,
+        ...     out_concepts=5,
         ...     temperature=0.5
         ... )
         >>>
@@ -65,10 +65,10 @@ class SelectorZU(BaseEncoder):
     """
     def __init__(
         self,
-        in_features: int,
-        memory_size : int,
-        exogenous_size: int,
-        out_features: int,
+        in_latent: int,
+        memory_size: int,
+        out_exogenous: int,
+        out_concepts: int,
         temperature: float = 1.0,
         *args,
         **kwargs,
@@ -77,36 +77,34 @@ class SelectorZU(BaseEncoder):
         Initialize the memory selector.
 
         Args:
-            in_features: Number of input latent features.
+            in_latent: Number of input latent features.
             memory_size: Number of memory slots per concept.
-            exogenous_size: Dimension of each memory exogenous.
-            out_features: Number of output concepts.
+            out_exogenous: Dimension of each memory exogenous.
+            out_concepts: Number of output concepts.
             temperature: Temperature for selection (default: 1.0).
             *args: Additional arguments for the linear layer.
             **kwargs: Additional keyword arguments for the linear layer.
         """
         super().__init__(
-            in_features=in_features,
-            out_features=out_features,
+            in_latent=in_latent,
+            out_concepts=out_concepts,
         )
         self.temperature = temperature
         self.memory_size = memory_size
-        self.exogenous_size = exogenous_size
-        self._annotation_out_features = out_features
-        self._exogenous_out_features = memory_size * exogenous_size
-        self._selector_out_shape = (self._annotation_out_features, memory_size)
-        self._selector_out_features = np.prod(self._selector_out_shape).item()
+        self.out_exogenous = out_exogenous
+        self._selector_out_shape = (out_concepts, memory_size)
+        self._selector_out_dim = np.prod(self._selector_out_shape).item()
 
-        # init memory of exogenous [out_features, memory_size * exogenous_size]
-        self.memory = torch.nn.Embedding(self._annotation_out_features, self._exogenous_out_features)
+        # init memory of exogenous [out_concepts, memory_size * out_exogenous]
+        self.memory = torch.nn.Embedding(out_concepts, memory_size * out_exogenous)
 
-        # init selector [B, out_features]
+        # init selector [B, out_concepts]
         self.selector = torch.nn.Sequential(
-            torch.nn.Linear(in_features, exogenous_size),
+            torch.nn.Linear(in_latent, out_exogenous),
             torch.nn.LeakyReLU(),
             torch.nn.Linear(
-                exogenous_size,
-                self._selector_out_features,
+                out_exogenous,
+                self._selector_out_dim,
                 *args,
                 **kwargs,
             ),
@@ -115,27 +113,27 @@ class SelectorZU(BaseEncoder):
 
     def forward(
         self,
-        input: torch.Tensor = None,
+        latent: torch.Tensor,
         sampling: bool = False,
     ) -> torch.Tensor:
         """
-        Select memory exogenous based on input input.
+        Select memory exogenous based on latent input.
 
         Computes attention weights over memory slots and returns a weighted
         combination of memory exogenous. Can use soft attention or hard
         selection via Gumbel-softmax.
 
         Args:
-            input: Input latent of shape (batch_size, in_features).
+            latent: Input latent of shape (batch_size, in_latent).
             sampling: If True, use Gumbel-softmax for hard selection;
                      if False, use soft attention (default: False).
 
         Returns:
             torch.Tensor: Selected exogenous of shape
-                         (batch_size, out_features, exogenous_size).
+                         (batch_size, out_concepts, out_exogenous).
         """
-        memory = self.memory.weight.view(-1, self.memory_size, self.exogenous_size)
-        mixing_coeff = self.selector(input)
+        memory = self.memory.weight.view(-1, self.memory_size, self.out_exogenous)
+        mixing_coeff = self.selector(latent)
         if sampling:
             mixing_probs = F.gumbel_softmax(mixing_coeff, dim=1, tau=self.temperature, hard=True)
         else:

@@ -13,19 +13,19 @@ class TestUncertaintyInterventionPolicy(unittest.TestCase):
 
     def test_initialization(self):
         """Test uncertainty policy initialization."""
-        policy = UncertaintyInterventionPolicy(out_features=10)
-        self.assertEqual(policy.out_features, 10)
+        policy = UncertaintyInterventionPolicy(out_concepts=10)
+        self.assertEqual(policy.out_concepts, 10)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        policy = UncertaintyInterventionPolicy(out_features=10)
+        policy = UncertaintyInterventionPolicy(out_concepts=10)
         endogenous = torch.randn(4, 10)
         output = policy(endogenous)
         self.assertEqual(output.shape, (4, 10))
 
     def test_uncertainty_measure(self):
         """Test that certainty is measured correctly (returns absolute values)."""
-        policy = UncertaintyInterventionPolicy(out_features=10)
+        policy = UncertaintyInterventionPolicy(out_concepts=10)
 
         # High certainty (endogenous far from 0)
         high_certainty = torch.tensor([[10.0, -10.0, 10.0, -10.0]])
@@ -41,7 +41,7 @@ class TestUncertaintyInterventionPolicy(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through policy."""
-        policy = UncertaintyInterventionPolicy(out_features=5)
+        policy = UncertaintyInterventionPolicy(out_concepts=5)
         endogenous = torch.randn(2, 5, requires_grad=True)
         output = policy(endogenous)
         loss = output.sum()

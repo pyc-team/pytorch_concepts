@@ -8,24 +8,48 @@ hydra:
   sweeper:
     # standard grid search
     params:
-      seed: 1
-      dataset: asia, sachs, insurance
-      model: cbm
-      #loss: standard, weighted
+      seed: 42
+      dataset: dag_asia, dag_sachs, dag_insurance
+      model: cbm, cem, c2bm
+      model.train_inference._target_:
+        torch_concepts.nn.DeterministicInference,
+        torch_concepts.nn.IndependentInference,
+        torch_concepts.nn.AncestralSamplingInference
+      # --- inference params
+      # +model.train_inference.detach: false, true
+      # +model.train_inference.p: 0.4
+      loss: standard
+      # --- weighted loss params
+      # loss.concept_weight: 10
+      # loss.task_weight: 1
+
+dataset:
+  batch_size: 2048
+  # concept_subset: ['Attractive', 'Bald', 'Big_Nose', 'Black_Hair']  # for celeba
 
 model:
   optim_kwargs:
     lr: 0.01
+  latent_encoder_kwargs:
+    hidden_size: 128
+    n_layers: 1
+    activation: leaky_relu
+    dropout: 0.
+  # embedding_size: 8  # for embedding models
 
 metrics:
-  summary_metrics: true
-  perconcept_metrics: true #${dataset.default_task_names}
+  summary: true
+  per_concept: true # true or ${dataset.default_task_names}
 
 trainer:
-  logger: null
+  # logger: wandb
+  # log_model: true   # whether to save checkpoint on wandb
+  save_top_k: 1.    # whether to save checkpoint locally
   max_epochs: 200
   patience: 20
 
 matmul_precision: medium
+
+debug: true # whether to add run to the analysis registry 
 
 notes: test

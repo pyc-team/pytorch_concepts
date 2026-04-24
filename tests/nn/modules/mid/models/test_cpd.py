@@ -4,10 +4,10 @@ import unittest
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.variable import Variable
+from torch_concepts.nn.modules.mid.models.variable import Variable, ConceptVariable
 from torch_concepts.distributions import Delta
 
 
@@ -18,7 +18,7 @@ class TestParametricCPDBasic:
         """Test ParametricCPD with single concept."""
         module = nn.Linear(5, 1)
         cpd = ParametricCPD(concepts='c1', parametrization=module)
-        assert cpd.concepts == ['c1']
+        assert cpd.concept == 'c1'
         assert cpd.parametrization is module
 
     def test_multi_concept_initialization_splits(self):
@@ -27,8 +27,8 @@ class TestParametricCPDBasic:
         cpds = ParametricCPD(concepts=['c1', 'c2'], parametrization=module)
         assert isinstance(cpds, list)
         assert len(cpds) == 2
-        assert cpds[0].concepts == ['c1']
-        assert cpds[1].concepts == ['c2']
+        assert cpds[0].concept == 'c1'
+        assert cpds[1].concept == 'c2'
 
     def test_multi_concept_with_module_list(self):
         """Test ParametricCPD with list of modules."""
@@ -53,7 +53,7 @@ class TestParametricCPDParentCombinations:
 
     def test_no_parents(self):
         """Test _get_parent_combinations with no parents."""
-        var = Variable(concepts='c1', parents=[], distribution=Delta, size=1)
+        var = Variable(concepts='c1', distribution=Delta, size=1)
         module = nn.Linear(2, 1)
         cpd = ParametricCPD(concepts='c1', parametrization=module)
         cpd.variable = var
@@ -66,11 +66,11 @@ class TestParametricCPDParentCombinations:
 
     def test_single_bernoulli_parent(self):
         """Test _get_parent_combinations with single Bernoulli parent."""
-        parent_var = Variable(concepts='p', parents=[], distribution=Bernoulli, size=1)
-        child_var = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+        parent_var = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child_var = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -83,11 +83,11 @@ class TestParametricCPDParentCombinations:
 
     def test_single_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts='p', parents=[], distribution=Categorical, size=3)
-        child_var = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+        parent_var = Variable(concepts='p', distribution=OneHotCategorical, size=3)
+        child_var = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(3, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -102,11 +102,11 @@ class TestParametricCPDParentCombinations:
 
     def test_continuous_parent_only(self):
         """Test _get_parent_combinations with only continuous (Delta) parent."""
-        parent_var = Variable(concepts='p', parents=[], distribution=Delta, size=2)
-        child_var = Variable(concepts='c', parents=['p'], distribution=Delta, size=1)
+        parent_var = Variable(concepts='p', distribution=Delta, size=2)
+        child_var = Variable(concepts='c', distribution=Delta, size=1)
 
         module = nn.Linear(2, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -118,12 +118,12 @@ class TestParametricCPDParentCombinations:
 
     def test_mixed_discrete_and_continuous_parents(self):
         """Test _get_parent_combinations with mixed parents."""
-        p1 = Variable(concepts='p1', parents=[], distribution=Bernoulli, size=1)
-        p2 = Variable(concepts='p2', parents=[], distribution=Delta, size=2)
-        child_var = Variable(concepts='c', parents=['p1', 'p2'], distribution=Bernoulli, size=1)
+        p1 = Variable(concepts='p1', distribution=Bernoulli, size=1)
+        p2 = Variable(concepts='p2', distribution=Delta, size=2)
+        child_var = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(3, 1)  # 1 from Bernoulli + 2 from Delta
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child_var
         cpd.parents = [p1, p2]
 
@@ -140,9 +140,9 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_delta_no_parents(self):
         """Test build_cpt for Delta variable with no parents."""
-        var = Variable(concepts='c', parents=[], distribution=Delta, size=1)
+        var = Variable(concepts='c', distribution=Delta, size=1)
         module = nn.Linear(2, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -153,9 +153,9 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_bernoulli_no_parents(self):
         """Test build_cpt for Bernoulli variable with no parents."""
-        var = Variable(concepts='c', parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='c', distribution=Bernoulli, size=1)
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -167,11 +167,11 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_bernoulli_with_parent(self):
         """Test build_cpt for Bernoulli variable with Bernoulli parent."""
-        parent = Variable(concepts='p', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child
         cpd.parents = [parent]
 
@@ -185,9 +185,9 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_categorical(self):
         """Test build_cpt for Categorical variable."""
-        var = Variable(concepts='c', parents=[], distribution=Categorical, size=3)
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
         module = nn.Linear(2, 3)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -199,12 +199,12 @@ class TestParametricCPDBuildCPT:
 
     def test_build_cpt_input_mismatch_raises_error(self):
         """Test build_cpt raises error when input dimensions mismatch."""
-        parent = Variable(concepts='p', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         # Module expects 5 features but parent only provides 1
         module = nn.Linear(5, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child
         cpd.parents = [parent]
 
@@ -217,9 +217,9 @@ class TestParametricCPDBuildPotential:
 
     def test_build_potential_bernoulli_no_parents(self):
         """Test build_potential for Bernoulli variable with no parents."""
-        var = Variable(concepts='c', parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='c', distribution=Bernoulli, size=1)
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -234,11 +234,11 @@ class TestParametricCPDBuildPotential:
 
     def test_build_potential_bernoulli_with_parent(self):
         """Test build_potential for Bernoulli with Bernoulli parent."""
-        parent = Variable(concepts='p', parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
+        child = Variable(concepts='c', distribution=Bernoulli, size=1)
 
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = child
         cpd.parents = [parent]
 
@@ -254,9 +254,9 @@ class TestParametricCPDBuildPotential:
 
     def test_build_potential_categorical(self):
         """Test build_potential for Categorical variable."""
-        var = Variable(concepts='c', parents=[], distribution=Categorical, size=3)
+        var = Variable(concepts='c', distribution=OneHotCategorical, size=3)
         module = nn.Linear(2, 3)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -270,9 +270,9 @@ class TestParametricCPDBuildPotential:
 
     def test_build_potential_delta(self):
         """Test build_potential for Delta variable."""
-        var = Variable(concepts='c', parents=[], distribution=Delta, size=2)
+        var = Variable(concepts='c', distribution=Delta, size=2)
         module = nn.Linear(3, 2)
-        cpd = ParametricCPD(concepts='c', parametrization=module)
+        cpd = ParametricCPD(concepts='c', parametrization=module, parents=['p'])
         cpd.variable = var
         cpd.parents = []
 
@@ -302,7 +302,7 @@ class TestParametricCPD(unittest.TestCase):
         """Test creating a cpd with single concept."""
         module = nn.Linear(10, 1)
         cpd = ParametricCPD(concepts='concept_a', parametrization=module)
-        self.assertEqual(cpd.concepts, ['concept_a'])
+        self.assertEqual(cpd.concept, 'concept_a')
         self.assertIsNotNone(cpd.modules)
 
     def test_multiple_concepts_single_module(self):
@@ -310,9 +310,9 @@ class TestParametricCPD(unittest.TestCase):
         module = nn.Linear(10, 1)
         cpds = ParametricCPD(concepts=['A', 'B', 'C'], parametrization=module)
         self.assertEqual(len(cpds), 3)
-        self.assertEqual(cpds[0].concepts, ['A'])
-        self.assertEqual(cpds[1].concepts, ['B'])
-        self.assertEqual(cpds[2].concepts, ['C'])
+        self.assertEqual(cpds[0].concept, 'A')
+        self.assertEqual(cpds[1].concept, 'B')
+        self.assertEqual(cpds[2].concept, 'C')
 
     def test_multiple_concepts_multiple_modules(self):
         """Test multiple concepts with different modules."""
@@ -343,7 +343,7 @@ class TestParametricCPD(unittest.TestCase):
         module = nn.Linear(10, 1)
         cpd = ParametricCPD(concepts='concept', parametrization=module)
 
-        var = Variable(concepts=['concept'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='concept', distribution=Bernoulli, size=1)
         cpd.variable = var
 
         self.assertEqual(cpd.variable, var)
@@ -351,10 +351,8 @@ class TestParametricCPD(unittest.TestCase):
     def test_cpd_with_parents(self):
         """Test cpd with parent variables."""
         module = nn.Linear(10, 1)
-        cpd = ParametricCPD(concepts='child', parametrization=module)
-
-        parent_var = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        cpd.parents = [parent_var]
+        parent_var = Variable(concepts='parent', distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
 
         self.assertEqual(len(cpd.parents), 1)
 
@@ -370,7 +368,7 @@ class TestParametricCPD(unittest.TestCase):
         """Test _get_parent_combinations with no parents."""
         module = nn.Linear(10, 1)
         cpd = ParametricCPD(concepts='concept', parametrization=module)
-        var = Variable(concepts=['concept'], parents=[], distribution=Bernoulli, size=1)
+        var = Variable(concepts='concept', distribution=Bernoulli, size=1)
         cpd.variable = var
         cpd.parents = []
 
@@ -380,10 +378,10 @@ class TestParametricCPD(unittest.TestCase):
 
     def test_get_parent_combinations_bernoulli_parent(self):
         """Test _get_parent_combinations with Bernoulli parent."""
-        parent_var = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
+        parent_var = Variable(concepts='parent', distribution=Bernoulli, size=1)
         module = nn.Linear(1, 1)
-        cpd = ParametricCPD(concepts='child', parametrization=module)
-        child_var = Variable(concepts=['child'], parents=[parent_var], distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
+        child_var = Variable(concepts='child', distribution=Bernoulli, size=1)
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -393,10 +391,10 @@ class TestParametricCPD(unittest.TestCase):
 
     def test_get_parent_combinations_categorical_parent(self):
         """Test _get_parent_combinations with Categorical parent."""
-        parent_var = Variable(concepts=['parent'], parents=[], distribution=Categorical, size=3)
+        parent_var = Variable(concepts='parent', distribution=OneHotCategorical, size=3)
         module = nn.Linear(3, 1)
-        cpd = ParametricCPD(concepts='child', parametrization=module)
-        child_var = Variable(concepts=['child'], parents=[parent_var], distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
+        child_var = Variable(concepts='child', distribution=Bernoulli, size=1)
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -406,10 +404,10 @@ class TestParametricCPD(unittest.TestCase):
 
     def test_get_parent_combinations_delta_parent(self):
         """Test _get_parent_combinations with Delta parent."""
-        parent_var = Variable(concepts=['parent'], parents=[], distribution=Delta, size=2)
+        parent_var = Variable(concepts='parent', distribution=Delta, size=2)
         module = nn.Linear(2, 1)
-        cpd = ParametricCPD(concepts='child', parametrization=module)
-        child_var = Variable(concepts=['child'], parents=[parent_var], distribution=Bernoulli, size=1)
+        cpd = ParametricCPD(concepts='child', parametrization=module, parents=[parent_var])
+        child_var = Variable(concepts='child', distribution=Bernoulli, size=1)
         cpd.variable = child_var
         cpd.parents = [parent_var]
 
@@ -423,6 +421,45 @@ class TestParametricCPD(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             cpd.build_cpt()
+
+
+class TestParametricCPDParentCap(unittest.TestCase):
+    """Test _get_parent_combinations caps exponential blowup."""
+
+    def test_too_many_binary_parents_raises(self):
+        """More than _MAX_DISCRETE_BITS binary parents should raise RuntimeError."""
+        parents = [ConceptVariable(f'p{i}', distribution=Bernoulli, size=1) for i in range(21)]
+
+        cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(21, 1), parents=[p.concept for p in parents])
+        cpd.parents = parents  # bypass string resolution
+
+        with self.assertRaises(RuntimeError, msg="discrete parent bits"):
+            cpd._get_parent_combinations()
+
+    def test_within_cap_succeeds(self):
+        """A small number of parents should not raise."""
+        parents = [ConceptVariable(f'p{i}', distribution=Bernoulli, size=1) for i in range(3)]
+
+        cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(3, 1), parents=[p.concept for p in parents])
+        cpd.parents = parents
+        inputs, states = cpd._get_parent_combinations()
+        self.assertEqual(inputs.shape[0], 8)  # 2^3 = 8
+
+
+class TestParametricCPDSharedGuard(unittest.TestCase):
+    """Test shared CPD guard in build_cpt / build_potential."""
+
+    def test_shared_cpd_build_cpt_raises(self):
+        """build_cpt should raise NotImplementedError for shared CPDs."""
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(5, 2), shared=True)
+        with self.assertRaises(NotImplementedError):
+            cpd.build_cpt()
+
+    def test_shared_cpd_build_potential_raises(self):
+        """build_potential should raise NotImplementedError for shared CPDs."""
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(5, 2), shared=True)
+        with self.assertRaises(NotImplementedError):
+            cpd.build_potential()
 
 
 if __name__ == '__main__':

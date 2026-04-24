@@ -23,6 +23,23 @@ If you plan to use the ``torch_concepts.data`` module, install with the data ext
 
 This will install all dependencies including those required for data loading and preprocessing.
 
+Installation with Full Support (Conda)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For full support including all dependencies for development, experiments, and testing, use the provided conda environment:
+
+.. code-block:: bash
+
+   git clone https://github.com/pyc-team/pytorch_concepts.git
+   cd pytorch_concepts
+   # install and activate conda environment (use environment_silicon.yaml for Apple Silicon chips)
+   conda env create -f conceptarium/environment.yaml
+   conda activate conceptarium
+   # install pyc in editable mode
+   pip install -e .
+
+This setup is recommended for contributors and users who want access to all functionalities.
+
 Usage
 ^^^^^
 

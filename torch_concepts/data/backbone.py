@@ -1,159 +1,382 @@
-"""Backbone utilities for feature extraction and embedding precomputation.
-
-Provides functions to extract and cache embeddings from pre-trained backbone
-models (e.g., ResNet, ViT) to speed up training of concept-based models.
 """
-import os
+Backbone utilities for feature extraction.
+
+This module provides the :class:`Backbone` class for extracting embeddings
+from pre-trained models. It supports both HuggingFace models (DINOv2, ViT, etc.)
+and torchvision models (ResNet, VGG, EfficientNet, DenseNet).
+
+The backbone can be used as a regular :class:`torch.nn.Module` and is designed
+to work seamlessly with the :class:`ConceptDataModule` for preprocessing
+image datasets into feature embeddings.
+
+Example
+-------
+>>> from torch_concepts.data.backbone import Backbone
+>>> backbone = Backbone('resnet50', device='cuda')
+>>> embeddings = backbone(batch_images)  # (B, 2048)
+
+Notes
+-----
+HuggingFace models are detected by presence of '/' in the name or by
+keywords like 'dinov2', 'vit-', 'beit', 'clip', 'swin', 'convnext'.
+"""
 import torch
+import torch.nn as nn
 import logging
-from torch import nn
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+import warnings
+from typing import Union, List, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-def _collate_inputs(batch):
-    """Collate only the input images, ignoring other fields."""
-    first = batch[0]
-    if isinstance(first, dict):
-        if 'inputs' in first and isinstance(first['inputs'], dict) and 'x' in first['inputs']:
-            xs = [b['inputs']['x'] for b in batch]
-        else:
-            raise KeyError("Batch items must contain 'inputs'['x'].")
-    else:
-        xs = batch
-    return torch.stack(xs, dim=0)
 
-def compute_backbone_embs(
-    dataset,
-    backbone: nn.Module,
-    batch_size: int = 512,
-    workers: int = 0,
-    device: str = None,
-    verbose: bool = True
-) -> torch.Tensor:
-    """Extract embeddings from a dataset using a backbone model.
-    
-    Performs a forward pass through the backbone for the entire dataset and
-    returns the concatenated embeddings. Useful for precomputing features
-    to avoid repeated backbone computation during training.
-    
-    Args:
-        dataset: Dataset with __getitem__ returning dict with 'x' key or 'inputs'.'x' nested key.
-        backbone (nn.Module): Feature extraction model (e.g., ResNet encoder).
-        batch_size (int, optional): Batch size for processing. Defaults to 512.
-        workers (int, optional): Number of DataLoader workers. Defaults to 0.
-        device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.). 
-            If None, auto-detects ('cuda' if available, else 'cpu'). Defaults to None.
-        verbose (bool, optional): Print detailed logging information. Defaults to True.
-        
-    Returns:
-        torch.Tensor: Stacked embeddings with shape (n_samples, embedding_dim).
-        
-    Example:
-        >>> from torchvision.models import resnet18
-        >>> backbone = nn.Sequential(*list(resnet18(pretrained=True).children())[:-1])
-        >>> embeddings = compute_backbone_embs(my_dataset, backbone, batch_size=64, device='cuda')
-        >>> embeddings.shape
-        torch.Size([10000, 512])
+def _resolve_device(device: Optional[str] = None) -> torch.device:
+    """Resolve device with auto-detection if None.
+
+    Auto-detection priority: CUDA > CPU. MPS is not supported due to
+    compatibility issues with torchvision transforms and HuggingFace models.
+
+    Parameters
+    ----------
+    device : str, optional
+        Device string ('cpu', 'cuda', 'cuda:0', etc.). If None, auto-detects.
+
+    Returns
+    -------
+    torch.device
+        Resolved device object.
+
+    Warnings
+    --------
+    If MPS is available but selected, a warning is raised and CPU is used instead.
     """
-    
-    # Set device with auto-detection if None
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = torch.device(device)
-    
-    # Store original training state to restore later
-    was_training = backbone.training
-    
-    # Move backbone to device and set to eval mode
-    backbone = backbone.to(device)
-    backbone.eval()
-    
-    # Create dataloader
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,  # Important: maintain order
-        num_workers=workers,
-        collate_fn=_collate_inputs,
-    )
-    
-    embeddings_list = []
-    
-    if verbose:
-        logger.info("Precomputing embeddings with backbone...")
-    with torch.no_grad():
-        iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
-        for batch in iterator:
-            x = batch.to(device) # batch already collated to only inputs
-            embeddings = backbone(x) # Forward pass through backbone
-            embeddings_list.append(embeddings.cpu()) # Move back to CPU and store
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            warnings.warn(
+                "MPS may not work with torchvision preprocessing transforms "
+                "and HuggingFace models. Falling back to CPU.",
+                stacklevel=2
+            )
+            device = 'cpu'
+        else:
+            device = 'cpu'
+    return torch.device(device)
 
-    all_embeddings = torch.cat(embeddings_list, dim=0) # Concatenate all embeddings
-    
-    # Restore original training state
-    if was_training:
-        backbone.train()
-    
-    return all_embeddings
 
-def get_backbone_embs(path: str,
-                    dataset,
-                    backbone,
-                    batch_size,
-                    force_recompute=False,
-                    workers=0,
-                    device=None,
-                    verbose=True):
-    """Get backbone embeddings with automatic caching.
-    
-    Loads embeddings from cache if available, otherwise computes and saves them.
-    This dramatically speeds up training by avoiding repeated (pretrained) backbone computation.
-    
-    Args:
-        path (str): File path for saving/loading embeddings (.pt file).
-        dataset: Dataset to extract embeddings from.
-        backbone: Backbone model for feature extraction.
-        batch_size: Batch size for computation.
-        force_recompute (bool, optional): Recompute even if cached. Defaults to False.
-        workers (int, optional): Number of DataLoader workers. Defaults to 0.
-        device (str, optional): Device to use ('cpu', 'cuda', 'cuda:0', etc.).
-            If None, auto-detects ('cuda' if available, else 'cpu'). Defaults to None.
-        verbose (bool, optional): Print detailed logging information. Defaults to True.
-        
-    Returns:
-        torch.Tensor: Cached or freshly computed embeddings.
-        
-    Example:
-        >>> embeddings = get_backbone_embs(
-        ...     path='cache/mnist_resnet18.pt',
-        ...     dataset=train_dataset,
-        ...     backbone=my_backbone,
-        ...     batch_size=256,
-        ...     device='cuda'
-        ... )
-        Loading precomputed embeddings from cache/mnist_resnet18.pt
+def _is_huggingface_model(name: str) -> bool:
+    """Check if backbone string refers to a HuggingFace model.
+
+    Detection is based on:
+    1. Presence of '/' in the name (e.g., 'facebook/dinov2-base')
+    2. Presence of known HuggingFace keywords (dinov2, vit-, beit, etc.)
+
+    Parameters
+    ----------
+    name : str
+        Model name to check.
+
+    Returns
+    -------
+    bool
+        True if the name refers to a HuggingFace model.
     """
-    # if the path of the embeddings are not precomputed and stored, then compute them and store them
-    if not os.path.exists(path) or force_recompute:
-        # compute
-        embs = compute_backbone_embs(dataset,
-                                    backbone,
-                                    batch_size=batch_size,
-                                    workers=workers,
-                                    device=device,
-                                    verbose=verbose)
-        # save
-        if verbose:
-            logger.info(f"Saving embeddings to {path}")
-        # Create parent directories if they don't exist
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(embs, path)
-        if verbose:
-            logger.info(f"✓ Saved embeddings with shape: {embs.shape}")
+    hf_keywords = ['dinov2', 'dino-', 'vit-', 'beit', 'clip', 'swin', 'convnext']
+    name_lower = name.lower()
+    if '/' in name:
+        return True
+    return any(kw in name_lower for kw in hf_keywords)
 
-    if verbose:
-        logger.info(f"Loading precomputed embeddings from {path}")
-    embs = torch.load(path)
-    return embs
+
+def _load_huggingface_model(
+    name: str, 
+    device: torch.device
+) -> Tuple[nn.Module, object]:
+    """Load a HuggingFace model and processor.
+
+    Parameters
+    ----------
+    name : str
+        HuggingFace model identifier (e.g., 'facebook/dinov2-base').
+    device : torch.device
+        Device to load the model onto.
+
+    Returns
+    -------
+    tuple
+        (model, processor) where model is the HuggingFace model in eval mode
+        and processor is the AutoImageProcessor for preprocessing.
+    """
+    from transformers import AutoImageProcessor, AutoModel
+    processor = AutoImageProcessor.from_pretrained(name)
+    model = AutoModel.from_pretrained(name).to(device).eval()
+    return model, processor
+
+
+def _load_torchvision_model(
+    name: str, 
+    device: torch.device
+) -> Tuple[nn.Module, object]:
+    """Load a torchvision model and its preprocessing transforms.
+
+    Supported model families:
+    - ResNet (resnet18, resnet34, resnet50, resnet101, resnet152)
+    - VGG (vgg11, vgg13, vgg16, vgg19)
+    - EfficientNet (efficientnet_b0 through efficientnet_b7)
+    - DenseNet (densenet121, densenet161, densenet169, densenet201)
+
+    Parameters
+    ----------
+    name : str
+        Torchvision model name (e.g., 'resnet50', 'vgg16').
+    device : torch.device
+        Device to load the model onto.
+
+    Returns
+    -------
+    tuple
+        (model, preprocess) where model is a feature extractor (without
+        classification head) and preprocess is the transforms pipeline.
+
+    Raises
+    ------
+    ValueError
+        If the model name is not supported.
+    """
+    from torchvision.models import get_model, get_model_weights
+
+    weights = get_model_weights(name).DEFAULT
+    full_model = get_model(name, weights=weights)
+
+    name_lower = name.lower()
+    if 'resnet' in name_lower:
+        model = nn.Sequential(*list(full_model.children())[:-1], nn.Flatten())
+    elif 'vgg' in name_lower:
+        model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
+    elif 'efficientnet' in name_lower:
+        model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
+    elif 'densenet' in name_lower:
+        model = nn.Sequential(full_model.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+    else:
+        raise ValueError(f"Unsupported torchvision backbone: {name}")
+
+    model = model.to(device).eval()
+    preprocess = weights.transforms()
+    return model, preprocess
+
+
+class Backbone(nn.Module):
+    """Wrapper class for backbone models used for feature extraction.
+
+    Supports both HuggingFace models (DINOv2, ViT, CLIP, etc.) and torchvision
+    models (ResNet, VGG, EfficientNet, DenseNet). The backbone extracts
+    embeddings from images and can be used as a regular :class:`torch.nn.Module`.
+
+    The class automatically handles:
+    - Model loading and initialization in eval mode
+    - Preprocessing transforms appropriate for each model
+    - Device management (auto-detection of CUDA/CPU)
+    - Image format conversion (PIL to tensor for torchvision)
+
+    Parameters
+    ----------
+    name : str
+        Model name for feature extraction. Can be:
+
+        - **HuggingFace model**: 'facebook/dinov2-base', 'google/vit-base-patch16-224'
+        - **torchvision model**: 'resnet18', 'resnet50', 'vgg16', 'efficientnet_b0'
+
+    device : str, optional
+        Device to use ('cpu', 'cuda', 'cuda:0', etc.).
+        If None, auto-detects available hardware (CUDA > CPU).
+        Default is None.
+
+    Attributes
+    ----------
+    name : str
+        The model name used for initialization.
+    device : torch.device
+        The device the model is loaded on.
+    processor : object
+        The preprocessing transform/processor (varies by model type).
+    is_huggingface : bool
+        Whether this is a HuggingFace model.
+    filename : str
+        Safe filename for caching embeddings (e.g., 'bkb_embs_resnet50.pt').
+
+    Examples
+    --------
+    Using with torchvision model:
+
+    >>> from torch_concepts.data.backbone import Backbone
+    >>> import torch
+    >>> backbone = Backbone('resnet50', device='cpu')
+    >>> images = torch.randn(4, 3, 224, 224)  # batch of 4 images
+    >>> embeddings = backbone(images)
+    >>> embeddings.shape
+    torch.Size([4, 2048])
+
+    Using with HuggingFace model:
+
+    >>> backbone = Backbone('facebook/dinov2-base', device='cuda')
+    >>> from PIL import Image
+    >>> images = [Image.new('RGB', (224, 224)) for _ in range(4)]
+    >>> embeddings = backbone(images)
+    >>> embeddings.shape
+    torch.Size([4, 768])
+
+    See Also
+    --------
+    ConceptDataModule : DataModule that integrates with Backbone for preprocessing.
+    _is_huggingface_model : Helper function for model type detection.
+    """
+
+    def __init__(self, name: str, device: Optional[str] = None):
+        super().__init__()
+        self.name = name
+        self._device = _resolve_device(device)
+        self._is_huggingface = _is_huggingface_model(name)
+        self._model = None
+        self._processor = None
+        self._out_features = None
+        self._load_model()
+
+    def _load_model(self) -> None:
+        """Load the backbone model and processor based on model type.
+
+        For HuggingFace models, loads via transformers library.
+        For torchvision models, loads pretrained weights and removes
+        classification head to create a feature extractor.
+
+        Also computes the output feature dimension via a dummy forward pass.
+        """
+        if self._is_huggingface:
+            self._model, self._processor = _load_huggingface_model(self.name, self._device)
+            # Get output size from model config
+            self._out_features = self._model.config.hidden_size
+        else:
+            self._model, self._processor = _load_torchvision_model(self.name, self._device)
+            # Cache ToTensor transform for PIL image conversion
+            from torchvision import transforms
+            self._to_tensor = transforms.ToTensor()
+            # Compute output size with dummy forward pass
+            with torch.no_grad():
+                dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
+                dummy_output = self._model(dummy_input)
+                self._out_features = dummy_output.shape[-1]
+
+    @property
+    def device(self) -> torch.device:
+        """The device this backbone is on.
+
+        Returns
+        -------
+        torch.device
+            The device (e.g., cpu, cuda:0).
+        """
+        return self._device
+
+    @property
+    def out_features(self) -> int:
+        """The output embedding dimension of the backbone.
+
+        Returns
+        -------
+        int
+            The size of the output embedding (e.g., 2048 for ResNet50,
+            768 for DINOv2-base).
+        """
+        return self._out_features
+
+    @property
+    def processor(self):
+        """The preprocessing transform/processor for this backbone.
+
+        For HuggingFace models, this is an AutoImageProcessor.
+        For torchvision models, this is a transforms.Compose pipeline.
+
+        Returns
+        -------
+        object
+            The preprocessor appropriate for the model type.
+        """
+        return self._processor
+
+    @property
+    def is_huggingface(self) -> bool:
+        """Whether this is a HuggingFace model.
+
+        Returns
+        -------
+        bool
+            True if the backbone is a HuggingFace model.
+        """
+        return self._is_huggingface
+
+    @property
+    def filename(self) -> str:
+        """Generate a safe filename for caching embeddings.
+
+        Replaces '/' with '-' to ensure filesystem compatibility.
+
+        Returns
+        -------
+        str
+            Filename like 'bkb_embs_resnet50.pt' or 'bkb_embs_facebook-dinov2-base.pt'.
+        """
+        return f"bkb_embs_{self.name.replace('/', '-')}.pt"
+
+    def forward(self, x: Union[torch.Tensor, List]) -> torch.Tensor:
+        """Forward pass through the backbone to extract embeddings.
+
+        Parameters
+        ----------
+        x : torch.Tensor or list
+            Input data. Format depends on model type:
+
+            - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
+            - **HuggingFace**: List of PIL Images or preprocessed tensors
+
+        Returns
+        -------
+        torch.Tensor
+            Embeddings of shape (B, embedding_dim) or (embedding_dim,) for single images,
+            where embedding_dim depends on the model (e.g., 2048 for ResNet50, 768 for DINOv2-base).
+
+        Notes
+        -----
+        For HuggingFace models, the CLS token embedding is returned.
+        For torchvision models, the output of the average pooling layer is used.
+        Single images (3D tensors) are automatically batched and the result is squeezed.
+        """
+        if self._is_huggingface:
+            inputs = self._processor(images=x, return_tensors="pt")
+            inputs = {k: v.to(self._device) for k, v in inputs.items()}
+            outputs = self._model(**inputs)
+            return outputs.last_hidden_state[:, 0, :]  # CLS token
+        else:
+            if isinstance(x, list):
+                x = torch.stack([self._to_tensor(img) for img in x])
+            x = x.to(self._device)
+            # Handle single image (3D tensor) by adding batch dimension
+            squeeze_output = False
+            if x.dim() == 3:
+                x = x.unsqueeze(0)
+                squeeze_output = True
+            x = self._processor(x)
+            out = self._model(x)
+            if squeeze_output:
+                out = out.squeeze(0)
+            return out
+
+    def __repr__(self) -> str:
+        """Return string representation of the Backbone.
+
+        Returns
+        -------
+        str
+            Formatted string with model name, type, and device.
+        """
+        model_type = "HuggingFace" if self._is_huggingface else "torchvision"
+        return f"Backbone(name='{self.name}', type={model_type}, device={self._device})"
+

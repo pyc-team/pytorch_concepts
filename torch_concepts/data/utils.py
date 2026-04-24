@@ -68,7 +68,7 @@ def files_exist(files: Sequence[str]) -> bool:
     files = ensure_list(files)
     return all([os.path.exists(f) for f in files])
 
-def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
+def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor, list],
                 name: str,
                 precision: Union[int, str]) -> Tensor:
     """
@@ -77,7 +77,7 @@ def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
     Supports conversion from numpy arrays, pandas DataFrames, or existing tensors.
 
     Args:
-        data: Input data as numpy array, DataFrame, or Tensor.
+        data: Input data as numpy array, DataFrame, Tensor, list.
         name: Name of the data (for error messages).
         precision: Desired numerical precision (16, 32, or 64).
 
@@ -85,16 +85,23 @@ def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
         Tensor: Converted tensor with specified precision.
 
     Raises:
-        AssertionError: If data is not in a supported format.
+        TypeError: If data is not in a supported format.
     """
     if isinstance(data, np.ndarray):
         data = torch.from_numpy(data)
+        return convert_precision(data, precision)
     elif isinstance(data, pd.DataFrame):
         data = torch.tensor(data.values)
+        return convert_precision(data, precision)
+    elif isinstance(data, Tensor):
+        return convert_precision(data, precision)
+    elif isinstance(data, list):
+        data = data
+        return data
     else:
-        assert isinstance(data, Tensor), f"{name} must be np.ndarray, \
-            pd.DataFrame, or torch.Tensor"
-    return convert_precision(data, precision)
+        raise TypeError(f"{name} must be np.ndarray, \
+            pd.DataFrame, torch.Tensor or a list of filenames, got {type(data)}.")
+    
 
 def convert_precision(tensor: Tensor,
                        precision: Union[int, str]) -> Tensor:

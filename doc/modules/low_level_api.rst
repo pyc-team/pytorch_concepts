@@ -35,9 +35,9 @@ Overview of Data Representations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 In |pyc_logo| PyC, we distinguish between three types of data representations:
 
-- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
-- **Exogenous**: Representations that are direct causes of endogenous variables
-- **Endogenous**: Representations of observable quantities of interest
+- **Latent/Input**: High-dimensional representations where exogenous and concept information is entangled
+- **Exogenous**: Representations that are direct causes of concept variables
+- **Concepts**: Representations of observable quantities of interest
 
 
 Layer Types
@@ -45,8 +45,8 @@ Layer Types
 
 In |pyc_logo| PyC you will find three types of layers whose interfaces reflect the distinction between data representations:
 
-- ``Encoder`` layers: Never take as input endogenous variables
-- ``Predictor`` layers: Must take as input a set of endogenous variables
+- ``Encoder`` layers: Never take as input concept variables
+- ``Predictor`` layers: Must take as input a set of concept variables
 - Special layers: Perform operations like memory selection or graph learning
 
 
@@ -56,37 +56,32 @@ Layer Naming Standard
 In order to easily identify the type of layer, |pyc_logo| PyC uses a consistent standard to assign names to layers.
 Each layer name follows the format:
 
-``<LayerType><InputType><OutputType>``
+``<LayerType><InputType>To<OutputType>``
 
 where:
 
 - ``LayerType``: describes the type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
-- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. |pyc_logo| PyC uses the following abbreviations:
+- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output.
 
-  - ``Z``: Input
-  - ``U``: Exogenous
-  - ``C``: Endogenous
-
-
-For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
-``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
-as input any endogenous variables, it is an encoder layer.
+For instance, a layer named ``LinearLatentToConcept`` is a linear layer that takes as input a
+``Latent`` representation and produces a ``Concepts`` representation. Since it does not take
+as input any concept variables, it is an encoder layer.
 
 .. code-block:: python
 
- pyc.nn.LinearZC(in_features=10, out_features=3)
+ pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=3)
 
-As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
-takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
-``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
+As another example, a layer named ``HyperlinearConceptExogenousToConcept`` is a hyper-network layer that
+takes as input both ``Concepts`` and ``Exogenous`` representations and produces a
+``Concepts`` representation. Since it takes as input concept variables, it is a predictor layer.
 
 .. code-block:: python
 
- pyc.nn.HyperLinearCUC(
-    in_features_endogenous=10,
-    in_features_exogenous=7,
+ pyc.nn.HyperlinearConceptExogenousToConcept(
+    in_concepts=10,
+    in_exogenous=7,
     embedding_size=24,
-    out_features=3
+    out_concepts=3
  )
 
 As a final example, graph learners are a special layers that learn relationships between concepts.
@@ -109,8 +104,8 @@ A model is built as in standard PyTorch (e.g., ModuleDict or Sequential) and may
 .. code-block:: python
 
    concept_bottleneck_model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearZC(in_features=10, out_features=3),
-       'predictor': pyc.nn.LinearCC(in_features_endogenous=3, out_features=2),
+       'encoder': pyc.nn.LinearLatentToConcept(in_latent=10, out_concepts=3),
+       'predictor': pyc.nn.LinearConceptToConcept(in_concepts=3, out_concepts=2),
    })
 
 Inference
@@ -122,12 +117,12 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     endogenous_concepts = concept_bottleneck_model['encoder'](input=x)
-     endogenous_tasks = concept_bottleneck_model['predictor'](endogenous=endogenous_concepts)
+     concepts = concept_bottleneck_model['encoder'](latent=x)
+     task_logits = concept_bottleneck_model['predictor'](concepts=concepts)
 
 - **Interventions**: interventions are context managers that temporarily modify a layer.
 
-  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept endogenous to a constant value:
+  **Intervention strategies**: define how the intervened layer behaves within an intervention context e.g., we can fix the concept values to a constant:
 
   .. code-block:: python
 
@@ -140,7 +135,7 @@ At this API level, there are two types of inference that can be performed:
 
   .. code-block:: python
 
-     int_policy = pyc.nn.UniformPolicy(out_features=3)
+     int_policy = pyc.nn.UniformPolicy(out_concepts=3)
 
   When a forward pass is performed within an intervention context, the intervened layer behaves differently with a cascading effect on all subsequent layers:
 
@@ -151,8 +146,8 @@ At this API level, there are two types of inference that can be performed:
         strategies=int_strategy,
         target_concepts=[0, 2]
      ) as new_encoder_layer:
-         endogenous_concepts = new_encoder_layer(input=x)
-         endogenous_tasks = concept_bottleneck_model['predictor'](
-            endogenous=endogenous_concepts
+         concepts = new_encoder_layer(latent=x)
+         task_logits = concept_bottleneck_model['predictor'](
+            concepts=concepts
          )
 

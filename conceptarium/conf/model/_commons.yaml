@@ -1,6 +1,7 @@
 defaults:
   - _self_
 
+lightning: true
 
 # =============================================================
 # Encoder (features -> latent space) settings
@@ -10,7 +11,7 @@ latent_encoder_kwargs:
   hidden_size: 64
   n_layers: 1
   activation: leaky_relu
-  dropout: 0.5
+  dropout: 0.
 
 
 # =============================================================
@@ -18,11 +19,25 @@ latent_encoder_kwargs:
 # =============================================================
 variable_distributions:
   _target_: "torch_concepts.GroupConfig"
-  binary: "torch.distributions.RelaxedBernoulli"
-  categorical: "torch.distributions.RelaxedOneHotCategorical"
-  # TODO: handle kwargs
+  binary:   
+    - _target_: "hydra.utils.get_class"
+      path: "torch.distributions.RelaxedBernoulli"
+    - temperature: 1.
+  categorical: 
+    - _target_: "hydra.utils.get_class"
+      path: "torch.distributions.RelaxedOneHotCategorical"
+    - temperature: 1.
+  # TODO
   # continuous: 
     # ... not supported yet
+
+
+# =============================================================
+# Concept activation configs
+# =============================================================
+# variable_activations are intentionally omitted so that defaults
+# from _DEFAULT_ACTIVATIONS are used (sigmoid for binary,
+# partial(softmax, dim=-1) for categorical).
 
 
 # =============================================================
@@ -38,11 +53,14 @@ optim_kwargs:
 # =============================================================
 # Scheduler settings
 # =============================================================
-# scheduler_class: 
-#   _target_: "hydra.utils.get_class"
-#   path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
-# scheduler_kwargs:
-#   factor: 0.2
+scheduler_class: 
+  _target_: "hydra.utils.get_class"
+  path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
+scheduler_kwargs:
+  factor: 0.5
+  min_lr: 0.001
+  patience: 10
+  monitor: "val_loss"
 
 
 # TODO: implement this

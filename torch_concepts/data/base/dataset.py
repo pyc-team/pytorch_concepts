@@ -77,6 +77,8 @@ class ConceptDataset(Dataset):
         # Set info
         self.name = name if name is not None else self.__class__.__name__
         self.precision = precision
+        self.embs_precomputed = False  # whether input_data 
+                                       # contains precomputed embeddings
 
         if concepts is None:
             raise ValueError("Concepts must be provided for ConceptDataset.")
@@ -110,27 +112,19 @@ class ConceptDataset(Dataset):
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
             
-            
-        # sanity check on unsupported concept types     
-        if axis_annotation.metadata is not None:
-            for name, meta in axis_annotation.metadata.items():
-                # raise error if type metadata contain 'continuous': this is not supported yet
-                # TODO: implement continuous concept types
-                if meta['type'] == 'continuous':
-                    raise NotImplementedError("Continuous concept types are not supported yet.")
-
+        # NOTE: both 'discrete' and 'continuous' concept types are supported.
 
         # set concept annotations
         # this defines self.annotations property
         self._annotations = annotations
         # maybe reduce annotations based on subset of concept names
-        self.maybe_reduce_annotations(annotations,
-                                      concept_names_subset)
+        self._maybe_reduce_annotations(annotations,
+                                       concept_names_subset)
 
         # Store concept data C
         self.concepts = None
         if concepts is not None:
-            self.set_concepts(concepts) # Annotat
+            self.set_concepts(concepts)
 
         # Store graph
         self._graph = None
@@ -334,10 +328,12 @@ class ConceptDataset(Dataset):
 
     # Setters ##############################################################
 
-    def maybe_reduce_annotations(self,
+    def _maybe_reduce_annotations(self,
                                 annotations: Annotations,
                                 concept_names_subset: Optional[List[str]] = None):
-        """Set concept and labels for the dataset.
+        """If ``concept_names_subset`` is provided, the annotations are reduced
+        to include only the specified concepts. 
+
         Args:
             annotations: Annotations object for all concepts.
             concept_names_subset: List of strings naming the subset of concepts to use. 
@@ -384,6 +380,9 @@ class ConceptDataset(Dataset):
         """Set the adjacency matrix of the causal graph between concepts 
         as a pandas DataFrame.
         
+        If a concept subset was selected via ``concept_names_subset``,
+        the graph is automatically subsetted to match the current concepts.
+
         Args:
             graph: A pandas DataFrame representing the adjacency matrix of the 
                    causal graph. Rows and columns should be named after the 
@@ -391,10 +390,10 @@ class ConceptDataset(Dataset):
         """
         if not isinstance(graph, pd.DataFrame):
             raise TypeError(f"Graph must be a pandas DataFrame, got {type(graph).__name__}.")
-        # eventually extract subset
-        graph = graph.loc[self.concept_names, self.concept_names]
+        # Subset graph to match current concept_names
+        subgraph = graph.loc[self.concept_names, self.concept_names]
         self._graph = ConceptGraph(
-            data=parse_tensor(graph, 'graph', self.precision),
+            data=parse_tensor(subgraph, 'graph', self.precision),
             node_names=self.concept_names
         )
         

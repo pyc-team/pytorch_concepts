@@ -85,8 +85,11 @@ data/
 !tests/data/
 
 # conceptarium logs
+runs.csv
+conceptarium/results/
 outputs/
 
-CUB200/
-
-.DS_Store
+# analysis
+conceptarium/visualize.py
+conceptarium/run_analysis.py
+conceptarium/conf/benchmark.yaml

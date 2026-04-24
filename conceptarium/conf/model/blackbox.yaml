@@ -3,5 +3,3 @@ defaults:
   - _self_
   
 _target_: "torch_concepts.nn.BlackBox"
-
-inference: null

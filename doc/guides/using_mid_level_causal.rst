@@ -24,7 +24,7 @@ Structural Equation Models
 
 |pyc_logo| PyC can be used to design Structural Equation Models (SEMs), where:
 
-- ``ExogenousVariable`` and ``EndogenousVariable`` objects represent random variables in the SEM. Variables are defined by their name, parents, and distribution type. For example, in this guide we define variables as:
+- ``ExogenousVariable`` and (endogenous) ``ConceptVariable`` objects represent random variables in the SEM. Variables are defined by their name, parents, and distribution type. For example, in this guide we define variables as:
 
   .. code-block:: python
 
@@ -33,7 +33,7 @@ Structural Equation Models
          parents=[],
          distribution=RelaxedBernoulli
      )
-     genotype_var = EndogenousVariable(
+     genotype_var = ConceptVariable(
          "genotype",
          parents=["exogenous"],
          distribution=RelaxedBernoulli
@@ -78,7 +78,7 @@ For example, to set ``smoking`` to 0 (prevent smoking) and query the effect on d
    )
 
    with intervention(
-       policies=UniformPolicy(out_features=1),
+       policies=UniformPolicy(out_concepts=1),
        strategies=smoking_strategy_0,
        target_concepts=["smoking"]
    ):
@@ -108,10 +108,10 @@ Detailed Guides
        import torch
        from torch.distributions import RelaxedBernoulli
        import torch_concepts as pyc
-       from torch_concepts import EndogenousVariable, ExogenousVariable
+       from torch_concepts import ConceptVariable, ExogenousVariable
        from torch_concepts.nn import ParametricCPD, ProbabilisticModel
        from torch_concepts.nn import AncestralSamplingInference
-       from torch_concepts.nn import CallableCC, UniformPolicy, DoIntervention, intervention
+       from torch_concepts.nn import CallableConceptToConcept, UniformPolicy, DoIntervention, intervention
        from torch_concepts.nn.functional import cace_score
 
     **Create Sample Data**
@@ -125,7 +125,7 @@ Detailed Guides
 
     **Define Variables and Causal Structure**
 
-    In Structural Equation Models, we distinguish between exogenous (external) and endogenous (internal) variables.
+    In Structural Equation Models, we distinguish between exogenous (external) and concept (internal) variables.
     Each variable is defined by its name, parents, and distribution type.
     By specifying parents, we define the causal graph structure.
 
@@ -138,26 +138,26 @@ Detailed Guides
            distribution=RelaxedBernoulli
        )
 
-       # Define endogenous variables (causal chain)
-       genotype_var = EndogenousVariable(
+       # Define concept variables (causal chain)
+       genotype_var = ConceptVariable(
            "genotype",
            parents=["exogenous"],
            distribution=RelaxedBernoulli
        )
 
-       smoking_var = EndogenousVariable(
+       smoking_var = ConceptVariable(
            "smoking",
            parents=["genotype"],
            distribution=RelaxedBernoulli
        )
 
-       tar_var = EndogenousVariable(
+       tar_var = ConceptVariable(
            "tar",
            parents=["genotype", "smoking"],
            distribution=RelaxedBernoulli
        )
 
-       cancer_var = EndogenousVariable(
+       cancer_var = ConceptVariable(
            "cancer",
            parents=["tar"],
            distribution=RelaxedBernoulli
@@ -167,7 +167,7 @@ Detailed Guides
 
     ParametricCPDs define the structural equations (causal mechanisms) between variables.
     We can use |pyc_logo| PyC or |pytorch_logo| PyTorch modules to parameterize these CPDs.
-    More specifically, |pyc_logo| PyC provides ``CallableCC`` to define structural equations using arbitrary callables.
+    More specifically, |pyc_logo| PyC provides ``CallableConceptToConcept`` to define structural equations using arbitrary callables.
 
     .. code-block:: python
 
@@ -189,7 +189,7 @@ Detailed Guides
        # CPD for smoking (depends on genotype)
        smoking_cpd = ParametricCPD(
            ["smoking"],
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: (x > 0.5).float(),
                use_bias=False
            )
@@ -198,7 +198,7 @@ Detailed Guides
        # CPD for tar (depends on genotype and smoking)
        tar_cpd = ParametricCPD(
            "tar",
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: torch.logical_or(x[:, 0] > 0.5, x[:, 1] > 0.5).float().unsqueeze(-1),
                use_bias=False
            )
@@ -207,7 +207,7 @@ Detailed Guides
        # CPD for cancer (depends on tar)
        cancer_cpd = ParametricCPD(
            "cancer",
-           parametrization=CallableCC(
+           parametrization=CallableConceptToConcept(
                lambda x: x,
                use_bias=False
            )
@@ -230,18 +230,17 @@ Detailed Guides
     :icon: telescope
 
     Once the SEM is defined, we can perform observational inference to obtain predictions
-    for all endogenous variables given exogenous evidence:
+    for all concept variables given exogenous evidence:
 
     .. code-block:: python
 
        # Create inference engine
        inference_engine = AncestralSamplingInference(
            sem_model,
-           temperature=1.0,
            log_probs=False
        )
 
-       # Query all endogenous variables
+       # Query all concept variables
        query_concepts = ["genotype", "smoking", "tar", "cancer"]
        results = inference_engine.query(query_concepts, evidence=initial_input)
 
@@ -271,7 +270,7 @@ Detailed Guides
        )
 
        with intervention(
-           policies=UniformPolicy(out_features=1),
+           policies=UniformPolicy(out_concepts=1),
            strategies=smoking_strategy_0,
            target_concepts=["smoking"]
        ):
@@ -288,7 +287,7 @@ Detailed Guides
        )
 
        with intervention(
-           policies=UniformPolicy(out_features=1),
+           policies=UniformPolicy(out_concepts=1),
            strategies=smoking_strategy_1,
            target_concepts=["smoking"]
        ):

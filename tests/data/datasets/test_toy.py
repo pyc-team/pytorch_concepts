@@ -306,17 +306,18 @@ class TestCompletenessDataset:
             seed=42,
             n_gen=n_gen,
             n_concepts=n_concepts,
-            n_hidden_concepts=0
+            n_hidden_concepts=0,
+            n_tasks=1
         )
 
         assert len(dataset) == n_gen
         assert dataset.n_concepts == n_concepts + 1  # includes task
         assert len(dataset.concept_names) == n_concepts + 1
 
-        # Check concept names format - should be C0, C1, ..., y0
+        # Check concept names format - should be C0, C1, ..., y
         for i in range(n_concepts):
             assert f'C{i}' in dataset.concept_names
-        assert 'y0' in dataset.concept_names
+        assert 'y' in dataset.concept_names
 
     def test_completeness_dataset_with_hidden_concepts(self, temp_dir):
         """Test completeness dataset with hidden concepts."""

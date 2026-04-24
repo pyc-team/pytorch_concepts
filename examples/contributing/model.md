@@ -4,189 +4,240 @@ This guide will help you implement a new model in <img src="../../doc/_static/im
 
 ## Prerequisites
 
-- Understanding of the model architecture (encoder, concept layers, predictor)
-- Knowledge of concept dependencies
-- Familiarity with inference strategy (deterministic, sampling, etc.)
+- Knowledge of how concepts, exogenous and latent variables are related in the model PGM
+- Knowledge of what are the layers (i.e., the ParametricCPDs ) connecting such variables 
+- Familiarity with inference strategy supported by the model(deterministic, sampling, etc.)
 
 ## Training Modes
 
-PyC models support two training paradigms:
+PyC models support two training paradigms controlled by the `lightning` parameter:
 
-### 1. Standard PyTorch Training (Manual)
-- Initialize model **without** loss parameter
-- Define optimizer, loss function, and training loop manually
-- Full control over forward pass and optimization
+### 1. Standard PyTorch Training (`lightning=False`, default)
+- Model works as a pure PyTorch `nn.Module`
+- Optimizer, loss function, and training loop must be defined manually and externally to the model definition
 - Example: `examples/utilization/2_model/5_torch_training.py`
 
-### 2. PyTorch Lightning Training (Automatic)
-- Initialize model **with** loss, optim_class, and optim_kwargs parameters
+### 2. PyTorch Lightning Training (`lightning=True`)
+- Initialize model **with** `lightning=True`, `loss`, `optim_class`, and `optim_kwargs` parameters
 - Use Lightning Trainer for automatic training/validation/testing
-- Inherits training logic from Learner classes (JointLearner, IndependentLearner)
+- Inherits training logic from `BaseLearner` mixin
 - Example: `examples/utilization/2_model/6_lightning_training.py`
 
 ## Implementation Overview
 
-All models extend `BaseModel` from `torch_concepts.nn.modules.high.base.model` and implement:
+All bipartite models (encoder → concepts → tasks) extend `BaseBipartiteModel` from `torch_concepts.nn.modules.high.base.bipartite`. The base class provides:
+- Automatic backbone and latent encoder handling
+- Inference engine switching (train/eval)
+- Forward pass implementation
+- Loss and metrics filtering
+
+**Your model only needs to implement `__init__`** to configure the specific architecture using `BipartiteModel`.
+
+### High-Level API Implementation
 
 ```python
-from typing import Any, Dict, List, Optional, Union, Mapping
-import torch
+from typing import List, Optional, Union
 from torch import nn
 
 from torch_concepts import Annotations
 from torch_concepts.nn import (
     BipartiteModel, 
-    LinearZC, 
-    LinearCC, 
     LazyConstructor,
-    BaseInference
+    DeterministicInference
 )
 
-from ..base.model import BaseModel
+# Import your encoder and predictor layer types
+from torch_concepts.nn.modules.low.encoders.linear import LinearLatentToConcept
+from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+
+from ..base.bipartite import BaseBipartiteModel
 
 
-class YourModel(BaseModel):
-    """High-level implementation of Your Model using BipartiteModel.
+class YourModel(BaseBipartiteModel):
+    """Your Model description.
     
-    [Brief description of your model and its key features]
+    A unified model class that works as a pure PyTorch module by default,
+    or as a Lightning module when lightning=True.
     
-    Args:
-        task_names: Names of task/target concepts to predict
-        inference: Inference module for forward pass and interventions
-        input_size: Dimension of input features
-        annotations: Concept annotations with metadata
-        variable_distributions: Mapping of distribution types to distribution classes
-        embs_precomputed: Whether embeddings are pre-computed
-        backbone: Optional backbone network
-        encoder_kwargs: Configuration for shared encoder MLP
+    Parameters
+    ----------
+    input_size : int
+        Dimensionality of input features (after backbone if used).
+    annotations : Annotations
+        Concept annotations with labels, cardinalities, and distributions.
+    task_names : Union[List[str], str]
+        Names of task variables (subset of annotation labels).
+    lightning : bool, default False
+        If True, adds Lightning training capabilities.
+        If False (default), works as pure PyTorch module.
+    inference : BaseInference, optional
+        Inference engine class for evaluation.
+    train_inference : BaseInference, optional
+        Inference engine class for training.
+    **kwargs
+        Additional arguments passed to BaseBipartiteModel.
+    
+    Examples
+    --------
+    >>> # Pure PyTorch module (default)
+    >>> model = YourModel(input_size=8, annotations=ann, task_names=['task'])
+    >>> out = model(query=['c1', 'task'], x=input_tensor)
+    
+    >>> # Lightning training enabled
+    >>> model = YourModel(
+    ...     lightning=True, input_size=8, annotations=ann, task_names=['task'],
+    ...     loss=my_loss, optim_class=torch.optim.Adam, optim_kwargs={'lr': 0.001}
+    ... )
     """
     
     def __init__(
         self,
-        task_names: Union[List[str], str, List[int]],
-        inference: BaseInference,
         input_size: int,
         annotations: Annotations,
-        variable_distributions: Mapping,
-        embs_precomputed: bool = False,
-        backbone: Optional[callable] = None,
-        encoder_kwargs: Dict = None,
+        task_names: Union[List[str], str],
+        inference = DeterministicInference,
+        train_inference = DeterministicInference,
+        lightning: bool = False,
         **kwargs
-    ) -> None:
-        # Initialize BaseModel (sets up encoder, backbone, annotations)
+    ):
+        # Step 1: Call parent __init__ with standard parameters
         super().__init__(
-            annotations=annotations,
-            variable_distributions=variable_distributions,
             input_size=input_size,
-            embs_precomputed=embs_precomputed,
-            backbone=backbone,
-            encoder_kwargs=encoder_kwargs,
-        )
-        
-        # Build the model using BipartiteModel
-        # This creates a two-layer architecture: embedding -> concepts -> tasks
-        model = BipartiteModel(
-            task_names=task_names,
-            input_size=self.encoder_out_features,
             annotations=annotations,
-            encoder=LazyConstructor(LinearZC),
-            predictor=LazyConstructor(LinearCC)
+            task_names=task_names,
+            lightning=lightning,
+            **kwargs  # Passes backbone, loss, metrics, optim_class, etc.
         )
-        self.pgm = model.pgm
         
-        # Initialize inference module
-        self.inference = inference(self.pgm)
-    
-    def forward(
-        self,
-        x: torch.Tensor,
-        query: List[str] = None,
-        backbone_kwargs: Optional[Mapping[str, Any]] = None,
-        **kwargs
-    ) -> torch.Tensor:
-        """Forward pass through the model.
-        
-        Args:
-            x: Input tensor (batch_size, input_size)
-            query: List of concept names to query
-            backbone_kwargs: Optional kwargs for backbone
-            
-        Returns:
-            Output endogenous for queried concepts (batch_size, sum(concept_cardinalities))
-        """
-        # (batch, input_size) -> (batch, backbone_out_features)
-        features = self.maybe_apply_backbone(x, backbone_kwargs)
-        
-        # (batch, backbone_out_features) -> (batch, encoder_out_features)
-        features = self.encoder(features)
-        
-        # Inference: (batch, encoder_out_features) -> (batch, sum(concept_cardinalities))
-        out = self.inference.query(query, evidence={'embedding': features})
-        return out
-    
-    def filter_output_for_loss(self, forward_out):
-        """Process model output for loss computation.
-        
-        Default: return output as-is. Override for custom processing.
-        """
-        return forward_out
-    
-    def filter_output_for_metrics(self, forward_out):
-        """Process model output for metric computation.
-        
-        Default: return output as-is. Override for custom processing.
-        """
-        return forward_out
+        # Step 2: Build the bipartite model architecture
+        # Use LazyConstructor to automatically instantiate layers for each concept
+        self.model = BipartiteModel(
+            task_names=task_names,
+            input_size=self.latent_size,  # Output size from latent encoder
+            annotations=annotations,
+            encoder=LazyConstructor(LinearLatentToConcept),      # latent → concepts
+            predictor=LazyConstructor(LinearConceptToConcept)    # concepts → tasks
+        )
+
+        # Step 3: Initialize inference engines
+        self.eval_inference = inference(self.model.probabilistic_model)
+        self.train_inference = train_inference(self.model.probabilistic_model)
 ```
+
+### Key Implementation Points
+
+1. **Only implement `__init__`**: The `forward`, `filter_output_for_loss`, and `filter_output_for_metrics` methods are inherited from `BaseBipartiteModel` and work for most cases.
+
+2. **Use `self.latent_size`**: After `super().__init__()`, this property gives you the output dimension of the latent encoder (to pass to `BipartiteModel`).
+
+3. **Use `LazyConstructor`**: This automatically instantiates your encoder/predictor layers for each concept with the correct input/output dimensions.
+
+4. **Set both inference engines**: Always set `self.eval_inference` and `self.train_inference`. They can be the same class or different (e.g., `DeterministicInference` for eval, `IndependentInference` for training).
+
+### When to Override `forward`
+
+The default `forward` in `BaseBipartiteModel` handles most cases:
+
+```python
+def forward(self, query, x=None, evidence=None, *args, **kwargs):
+    if x is not None:
+        features = self.maybe_apply_backbone(x)
+        latent = self.latent_encoder(features)
+        evidence['input'] = latent
+    return self.inference.query(query, evidence=evidence, *args, **kwargs)
+```
+
+**Override `forward` when:**
+
+| Scenario | Example |
+|----------|---------|
+| **Custom preprocessing** | Apply normalization, augmentation, or feature transformations before the latent encoder |
+| **Multiple inputs** | Model takes multiple input tensors (e.g., image + metadata) |
+| **Custom evidence structure** | Need to populate evidence dict with additional keys beyond `'input'` |
+| **Post-processing** | Apply transformations to inference output (e.g., scaling, clipping) |
+| **Multiple outputs** | Need to return additional outputs to the concepts |
+
+
+### When to Override `filter_output_for_loss`
+
+The default implementation passes model output directly to the loss function:
+
+```python
+def filter_output_for_loss(self, forward_out, target):
+    return {'input': forward_out, 'target': target}
+```
+
+**Override when:**
+Need additional inputs to a custom loss, e.g., regularization or auxiliary loss terms.
+
+### When to Override `filter_output_for_metrics`
+
+The default implementation passes model output directly to metrics:
+
+```python
+def filter_output_for_metrics(self, forward_out, target):
+    return {'preds': forward_out, 'target': target}
+```
+
+**Override when:** Need additional inputs to custom metrics.
+
 
 ### 1.3 Mid-Level API Implementation
 
 For custom architectures using `Variables`, `ParametricCPDs`, and `ProbabilisticGraphicalModel`:
 
 ```python
-from torch_concepts import Variable, InputVariable
+from torch_concepts import Variable, LatentVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
     ProbabilisticGraphicalModel,
-    LinearZC,
-    LinearCC,
-    BaseInference
+    LinearLatentToConcept,
+    LinearConceptToConcept,
+    BaseInference,
+    DeterministicInference
 )
 
 
-class YourModel_ParametricCPDs(BaseModel):
+class YourModel(BaseBipartiteModel):
     """Mid-level implementation using Variables and ParametricCPDs.
     
     Use this approach when you need:
     - Custom concept dependencies
     - Non-standard graph structures
     - Fine-grained control over layer instantiation
+    
+    Supports both pure PyTorch (lightning=False) and Lightning (lightning=True) modes.
     """
 
     def __init__(
             self,
-            task_names: Union[List[str], str, List[int]],
-            inference: BaseInference,
             input_size: int,
             annotations: Annotations,
-            variable_distributions: Mapping,
+            task_names: Union[List[str], str, List[int]],
+            lightning: bool = False,
+            inference: BaseInference = DeterministicInference,
+            train_inference: Optional[BaseInference] = DeterministicInference,
+            variable_distributions: Mapping = None,
             embs_precomputed: bool = False,
             backbone: Optional[callable] = None,
             encoder_kwargs: Dict = None,
             **kwargs
     ) -> None:
         super().__init__(
-            annotations=annotations,
-            variable_distributions=variable_distributions,
             input_size=input_size,
+            annotations=annotations,
+            task_names=task_names,
+            lightning=lightning,
+            variable_distributions=variable_distributions,
             embs_precomputed=embs_precomputed,
             backbone=backbone,
             encoder_kwargs=encoder_kwargs,
+            **kwargs
         )
 
         # Step 1: Define embedding variable (latent representation from encoder)
-        embedding = InputVariable(
+        embedding = LatentVariable(
             "embedding",
             parents=[],
             distribution=Delta,
@@ -220,8 +271,8 @@ class YourModel_ParametricCPDs(BaseModel):
         concept_encoders = ParametricCPD(
             concept_names,
             parametrization=[
-                LinearZC(
-                    in_features=embedding.size,
+                LinearLatentToConcept(
+                    in_latent=embedding.size,
                     out_features=c.size
                 ) for c in concepts
             ]
@@ -231,8 +282,8 @@ class YourModel_ParametricCPDs(BaseModel):
         task_predictors = ParametricCPD(
             task_names,
             parametrization=[
-                LinearCC(
-                    in_features_endogenous=sum([c.size for c in concepts]),
+                LinearConceptToConcept(
+                    in_concepts=sum([c.size for c in concepts]),
                     out_features=t.size
                 ) for t in tasks
             ]
@@ -245,7 +296,7 @@ class YourModel_ParametricCPDs(BaseModel):
         )
 
         # Step 7: Initialize inference
-        self.inference = inference(self.pgm)
+        self.eval_inference = inference(self.pgm)
 
     def forward(
             self,
@@ -282,7 +333,7 @@ concept = Variable("smoking", parents=['embedding'],
 
 # Categorical concept with 5 classes
 concept = Variable("diagnosis", parents=['embedding'], 
-                  distribution=Categorical, size=5)
+                  distribution=OneHotCategorical, size=5)
 
 # Multiple concepts at once
 concepts = Variable(['age', 'gender', 'bmi'], 
@@ -298,19 +349,19 @@ Represent computational modules (neural network layers):
 
 ```python
 # Single factor
-encoder = ParametricCPD("smoking", parametrization=LinearZC(...))
+encoder = ParametricCPD("smoking", parametrization=LinearLatentToConcept(...))
 
 # Multiple CPDs
 encoders = ParametricCPD(['age', 'gender'], 
-                 parametrization=[LinearZC(...), LinearZC(...)])
+                 parametrization=[LinearLatentToConcept(...), LinearLatentToConcept(...)])
 ```
 
 #### LazyConstructor
 Utility for automatically instantiating modules for multiple concepts:
 
 ```python
-# Creates one LinearZC per concept
-encoder = LazyConstructor(LinearZC)
+# Creates one LinearLatentToConcept per concept
+encoder = LazyConstructor(LinearLatentToConcept)
 ```
 
 #### Inference
@@ -324,61 +375,29 @@ Controls how information flows through the model:
 #### Encoders (Embedding/Exogenous → Logits)
 ```python
 from torch_concepts.nn import (
-    LinearZC,      # Linear encoder from embedding
-    LinearUC,     # Linear encoder from exogenous
-    LinearZU,             # Creates exogenous representations
+    LinearLatentToConcept,      # Linear encoder from embedding
+    LinearExogenousToConcept,     # Linear encoder from exogenous
+    LinearLatentToExogenous,             # Creates exogenous representations
 )
 ```
 
 #### Predictors (Logits → Logits)
 ```python
 from torch_concepts.nn import (
-    LinearCC,           # Linear predictor
-    HyperLinearCUC,    # Hypernetwork-based predictor
-    MixCUC,    # Mix of endogenous and exogenous
+    LinearConceptToConcept,           # Linear predictor
+    HyperlinearConceptExogenousToConcept,    # Hypernetwork-based predictor
+    MixConceptExogegnousToConcept,    # Mix of endogenous and exogenous
 )
 ```
 
 #### Special Layers
 ```python
 from torch_concepts.nn import (
-    SelectorZU,          # Memory-augmented selection
+    SelectorLatentToExogenous,          # Memory-augmented selection
     WANDAGraphLearner,       # Learn concept graph structure
 )
 ```
 
-### 1.6 Custom Output Processing
-
-Override these methods for custom loss/metric computation:
-
-```python
-def filter_output_for_loss(self, forward_out):
-    """Process output before loss computation.
-    
-    Example: Split concepts and tasks for weighted loss
-    """
-    concept_endogenous = forward_out[:, :self.n_concepts]
-    task_endogenous = forward_out[:, self.n_concepts:]
-    return {
-        'concept_input': concept_endogenous,
-        'task_input': task_endogenous
-    }
-
-def filter_output_for_metrics(self, forward_out):
-    """Process output before metric computation.
-    
-    Example: Apply softmax for probability metrics
-    """
-    return torch.softmax(forward_out, dim=-1)
-
-def preprocess_batch(self, inputs, concepts):
-    """Model-specific preprocessing of batch data.
-    
-    Example: Add noise or transformations
-    """
-    # Add your preprocessing logic
-    return inputs, concepts
-```
 
 ## Part 2: Model Configuration File
 
@@ -435,15 +454,15 @@ Test your model thoroughly before submission.
 
 
 ## Part 4: Integration & Submission
-
-### 4.1 Contacting the Authors
-
-**Important**: Contact the library authors before submitting to ensure your model fits the library's scope and get guidance on:
     
-### 4.2 Documentation
+### 4.1 Documentation
 
 Provide the following documentation:
 1. **Model docstring**: Clear description of model architecture, parameters, and usage
 2. **Citation**: If based on a paper, include proper citation
 3. **Example usage**: If the model is somewhat peculiar, please create example in `torch_concepts/examples/models-usage/your_model.py`
 4. **README entry**: Add entry and description to torch_concepts README
+
+### 4.2 Contacting the Authors
+
+**Important**: Contact the library authors before submitting to ensure your model fits the library's standards and get guidance.

@@ -11,6 +11,7 @@ import torch
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Dict, List, Tuple, Union, Optional, Any, Sequence
 
 
@@ -196,11 +197,25 @@ class AxisAnnotation:
 
         return self.labels[idx]
 
+    @cached_property
+    def label_to_index(self) -> Dict[str, int]:
+        """Precomputed mapping from concept name to concept-level index.
+        
+        Provides O(1) lookup for concept indices, useful for efficient
+        concept extraction operations.
+        
+        Example:
+            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'])
+            >>> axis.label_to_index['shape']
+            1
+        """
+        return {name: i for i, name in enumerate(self.labels)}
+    
     def get_index(self, label: str) -> int:
         """Get index of a label in this axis."""
         try:
-            return self.labels.index(label)
-        except ValueError:
+            return self.label_to_index[label]
+        except KeyError:
             raise ValueError(f"Label {label!r} not found in labels {self.labels}")
 
     def get_label(self, idx: int) -> str:
@@ -219,48 +234,173 @@ class AxisAnnotation:
         else:
             return len(self.labels)
 
-    def get_endogenous_idx(self, labels: List[str]) -> List[int]:
-        """Get endogenous (logit-level) indices for a list of concept labels.
+    # =========================================================================
+    # Cached index properties for efficient tensor slicing
+    # =========================================================================
+    
+    @cached_property
+    def cumulative_cardinalities(self) -> List[int]:
+        """Precomputed cumulative cardinalities for O(1) slicing.
         
-        This method returns the flattened tensor indices where the logits/values
-        for the specified concepts appear, accounting for each concept's cardinality.
+        Returns a list where cumulative_cardinalities[i] is the starting
+        position of concept i in the flattened tensor, and 
+        cumulative_cardinalities[i+1] is the ending position (exclusive).
+        
+        Example:
+            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
+            >>> axis.cumulative_cardinalities
+            [0, 3, 5, 6]  # color: 0-3, shape: 3-5, size: 5-6
+        """
+        cum = [0]
+        for c in self.cardinalities:
+            cum.append(cum[-1] + c)
+        return cum
+    
+    @cached_property
+    def concept_slices(self) -> Dict[str, slice]:
+        """Precomputed mapping from concept name to slice in flattened tensor.
+        
+        Example:
+            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
+            >>> axis.concept_slices['color']
+            slice(0, 3)
+            >>> tensor[:, axis.concept_slices['shape']]  # Get shape logits
+        """
+        cum = self.cumulative_cardinalities
+        return {name: slice(cum[i], cum[i+1]) 
+                for i, name in enumerate(self.labels)}
+    
+    @cached_property
+    def type_groups(self) -> Dict[str, Dict[str, List]]:
+        """Precomputed type-based groupings at both concept and logit levels.
+        
+        Returns a dict with keys 'binary', 'categorical', 'continuous', each
+        containing:
+            - 'labels': list of concept names
+            - 'concept_idx': list of concept-level indices
+            - 'logits_idx': list of logit-level indices
+        
+        Example:
+            >>> axis = AxisAnnotation(
+            ...     labels=['size', 'color', 'temp'],
+            ...     cardinalities=[1, 3, 1],
+            ...     metadata={
+            ...         'size': {'type': 'discrete'},
+            ...         'color': {'type': 'discrete'},
+            ...         'temp': {'type': 'continuous'}
+            ...     }
+            ... )
+            >>> axis.type_groups['binary']['labels']  # ['size']
+            >>> axis.type_groups['categorical']['logits_idx']  # [1, 2, 3]
+        """
+        cum = self.cumulative_cardinalities
+        
+        groups = {
+            'binary': {'labels': [], 'concept_idx': [], 'logits_idx': []},
+            'categorical': {'labels': [], 'concept_idx': [], 'logits_idx': []},
+            'continuous': {'labels': [], 'concept_idx': [], 'logits_idx': []},
+        }
+        
+        for i, label in enumerate(self.labels):
+            card = self.cardinalities[i]
+            
+            # Determine type from metadata or infer from cardinality
+            if self.metadata and label in self.metadata:
+                concept_type = self.metadata[label].get('type', 'discrete')
+            else:
+                concept_type = 'discrete'  # Default assumption
+            
+            # Classify into binary/categorical/continuous
+            if concept_type == 'continuous':
+                group_key = 'continuous'
+            elif concept_type == 'discrete' and card == 1:
+                group_key = 'binary'
+            else:  # discrete with card > 1
+                group_key = 'categorical'
+            
+            # Store at concept level
+            groups[group_key]['labels'].append(label)
+            groups[group_key]['concept_idx'].append(i)
+            
+            # Store at logit level (all positions for this concept)
+            groups[group_key]['logits_idx'].extend(range(cum[i], cum[i+1]))
+        
+        return groups
+    
+    def slice_tensor(self, tensor: torch.Tensor, concepts: List[str]) -> torch.Tensor:
+        """Extract and concatenate columns for specified concepts.
         
         Args:
-            labels: List of concept label names to get indices for.
+            tensor: Input tensor of shape (batch, total_logits)
+            concepts: List of concept names to extract, in desired output order
             
         Returns:
-            List of endogenous indices in the flattened tensor, in the order 
-            corresponding to the input labels.
+            Tensor with columns for specified concepts concatenated
+            
+        Example:
+            >>> # Reorder from topological to annotation order
+            >>> reordered = axis.slice_tensor(predictions, axis.labels)
+        """
+        pieces = [tensor[:, self.concept_slices[c]] for c in concepts]
+        return torch.cat(pieces, dim=1)
+    
+    def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
+        """Get slice or indices for concept(s) in the flattened tensor.
+        
+        Unified method for accessing concept positions:
+        - Single concept name → returns slice object for tensor indexing
+        - List of concept names → returns flattened list of indices
+        
+        Uses precomputed concept_slices for O(1) per-concept lookup.
+        
+        Args:
+            labels: Single concept name (str) or list of concept names.
+            
+        Returns:
+            - slice: If labels is a single string
+            - List[int]: If labels is a list of strings
             
         Raises:
             ValueError: If any label is not found in the axis labels.
             
         Example:
-            >>> # Concepts: ['color', 'shape', 'size'] with cardinalities [3, 2, 1]
-            >>> # Flattened tensor has 6 positions: [c0, c1, c2, s0, s1, sz]
             >>> axis = AxisAnnotation(
             ...     labels=['color', 'shape', 'size'],
             ...     cardinalities=[3, 2, 1]
             ... )
-            >>> axis.get_endogenous_idx(['color', 'size'])
-            [0, 1, 2, 5]  # color takes positions 0-2, size takes position 5
-        """
-        endogenous_indices = []
-        cum_idx = [0] + list(torch.cumsum(torch.tensor(self.cardinalities), dim=0).tolist())
-        
-        for label in labels:
-            # Validate label exists
-            try:
-                concept_idx = self.get_index(label)
-            except ValueError:
-                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
+            >>> # Single concept → slice
+            >>> axis.get_slice('color')
+            slice(0, 3, None)
+            >>> tensor[:, axis.get_slice('color')]  # slicing
             
-            # Get the range of endogenous indices for this concept
-            start_idx = cum_idx[concept_idx]
-            end_idx = cum_idx[concept_idx + 1]
-            endogenous_indices.extend(range(start_idx, end_idx))
+            >>> # Multiple concepts → flattened indices
+            >>> axis.get_slice(['color', 'size'])
+            [0, 1, 2, 5]  # color takes 0-2, size takes 5
+        """
+        slices = self.concept_slices  # Use cached property
         
-        return endogenous_indices
+        # Single concept → return slice directly
+        if isinstance(labels, str):
+            if labels not in slices:
+                raise ValueError(f"Label '{labels}' not found in axis labels {self.labels}")
+            return slices[labels]
+        
+        # Multiple concepts → return flattened indices
+        logits_indices = []
+        for label in labels:
+            if label not in slices:
+                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
+            s = slices[label]
+            logits_indices.extend(range(s.start, s.stop))
+        
+        return logits_indices
+
+    def get_logits_idx(self, labels: List[str]) -> List[int]:
+        """Alias for get_slice(labels) when labels is a list.
+        
+        Deprecated: Use get_slice() instead.
+        """
+        return self.get_slice(labels)
 
     def to_dict(self) -> Dict[str, Any]:
         """

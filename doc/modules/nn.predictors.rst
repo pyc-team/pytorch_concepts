@@ -14,31 +14,31 @@ Summary
    :toctree: generated
    :nosignatures:
 
-   LinearCC
-   MixCUC
-   HyperLinearCUC
-   CallableCC
+   LinearConceptToConcept
+   MixConceptExogegnousToConcept
+   HyperlinearConceptExogenousToConcept
+   CallableConceptToConcept
 
 
 Class Documentation
 -------------------
 
-.. autoclass:: LinearCC
+.. autoclass:: LinearConceptToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: MixCUC
+.. autoclass:: MixConceptExogegnousToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: HyperLinearCUC
+.. autoclass:: HyperlinearConceptExogenousToConcept
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: CallableCC
+.. autoclass:: CallableConceptToConcept
    :members:
    :undoc-members:
    :show-inheritance:

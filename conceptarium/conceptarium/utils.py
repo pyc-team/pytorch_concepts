@@ -7,10 +7,12 @@ This module provides helper functions for:
 - Managing concept annotations and distributions
 """
 import os
+import inspect
 import torch
 import logging
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig, OmegaConf, open_dict
+from hydra.utils import instantiate, get_class
 from torch_concepts import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,28 @@ def clean_empty_configs(cfg: DictConfig) -> DictConfig:
             cfg.update(rag = None)
     return cfg
 
+def instantiate_loss(cfg: DictConfig, annotations):
+    """Instantiate loss, passing ``annotations`` only if accepted.
+
+    Inspects the target class constructor to decide whether to forward the
+    ``annotations`` argument.
+    """
+    loss_cfg = cfg.loss
+    target = loss_cfg.get("_target_")
+    needs_annotations = False
+    if target:
+        try:
+            cls = get_class(target)
+            sig = inspect.signature(cls.__init__)
+            needs_annotations = "annotations" in sig.parameters
+        except Exception:
+            needs_annotations = True  # safe fallback: pass it anyway
+
+    if needs_annotations:
+        return instantiate(loss_cfg, annotations=annotations, _convert_="all")
+    return instantiate(loss_cfg, _convert_="all")
+
+
 def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
     """Update model configuration from datamodule properties.
     
@@ -84,9 +108,10 @@ def update_config_from_data(cfg: DictConfig, dm) -> DictConfig:
     """
     with open_dict(cfg):
         cfg.model.update(
-            # FIXME: backbone.output_size might not exist
-            input_size = dm.backbone.output_size if dm.backbone else dm.n_features[-1],
+            input_size = dm.n_features[-1],
             # output_size = sum(dm.concept_metadata.values()),   # check if this is needed
-            backbone = dm.backbone if not dm.embs_precomputed else None,
+            # TODO: provide a way to pass backbone to the model if needed
+            # backbone = dm.backbone if not dm.dataset.embs_precomputed else None,
+            backbone = None
         )
     return cfg

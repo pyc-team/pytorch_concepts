@@ -17,6 +17,7 @@ Summary
    ForwardInference
    DeterministicInference
    AncestralSamplingInference
+   IndependentInference
 
 
 Class Documentation
@@ -33,6 +34,11 @@ Class Documentation
    :show-inheritance:
 
 .. autoclass:: AncestralSamplingInference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: IndependentInference
    :members:
    :undoc-members:
    :show-inheritance:

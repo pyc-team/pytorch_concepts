@@ -6,30 +6,30 @@ Tests all encoder modules (linear, exogenous, selector, stochastic).
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.stochastic import StochasticZC
+from torch_concepts.nn.modules.low.encoders.stochastic import StochasticLatentToConcept
 
 
-class TestStochasticZC(unittest.TestCase):
-    """Test StochasticZC."""
+class TestStochasticLatentToConcept(unittest.TestCase):
+    """Test StochasticLatentToConcept."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = StochasticZC(
-            in_features=128,
-            out_features=5,
+        encoder = StochasticLatentToConcept(
+            in_latent=128,
+            out_concepts=5,
             num_monte_carlo=100
         )
-        self.assertEqual(encoder.in_features, 128)
-        self.assertEqual(encoder.out_features, 5)
+        self.assertEqual(encoder.in_latent, 128)
+        self.assertEqual(encoder.out_concepts, 5)
         self.assertEqual(encoder.num_monte_carlo, 100)
         self.assertIsNotNone(encoder.mu)
         self.assertIsNotNone(encoder.sigma)
 
     def test_forward_with_reduce(self):
         """Test forward pass with reduce=True."""
-        encoder = StochasticZC(
-            in_features=64,
-            out_features=5,
+        encoder = StochasticLatentToConcept(
+            in_latent=64,
+            out_concepts=5,
             num_monte_carlo=50
         )
         embeddings = torch.randn(4, 64)
@@ -38,9 +38,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_forward_without_reduce(self):
         """Test forward pass with reduce=False."""
-        encoder = StochasticZC(
-            in_features=32,
-            out_features=3,
+        encoder = StochasticLatentToConcept(
+            in_latent=32,
+            out_concepts=3,
             num_monte_carlo=20
         )
         embeddings = torch.randn(2, 32)
@@ -49,9 +49,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through stochastic encoder."""
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=4,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=4,
             num_monte_carlo=10
         )
         embeddings = torch.randn(2, 16, requires_grad=True)
@@ -62,9 +62,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_predict_sigma(self):
         """Test internal _predict_sigma method."""
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=3,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=3,
             num_monte_carlo=10
         )
         embeddings = torch.randn(2, 16)
@@ -78,9 +78,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_positive_diagonal_covariance(self):
         """Test that diagonal of covariance is positive."""
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=3,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=3,
             num_monte_carlo=10
         )
         embeddings = torch.randn(2, 16)
@@ -92,9 +92,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_monte_carlo_samples_variability(self):
         """Test that MC samples show variability."""
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=2,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=2,
             num_monte_carlo=100
         )
         embeddings = torch.randn(1, 16)
@@ -106,9 +106,9 @@ class TestStochasticZC(unittest.TestCase):
     def test_different_monte_carlo_sizes(self):
         """Test various MC sample sizes."""
         for mc_size in [10, 50, 200]:
-            encoder = StochasticZC(
-                in_features=16,
-                out_features=3,
+            encoder = StochasticLatentToConcept(
+                in_latent=16,
+                out_concepts=3,
                 num_monte_carlo=mc_size
             )
             embeddings = torch.randn(2, 16)
@@ -118,9 +118,9 @@ class TestStochasticZC(unittest.TestCase):
     def test_mean_consistency(self):
         """Test that mean of samples approximates mu."""
         torch.manual_seed(42)
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=2,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=2,
             num_monte_carlo=1000
         )
         embeddings = torch.randn(1, 16)
@@ -137,9 +137,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        encoder = StochasticZC(
-            in_features=32,
-            out_features=4,
+        encoder = StochasticLatentToConcept(
+            in_latent=32,
+            out_concepts=4,
             num_monte_carlo=20
         )
         for batch_size in [1, 4, 8]:
@@ -151,9 +151,9 @@ class TestStochasticZC(unittest.TestCase):
 
     def test_sigma_weight_initialization(self):
         """Test that sigma weights are scaled down at init."""
-        encoder = StochasticZC(
-            in_features=16,
-            out_features=3,
+        encoder = StochasticLatentToConcept(
+            in_latent=16,
+            out_concepts=3,
             num_monte_carlo=10
         )
         # Check that weights are small (scaled by 0.01)

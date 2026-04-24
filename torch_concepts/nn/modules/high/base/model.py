@@ -4,35 +4,39 @@ This module defines the abstract BaseModel class that serves as the foundation
 for all concept-based models in the library. It handles backbone integration,
 encoder setup, and provides hooks for data preprocessing.
 
-BaseModel supports two training modes:
+BaseModel supports two usage modes:
 
-1. **Standard PyTorch Training** (Manual Loop):
-   - Initialize model without loss parameter
+1. **Standard PyTorch Module** (training=False, default):
+   - Works as a regular nn.Module
    - Manually define optimizer, loss function, training loop
    - Full control over forward pass, loss computation, optimization
    - Ideal for custom training procedures
 
-2. **PyTorch Lightning Training** (Automatic):
+2. **PyTorch Lightning Module** (lightning=True):
    - Initialize model with loss, optim_class, optim_kwargs parameters
    - Use Lightning Trainer for automatic training/validation/testing
-   - Inherits training logic from Learner classes (JointLearner, IndependentLearner)
+   - Inherits training logic from BaseLearner
    - Ideal for rapid experimentation with standard procedures
 
 See Also
 --------
-torch_concepts.nn.modules.high.learners.JointLearner : Lightning training logic
+torch_concepts.nn.modules.high.base.learner.BaseLearner : Lightning training logic
 torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete implementation
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Mapping, Dict
+from typing import List, Any, Optional, Mapping, Dict
 import torch
 import torch.nn as nn
 
 from .....annotations import Annotations
 from ...low.dense_layers import MLP
 from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations
+from .....utils import add_distribution_to_annotations, add_activation_to_annotations, add_default_properties
+from ...utils import with_training_mode
+from ...outputs import ModelOutput
+
+from ...mid.constructors.concept_graph import ConceptGraph
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -41,17 +45,17 @@ class BaseModel(nn.Module, ABC):
     and encoders for latent representations. All concrete model implementations 
     should inherit from this class.
 
-    BaseModel is flexible and supports two distinct training paradigms:
+    BaseModel supports two usage modes controlled by the `lightning` parameter:
 
-    **Mode 1: Standard PyTorch Training (Manual Loop)**
+    **Mode 1: Standard PyTorch Module (lightning=False, default)**
     
-    Initialize model without loss/optimizer parameters for full manual control.
+    Initialize model without lightning=True for full manual control.
     You define the training loop, optimizer, and loss function externally.
     
-    **Mode 2: PyTorch Lightning Training (Automatic)**
+    **Mode 2: PyTorch Lightning Module (lightning=True)**
     
-    Initialize model with loss, optim_class, and optim_kwargs for automatic training
-    via PyTorch Lightning Trainer. The model inherits training logic from Learner classes.
+    Initialize model with lightning=True, loss, optim_class, and optim_kwargs 
+    for automatic training via PyTorch Lightning Trainer.
 
     Parameters
     ----------
@@ -61,12 +65,29 @@ class BaseModel(nn.Module, ABC):
     annotations : Annotations
         Concept annotations containing variable names, cardinalities, and optional
         distribution metadata. Distributions specify how the model represents each
-        concept (e.g., Bernoulli for binary, Categorical for multi-class).
+        concept (e.g., Bernoulli for binary, OneHotCategorical for multi-class).
+    lightning : bool, default False
+        If True, adds Lightning training capabilities (BaseLearner mixin).
+        If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
         Dictionary mapping concept names to torch.distributions classes (e.g.,
-        ``{'c1': Bernoulli, 'c2': Categorical}``). Required if annotations lack
-        'distribution' metadata. If provided, distributions are added to annotations
-        internally. Can also be a GroupConfig object. Defaults to None.
+        ``{'c1': Bernoulli, 'c2': OneHotCategorical}``). If None, default distributions
+        are used (e.g., ``Bernoulli`` for binary, ``OneHotCategorical`` for categorical concepts).
+        If provided, distributions are added to annotations internally. 
+        Can also be a GroupConfig object. Defaults to None.
+    variable_activations : Mapping, optional
+        Dictionary mapping concept names to activation functions (e.g.,
+        ``{'c1': torch.sigmoid, 'c2': torch.softmax}``). If None, default activations
+        are used (e.g., ``torch.sigmoid`` for binary, ``torch.softmax`` for categorical concepts).
+        If provided, activations are added to annotations internally. 
+        Can also be a GroupConfig object. Defaults to None.
+    graph : ConceptGraph, optional
+        Directed acyclic graph (DAG) specifying causal or dependency relationships
+        between concepts. Nodes correspond to concept names in annotations; edges
+        encode parent-child dependencies used by graph-aware models (e.g., 
+        ``CausallyReliableConceptBottleneckModel``). If None, model assumes no explicit 
+        graph structure, and each model enforces its own.
+        Defaults to None.
     backbone : BackboneType, optional
         Feature extraction module (e.g., ResNet, ViT) applied before latent encoder.
         Can be nn.Module or callable. If None, assumes inputs are pre-computed features.
@@ -81,6 +102,24 @@ class BaseModel(nn.Module, ABC):
         - 'n_layers' (int): Number of hidden layers
         - 'activation' (str): Activation function name
         If None, uses nn.Identity (no encoding). Defaults to None.
+    
+    Lightning Training Parameters (only used when lightning=True)
+    -------------------------------------------------------------
+    loss : nn.Module, optional
+        Loss function for training (e.g. ``ConceptLoss``).  Use per-type
+        composition via ``ConceptLoss`` to combine multiple terms (see
+        ``binary``, ``binary_weights``, etc.).
+    metrics : ConceptMetrics or dict, optional
+        Metrics for evaluation. Can be a ConceptMetrics object or dict with keys
+        'train_metrics', 'val_metrics', 'test_metrics' mapping to MetricCollections.
+    optim_class : torch.optim.Optimizer, optional
+        Optimizer class (not instance). E.g., torch.optim.Adam, torch.optim.AdamW.
+    optim_kwargs : dict, optional
+        Keyword arguments for optimizer. E.g., {'lr': 0.001, 'weight_decay': 1e-4}.
+    scheduler_class : torch.optim.lr_scheduler._LRScheduler, optional
+        Learning rate scheduler class. E.g., StepLR, CosineAnnealingLR.
+    scheduler_kwargs : dict, optional
+        Keyword arguments for scheduler. Include 'monitor' key for ReduceLROnPlateau.
     **kwargs
         Additional arguments passed to nn.Module superclass.
 
@@ -99,63 +138,78 @@ class BaseModel(nn.Module, ABC):
 
     Notes
     -----
-    - **Concept Distributions**: The model needs to know which distribution to use
-      for each concept (Bernoulli, Categorical, Normal, etc.). This can be provided
-      in two ways:
-      
-      1. In annotations metadata: ``metadata={'c1': {'distribution': Bernoulli}}``
-      2. Via variable_distributions parameter at initialization
-      
-      If distributions are in annotations, variable_distributions is not needed.
-      If not, variable_distributions is required and will be added to annotations.
-    - Subclasses must implement ``forward()``, ``filter_output_for_loss()``,
-      and ``filter_output_for_metrics()`` methods.
-    - For Lightning training, subclasses typically inherit from both BaseModel
-      and a Learner class (e.g., JointLearner) via multiple inheritance.
+    - **Concept Distributions and Activations**: The model needs to know which
+      distribution and activation to use for each concept. These can be provided 
+      in three ways:
+
+      1. In annotations metadata before model init
+      2. Via the `variable_distributions` and `variable_activations` parameters
+      3. If missing, the model will fill in defaults
+      If no default can be determined, a ``ValueError`` is raised.
+
+    - Subclasses must implement ``forward()``.
+    - For Lightning training, set lightning=True. The BaseLearner mixin is
+      automatically added via ``__new__``.
     - The latent_size attribute is critical for downstream concept encoders
       to determine input dimensionality.
 
     Examples
     --------
-    Distributions specify how the model represents concepts. Provide them either
-    in annotations metadata OR via variable_distributions parameter:
+    Distributions and activations should be in annotations metadata. If not
+    provided, defaults are used (Bernoulli for binary, OneHotCategorical for
+    categorical concepts):
     
     >>> import torch
     >>> import torch.nn as nn
     >>> from torch.distributions import Bernoulli
     >>> from torch_concepts.nn import ConceptBottleneckModel
     >>> from torch_concepts.annotations import AxisAnnotation, Annotations
+    >>> from torch_concepts.utils import add_distribution_to_annotations
     >>> 
-    >>> # Option 1: Distributions in annotations metadata
+    >>> # Option 1: Explicit distributions in annotations metadata
     >>> ann = Annotations({
     ...     1: AxisAnnotation(
     ...         labels=['c1', 'c2', 'task'],
     ...         cardinalities=[1, 1, 1],
     ...         metadata={
-    ...             'c1': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'c2': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'task': {'type': 'binary', 'distribution': Bernoulli}
+    ...             'c1': {'type': 'discrete', 'distribution': Bernoulli},
+    ...             'c2': {'type': 'discrete', 'distribution': Bernoulli},
+    ...             'task': {'type': 'discrete', 'distribution': Bernoulli}
     ...         }
     ...     )
     ... })
     >>> model = ConceptBottleneckModel(
     ...     input_size=10,
-    ...     annotations=ann,  # Distributions already in metadata
+    ...     annotations=ann, # distributions provided in metadata
     ...     task_names=['task']
     ... )
     >>> 
-    >>> # Option 2: Distributions via variable_distributions parameter
+    >>> # Option 2: Add distributions via utility before model init
     >>> ann_no_dist = Annotations({
     ...     1: AxisAnnotation(
     ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1]
+    ...         cardinalities=[1, 1, 1],
+    ...         metadata={
+    ...             'c1': {'type': 'discrete'},
+    ...             'c2': {'type': 'discrete'},
+    ...             'task': {'type': 'discrete'}
+    ...         }
     ...     )
     ... })
-    >>> variable_distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
+    >>> distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
+    >>> ann_no_dist = add_distribution_to_annotations(
+    ...     ann_no_dist, distributions
+    ... )
     >>> model = ConceptBottleneckModel(
     ...     input_size=10,
     ...     annotations=ann_no_dist,
-    ...     variable_distributions=variable_distributions,  # Added here
+    ...     task_names=['task']
+    ... )
+    >>> 
+    >>> # Option 3: Let the model use defaults (Bernoulli for binary discrete)
+    >>> model = ConceptBottleneckModel(
+    ...     input_size=10,
+    ...     annotations=ann_no_dist,
     ...     task_names=['task']
     ... )
     >>> 
@@ -175,51 +229,114 @@ class BaseModel(nn.Module, ABC):
     See Also
     --------
     torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete CBM implementation
-    torch_concepts.nn.modules.high.learners.JointLearner : Lightning training logic for joint models
+    torch_concepts.nn.modules.high.base.learner.BaseLearner : Lightning training logic
     torch_concepts.annotations.Annotations : Concept annotation container
     """
+
+    def __new__(cls, *args, lightning: bool = False, **kwargs):
+        """Create instance with BaseLearner mixin for Lightning training.
+        
+        This method dynamically creates a combined class that includes
+        BaseLearner when lightning=True.
+        
+        Parameters
+        ----------
+        lightning : bool, default False
+            If True, adds BaseLearner mixin for Lightning training.
+            If False, returns a pure PyTorch module without Lightning integration.
+        
+        Returns
+        -------
+        BaseModel
+            Instance of the combined class with BaseLearner mixin.
+        """
+        combined_class = with_training_mode(cls, lightning)
+        instance = object.__new__(combined_class)
+        instance._lightning_enabled = lightning
+        return instance
 
     def __init__(
         self,
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
+        variable_activations: Optional[Mapping] = None,
+        graph: ConceptGraph = None,
         backbone: Optional[BackboneType] = None,
         latent_encoder: Optional[nn.Module] = None,
         latent_encoder_kwargs: Optional[Dict] = None,
+        lightning: bool = False,  # Consumed by __new__, included for signature
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
 
+        self.graph = graph
+
         if annotations is not None:
             annotations = annotations.get_axis_annotation(1)
 
-            # Add distribution information to annotations metadata
-            if annotations.has_metadata('distribution'):
-                self.concept_annotations = annotations
-            else:
-                assert variable_distributions is not None, (
-                    "variable_distributions must be provided if annotations "
-                    "lack 'distribution' metadata."
-                )
-                self.concept_annotations = add_distribution_to_annotations(
-                    annotations, variable_distributions
-                )
+            # 1. If distributions/activations are explicitly passed, override annotations
+            if variable_distributions is not None:
+                annotations = add_distribution_to_annotations(annotations, variable_distributions)
+            if variable_activations is not None:
+                annotations = add_activation_to_annotations(annotations, variable_activations)
+
+            # 2. Fill in defaults for any concepts still missing distribution/activation
+            # this also serves as a validation step to ensure all concepts have necessary metadata
+            self.concept_annotations = add_default_properties(annotations)
+
             self.concept_names = self.concept_annotations.labels
 
         self._backbone = backbone
 
         if latent_encoder is not None:
-            self._latent_encoder = latent_encoder(input_size,
-                                    **(latent_encoder_kwargs or {}))
+            self._latent_encoder = latent_encoder(
+                input_size,
+                **(latent_encoder_kwargs or {})
+            )
         elif latent_encoder_kwargs is not None:
             # assume an MLP encoder if latent_encoder_kwargs provided but no latent_encoder
-            self._latent_encoder = MLP(input_size=input_size,
-                                **latent_encoder_kwargs)
+            self._latent_encoder = MLP(
+                input_size=input_size,
+                **latent_encoder_kwargs
+            )
         else:
             self._latent_encoder = nn.Identity()
 
         self.latent_size = latent_encoder_kwargs.get('hidden_size') if latent_encoder_kwargs else input_size
+
+    @property
+    def inference(self):
+        """Return the active inference engine based on train/eval mode.
+
+        When ``self.training`` is True (after ``.train()``), returns
+        ``self.train_inference``.  When False (after ``.eval()``),
+        returns ``self.eval_inference``.  This mirrors PyTorch and
+        Lightning conventions so that calling ``.train()`` / ``.eval()``
+        automatically selects the correct engine.
+
+        Returns
+        -------
+        BaseInference
+            The currently active inference engine.
+        """
+        if self.training and self.train_inference is not None:
+            return self.train_inference
+        return self.eval_inference
+
+    def _finalize(self):
+        if not hasattr(self, 'model') or self.model is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.model in __init__"
+            )
+        if not hasattr(self, 'eval_inference') or self.eval_inference is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.eval_inference in __init__"
+            )
+        if self._lightning_enabled and not hasattr(self, 'train_inference'):
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set self.train_inference in __init__ when lightning=True"
+            )
 
     def __repr__(self):
         backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
@@ -265,69 +382,83 @@ class BaseModel(nn.Module, ABC):
     #     """
     #     return self._encoder
 
-    @abstractmethod
-    def filter_output_for_loss(self, forward_out, target):
-        """Filter model outputs before passing to loss function.
+    def forward(
+        self,
+        query: List[str],
+        x: torch.Tensor = None,
+        evidence: Dict[str, torch.Tensor] = None,
+        *inference_args,
+        **inference_kwargs
+    ) -> ModelOutput:
+        """Unified forward pass for all inferences.
 
-        Override this method in your model to customize what outputs are passed to the loss.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in loss computation or need specific formatting.
+        The active inference engine is selected automatically based on
+        ``self.training`` (toggled by ``.train()`` / ``.eval()``).
+        
+        Parameters
+        ----------
+        query : List[str]
+            Concept names to query.
+        x : torch.Tensor, optional
+            Raw input tensor. Shape: (batch_size, input_size).
+            If provided, backbone and latent encoder are applied.
+        evidence : Dict[str, torch.Tensor], optional
+            Evidence dict mapping names to tensors. Defaults to empty dict.
+            Names should match variable names in the PGM.
+        *inference_args
+            Positional arguments passed to the inference engine's query method.
+        **inference_kwargs
+            Keyword arguments passed to the inference engine's query method.
+            Includes ``return_logits``, ``return_probs``, ``return_joint``.
+        
+        Returns
+        -------
+        ModelOutput
+            Structured output with ``.logits`` and/or ``.probs``
+            populated according to ``return_logits``/``return_probs``
+            in inference_kwargs.
+        """
+        if evidence is None:
+            evidence = {}
+        
+        # If x is provided, process x through backbone and latent encoder
+        # and add the resulting latent representation as the 'input' of the PGM
+        # TODO: handle backbone kwargs when present
+        if x is not None:
+            features = self.maybe_apply_backbone(x)
+            latent = self.latent_encoder(features)
+            evidence['input'] = latent
+        
+        result = self.inference.query(
+            query, 
+            evidence=evidence,
+            *inference_args, 
+            **inference_kwargs
+        )
+        
+        return ModelOutput(
+            logits=result.logits,
+            probs=result.probs,
+            joint=result.joint,
+        )
 
-        This method is called automatically during Lightning training in the
-        ``shared_step()`` method of Learner classes. For manual PyTorch training,
-        you typically don't need to call this method explicitly.
+    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+        """Prepare ground truth labels for loss/metrics.
+
+        Override in subclasses that need to transform the target
+        (e.g. slice to task-only columns).
 
         Parameters
         ----------
-        forward_out : Any
-            Raw model output from forward pass (typically concept predictions,
-            but can include auxiliary outputs like attention weights, embeddings).
         target : torch.Tensor
-            Ground truth labels/targets.
+            Raw ground truth labels from the batch.
 
         Returns
         -------
-        dict
-            Dictionary with keys expected by your loss function. Common format:
-            ``{'input': predictions, 'target': ground_truth}`` for standard losses.
-
-        Notes
-        -----
-        - For standard losses like nn.BCEWithLogitsLoss, return format should match
-          the loss function's expected signature.
-        - This method enables models to return rich outputs (embeddings, attentions)
-          without interfering with loss computation.
-        - Must be implemented by all concrete model subclasses.
-
-        Examples
-        --------
-        Standard implementation passes predictions and targets directly to loss:
-        
-        >>> def filter_output_for_loss(self, forward_out, target):
-        ...     return {'input': forward_out, 'target': target}
-
-        See Also
-        --------
-        filter_output_for_metrics : Similar filtering for metrics computation
-        torch_concepts.nn.modules.high.learners.JointLearner.shared_step : Where this is called
+        torch.Tensor
+            Transformed target tensor.
         """
-        pass
-
-    @abstractmethod
-    def filter_output_for_metrics(self, forward_out, target):
-        """Filter model outputs before passing to metric computation.
-
-        Override this method in your model to customize what outputs are passed to the metrics.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in metric computation or viceversa.
-
-        Args:
-            forward_out: Model output (typically concept predictions).
-            target: Ground truth concepts.
-        Returns:
-            dict: Filtered outputs for metric computation.
-        """
-        pass
+        return target
 
     # ------------------------------------------------------------------
     # Features extraction helpers
@@ -336,7 +467,7 @@ class BaseModel(nn.Module, ABC):
     def maybe_apply_backbone(
         self,
         x: torch.Tensor,
-        backbone_args: Optional[Mapping[str, Any]] = None,
+        backbone_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> torch.Tensor:
         """Apply the backbone to ``x`` unless features are pre-computed.
 
@@ -361,46 +492,4 @@ class BaseModel(nn.Module, ABC):
                 f"instance of type {type(self.backbone).__name__}."
             )
 
-        return self.backbone(x, **backbone_args if backbone_args else {})
-
-
-    # ------------------------------------------------------------------
-    # Output helpers
-    # ------------------------------------------------------------------
-    
-    def filter_output_for_loss(self, out_concepts):
-        """Filter model outputs before passing to loss function.
-
-        Override this method to customize what outputs are passed to the loss.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in loss computation or viceversa.
-
-        Args:
-            out_concepts: Model output (typically concept predictions).
-
-        Returns:
-            Filtered output passed to loss function. By default, returns
-            out_concepts unchanged.
-
-        Example:
-            >>> def filter_output_for_loss(self, out):
-            ...     # Only use concept predictions, ignore attention weights
-            ...     return out['concepts']
-        """
-        return out_concepts
-    
-    def filter_output_for_metrics(self, out_concepts):
-        """Filter model outputs before passing to metrics.
-
-        Override this method to customize what outputs are passed to metrics.
-        Useful when your model returns auxiliary outputs that shouldn't be
-        included in metric computation or viceversa.
-
-        Args:
-            out_concepts: Model output (typically concept predictions).
-
-        Returns:
-            Filtered output passed to metrics. By default, returns
-            out_concepts unchanged.
-        """
-        return out_concepts
+        return self.backbone(x, **backbone_kwargs if backbone_kwargs else {})

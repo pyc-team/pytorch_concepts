@@ -1,0 +1,19 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.completeness.CompletenessDataModule
+
+name: completeness
+
+default_task_names: [y]
+
+backbone: null # input is not structured data, so no backbone by default
+precompute_embs: false 
+force_recompute: false 
+
+n_concepts: 50  # number of concepts
+n_hidden_concepts: 10  # number of hidden concepts
+n_tasks: 5  # number of tasks
+
+n_gen: 10000

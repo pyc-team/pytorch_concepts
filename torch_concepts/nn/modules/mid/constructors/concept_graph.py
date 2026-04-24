@@ -8,7 +8,8 @@ and topological operations.
 import torch
 
 import pandas as pd
-from typing import List, Tuple, Union, Optional, Set
+from collections import deque
+from typing import Dict, List, Tuple, Union, Optional, Set
 
 from torch import Tensor
 import networkx as nx
@@ -138,10 +139,30 @@ class ConceptGraph:
         self._node_name_to_index = {name: idx for idx, name in enumerate(self.node_names)}
 
         # Convert to sparse format and store
-        self.edge_index, self.edge_weight = _dense_to_sparse_pytorch(data)
+        self._edge_index, self._edge_weight = _dense_to_sparse_pytorch(data)
 
         # Cache networkx graph for faster repeated access
         self._nx_graph_cache = None
+
+    @property
+    def edge_index(self) -> Tensor:
+        """Edge list of shape (2, num_edges)."""
+        return self._edge_index
+
+    @edge_index.setter
+    def edge_index(self, value: Tensor):
+        self._edge_index = value
+        self._nx_graph_cache = None  # invalidate cache
+
+    @property
+    def edge_weight(self) -> Tensor:
+        """Edge weights of shape (num_edges,)."""
+        return self._edge_weight
+
+    @edge_weight.setter
+    def edge_weight(self, value: Tensor):
+        self._edge_weight = value
+        self._nx_graph_cache = None  # invalidate cache
 
     @classmethod
     def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):
@@ -395,6 +416,53 @@ class ConceptGraph:
         """
         G = self._nx_graph
         return list(nx.topological_sort(G))
+
+    def get_levels(self) -> List[List[str]]:
+        """Group nodes by depth from the graph roots.
+
+        Only valid for directed acyclic graphs (DAGs).
+
+        Returns:
+            List of lists, where ``result[d]`` contains the node names at
+            depth *d*.  The outer list is sorted by increasing depth.
+
+        Example:
+            >>> import torch
+            >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+            >>> adj = torch.tensor([[0., 1., 0.],
+            ...                     [0., 0., 1.],
+            ...                     [0., 0., 0.]])
+            >>> g = ConceptGraph(adj, node_names=['A', 'B', 'C'])
+            >>> g.get_levels()
+            [['A'], ['B'], ['C']]
+        """
+        roots = self.get_root_nodes()
+        depths: Dict[str, int] = {}
+        queue: deque = deque()
+        for root in roots:
+            depths[root] = 0
+            queue.append(root)
+
+        while queue:
+            node = queue.popleft()
+            for child in self.get_successors(node):
+                new_depth = depths[node] + 1
+                if child not in depths or new_depth < depths[child]:
+                    depths[child] = new_depth
+                    queue.append(child)
+
+        # Nodes with no edges at all (isolated) default to depth 0
+        for name in self.node_names:
+            if name not in depths:
+                depths[name] = 0
+
+        # Group by depth
+        groups: Dict[int, List[str]] = {}
+        for name, d in depths.items():
+            groups.setdefault(d, []).append(name)
+
+        max_depth = max(groups) if groups else -1
+        return [groups.get(d, []) for d in range(max_depth + 1)]
 
     def get_predecessors(self, node: Union[str, int]) -> List[str]:
         """
