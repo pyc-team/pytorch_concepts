@@ -23,7 +23,7 @@ from pathlib import Path
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
-from torch_concepts.data.io import download_file, zip_is_valid
+from torch_concepts.data.io import download_url_wget, zip_is_valid
 
 
 logger = logging.getLogger(__name__)
@@ -313,7 +313,7 @@ class AWA2Dataset(ConceptDataset):
         for url in URLS:
             dest = os.path.join(self.root, url.split("/")[-1])
             for attempt in range(1, _MAX_RETRIES + 1):
-                download_file(url, dest)
+                download_url_wget(url, dest)
                 print(f"  Verifying {os.path.basename(dest)} (attempt {attempt}/{_MAX_RETRIES}) ...")
                 if zip_is_valid(dest):
                     break

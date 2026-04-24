@@ -41,7 +41,8 @@ concept_subset: [
   'has_tail_pattern::multi-colored', 
   'has_bill_color::grey', 
   'has_bill_color::black', 
-  'has_bill_color::buff'
+  'has_bill_color::buff',
+  'class', # task label
 ]
 
 # Concept descriptions (optional; leave null to use raw attribute names)

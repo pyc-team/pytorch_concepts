@@ -103,7 +103,7 @@ class DownloadProgressBar(tqdm):
         self.update(b * bsize - self.n)
 
 
-def download_urllib(url: str,
+def download_url(url: str,
                     folder: str,
                     filename: Optional[str] = None,
                     verbose: bool = True):
@@ -154,7 +154,7 @@ def wget_available() -> bool:
     return _shutil.which("wget") is not None
 
 
-def download_file(url: str, dest: str) -> None:
+def download_url_wget(url: str, dest: str) -> None:
     """Download *url* to *dest*.
 
     Uses ``wget --continue`` when available (handles large files and

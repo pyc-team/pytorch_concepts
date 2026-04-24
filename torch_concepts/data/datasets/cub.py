@@ -25,7 +25,7 @@ import shutil
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
-from torch_concepts.data.io import download_urllib
+from torch_concepts.data.io import download_url
 
 logger = logging.getLogger(__name__)
 
@@ -785,9 +785,9 @@ class CUBDataset(ConceptDataset):
             os.makedirs(class_attr_dir)
             for split_name in ('train', 'val', 'test'):
                 url = f"{URLS[0]}/{split_name}.pkl"
-                download_urllib(url, class_attr_dir)
+                download_url(url, class_attr_dir)
 
-        tgz_path = download_urllib(URLS[1], self.root)
+        tgz_path = download_url(URLS[1], self.root)
         
         with tarfile.open(tgz_path, "r:gz") as tar:
             tar.extractall(path=self.root)

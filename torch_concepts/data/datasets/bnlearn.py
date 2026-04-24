@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 from ..base import ConceptDataset
 from ..preprocessing.autoencoder import extract_embs_from_autoencoder
-from ..io import download_urllib
+from ..io import download_url
 
 BUILTIN_DAGS = ['asia', 'alarm', 'andes', 'sachs', 'water']
 
@@ -87,7 +87,7 @@ class BnLearnDataset(ConceptDataset):
             pass
         else:
             url = f'https://www.bnlearn.com/bnrepository/{self.name}/{self.name}.bif.gz'
-            gz_path = download_urllib(url, self.root_dir)
+            gz_path = download_url(url, self.root_dir)
             bif_path = self.raw_paths[0]
             
             # Decompress .gz file
