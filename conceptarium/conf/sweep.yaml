@@ -9,10 +9,12 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: cub, cub_incomplete, awa2, awa2_incomplete
-      model: cbm, cem
+      dataset: dag_asia, dag_sachs
+      model: cbm, cem, c2bm
       model.train_inference._target_:
-        torch_concepts.nn.DeterministicInference
+        torch_concepts.nn.DeterministicInference,
+        torch_concepts.nn.IndependentInference,
+        torch_concepts.nn.AncestralSamplingInference
       # --- inference params
       # +model.train_inference.detach: false, true
       # +model.train_inference.p: 0.4
@@ -43,7 +45,7 @@ trainer:
   # logger: wandb
   # log_model: true   # whether to save checkpoint on wandb
   save_top_k: 1.    # whether to save checkpoint locally
-  max_epochs: 20
+  max_epochs: 200
   patience: 20
 
 matmul_precision: medium
