@@ -26,6 +26,8 @@ import logging
 import warnings
 from typing import Union, List, Tuple, Optional
 
+from ..utils import resolve_hf_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,8 +110,9 @@ def _load_huggingface_model(
         and processor is the AutoImageProcessor for preprocessing.
     """
     from transformers import AutoImageProcessor, AutoModel
-    processor = AutoImageProcessor.from_pretrained(name)
-    model = AutoModel.from_pretrained(name).to(device).eval()
+    token = resolve_hf_token()
+    processor = AutoImageProcessor.from_pretrained(name, token=token)
+    model = AutoModel.from_pretrained(name, token=token).to(device).eval()
     return model, processor
 
 
