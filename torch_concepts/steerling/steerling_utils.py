@@ -26,6 +26,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 
+from ..utils import resolve_hf_token
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_ID = "guidelabs/steerling-8b"
@@ -45,7 +47,11 @@ def load_steerling_config(
     """
     from huggingface_hub import hf_hub_download
 
-    config_path = hf_hub_download(model_name_or_path, "config.json")
+    config_path = hf_hub_download(
+        model_name_or_path,
+        "config.json",
+        token=resolve_hf_token(),
+    )
     with open(config_path) as f:
         raw = json.load(f)
 
@@ -71,7 +77,9 @@ def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
             "Install with: pip install transformers"
         ) from exc
     return AutoTokenizer.from_pretrained(
-        model_name_or_path, trust_remote_code=True,
+        model_name_or_path,
+        trust_remote_code=True,
+        token=resolve_hf_token(),
     )
 
 
@@ -97,7 +105,9 @@ def _download_index(model_name_or_path: str) -> Dict[str, str]:
     from huggingface_hub import hf_hub_download
 
     index_path = hf_hub_download(
-        model_name_or_path, "model.safetensors.index.json"
+        model_name_or_path,
+        "model.safetensors.index.json",
+        token=resolve_hf_token(),
     )
     with open(index_path) as f:
         return json.load(f)["weight_map"]
@@ -128,7 +138,11 @@ def load_steerling_known_head_weights(
 
     state_dict: Dict[str, torch.Tensor] = {}
     for shard_file in shards:
-        shard_path = hf_hub_download(model_name_or_path, shard_file)
+        shard_path = hf_hub_download(
+            model_name_or_path,
+            shard_file,
+            token=resolve_hf_token(),
+        )
         with safe_open(shard_path, framework="pt", device=device) as f:
             for key in f.keys():
                 if key.startswith("known_head."):
@@ -159,7 +173,11 @@ def load_steerling_unknown_head_weights(
 
     state_dict: Dict[str, torch.Tensor] = {}
     for shard_file in shards:
-        shard_path = hf_hub_download(model_name_or_path, shard_file)
+        shard_path = hf_hub_download(
+            model_name_or_path,
+            shard_file,
+            token=resolve_hf_token(),
+        )
         with safe_open(shard_path, framework="pt", device=device) as f:
             for key in f.keys():
                 if key.startswith("unknown_head."):
@@ -186,7 +204,11 @@ def load_steerling_lm_head_weights(
 
     weight_map = _download_index(model_name_or_path)
     shard_file = weight_map["transformer.tok_emb.weight"]
-    shard_path = hf_hub_download(model_name_or_path, shard_file)
+    shard_path = hf_hub_download(
+        model_name_or_path,
+        shard_file,
+        token=resolve_hf_token(),
+    )
 
     with safe_open(shard_path, framework="pt", device=device) as f:
         weight = f.get_tensor("transformer.tok_emb.weight")
@@ -222,7 +244,11 @@ def load_steerling_backbone_weights(
 
     state_dict: Dict[str, torch.Tensor] = {}
     for shard_file in sorted(shards):
-        shard_path = hf_hub_download(model_name_or_path, shard_file)
+        shard_path = hf_hub_download(
+            model_name_or_path,
+            shard_file,
+            token=resolve_hf_token(),
+        )
         with safe_open(shard_path, framework="pt", device=device) as f:
             for key in f.keys():
                 if key.startswith("transformer."):

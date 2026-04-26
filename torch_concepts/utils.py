@@ -9,13 +9,43 @@ import importlib
 import os
 from collections import Counter
 from copy import deepcopy
-from typing import Dict, Union, List, Mapping
+from typing import Dict, Union, List, Mapping, Optional
 import torch, math
 import logging
 from pytorch_lightning import seed_everything as pl_seed_everything
 
 from .annotations import Annotations, AxisAnnotation
 from .nn.modules.utils import GroupConfig
+
+
+def resolve_hf_token() -> Optional[str]:
+    """Resolve an HF token from env vars or conceptarium.env fallback.
+
+    Priority order:
+    1. HF_TOKEN
+    2. HUGGINGFACE_HUB_TOKEN
+    3. HUGGINGFACEHUB_TOKEN
+    4. conceptarium.env.HUGGINGFACEHUB_TOKEN (if importable)
+    """
+    token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        or os.environ.get("HUGGINGFACEHUB_TOKEN")
+    )
+    if token:
+        return token
+
+    try:
+        from conceptarium.env import HUGGINGFACEHUB_TOKEN as config_token
+    except Exception:
+        config_token = None
+
+    if config_token:
+        os.environ.setdefault("HF_TOKEN", config_token)
+        os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", config_token)
+        return config_token
+
+    return None
 
 
 def seed_everything(seed: int, workers: bool = True) -> int:

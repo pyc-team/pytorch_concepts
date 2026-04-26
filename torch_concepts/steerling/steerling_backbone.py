@@ -80,7 +80,7 @@ class SteerlingBackbone(nn.Module):
         self,
         pretrained: bool | str = True,
         freeze: bool = True,
-        device: str = "cpu",
+        device: str = "cuda",
         dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
