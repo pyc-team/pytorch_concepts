@@ -28,7 +28,12 @@ from .steerling_utils import (
     load_steerling_concept_map,
 )
 from .steerling_backbone import SteerlingBackbone
-from .steerling_encoder import SteerlingLatentToConcept, SteerlingConceptExogenousToLatent
+from .steerling_encoder import (
+    SteerlingLatentToConcept,
+    SteerlingConceptExogenousToLatent,
+    SteerlingConceptsToLatentEmbeddings,
+    SteerlingLatentToLatentFusion,
+)
 from .steerling_decoder import (
     SteerlingLMHead,
     prepare_generation_sequence,
@@ -54,6 +59,8 @@ __all__ = [
     # Encoder
     "SteerlingLatentToConcept",
     "SteerlingConceptExogenousToLatent",
+    "SteerlingConceptsToLatentEmbeddings",
+    "SteerlingLatentToLatentFusion",
     # Decoder
     "SteerlingLMHead",
     "prepare_generation_sequence",

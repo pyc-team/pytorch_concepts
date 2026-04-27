@@ -339,3 +339,100 @@ class SteerlingConceptExogenousToLatent(nn.Module):
             :math:`\bar{h} = \text{concepts} \times \text{embeddings}`.
         """
         return concepts.to(self.embeddings.device) @ self.embeddings
+
+
+# ---------------------------------------------------------------------------
+# Decoupled three-stage reconstruction
+# ---------------------------------------------------------------------------
+
+class SteerlingConceptsToLatentEmbeddings(nn.Module):
+    r"""Generic scalar-product layer: activations ``@`` stored embeddings.
+
+    This module is the shared implementation for both known- and unknown-
+    concept branches:
+
+    .. math::
+
+        \hat{h} = \mathbf{c} \cdot \mathbf{E}
+
+    where :math:`\mathbf{c}` is a concept-activation tensor of shape
+    ``(*, N)`` and :math:`\mathbf{E}` is a stored embedding matrix of
+    shape ``(N, D)``.
+
+    The ``forward`` signature is ``forward(self, endogenous)`` so that the PyC
+    inference engine routes :class:`~torch_concepts.ConceptVariable` parents
+    to this module automatically.
+
+    Args:
+        embeddings: Concept embedding matrix ``(N, D)``.
+        device: Target device (default ``"cuda"``).
+    """
+
+    def __init__(self, embeddings: torch.Tensor, device: str = "cuda"):
+        super().__init__()
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable, falling back to CPU.")
+            device = "cpu"
+        self.register_buffer("embeddings", embeddings.to(device))
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        r"""Compute ``endogenous @ embeddings``.
+
+        Args:
+            input: ``(*, N)`` concept (supervised or unsupervised) activations.
+
+        Returns:
+            ``(*, D)`` projected latent contribution.
+        """
+        return input.to(self.embeddings.device) @ self.embeddings
+
+
+
+class SteerlingLatentToLatentFusion(nn.Module):
+    r"""Sum two partial hidden states into the full reconstructed latent.
+
+    Implements the final combination step:
+
+    .. math::
+
+        \bar{h} = \hat{k} + \hat{u}
+
+    The PyC inference engine concatenates :class:`~torch_concepts.LatentVariable`
+    parents along the last dimension before calling ``forward``, so this layer
+    receives ``cat([k_hat, u_hat], dim=-1)`` of shape ``(*, 2D)``, splits it
+    in half, and returns the element-wise sum of shape ``(*, D)``.
+
+    Args:
+        latent_dim: Hidden dimension ``D`` — must match the output dimension
+            of :class:`SteerlingKnownConceptsToLatent` and
+            :class:`SteerlingUnknownConceptsToLatent`.
+
+    Example::
+
+        h_bar_layer = SteerlingLatentToLatentFusion(latent_dim=4096)
+        h_bar_cpd = ParametricCPD(
+            "h_bar",
+            parents=["k_hat", "u_hat"],   # LatentVariable parents (Delta)
+            parametrization=h_bar_layer,
+        )
+    """
+
+    def __init__(self, latent_dim: int):
+        super().__init__()
+        # Store D so that forward can split the concatenated (*, 2D) input.
+        self.latent_dim = latent_dim
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        r"""Compute ``h_bar = k_hat + u_hat``.
+
+        Args:
+            input: ``(*, 2D)`` tensor produced by the PyC engine concatenating
+                ``k_hat`` and ``u_hat`` along the last dimension.  Injected
+                automatically when parents are
+                :class:`~torch_concepts.LatentVariable` instances.
+
+        Returns:
+            ``(*, D)`` reconstructed hidden state :math:`\bar{h}`.
+        """
+        k_hat, u_hat = input.split(self.latent_dim, dim=-1)
+        return k_hat + u_hat
