@@ -351,8 +351,29 @@ def load_steerling_concepts(
 
 def load_steerling_concept_names(
     url: str = KNOWN_CONCEPTS_URL,
-) -> Dict[int, str]:
-    """Return a ``{concept_idx: concept_name}`` dict for all known concepts."""
+) -> list:
+    """Return an ordered list of concept names for all known concepts.
+
+    The list is ordered by ``concept_idx`` so that
+    ``names[i]`` corresponds to concept index ``i``.  This is the
+    format expected by :class:`~torch_concepts.distributions.ConceptVariable`.
+
+    Use :func:`load_steerling_concept_map` when you need index → name
+    random-access lookups instead.
+    """
     df = load_steerling_concepts(url)
-    # df is indexed by concept_idx (set via index_col in read_csv)
+    # sort by concept_idx (the DataFrame index) to guarantee order
+    return list(df.sort_index()["concept_name"])
+
+
+def load_steerling_concept_map(
+    url: str = KNOWN_CONCEPTS_URL,
+) -> Dict[int, str]:
+    """Return a ``{concept_idx: concept_name}`` dict for all known concepts.
+
+    Use this for index-based lookups (e.g. mapping top-k indices back to
+    names).  For ordered variable naming use
+    :func:`load_steerling_concept_names` instead.
+    """
+    df = load_steerling_concepts(url)
     return dict(zip(df.index, df["concept_name"]))

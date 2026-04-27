@@ -25,6 +25,7 @@ from .steerling_utils import (
     load_steerling_backbone_weights,
     load_steerling_concepts,
     load_steerling_concept_names,
+    load_steerling_concept_map,
 )
 from .steerling_backbone import SteerlingBackbone
 from .steerling_encoder import SteerlingLatentToConcept, SteerlingConceptExogenousToLatent
@@ -47,6 +48,7 @@ __all__ = [
     "load_steerling_backbone_weights",
     "load_steerling_concepts",
     "load_steerling_concept_names",
+    "load_steerling_concept_map",
     # Backbone
     "SteerlingBackbone",
     # Encoder
