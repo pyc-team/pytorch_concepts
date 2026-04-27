@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_ID = "guidelabs/steerling-8b"
 
+# Seed the huggingface_hub global session token once at import time.
+# This suppresses "unauthenticated" warnings from any internal HF Hub
+# calls (e.g. within the steerling package) that do not go through our
+# resolve_hf_token() helpers.
+def _login_hf_hub() -> None:
+    """Silently log in to the HF Hub if a token is available."""
+    token = resolve_hf_token()
+    if token is None:
+        return
+    try:
+        from huggingface_hub import login
+        login(token=token, add_to_git_credential=False)
+    except Exception:
+        # huggingface_hub is optional; token is still passed per-call.
+        pass
+
+_login_hf_hub()
+
 
 # ------------------------------------------------------------------
 # Config
