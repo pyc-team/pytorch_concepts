@@ -90,8 +90,15 @@ class SteerlingLatentToConcept(BaseEncoder):
         apply_topk_to_unknown: bool = False,
         pretrained: bool | str = False,
         freeze: bool = False,
+        device: str = "cuda",
         concept_head_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        # Resolve device before any downloads or model instantiation.
+        # Falls back to CPU gracefully if CUDA is requested but unavailable.
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable, falling back to CPU.")
+            device = "cpu"
+
         ConceptHead, _ = _import_concept_head()
 
         # Resolve pretrained -> model_id (or None)
@@ -157,11 +164,13 @@ class SteerlingLatentToConcept(BaseEncoder):
         if model_id is not None:
             if is_unknown:
                 from torch_concepts.steerling.steerling_utils import load_steerling_unknown_head_weights
-                state_dict = load_steerling_unknown_head_weights(model_id)
+                state_dict = load_steerling_unknown_head_weights(model_id, device=device)
             else:
                 from torch_concepts.steerling.steerling_utils import load_steerling_known_head_weights
-                state_dict = load_steerling_known_head_weights(model_id)
-            self.head.load_state_dict(state_dict, strict=False)
+                state_dict = load_steerling_known_head_weights(model_id, device=device)
+            self.head.load_state_dict(state_dict, strict=False)  # strict=False: ConceptHead may have extra buffers
+
+        self.head = self.head.to(device)
 
         # Freeze
         if freeze:
@@ -207,6 +216,9 @@ class SteerlingLatentToConcept(BaseEncoder):
 
         Accepts 2-D ``(batch, D)`` or 3-D ``(batch, seq, D)`` input.
         """
+        target_device = next(self.head.parameters()).device
+        latent = latent.to(target_device)
+
         squeezed = False
         if latent.dim() == 2:
             latent = latent.unsqueeze(1)
@@ -301,9 +313,18 @@ class SteerlingConceptExogenousToLatent(nn.Module):
         )  # → (B, D)
     """
 
-    def __init__(self, known_embeddings: torch.Tensor, unknown_embeddings: torch.Tensor):
+    def __init__(
+        self,
+        known_embeddings: torch.Tensor,
+        unknown_embeddings: torch.Tensor,
+        device: str = "cuda",
+    ):
         super().__init__()
-        self.register_buffer("embeddings", torch.cat([known_embeddings, unknown_embeddings], dim=0))
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable, falling back to CPU.")
+            device = "cpu"
+        embeddings = torch.cat([known_embeddings, unknown_embeddings], dim=0).to(device)
+        self.register_buffer("embeddings", embeddings)
 
     def forward(self, concepts: torch.Tensor) -> torch.Tensor:
         r"""Reconstruct the concept-based hidden state.
@@ -317,4 +338,4 @@ class SteerlingConceptExogenousToLatent(nn.Module):
             ``(*, D)`` reconstructed hidden state
             :math:`\bar{h} = \text{concepts} \times \text{embeddings}`.
         """
-        return concepts @ self.embeddings
+        return concepts.to(self.embeddings.device) @ self.embeddings

@@ -6,6 +6,14 @@ of interpretable language models, including backbone, encoder, decoder,
 and hub/config helpers.
 """
 
+import os
+
+# Default to eager mode for Steerling to avoid Triton/Inductor failures on
+# some CUDA driver stacks. Override with:
+#   TORCH_CONCEPTS_ENABLE_TORCH_COMPILE=1
+if os.environ.get("TORCH_CONCEPTS_ENABLE_TORCH_COMPILE", "0") != "1":
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+
 from .steerling_utils import (
     DEFAULT_MODEL_ID,
     KNOWN_CONCEPTS_URL,

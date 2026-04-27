@@ -47,8 +47,15 @@ class SteerlingLMHead(nn.Module):
         freeze: bool = True,
         vocab_size: int | None = None,
         n_embd: int | None = None,
+        device: str = "cuda",
     ):
         super().__init__()
+
+        # Resolve device before any downloads or model instantiation.
+        # Falls back to CPU gracefully if CUDA is requested but unavailable.
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable, falling back to CPU.")
+            device = "cpu"
 
         # Resolve model id
         if pretrained is True:
@@ -76,9 +83,11 @@ class SteerlingLMHead(nn.Module):
         # Load pretrained weights (tok_emb.weight, weight-tied)
         if model_id is not None:
             from torch_concepts.steerling.steerling_utils import load_steerling_lm_head_weights
-            state_dict = load_steerling_lm_head_weights(model_id)
+            state_dict = load_steerling_lm_head_weights(model_id, device=device)
             self.lm_head.load_state_dict(state_dict)
             logger.info("Loaded LM head weights (%d vocab, %d embd)", vocab_size, n_embd)
+
+        self.lm_head = self.lm_head.to(device)
 
         if freeze:
             for p in self.lm_head.parameters():
@@ -90,7 +99,9 @@ class SteerlingLMHead(nn.Module):
 
     def forward(self, latent: torch.Tensor) -> torch.Tensor:
         """Map ``(*, D)`` hidden states to ``(*, vocab)`` logits (float32)."""
-        return self.lm_head(latent.to(self.lm_head.weight.dtype)).float()
+        target_device = self.lm_head.weight.device
+        target_dtype = self.lm_head.weight.dtype
+        return self.lm_head(latent.to(device=target_device, dtype=target_dtype)).float()
 
 
 def prepare_generation_sequence(

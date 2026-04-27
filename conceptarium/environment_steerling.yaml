@@ -1,7 +1,6 @@
 name: steerling
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python=3.13.*
 
@@ -12,7 +11,6 @@ dependencies:
   - scikit-learn
   - scipy
   - openpyxl
-
   - pip
   - pip:
     # PyTorch with CUDA 12.8 (via PyTorch index)

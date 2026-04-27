@@ -29,10 +29,11 @@ import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
+DEFAULT_VOCAB_SIZE = 100277
 
 
 def _import_steerling_transformer():
-    """Lazily import the Steerling transformer and config classes."""
+    """Lazily import Steerling model/config classes."""
     try:
         from steerling.models.causal_diffusion import CausalDiffusionLM
         from steerling.configs.causal_diffusion import CausalDiffusionConfig
@@ -85,6 +86,12 @@ class SteerlingBackbone(nn.Module):
     ):
         super().__init__()
 
+        # Resolve device before any downloads or model instantiation.
+        # Falls back to CPU gracefully if CUDA is requested but unavailable.
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable, falling back to CPU.")
+            device = "cpu"
+
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
         from torch_concepts.steerling.steerling_utils import (
             DEFAULT_MODEL_ID,
@@ -92,34 +99,35 @@ class SteerlingBackbone(nn.Module):
             load_steerling_backbone_weights,
         )
 
-        # Resolve model id
-        if pretrained is True:
-            model_id: str | None = DEFAULT_MODEL_ID
-        elif isinstance(pretrained, str) and pretrained:
-            model_id = pretrained
-        else:
-            model_id = None
+        model_id: str | None = (
+            DEFAULT_MODEL_ID if pretrained is True
+            else pretrained if isinstance(pretrained, str) and pretrained
+            else None
+        )
 
         self._model_id = model_id
+        model_cfg_dict: dict[str, object] = {}
 
-        # Load config
         if model_id is not None:
             model_cfg_dict, _ = load_steerling_config(model_id)
-            filtered = {k: v for k, v in model_cfg_dict.items()
-                        if k in CausalDiffusionConfig.model_fields}
-            filtered.pop("model_type", None)  # hub config says "steerling"
-            config = CausalDiffusionConfig(**filtered)
+            config_values = {
+                k: v for k, v in model_cfg_dict.items()
+                if k in CausalDiffusionConfig.model_fields
+            }
+            config_values.pop("model_type", None)
+            config = CausalDiffusionConfig(**config_values)
         else:
             config = CausalDiffusionConfig()
 
-        # Build transformer
-        vocab_size = model_cfg_dict.get("vocab_size", 100277) if model_id else 100277
+        vocab_size = int(model_cfg_dict.get("vocab_size", DEFAULT_VOCAB_SIZE))
         self.transformer = CausalDiffusionLM(config, vocab_size=vocab_size)
         self._out_features = config.n_embd
 
-        # Load weights
         if model_id is not None:
+            logger.info("Loading backbone weights from %s...", model_id)
             state_dict = load_steerling_backbone_weights(model_id, device=device)
+            # strict=False: CausalDiffusionLM may declare concept-head keys
+            # that are intentionally absent from the backbone-only state dict.
             self.transformer.load_state_dict(state_dict, strict=False)
             if dtype is None:
                 dtype = torch.bfloat16
@@ -130,13 +138,10 @@ class SteerlingBackbone(nn.Module):
         self.transformer = self.transformer.to(device)
         self.transformer.eval()
 
-        # Freeze
         if freeze:
-            for p in self.transformer.parameters():
-                p.requires_grad = False
+            self.transformer.requires_grad_(False)
 
-        # Tokenizer (lazy-cached)
-        self._tokenizer = None
+        self._tokenizer: Optional[object] = None
 
     @property
     def out_features(self) -> int:
@@ -150,8 +155,9 @@ class SteerlingBackbone(nn.Module):
             from torch_concepts.steerling.steerling_utils import (
                 get_steerling_tokenizer, DEFAULT_MODEL_ID,
             )
-            model_id = self._model_id or DEFAULT_MODEL_ID
-            self._tokenizer = get_steerling_tokenizer(model_id)
+            self._tokenizer = get_steerling_tokenizer(
+                self._model_id or DEFAULT_MODEL_ID
+            )
         return self._tokenizer
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -170,7 +176,8 @@ class SteerlingBackbone(nn.Module):
         return self.transformer(input_ids, return_hidden=True)
 
     def __repr__(self) -> str:
+        params_b = sum(p.numel() for p in self.parameters()) / 1e9
         return (
             f"SteerlingBackbone(out_features={self._out_features}, "
-            f"params={sum(p.numel() for p in self.parameters()) / 1e9:.1f}B)"
+            f"params={params_b:.1f}B)"
         )
