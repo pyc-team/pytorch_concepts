@@ -22,7 +22,7 @@ def main():
     n_new_tokens = 20
 
     # ── 1. Load backbone and prepare evidence ──────────────────────────
-    backbone = SteerlingBackbone(pretrained=True, freeze=True, device="cpu")
+    backbone = SteerlingBackbone(pretrained=True, freeze=True, device="cuda")
     data = prepare_steerling_evidence(backbone, prompt, n_new_tokens)
     input_ids = data["input_ids"]       # (1, T_prompt + n_new_tokens)
     hidden = data["hidden"]             # (1, T_prompt + n_new_tokens, 4096)
