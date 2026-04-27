@@ -31,6 +31,7 @@ def main():
 
     # ── 2. Concept encoder heads ───────────────────────────────────────
     lm_head = SteerlingLMHead(pretrained=True, freeze=True)
+    lm_head.eval()
 
 
     # ── 3. Variables ───────────────────────────────────────────────────
@@ -57,10 +58,12 @@ def main():
     
     # parametrize concepts with the pretrained concept encoder
     sup_concepts_head = SteerlingLatentToConcept(pretrained=True, freeze=True)
+    sup_concepts_head.eval()
     k_cpd = ParametricCPD(sup_concepts_names, parents=["input"], 
                           parametrization=sup_concepts_head,
                           shared=True, shared_name="sup_concepts")
     unsup_concepts_head = SteerlingLatentToConcept(pretrained=True, freeze=True, is_unknown=True)
+    unsup_concepts_head.eval()
     u_cpd = ParametricCPD(unsup_concepts_names, parents=["input"], 
                           parametrization=unsup_concepts_head,
                           shared=True, shared_name="unsup_concepts")
