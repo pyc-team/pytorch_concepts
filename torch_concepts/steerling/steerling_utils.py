@@ -100,8 +100,21 @@ def _ensure_hub_deps():
         ) from exc
 
 
+# In-process cache for the safetensors weight-map index.
+# huggingface_hub already caches the file on disk; this avoids
+# re-parsing the JSON on every function call within the same process.
+_weight_map_cache: Dict[str, Dict[str, str]] = {}
+
+
 def _download_index(model_name_or_path: str) -> Dict[str, str]:
-    """Download the safetensors index and return the weight_map dict."""
+    """Download ``model.safetensors.index.json`` and return its weight_map.
+
+    The result is cached in memory so repeated calls within the same
+    process skip the JSON parse entirely.
+    """
+    if model_name_or_path in _weight_map_cache:
+        return _weight_map_cache[model_name_or_path]
+
     from huggingface_hub import hf_hub_download
 
     index_path = hf_hub_download(
@@ -110,7 +123,10 @@ def _download_index(model_name_or_path: str) -> Dict[str, str]:
         token=resolve_hf_token(),
     )
     with open(index_path) as f:
-        return json.load(f)["weight_map"]
+        weight_map = json.load(f)["weight_map"]
+
+    _weight_map_cache[model_name_or_path] = weight_map
+    return weight_map
 
 
 def load_steerling_known_head_weights(
@@ -243,7 +259,12 @@ def load_steerling_backbone_weights(
     }
 
     state_dict: Dict[str, torch.Tensor] = {}
+    logger.info(
+        "Loading backbone weights from %s (%d shards)...",
+        model_name_or_path, len(shards),
+    )
     for shard_file in sorted(shards):
+        logger.info("  Loading shard %s...", shard_file)
         shard_path = hf_hub_download(
             model_name_or_path,
             shard_file,
@@ -254,8 +275,7 @@ def load_steerling_backbone_weights(
                 if key.startswith("transformer."):
                     state_dict[key.removeprefix("transformer.")] = f.get_tensor(key)
 
-    logger.info("Loaded backbone weights from %s", model_name_or_path,
-    )
+    logger.info("Backbone weights loaded from %s", model_name_or_path)
     return state_dict
 
 
@@ -314,6 +334,7 @@ def load_steerling_concepts(
 def load_steerling_concept_names(
     url: str = KNOWN_CONCEPTS_URL,
 ) -> Dict[int, str]:
-    """Helper to load concept_idx → concept_name mapping."""
+    """Return a ``{concept_idx: concept_name}`` dict for all known concepts."""
     df = load_steerling_concepts(url)
-    return list(df["concept_name"])
+    # df is indexed by concept_idx (set via index_col in read_csv)
+    return dict(zip(df.index, df["concept_name"]))
