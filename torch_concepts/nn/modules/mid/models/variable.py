@@ -8,30 +8,95 @@ and support hierarchical concept structures.
 import copy
 import torch
 from functools import partial
-from torch.distributions import Distribution, Bernoulli, Categorical, MultivariateNormal, Normal, \
-    RelaxedBernoulli, OneHotCategorical, RelaxedOneHotCategorical
+
+# PyTorch distributions
+from torch.distributions import Distribution, Normal, MultivariateNormal, \
+    Bernoulli, RelaxedBernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical
+from .....distributions import Delta
+
 from typing import List, Dict, Any, Union, Optional, Type, Callable
 
-from .....distributions import Delta
+
+# List of supported distribution types for Variables.
+_SUPPORTED_DISTRIBUTIONS: list = [
+    Bernoulli,
+    RelaxedBernoulli,
+    OneHotCategorical,
+    RelaxedOneHotCategorical,
+    Normal,
+    MultivariateNormal,
+    Delta
+]
+
+# Default size for distributions that have a natural scalar default.
+_DEFAULT_SIZES: Dict[Type[Distribution], int] = {
+    Bernoulli: 1,
+    RelaxedBernoulli: 1,
+    Normal: 1
+}
 
 # Default distributions per concept type group (binary / categorical / continuous).
 _DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
-    'binary': Bernoulli,
-    'categorical': OneHotCategorical,
-    # 'continuous': Normal,  # TODO: add when continuous concepts are supported
+    'binary': RelaxedBernoulli,
+    'categorical': RelaxedOneHotCategorical,
+    'continuous': Normal
 }
 
 # Default logits → probabilities activations per distribution type.
 _DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
     Bernoulli: torch.sigmoid,
     RelaxedBernoulli: torch.sigmoid,
-    Categorical: partial(torch.softmax, dim=-1),
     OneHotCategorical: partial(torch.softmax, dim=-1),
     RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
     Normal: lambda x: x,
     MultivariateNormal: lambda x: x,
     Delta: lambda x: x,
 }
+
+# Number of raw parameters needed to parameterise each supported distribution
+# given a variable of a certain *size* (event dimension).
+_PARAM_DIMS: Dict[Type[Distribution], Dict[str, Callable[[int], int]]] = {
+    Bernoulli: {'probs': lambda size: size},                        # one prob per dimension
+    RelaxedBernoulli: {'probs': lambda size: size},                 # one prob per dimension
+    OneHotCategorical: {'probs': lambda size: size},                # one prob per class
+    RelaxedOneHotCategorical: {'probs': lambda size: size},         # one prob per class
+    Normal: {'loc': lambda size: size,                       # mean
+             'scale': lambda size: size},                    # log-std
+    MultivariateNormal: {'loc': lambda size: size,                           # mean 
+                         'scale_tril': lambda size: size * (size + 1) // 2}, # lower-triangular Cholesky
+    Delta: {'value': lambda size: size}
+}
+
+
+def param_dim(
+    distribution: Type[Distribution], 
+    size: int = 1,
+    return_sum: bool = True) -> int:
+    """Return the number of raw parameters required to parameterise *distribution*.
+
+    Args:
+        distribution: A supported distribution class (must be in
+            :data:`_SUPPORTED_DISTRIBUTIONS`).
+        size: The event dimension of the variable (e.g. ``1`` for
+            Bernoulli, ``k`` for ``OneHotCategorical`` with *k* classes,
+            ``d`` for a ``d``-dimensional ``Normal`` or
+            ``MultivariateNormal``).
+
+    Returns:
+        int: Total number of scalar parameters.
+
+    Raises:
+        ValueError: If *distribution* is not in :data:`_SUPPORTED_DISTRIBUTIONS`.
+    """
+    if distribution not in _SUPPORTED_DISTRIBUTIONS:
+        raise ValueError(
+            f"Distribution '{distribution.__name__}' is not supported. "
+            f"Supported distributions are: {[d.__name__ for d in _SUPPORTED_DISTRIBUTIONS]}."
+        )
+    if return_sum:
+        return sum(v(size) for v in _PARAM_DIMS[distribution].values()) 
+    else:        
+        return {k: v(size) for k, v in _PARAM_DIMS[distribution].items()}
 
 
 class Variable:
@@ -94,7 +159,7 @@ class Variable:
 
     def __new__(cls, concepts: Union[str, List[str]],
                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None,
+                size: Union[int, List[int], None] = None, metadata: Optional[Dict[str, Any]] = None,
                 dist_kwargs: Optional[Dict[str, Any]] = None,
                 activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
         """
@@ -171,7 +236,7 @@ class Variable:
 
     def __init__(self, concepts: Union[str, List[str]],
                  distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
+                 size: Union[int, List[int], None] = None,
                  metadata: Dict[str, Any] = None,
                  dist_kwargs: Optional[Dict[str, Any]] = None,
                  activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
@@ -205,9 +270,23 @@ class Variable:
                 "which is incompatible with Variable. "
                 "Use OneHotCategorical (or RelaxedOneHotCategorical) instead."
             )
+        
+        if distribution not in _SUPPORTED_DISTRIBUTIONS:
+            raise ValueError(
+                f"Distribution '{distribution.__name__}' is not supported. "
+                f"Supported distributions are: {[d.__name__ for d in _SUPPORTED_DISTRIBUTIONS]}."
+            )
 
-        if distribution is Bernoulli and size != 1:
-            raise ValueError("Bernoulli Variable must have size=1 as it represents a binary outcome per concept.")
+        if size is None:
+            if distribution in _DEFAULT_SIZES:
+                size = _DEFAULT_SIZES[distribution]
+            else:
+                raise ValueError(
+                    f"'size' must be provided for distribution '{distribution.__name__}'."
+                )
+
+        if distribution in [Bernoulli, RelaxedBernoulli, Normal] and size != 1:
+            raise ValueError("Bernoulli, RelaxedBernoulli, and Normal distributions must have size=1.")
 
         self.concept = concepts
         self.distribution = distribution
@@ -216,26 +295,29 @@ class Variable:
         self.metadata = metadata if metadata is not None else {}
         if activation is not None:
             self.activation = activation
-        elif distribution in _DEFAULT_ACTIVATIONS:
-            self.activation = _DEFAULT_ACTIVATIONS[distribution]
         else:
-            raise ValueError(
-                f"No default activation for distribution {distribution.__name__}. "
-                f"Please provide an explicit 'activation' callable."
-            )
+            # Use default activation based on distribution type
+            self.activation = _DEFAULT_ACTIVATIONS[distribution]
 
     @property
     def out_features(self) -> int:
         """
         Number of output features for this variable.
 
-        This is an alias for `size`, provided for consistency with neural network
-        module interfaces where `out_features` is the conventional name.
+        Returns:
+            int: Number of output features.
+        """
+        return param_dim(self.distribution, self.size, return_sum=True)
+
+    @property
+    def param_dim(self) -> int:
+        """
+        Number of output features for this variable.
 
         Returns:
-            int: Number of output features (equals `size`).
+            int: Number of output features.
         """
-        return self.size
+        return param_dim(self.distribution, self.size, return_sum=False)
 
     def __repr__(self):
         """
@@ -244,9 +326,9 @@ class Variable:
         Returns:
             str: String representation including concepts, distribution, size, and metadata.
         """
-        meta_str = f", metadata={self.metadata}" if self.metadata else ""
-        dist_kwargs_str = f", dist_kwargs={self.dist_kwargs}" if self.dist_kwargs else ""
-        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, {meta_str})"
+        meta_str = f"metadata={self.metadata}" if self.metadata else ""
+        dist_kwargs_str = f"({self.dist_kwargs})" if self.dist_kwargs else ""
+        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, param_dim={self.param_dim}, {meta_str})"
 
 
 class ConceptVariable(Variable):

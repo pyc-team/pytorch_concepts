@@ -14,12 +14,11 @@ from itertools import product
 
 import torch.nn as nn
 
-from .factor import ParametricFactor
 from .variable import Variable
 from .....distributions import Delta
 
 
-class ParametricCPD(ParametricFactor):
+class ParametricCPD(nn.Module):
     """
     Conditional probability distribution parameterised by a neural network.
 
@@ -56,7 +55,6 @@ class ParametricCPD(ParametricFactor):
                 concepts: Union[str, List[str]],
                 parametrization: Union[nn.Module, List[nn.Module]],
                 shared: bool = False,
-                shared_name: Optional[str] = None,
                 **kwargs):
         """
         Create new ParametricCPD instance(s).
@@ -109,17 +107,29 @@ class ParametricCPD(ParametricFactor):
     def __init__(self, 
                  concepts: Union[str, List[str]],
                  parametrization: Union[nn.Module, List[nn.Module]],
-                 parents: List[Union[Variable, str]] = None,
+                 parents: List[Union[Variable, str]] = [],
                  shared: bool = False,
-                 shared_name: Optional[str] = None,
-                 **kwargs):
-        super().__init__(concepts=concepts, parametrization=parametrization, **kwargs)
-        self.parents: List[Variable] = list(parents) if parents is not None else []
-        self.shared: bool = shared
-        self.shared_name: Optional[str] = shared_name
+                 shared_name: Optional[str] = None):
+        super().__init__()
+        self.concepts = concepts
+        self.parametrization = parametrization
+
+        assert isinstance(parents, list), "'parents' must be a list of Variable instances or strings."
+        self.parents = parents
+        self.shared = shared
+        self.shared_name = shared_name
+
+        # FIXME: remove self.concept dependence everywhere
+        if isinstance(self.concepts, str):
+            self.concept = self.concepts
+        else:
+            self.concept = self.concepts[0]
+
+        # TODO: use when implementing factors
+        # self.scope = concepts+parents if isinstance(concepts, list) else [concepts]+parents
 
     # ------------------------------------------------------------------
-    # Directed-model helpers (moved from ParametricFactor)
+    # Directed-model helpers
     # ------------------------------------------------------------------
     @property
     def in_features(self) -> int:
@@ -130,207 +140,228 @@ class ParametricCPD(ParametricFactor):
 
     _MAX_DISCRETE_BITS = 20  # cap on total discrete parent bits for table construction
 
-    def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __repr__(self):
+        parents = [p.name if isinstance(p, Variable) else p for p in self.parents]
+        shared = f", shared={self.shared}" if self.shared else ""
+        return f"{self.__class__.__name__}(concepts={self.concepts!r}, parametrization={self.parametrization.__class__.__name__}, parents={parents}{shared})"
+    
+    def forward(self, **kwargs):
         """
-        Enumerate all discrete parent-state combinations for table construction.
+        Compute the factor output by running the parametrization module.
 
-        Continuous (Delta / Normal) parents are held at zero; discrete parents
-        (Bernoulli, Categorical and their relaxed variants) are exhaustively
-        enumerated.
+        Parameters
+        ----------
+        **kwargs
+            Keyword arguments passed to the parametrization module.
 
         Returns
         -------
-        all_full_inputs : torch.Tensor
-            Input tensors for the parametrization, one row per combination.
-        all_discrete_state_vectors : torch.Tensor
-            Corresponding state vectors for the table rows.
-
-        Raises
-        ------
-        RuntimeError
-            If the total number of discrete parent bits exceeds
-            ``_MAX_DISCRETE_BITS`` (default 20), which would require
-            enumerating more than ~1 million combinations.
+        torch.Tensor
+            Output of the parametrization module.
         """
-        if not self.parents:
-            in_features = self.parametrization.in_features
-            placeholder_input = torch.zeros((1, in_features))
-            return placeholder_input, torch.empty((1, 0))
+        return self.parametrization(**kwargs)
+    
+    # def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    #     """
+    #     Enumerate all discrete parent-state combinations for table construction.
 
-        # --- guard against combinatorial explosion ---
-        total_bits = 0
-        for p in self.parents:
-            if p.distribution in [Bernoulli, RelaxedBernoulli]:
-                total_bits += p.size
-            elif p.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-                total_bits += p.size  # one-hot dims
-        if total_bits > self._MAX_DISCRETE_BITS:
-            raise RuntimeError(
-                f"Total discrete parent bits ({total_bits}) exceeds the "
-                f"maximum of {self._MAX_DISCRETE_BITS}. Table construction "
-                f"would require 2^{total_bits} rows."
-            )
+    #     Continuous (Delta / Normal) parents are held at zero; discrete parents
+    #     (Bernoulli, Categorical and their relaxed variants) are exhaustively
+    #     enumerated.
 
-        discrete_combinations_list = []
-        discrete_state_vectors_list = []
-        continuous_tensors = []
+    #     Returns
+    #     -------
+    #     all_full_inputs : torch.Tensor
+    #         Input tensors for the parametrization, one row per combination.
+    #     all_discrete_state_vectors : torch.Tensor
+    #         Corresponding state vectors for the table rows.
 
-        for parent_var in self.parents:
-            if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
-                                           Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-                out_dim = parent_var.size
-                input_combinations = []
-                state_combinations = []
+    #     Raises
+    #     ------
+    #     RuntimeError
+    #         If the total number of discrete parent bits exceeds
+    #         ``_MAX_DISCRETE_BITS`` (default 20), which would require
+    #         enumerating more than ~1 million combinations.
+    #     """
+    #     if not self.parents:
+    #         in_features = self.parametrization.in_features
+    #         placeholder_input = torch.zeros((1, in_features))
+    #         return placeholder_input, torch.empty((1, 0))
 
-                if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
-                    input_combinations = list(product([0.0, 1.0], repeat=out_dim))
-                    state_combinations = input_combinations
-                elif parent_var.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-                    for i in range(out_dim):
-                        one_hot = torch.zeros(out_dim)
-                        one_hot[i] = 1.0
-                        input_combinations.append(one_hot.tolist())
-                        state_combinations.append([float(i)])
+    #     # --- guard against combinatorial explosion ---
+    #     total_bits = 0
+    #     for p in self.parents:
+    #         if p.distribution in [Bernoulli, RelaxedBernoulli]:
+    #             total_bits += p.size
+    #         elif p.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
+    #             total_bits += p.size  # one-hot dims
+    #     if total_bits > self._MAX_DISCRETE_BITS:
+    #         raise RuntimeError(
+    #             f"Total discrete parent bits ({total_bits}) exceeds the "
+    #             f"maximum of {self._MAX_DISCRETE_BITS}. Table construction "
+    #             f"would require 2^{total_bits} rows."
+    #         )
 
-                discrete_combinations_list.append(
-                    [torch.tensor(c, dtype=torch.float32).unsqueeze(0) for c in input_combinations])
-                discrete_state_vectors_list.append(
-                    [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
+    #     discrete_combinations_list = []
+    #     discrete_state_vectors_list = []
+    #     continuous_tensors = []
 
-            elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
-                fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
-                continuous_tensors.append(fixed_value)
-            else:
-                raise TypeError(
-                    f"Unsupported distribution type {parent_var.distribution.__name__} for table generation.")
+    #     for parent_var in self.parents:
+    #         if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
+    #                                        Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
+    #             out_dim = parent_var.size
+    #             input_combinations = []
+    #             state_combinations = []
 
-        if not discrete_combinations_list:
-            fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
-                                      if continuous_tensors else torch.empty((1, 0)))
-            return fixed_continuous_input, torch.empty((1, 0))
+    #             if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
+    #                 input_combinations = list(product([0.0, 1.0], repeat=out_dim))
+    #                 state_combinations = input_combinations
+    #             elif parent_var.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
+    #                 for i in range(out_dim):
+    #                     one_hot = torch.zeros(out_dim)
+    #                     one_hot[i] = 1.0
+    #                     input_combinations.append(one_hot.tolist())
+    #                     state_combinations.append([float(i)])
 
-        all_discrete_product = list(product(*discrete_combinations_list))
-        all_discrete_states_product = list(product(*discrete_state_vectors_list))
+    #             discrete_combinations_list.append(
+    #                 [torch.tensor(c, dtype=torch.float32).unsqueeze(0) for c in input_combinations])
+    #             discrete_state_vectors_list.append(
+    #                 [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
 
-        fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
-                                  if continuous_tensors else torch.empty((1, 0)))
+    #         elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
+    #             fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
+    #             continuous_tensors.append(fixed_value)
+    #         else:
+    #             raise TypeError(
+    #                 f"Unsupported distribution type {parent_var.distribution.__name__} for table generation.")
 
-        all_full_inputs = []
-        for discrete_inputs in all_discrete_product:
-            discrete_part = torch.cat(list(discrete_inputs), dim=-1)
-            all_full_inputs.append(torch.cat([discrete_part, fixed_continuous_input], dim=-1))
+    #     if not discrete_combinations_list:
+    #         fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
+    #                                   if continuous_tensors else torch.empty((1, 0)))
+    #         return fixed_continuous_input, torch.empty((1, 0))
 
-        all_discrete_state_vectors = []
-        for discrete_states in all_discrete_states_product:
-            all_discrete_state_vectors.append(torch.cat(list(discrete_states), dim=-1))
+    #     all_discrete_product = list(product(*discrete_combinations_list))
+    #     all_discrete_states_product = list(product(*discrete_state_vectors_list))
 
-        return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
+    #     fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
+    #                               if continuous_tensors else torch.empty((1, 0)))
 
-    # ------------------------------------------------------------------
-    # CPT / potential-table construction
-    # ------------------------------------------------------------------
+    #     all_full_inputs = []
+    #     for discrete_inputs in all_discrete_product:
+    #         discrete_part = torch.cat(list(discrete_inputs), dim=-1)
+    #         all_full_inputs.append(torch.cat([discrete_part, fixed_continuous_input], dim=-1))
 
-    def build_cpt(self) -> torch.Tensor:
-        if self.shared:
-            raise NotImplementedError(
-                "build_cpt() is not supported for shared CPDs. "
-                "Shared CPDs output concatenated logits for multiple concepts "
-                "and cannot be decomposed into per-variable CPTs."
-            )
-        if not self.variable:
-            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
+    #     all_discrete_state_vectors = []
+    #     for discrete_states in all_discrete_states_product:
+    #         all_discrete_state_vectors.append(torch.cat(list(discrete_states), dim=-1))
 
-        all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
+    #     return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
 
-        input_batch = all_full_inputs
+    # # ------------------------------------------------------------------
+    # # CPT / potential-table construction
+    # # ------------------------------------------------------------------
 
-        if input_batch.shape[-1] != self.parametrization.in_features:
-            raise RuntimeError(
-                f"Input tensor dimension mismatch for CPT building. "
-                f"ParametricCPD module expects {self.parametrization.in_features} features, "
-                f"but parent combinations resulted in {input_batch.shape[-1]} features. "
-                f"Check Variable definition and ProbabilisticModel resolution."
-            )
+    # def build_cpt(self) -> torch.Tensor:
+    #     if self.shared:
+    #         raise NotImplementedError(
+    #             "build_cpt() is not supported for shared CPDs. "
+    #             "Shared CPDs output concatenated logits for multiple concepts "
+    #             "and cannot be decomposed into per-variable CPTs."
+    #         )
+    #     if not self.variable:
+    #         raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
-        endogenous = self.parametrization(input=input_batch)
-        probabilities = None
+    #     all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
 
-        if self.variable.distribution is Bernoulli:
-            # Traditional P(X=1) output
-            p_c1 = torch.sigmoid(endogenous)
+    #     input_batch = all_full_inputs
 
-            # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
-            probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
+    #     if input_batch.shape[-1] != self.parametrization.in_features:
+    #         raise RuntimeError(
+    #             f"Input tensor dimension mismatch for CPT building. "
+    #             f"ParametricCPD module expects {self.parametrization.in_features} features, "
+    #             f"but parent combinations resulted in {input_batch.shape[-1]} features. "
+    #             f"Check Variable definition and ProbabilisticModel resolution."
+    #         )
 
-        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-            probabilities = torch.softmax(endogenous, dim=-1)
+    #     endogenous = self.parametrization(input=input_batch)
+    #     probabilities = None
 
-        elif self.variable.distribution is Delta:
-            probabilities = endogenous
+    #     if self.variable.distribution is Bernoulli:
+    #         # Traditional P(X=1) output
+    #         p_c1 = torch.sigmoid(endogenous)
 
-        else:
-            raise NotImplementedError(f"CPT for {self.variable.distribution.__name__} not supported.")
+    #         # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
+    #         probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
 
-        return probabilities
+    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
+    #         probabilities = torch.softmax(endogenous, dim=-1)
 
-    def build_potential(self) -> torch.Tensor:
-        if self.shared:
-            raise NotImplementedError(
-                "build_potential() is not supported for shared CPDs. "
-                "Shared CPDs output concatenated logits for multiple concepts "
-                "and cannot be decomposed into per-variable potential tables."
-            )
-        if not self.variable:
-            raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
+    #     elif self.variable.distribution is Delta:
+    #         probabilities = endogenous
 
-        # We need the core probability part for potential calculation
-        all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-        endogenous = self.parametrization(input=all_full_inputs)
+    #     else:
+    #         raise NotImplementedError(f"CPT for {self.variable.distribution.__name__} not supported.")
 
-        if self.variable.distribution is Bernoulli:
-            cpt_core = torch.sigmoid(endogenous)
-        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-            cpt_core = torch.softmax(endogenous, dim=-1)
-        elif self.variable.distribution is Delta:
-            cpt_core = endogenous
-        else:
-            raise NotImplementedError("Potential table construction not supported for this distribution.")
+    #     return probabilities
 
-        # --- Potential Table Construction ---
+    # def build_potential(self) -> torch.Tensor:
+    #     if self.shared:
+    #         raise NotImplementedError(
+    #             "build_potential() is not supported for shared CPDs. "
+    #             "Shared CPDs output concatenated logits for multiple concepts "
+    #             "and cannot be decomposed into per-variable potential tables."
+    #         )
+    #     if not self.variable:
+    #         raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
 
-        if self.variable.distribution is Bernoulli:
-            p_c1 = cpt_core
-            p_c0 = 1.0 - cpt_core
+    #     # We need the core probability part for potential calculation
+    #     all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
+    #     endogenous = self.parametrization(input=all_full_inputs)
 
-            child_states_c0 = torch.zeros_like(p_c0)
-            child_states_c1 = torch.ones_like(p_c1)
+    #     if self.variable.distribution is Bernoulli:
+    #         cpt_core = torch.sigmoid(endogenous)
+    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
+    #         cpt_core = torch.softmax(endogenous, dim=-1)
+    #     elif self.variable.distribution is Delta:
+    #         cpt_core = endogenous
+    #     else:
+    #         raise NotImplementedError("Potential table construction not supported for this distribution.")
 
-            # Rows for X=1: [Parent States | Child State (1) | P(X=1)]
-            rows_c1 = torch.cat([discrete_state_vectors, child_states_c1, p_c1], dim=-1)
-            # Rows for X=0: [Parent States | Child State (0) | P(X=0)]
-            rows_c0 = torch.cat([discrete_state_vectors, child_states_c0, p_c0], dim=-1)
+    #     # --- Potential Table Construction ---
 
-            potential_table = torch.cat([rows_c1, rows_c0], dim=0)
+    #     if self.variable.distribution is Bernoulli:
+    #         p_c1 = cpt_core
+    #         p_c0 = 1.0 - cpt_core
 
-        elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-            n_classes = self.variable.size
-            all_rows = []
-            for i in range(n_classes):
-                child_state_col = torch.full((cpt_core.shape[0], 1), float(i), dtype=torch.float32)
-                prob_col = cpt_core[:, i].unsqueeze(-1)
+    #         child_states_c0 = torch.zeros_like(p_c0)
+    #         child_states_c1 = torch.ones_like(p_c1)
 
-                # [Parent States | Child State (i) | P(X=i)]
-                rows_ci = torch.cat([discrete_state_vectors, child_state_col, prob_col], dim=-1)
-                all_rows.append(rows_ci)
+    #         # Rows for X=1: [Parent States | Child State (1) | P(X=1)]
+    #         rows_c1 = torch.cat([discrete_state_vectors, child_states_c1, p_c1], dim=-1)
+    #         # Rows for X=0: [Parent States | Child State (0) | P(X=0)]
+    #         rows_c0 = torch.cat([discrete_state_vectors, child_states_c0, p_c0], dim=-1)
 
-            potential_table = torch.cat(all_rows, dim=0)
+    #         potential_table = torch.cat([rows_c1, rows_c0], dim=0)
 
-        elif self.variable.distribution is Delta:
-            # [Parent States | Child Value]
-            child_value = cpt_core
-            potential_table = torch.cat([discrete_state_vectors, child_value], dim=-1)
+    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
+    #         n_classes = self.variable.size
+    #         all_rows = []
+    #         for i in range(n_classes):
+    #             child_state_col = torch.full((cpt_core.shape[0], 1), float(i), dtype=torch.float32)
+    #             prob_col = cpt_core[:, i].unsqueeze(-1)
 
-        else:
-            raise NotImplementedError("Potential table construction not supported for this distribution.")
+    #             # [Parent States | Child State (i) | P(X=i)]
+    #             rows_ci = torch.cat([discrete_state_vectors, child_state_col, prob_col], dim=-1)
+    #             all_rows.append(rows_ci)
 
-        return potential_table
+    #         potential_table = torch.cat(all_rows, dim=0)
+
+    #     elif self.variable.distribution is Delta:
+    #         # [Parent States | Child Value]
+    #         child_value = cpt_core
+    #         potential_table = torch.cat([discrete_state_vectors, child_value], dim=-1)
+
+    #     else:
+    #         raise NotImplementedError("Potential table construction not supported for this distribution.")
+
+    #     return potential_table

@@ -61,7 +61,8 @@ class ProbabilisticModel(nn.Module):
         :class:`ParametricFactor` instances.
     """
 
-    def __init__(self, variables: List[Variable],
+    def __init__(self, 
+                 variables: List[Variable],
                  factors: Union[List[ParametricFactor], List[ParametricCPD]]):
         super().__init__()
         has_cpds = any(isinstance(f, ParametricCPD) for f in factors)
@@ -88,23 +89,25 @@ class ProbabilisticModel(nn.Module):
 
     # ---- initialisation ----------------------------------------------------
 
-    def _initialize_model(self, input_factors: List[ParametricFactor]):
+    def _initialize_model(self, input_factors: Union[List[ParametricFactor], List[ParametricCPD]]):
         """Build concept→variable mapping and register factors."""
         self.concept_to_variable = {var.concept: var for var in self.variables}
 
         if self._is_directed:
             self._initialize_directed(input_factors)
         else:
-            for factor in input_factors:
-                if getattr(factor, 'shared', False):
-                    self._register_shared_factor(factor)
-                else:
-                    concept = factor.concept
-                    if concept in self.concept_to_variable:
-                        factor.variable = self.concept_to_variable[concept]
-                    self.factors[str(concept)] = factor
+            raise NotImplementedError("Undirected models with plain " \
+            "ParametricFactor are not yet supported.")
+            # for factor in input_factors:
+            #     if getattr(factor, 'shared', False):
+            #         self._register_shared_factor(factor)
+            #     else:
+            #         concept = factor.concept
+            #         if concept in self.concept_to_variable:
+            #             factor.variable = self.concept_to_variable[concept]
+            #         self.factors[str(concept)] = factor
 
-    def _register_shared_factor(self, factor):
+    def _register_shared_cpd(self, factor):
         """Register a shared CPD under its shared_name (if provided) or primary
         concept and map the remaining concept names as lightweight string redirects."""
         shared_name = getattr(factor, 'shared_name', None)
@@ -115,7 +118,7 @@ class ProbabilisticModel(nn.Module):
             if name != key:
                 self._shared_cpd_map[name] = key
 
-    def _initialize_directed(self, input_factors: List[ParametricFactor]):
+    def _initialize_directed(self, input_factors: Union[List[ParametricFactor], List[ParametricCPD]]):
         """Directed-model initialisation: lazy constructors + parent resolution."""
         from ...low.lazy import LazyConstructor
 
@@ -125,10 +128,12 @@ class ProbabilisticModel(nn.Module):
                 if isinstance(cpd.parametrization, LazyConstructor):
                     raise NotImplementedError(
                         "LazyConstructor is not supported with shared=True CPDs.")
-                self._register_shared_factor(cpd)
+                self._register_shared_cpd(cpd)
                 continue
+            
+            concept = cpd.concepts
+            assert isinstance(concept, str)
 
-            concept = cpd.concept
             if concept in self.concept_to_variable:
                 cpd.variable = self.concept_to_variable[concept]
 
@@ -220,35 +225,35 @@ class ProbabilisticModel(nn.Module):
         f.parents = stored.parents if stored is not None else []
         return f
 
-    def build_potentials(self):
-        """Build potential tables for all concepts.
+    # def build_potentials(self):
+    #     """Build potential tables for all concepts.
         
-        Raises:
-            NotImplementedError: If the model contains shared CPDs.
-        """
-        self._reject_shared_cpds("build_potentials")
-        return {
-            concept: self._make_temp_parametric_cpd(concept, module).build_potential()
-            for concept, module in self.factors.items()
-        }
+    #     Raises:
+    #         NotImplementedError: If the model contains shared CPDs.
+    #     """
+    #     self._reject_shared_cpds("build_potentials")
+    #     return {
+    #         concept: self._make_temp_parametric_cpd(concept, module).build_potential()
+    #         for concept, module in self.factors.items()
+    #     }
 
-    def build_cpts(self):
-        """Build Conditional Probability Tables for all concepts.
+    # def build_cpts(self):
+    #     """Build Conditional Probability Tables for all concepts.
         
-        Raises:
-            NotImplementedError: If the model contains shared CPDs.
-        """
-        self._reject_shared_cpds("build_cpts")
-        return {
-            concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
-            for concept, module in self.factors.items()
-        }
+    #     Raises:
+    #         NotImplementedError: If the model contains shared CPDs.
+    #     """
+    #     self._reject_shared_cpds("build_cpts")
+    #     return {
+    #         concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
+    #         for concept, module in self.factors.items()
+    #     }
 
-    def _reject_shared_cpds(self, method_name: str) -> None:
-        """Raise if any factor is a shared CPD."""
-        if self._shared_cpd_map:
-            raise NotImplementedError(
-                f"{method_name}() does not support shared CPDs. "
-                f"Secondary concepts {list(self._shared_cpd_map.keys())} "
-                f"would be silently omitted."
-            )
+    # def _reject_shared_cpds(self, method_name: str) -> None:
+    #     """Raise if any factor is a shared CPD."""
+    #     if self._shared_cpd_map:
+    #         raise NotImplementedError(
+    #             f"{method_name}() does not support shared CPDs. "
+    #             f"Secondary concepts {list(self._shared_cpd_map.keys())} "
+    #             f"would be silently omitted."
+    #         )
