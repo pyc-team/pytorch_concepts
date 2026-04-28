@@ -1,35 +1,34 @@
-from ..datasets.awa2 import AWA2Dataset
+from ..datasets.cub import CUBDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
 from ..base.splitter import Splitter
-from ..splitters.random import RandomSplitter
+from ..splitters.native import NativeSplitter
 
 
-class AWA2DataModule(ConceptDataModule):
-    """DataModule for Animals with Attributes 2 (AwA2).
+class CUBDataModule(ConceptDataModule):
+    """DataModule for CUB-200-2011 (Caltech-UCSD Birds).
 
-    Handles data loading, splitting, and batching for the AwA2 dataset with
-    support for concept-based learning.  Since AwA2 has no official
-    train/val/test split, splitting is performed by the datamodule using
-    ``RandomSplitter`` by default.
+    Handles data loading, splitting, and batching for the CUB-200-2011 dataset
+    with support for concept-based learning.  CUB-200-2011 provides official
+    train / val / test splits via the Koh et al. pre-processed pickle files,
+    so :class:`~torch_concepts.data.splitters.NativeSplitter` is used by
+    default.
+
+    .. note::
+        CUB-200-2011 must be **manually downloaded** before use.
+        See :class:`~torch_concepts.data.datasets.CUBDataset` for instructions.
 
     Parameters
     ----------
     root : str, optional
-        Root directory where the AwA2 data is stored.
-        Default: ``None`` (auto-creates ``./data/AWA2``).
-    seed : int, optional
-        Random seed for train / val / test split.  Default: 42.
+        Root directory containing ``class_attr_data_10/`` and
+        ``CUB_200_2011/``.  Default: ``None`` (auto-creates ``./data/CUB200``).
     image_size : int, optional
         Side length (px) to resize images to.  Default: 224.
-    val_size : float, optional
-        Fraction of samples for validation.  Default: 0.1.
-    test_size : float, optional
-        Fraction of samples for test.  Default: 0.2.
     splitter : Splitter, optional
-        Splitting strategy.  Default: ``RandomSplitter()`` (no official split
-        exists for AwA2, so the datamodule owns the split).
+        Splitting strategy.  Default: ``NativeSplitter()`` (uses the official
+        train / val / test splits from the pickle files).
     batch_size : int, optional
         Number of samples per batch.  Default: 512.
     backbone : BackboneType, optional
@@ -40,7 +39,7 @@ class AWA2DataModule(ConceptDataModule):
     force_recompute : bool, optional
         Recompute embeddings even if a cache exists.  Default: ``False``.
     concept_subset : list of str, optional
-        Subset of concept names to retain.  Default: ``None`` (all 86).
+        Subset of concept names to retain.  Default: ``None`` (all 113).
     label_descriptions : dict, optional
         Mapping from concept name to human-readable description.
     workers : int, optional
@@ -48,10 +47,10 @@ class AWA2DataModule(ConceptDataModule):
 
     Examples
     --------
-    >>> from torch_concepts.data import AWA2DataModule
+    >>> from torch_concepts.data import CUBDataModule
     >>>
-    >>> dm = AWA2DataModule(
-    ...     root="./data/AWA2",
+    >>> dm = CUBDataModule(
+    ...     root="./data/CUB200",
     ...     backbone="resnet50",
     ...     precompute_embs=True,
     ...     batch_size=64,
@@ -61,18 +60,15 @@ class AWA2DataModule(ConceptDataModule):
 
     See Also
     --------
-    AWA2Dataset : The underlying dataset class.
+    CUBDataset : The underlying dataset class.
     ConceptDataModule : Parent class with common datamodule functionality.
     """
 
     def __init__(
         self,
         root: str = None,
-        seed: int = 42,
         image_size: int = 224,
-        val_size: float = 0.1,
-        test_size: float = 0.2,
-        splitter: Splitter = RandomSplitter(),
+        splitter: Splitter = NativeSplitter(),
         batch_size: int = 512,
         backbone: BackboneType = None,
         precompute_embs: bool = True,
@@ -82,17 +78,15 @@ class AWA2DataModule(ConceptDataModule):
         workers: int = 0,
         **kwargs,
     ):
-        dataset = AWA2Dataset(
+        dataset = CUBDataset(
             root=root,
+            image_size=image_size,
             concept_subset=concept_subset,
             label_descriptions=label_descriptions,
-            image_size=image_size,
         )
 
         super().__init__(
             dataset=dataset,
-            val_size=val_size,
-            test_size=test_size,
             batch_size=batch_size,
             backbone=backbone,
             precompute_embs=precompute_embs,

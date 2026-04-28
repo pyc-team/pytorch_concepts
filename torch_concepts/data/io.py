@@ -104,9 +104,9 @@ class DownloadProgressBar(tqdm):
 
 
 def download_url(url: str,
-                 folder: str,
-                 filename: Optional[str] = None,
-                 verbose: bool = True):
+                    folder: str,
+                    filename: Optional[str] = None,
+                    verbose: bool = True):
     r"""Downloads the content of an URL to a specific folder.
 
     Args:
@@ -137,3 +137,57 @@ def download_url(url: str,
                              disable=not verbose) as t:
         urllib.request.urlretrieve(url, filename=path, reporthook=t.update_to)
     return path
+
+
+def zip_is_valid(path: str) -> bool:
+    """Return True if *path* is a structurally valid zip with correct CRCs."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            bad = z.testzip()  # returns first bad filename or None
+        return bad is None
+    except zipfile.BadZipFile:
+        return False
+
+
+def wget_available() -> bool:
+    import shutil as _shutil
+    return _shutil.which("wget") is not None
+
+
+def download_url_wget(url: str, dest: str) -> None:
+    """Download *url* to *dest*.
+
+    Uses ``wget --continue`` when available (handles large files and
+    network interruptions much better than urllib).  Falls back to a
+    pure-Python streaming download with ``Range`` resume support.
+    """
+    if wget_available():
+        import subprocess
+        print(f"\nDownloading {os.path.basename(dest)} via wget ...")
+        subprocess.run(
+            [
+                "wget",
+                "--continue",          # resume partial downloads
+                "--tries=10",          # retry up to 10 times on error
+                "--retry-connrefused",
+                "--waitretry=5",       # wait 5 s between retries
+                "--show-progress",
+                "-O", dest,
+                url,
+            ],
+            check=True,
+        )
+    else:
+        downloaded = os.path.getsize(dest) if os.path.exists(dest) else 0
+        req = urllib.request.Request(url, headers={"Range": f"bytes={downloaded}-"})
+        with urllib.request.urlopen(req) as r:
+            total = downloaded + int(r.headers.get("Content-Length", 0))
+            print(f"\nDownloading {os.path.basename(dest)} ({total / 1e9:.2f} GB)")
+            with open(dest, "ab") as f:
+                while chunk := r.read(1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    pct = downloaded / total * 100
+                    bar = "█" * int(pct // 2) + "░" * (50 - int(pct // 2))
+                    print(f"\r  [{bar}] {pct:.1f}%  {downloaded/1e9:.2f}/{total/1e9:.2f} GB", end="")
+        print()

@@ -1,0 +1,49 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.cub.CUBDataModule
+
+name: cub
+
+# Image resize size
+image_size: 224
+
+# backbone handling and embedding precomputation
+backbone: resnet50
+precompute_embs: true
+force_recompute: false
+
+# Task label - bird species (200 classes)
+default_task_names: [class]
+
+# splitter - CUB has official train/test
+splitter:
+  _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+# We generated the CUB incomplete dataset following the same procedure as in 
+# Zarlenga et al. (2024) "Avoiding Leakage Poisoning: Concept Interventions Under Distribution Shifts" (https://arxiv.org/pdf/2504.17921v1).
+# More precisely, selecting the concepts belonging to the following groups:
+# [“has_bill_shape”, “has_head_pattern”, “has_breast_colour”, “has_bill_length”, “has_wing_shape”, “has_tail_pattern”, “has_bill_color”]
+concept_subset: [
+  'has_bill_shape::dagger', 
+  'has_bill_shape::hooked_seabird', 
+  'has_bill_shape::all-purpose', 
+  'has_bill_shape::cone', 
+  'has_head_pattern::eyebrow', 
+  'has_head_pattern::plain', 
+  'has_bill_length::about_the_same_as_head', 
+  'has_bill_length::shorter_than_head', 
+  'has_wing_shape::rounded-wings', 
+  'has_wing_shape::pointed-wings', 
+  'has_tail_pattern::solid', 
+  'has_tail_pattern::striped', 
+  'has_tail_pattern::multi-colored', 
+  'has_bill_color::grey', 
+  'has_bill_color::black', 
+  'has_bill_color::buff',
+  'class', # task label
+]
+
+# Concept descriptions (optional; leave null to use raw attribute names)
+label_descriptions: null

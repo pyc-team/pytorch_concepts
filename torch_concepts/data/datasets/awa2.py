@@ -18,12 +18,13 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from typing import List, Mapping, Optional
-import urllib.request
 import zipfile
 from pathlib import Path
 
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
+from torch_concepts.data.io import download_url_wget, zip_is_valid
+
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,8 @@ class AWA2Dataset(ConceptDataset):
     root : str, optional
         Root directory where the dataset is stored.
         Defaults to ``./data/AWA2``.
+    image_size : int, optional
+        Side length (px) to resize images to.  Default: 224.
     concept_subset : list of str, optional
         Subset of concept names to retain. ``None`` keeps all 86.
     label_descriptions : dict, optional
@@ -242,15 +245,14 @@ class AWA2Dataset(ConceptDataset):
     def __init__(
         self,
         root: str = None,
-        seed: int = 42,
-        train_size: float = 0.6,
-        val_size: float = 0.2,
+        image_size: int = 224,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[Mapping] = None,
     ):
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'AWA2')
         self.root = root
+        self.image_size = image_size
         self.label_descriptions = label_descriptions
 
         filenames, concepts, annotations, graph = self.load()
@@ -297,59 +299,6 @@ class AWA2Dataset(ConceptDataset):
             'annotations.pt',
         ]
 
-    @staticmethod
-    def _zip_is_valid(path: str) -> bool:
-        """Return True if *path* is a structurally valid zip with correct CRCs."""
-        try:
-            with zipfile.ZipFile(path) as z:
-                bad = z.testzip()  # returns first bad filename or None
-            return bad is None
-        except zipfile.BadZipFile:
-            return False
-
-    @staticmethod
-    def _wget_available() -> bool:
-        import shutil as _shutil
-        return _shutil.which("wget") is not None
-
-    def _download_file(self, url: str, dest: str) -> None:
-        """Download *url* to *dest*.
-
-        Uses ``wget --continue`` when available (handles large files and
-        network interruptions much better than urllib).  Falls back to a
-        pure-Python streaming download with ``Range`` resume support.
-        """
-        if self._wget_available():
-            import subprocess
-            print(f"\nDownloading {os.path.basename(dest)} via wget ...")
-            subprocess.run(
-                [
-                    "wget",
-                    "--continue",          # resume partial downloads
-                    "--tries=10",          # retry up to 10 times on error
-                    "--retry-connrefused",
-                    "--waitretry=5",       # wait 5 s between retries
-                    "--show-progress",
-                    "-O", dest,
-                    url,
-                ],
-                check=True,
-            )
-        else:
-            downloaded = os.path.getsize(dest) if os.path.exists(dest) else 0
-            req = urllib.request.Request(url, headers={"Range": f"bytes={downloaded}-"})
-            with urllib.request.urlopen(req) as r:
-                total = downloaded + int(r.headers.get("Content-Length", 0))
-                print(f"\nDownloading {os.path.basename(dest)} ({total / 1e9:.2f} GB)")
-                with open(dest, "ab") as f:
-                    while chunk := r.read(1024 * 1024):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        pct = downloaded / total * 100
-                        bar = "█" * int(pct // 2) + "░" * (50 - int(pct // 2))
-                        print(f"\r  [{bar}] {pct:.1f}%  {downloaded/1e9:.2f}/{total/1e9:.2f} GB", end="")
-            print()
-
     def download(self):
         """Download raw AwA2 data from official sources.
 
@@ -364,9 +313,9 @@ class AWA2Dataset(ConceptDataset):
         for url in URLS:
             dest = os.path.join(self.root, url.split("/")[-1])
             for attempt in range(1, _MAX_RETRIES + 1):
-                self._download_file(url, dest)
+                download_url_wget(url, dest)
                 print(f"  Verifying {os.path.basename(dest)} (attempt {attempt}/{_MAX_RETRIES}) ...")
-                if self._zip_is_valid(dest):
+                if zip_is_valid(dest):
                     break
                 print(f"  CRC check failed — deleting corrupted file and retrying ...")
                 os.remove(dest)
@@ -498,7 +447,7 @@ class AWA2Dataset(ConceptDataset):
             img_path = self.input_data[item]
             x = Image.open(img_path)
             x = x.convert('RGB')  # Ensure 3 channels
-            x = transforms.Resize((224, 224))(x)  # Resize to 224x224
+            x = transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
             x = transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
         c = self.concepts[item]
         return {'inputs': {'x': x}, 'concepts': {'c': c}}
