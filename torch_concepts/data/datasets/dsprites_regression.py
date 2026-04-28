@@ -27,14 +27,12 @@ class DSpritesRegressionDataset(ConceptDataset):
 
     Parameters
     ----------
-    root : str, optional
-        Root directory for caching. Default: ``'./data/dsprites_regression'``.
-    formulas : dict, optional
+    formulas : dict
         Mapping from shape name ('square', 'circle', 'heart') to a sympy
         formula string using the concept column names as variables.
-        Default: ``{'square': 'value_x_position + value_y_position',
-        'circle': 'value_x_position * value_y_position',
-        'heart': 'value_x_position - value_y_position'}``.
+        Must be provided for all three shapes.
+    root : str, optional
+        Root directory for caching. Default: ``'./data/dsprites_regression'``.
     num_samples : int, optional
         Number of samples to subsample. Default: None (all).
     seed : int, optional
@@ -47,8 +45,8 @@ class DSpritesRegressionDataset(ConceptDataset):
 
     def __init__(
         self,
+        formulas: Dict[str, str],
         root: str = None,
-        formulas: Optional[Dict[str, str]] = None,
         seed: int = 42,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
@@ -58,8 +56,6 @@ class DSpritesRegressionDataset(ConceptDataset):
         self.label_descriptions = label_descriptions
         self.concept_subset = concept_subset
 
-        if formulas is None:
-            raise ValueError("Formulas must be provided for DSpritesRegressionDataset.")
         self.formulas = formulas
 
         self._concept_columns = DSPRITES_CONCEPTS
