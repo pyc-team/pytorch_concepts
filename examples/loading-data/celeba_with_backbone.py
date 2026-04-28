@@ -24,7 +24,7 @@ from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
 from torch_concepts import seed_everything
-from torch_concepts.data.datasets import CelebADataset
+from torch_concepts.data import CelebADataset
 from torch_concepts.data.backbone import Backbone
 from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept
 

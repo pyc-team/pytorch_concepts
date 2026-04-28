@@ -1,0 +1,33 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.mnist_arithmetic.MNISTArithmeticDataModule
+
+name: mnist_arithmetic
+
+seed: ${seed}
+
+# generation parameters
+num_train_samples: 10000
+num_test_samples: 2000
+val_size: 0.1
+img_size: 224
+operators: ['+', '-', 'x', '/']
+
+# backbone handling and embedding precomputation
+backbone: resnet50
+precompute_embs: true
+force_recompute: false
+
+# Task label - arithmetic result regression
+default_task_names: [result]
+
+# splitter - uses native train/val/test mapping from MNIST splits
+splitter:
+  _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+label_descriptions:
+  first_digit: "Value of the first MNIST digit"
+  second_digit: "Value of the second MNIST digit"
+  result: "Arithmetic result of the operation"

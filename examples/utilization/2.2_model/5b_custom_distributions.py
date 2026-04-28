@@ -20,7 +20,7 @@ from torch.distributions import RelaxedBernoulli
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.utils import (
     add_distribution_to_annotations,
@@ -117,8 +117,8 @@ def main():
     for epoch in range(n_epochs):
         optimizer.zero_grad()
         target = torch.cat([c_train, y_train], dim=1)
-        endogenous = model(x=x_train, query=query)
-        loss = loss_fn(endogenous, target)
+        out = model(x=x_train, query=query, return_logits=True)
+        loss = loss_fn(out.logits, target)
         loss.backward()
         optimizer.step()
         if epoch % 100 == 0:
@@ -134,9 +134,9 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        endogenous = model(x=x_train, query=query)
-        c_pred = endogenous[:, :n_concepts]
-        y_pred = endogenous[:, n_concepts:]
+        out = model(x=x_train, query=query)
+        c_pred = out.probs[:, :n_concepts]
+        y_pred = out.probs[:, n_concepts:]
 
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()
         task_acc = task_acc_fn(y_pred, y_train.int()).item()

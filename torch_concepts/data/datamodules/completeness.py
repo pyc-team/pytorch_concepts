@@ -1,6 +1,6 @@
 import os
 
-from ..datasets import CompletenessDataset
+from ..datasets.toy import CompletenessDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType

@@ -34,6 +34,7 @@ from ...low.dense_layers import MLP
 from .....typing import BackboneType
 from .....utils import add_distribution_to_annotations, add_activation_to_annotations, add_default_properties
 from ...utils import with_training_mode
+from ...outputs import ModelOutput
 
 from ...mid.constructors.concept_graph import ConceptGraph
 
@@ -64,14 +65,14 @@ class BaseModel(nn.Module, ABC):
     annotations : Annotations
         Concept annotations containing variable names, cardinalities, and optional
         distribution metadata. Distributions specify how the model represents each
-        concept (e.g., Bernoulli for binary, Categorical for multi-class).
+        concept (e.g., Bernoulli for binary, OneHotCategorical for multi-class).
     lightning : bool, default False
         If True, adds Lightning training capabilities (BaseLearner mixin).
         If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
         Dictionary mapping concept names to torch.distributions classes (e.g.,
-        ``{'c1': Bernoulli, 'c2': Categorical}``). If None, default distributions
-        are used (e.g., ``Bernoulli`` for binary, ``Categorical`` for categorical concepts).
+        ``{'c1': Bernoulli, 'c2': OneHotCategorical}``). If None, default distributions
+        are used (e.g., ``Bernoulli`` for binary, ``OneHotCategorical`` for categorical concepts).
         If provided, distributions are added to annotations internally. 
         Can also be a GroupConfig object. Defaults to None.
     variable_activations : Mapping, optional
@@ -146,8 +147,7 @@ class BaseModel(nn.Module, ABC):
       3. If missing, the model will fill in defaults
       If no default can be determined, a ``ValueError`` is raised.
 
-    - Subclasses must implement ``forward()``, ``filter_output_for_loss()``,
-      and ``filter_output_for_metrics()`` methods.
+    - Subclasses must implement ``forward()``.
     - For Lightning training, set lightning=True. The BaseLearner mixin is
       automatically added via ``__new__``.
     - The latent_size attribute is critical for downstream concept encoders
@@ -156,7 +156,7 @@ class BaseModel(nn.Module, ABC):
     Examples
     --------
     Distributions and activations should be in annotations metadata. If not
-    provided, defaults are used (Bernoulli for binary, Categorical for
+    provided, defaults are used (Bernoulli for binary, OneHotCategorical for
     categorical concepts):
     
     >>> import torch
@@ -389,7 +389,7 @@ class BaseModel(nn.Module, ABC):
         evidence: Dict[str, torch.Tensor] = None,
         *inference_args,
         **inference_kwargs
-    ) -> torch.Tensor:
+    ) -> ModelOutput:
         """Unified forward pass for all inferences.
 
         The active inference engine is selected automatically based on
@@ -409,11 +409,14 @@ class BaseModel(nn.Module, ABC):
             Positional arguments passed to the inference engine's query method.
         **inference_kwargs
             Keyword arguments passed to the inference engine's query method.
+            Includes ``return_logits``, ``return_probs``, ``return_joint``.
         
         Returns
         -------
-        torch.Tensor
-            Concatenated predictions for queried concepts.
+        ModelOutput
+            Structured output with ``.logits`` and/or ``.probs``
+            populated according to ``return_logits``/``return_probs``
+            in inference_kwargs.
         """
         if evidence is None:
             evidence = {}
@@ -426,47 +429,36 @@ class BaseModel(nn.Module, ABC):
             latent = self.latent_encoder(features)
             evidence['input'] = latent
         
-        return self.inference.query(
+        result = self.inference.query(
             query, 
-            evidence=evidence, 
+            evidence=evidence,
             *inference_args, 
             **inference_kwargs
         )
         
-    
-    def filter_output_for_loss(self, forward_out, target):
-        """No filtering needed - return concepts for standard loss computation.
+        return ModelOutput(
+            logits=result.logits,
+            probs=result.probs,
+            joint=result.joint,
+        )
+
+    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+        """Prepare ground truth labels for loss/metrics.
+
+        Override in subclasses that need to transform the target
+        (e.g. slice to task-only columns).
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output concepts.
         target : torch.Tensor
-            Ground truth labels.
+            Raw ground truth labels from the batch.
 
         Returns
         -------
-        dict
-            Dict with 'input' and 'target' for loss computation.
+        torch.Tensor
+            Transformed target tensor.
         """
-        return {'input': forward_out, 'target': target}
-
-    def filter_output_for_metrics(self, forward_out, target):
-        """No filtering needed - return concepts for metric computation.
-
-        Parameters
-        ----------
-        forward_out : torch.Tensor
-            Model output concepts.
-        target : torch.Tensor
-            Ground truth labels.
-
-        Returns
-        -------
-        dict
-            Dict with 'preds' and 'target' for metric computation.
-        """
-        return {'preds': forward_out, 'target': target}
+        return target
 
     # ------------------------------------------------------------------
     # Features extraction helpers

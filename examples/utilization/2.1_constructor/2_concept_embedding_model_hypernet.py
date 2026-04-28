@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, \
     LazyConstructor, \
     LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, HyperlinearConceptExogenousToConcept, \
@@ -12,7 +12,7 @@ from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, Determ
 
 def main():
     latent_dims = 10
-    n_epochs = 200
+    n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
 
@@ -50,8 +50,8 @@ def main():
     inference_engine = AncestralSamplingInference(concept_model.probabilistic_model)
     query_concepts = ["c1", "c2", "xor"]
     int_policy_c = RandomPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size, scale=100)
-    int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 0:1])
-    int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=c_train[:, 1:2])
+    int_strategy_c1 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 0:1], eps=1e-6))
+    int_strategy_c2 = GroundTruthIntervention(model=concept_model.probabilistic_model.parametric_cpds, ground_truth=torch.logit(c_train[:, 1:2], eps=1e-6))
 
     model = torch.nn.Sequential(encoder, concept_model)
 
@@ -64,15 +64,15 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+        c_pred = cy_pred.probs[:, :c_train.shape[1]]
+        y_pred = cy_pred.probs[:, c_train.shape[1]:]
 
         with intervention(policies=[int_policy_c, int_policy_c],
                           strategies=[int_strategy_c1, int_strategy_c2],
                           target_concepts=["c1", "c2"]):
             cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-            c_pred_int = cy_pred[:, :c_train.shape[1]]
-            y_pred_int = cy_pred[:, c_train.shape[1]:]
+            c_pred_int = cy_pred.probs[:, :c_train.shape[1]]
+            y_pred_int = cy_pred.probs[:, c_train.shape[1]:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -95,29 +95,29 @@ def main():
     print("=== Interventions ===")
 
     int_policy_random = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable["c1"].size)
-    int_strategy_random = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=0)
+    int_strategy_random = DoIntervention(model=concept_model.probabilistic_model.parametric_cpds, constants=-100)
     with intervention(policies=int_policy_random,
                       strategies=int_strategy_random,
                       target_concepts=["c1", "c2"]):
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+        c_pred = cy_pred.probs[:, :c_train.shape[1]]
+        y_pred = cy_pred.probs[:, c_train.shape[1]:]
         task_accuracy = accuracy_score(y_train, y_pred > 0.5)
         concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
         print(f"Do intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
-        print(cy_pred[:5])
+        print(cy_pred.probs[:5])
         print()
 
-        with intervention(policies=[int_policy_c, int_policy_c],
-                          strategies=[int_strategy_c1, int_strategy_c2],
-                          target_concepts=["c1", "c2"]):
-            cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-            c_pred = cy_pred[:, :c_train.shape[1]]
-            y_pred = cy_pred[:, c_train.shape[1]:]
-            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
-            print(f"Ground truth intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
-            print(cy_pred[:5])
+    with intervention(policies=[int_policy_c, int_policy_c],
+                        strategies=[int_strategy_c1, int_strategy_c2],
+                        target_concepts=["c1", "c2"]):
+        cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
+        c_pred = cy_pred.probs[:, :c_train.shape[1]]
+        y_pred = cy_pred.probs[:, c_train.shape[1]:]
+        task_accuracy = accuracy_score(y_train, y_pred > 0.5)
+        concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
+        print(f"Ground truth intervention on c1 | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+        print(cy_pred.probs[:5])
 
     return
 

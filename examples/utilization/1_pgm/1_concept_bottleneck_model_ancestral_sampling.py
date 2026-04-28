@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, Variable, LatentVariable, ConceptVariable
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, AncestralSamplingInference, LazyConstructor
 
@@ -12,6 +12,7 @@ def main():
     latent_dims = 10
     n_epochs = 10000
     n_samples = 1000
+    concept_reg = 0.5
 
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
     x_train = dataset.input_data
@@ -44,39 +45,39 @@ def main():
     query_concepts = ["c1", "c2", "xor"]
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.1)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
+        c_pred = cy_pred.logits[:, :c_train.shape[1]]
+        y_pred = cy_pred.logits[:, c_train.shape[1]:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + 0 * task_loss
+        loss = concept_loss + concept_reg * task_loss
 
         loss.backward()
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    print(cy_pred[:5])
+    print(cy_pred.logits[:5])
 
     int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
     int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
     with intervention(policies=int_policy_c,
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"]):
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input)
-        print(cy_pred[:5])
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
+        print(cy_pred.logits[:5])
 
     return
 

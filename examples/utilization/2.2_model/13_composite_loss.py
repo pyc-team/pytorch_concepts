@@ -13,12 +13,12 @@ Three scenarios are demonstrated:
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, L1LogitRegularizer
-from torch_concepts.data.datamodules import BnLearnDataModule
+from torch_concepts.data import BnLearnDataModule
 
 
 def main():
@@ -41,7 +41,7 @@ def main():
     # Assign distribution families to each concept
     axis = annotations.get_axis_annotation(1)
     variable_distributions = {
-        name: Bernoulli if axis.cardinalities[i] == 1 else Categorical
+        name: Bernoulli if axis.cardinalities[i] == 1 else OneHotCategorical
         for i, name in enumerate(concept_names)
     }
 

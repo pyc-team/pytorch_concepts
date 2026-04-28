@@ -4,7 +4,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, LazyConstructor, \
     LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
     HyperlinearConceptExogenousToConcept, GraphModel, WANDAGraphLearner
@@ -77,8 +77,8 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True, return_logits=True)
-        c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
-        y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
+        c_pred = cy_pred.logits[:, :cy_train_one_hot.shape[1]//2]
+        y_pred = cy_pred.logits[:, cy_train_one_hot.shape[1]//2:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train_one_hot)
@@ -111,7 +111,7 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-        task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+        task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
         print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
 
 
@@ -124,9 +124,9 @@ def main():
                           strategies=int_strategy_c1,
                           target_concepts=[intervened_concept]):
             cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-            task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+            task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
             print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
-            print(cy_pred[:5])
+            print(cy_pred.probs[:5])
             print()
 
             int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
@@ -135,9 +135,9 @@ def main():
                               strategies=int_strategy_c1,
                               target_concepts=[intervened_concept]):
                 cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-                task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+                task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
                 print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
-                print(cy_pred[:5])
+                print(cy_pred.probs[:5])
 
     return
 

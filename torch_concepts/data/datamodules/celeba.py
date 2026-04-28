@@ -1,4 +1,4 @@
-from ..datasets import CelebADataset
+from ..datasets.celeba import CelebADataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
@@ -66,7 +66,7 @@ class CelebADataModule(ConceptDataModule):
     --------
     Basic usage with default settings:
 
-    >>> from torch_concepts.data.datamodules import CelebADataModule
+    >>> from torch_concepts.data import CelebADataModule
     >>> 
     >>> dm = CelebADataModule(
     ...     seed=42,

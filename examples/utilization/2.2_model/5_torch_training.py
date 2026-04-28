@@ -16,7 +16,7 @@ from torch import nn
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 
 from torchmetrics.classification import BinaryAccuracy
 
@@ -84,10 +84,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
+        out = model(x=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
+    print(f"Output out shape: {out.probs.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -108,13 +108,14 @@ def main():
         target = torch.cat([c_train, y_train], dim=1)
 
         # Forward pass - query all variables (concepts + tasks)
-        endogenous = model(
+        out = model(
             x=x_train, 
-            query=query, 
+            query=query,
+            return_logits=True,
         )
         
         # Compute loss on all outputs
-        loss = loss_fn(endogenous, target)
+        loss = loss_fn(out.logits, target)
         
         loss.backward()
         optimizer.step()
@@ -131,9 +132,9 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        endogenous = model(x=x_train, query=query)
-        c_pred = endogenous[:, :n_concepts]
-        y_pred = endogenous[:, n_concepts:]
+        out = model(x=x_train, query=query)
+        c_pred = out.probs[:, :n_concepts]
+        y_pred = out.probs[:, n_concepts:]
         
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()

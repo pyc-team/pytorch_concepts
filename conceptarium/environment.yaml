@@ -1,14 +1,12 @@
 name: conceptarium
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
-  - defaults
+  - nodefaults
 dependencies:
   - python=3.12.*
-
-  - pytorch:pytorch
-  - pytorch:pytorch-cuda
+  
+  # Conda-forge's metapackage for PyTorch with CUDA support
+  - pytorch-gpu
   - torchvision>=0.17.1
   - torchmetrics>=0.7
 
@@ -21,12 +19,14 @@ dependencies:
   - tqdm
   - scikit-learn
   - scipy
-  - tqdm
   - openpyxl
 
   - pip
   - pip:
     - bnlearn # library for Bayesian networks
     - gdown # to download files from Google Drive (CelebA dataset)
-    - transformers # State-of-the-art pretrained models for backbones
+    - transformers # State-of-the-art pretrained models
     - hydra-list-sweeper
+    - datasets # HuggingFace datasets
+    - sympy # symbolic math 
+    - sympytorch # sympy to pytorch conversion 

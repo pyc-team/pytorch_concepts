@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, RelaxedOneHotCategorical
 
 from torch_concepts import Annotations, AxisAnnotation, Variable, LatentVariable, ConceptVariable
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, ParametricCPD, ProbabilisticModel, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, LazyConstructor
 
@@ -49,9 +49,9 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True, return_logits=True)
-        c_pred = cy_pred[:, :c_train.shape[1]]
-        y_pred = cy_pred[:, c_train.shape[1]:]
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
+        c_pred = cy_pred.logits[:, :c_train.shape[1]]
+        y_pred = cy_pred.logits[:, c_train.shape[1]:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -67,7 +67,7 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    print(cy_pred[:5])
+    print(cy_pred.logits[:5])
 
     int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
     int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
@@ -75,8 +75,11 @@ def main():
                       strategies=int_strategy_c,
                       target_concepts=["c1", "c2"],
                       quantiles=1):
-        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, debug=True)
-        print(cy_pred[:5])
+        # intervention affect the layer output 
+        # -> the parametrization of the distribution 
+        # -> the logits for discrete variables
+        cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
+        print(cy_pred.logits[:5])
 
     return
 

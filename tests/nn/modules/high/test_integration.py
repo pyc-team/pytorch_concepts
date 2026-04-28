@@ -12,7 +12,7 @@ This ensures that all high-level components work together correctly.
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -34,9 +34,9 @@ class TestHighLevelIntegration(unittest.TestCase):
                 cardinalities=[1, 3, 1, 4],
                 metadata={
                     'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
+                    'c2': {'type': 'discrete', 'distribution': OneHotCategorical},
                     'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
+                    'task': {'type': 'discrete', 'distribution': OneHotCategorical}
                 }
             )
         })
@@ -62,7 +62,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         # Forward pass
         x = torch.randn(8, 16)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(query=query, x=x)
+        out = model(query=query, x=x, return_logits=True)
         
         # Create targets matching output shape
         target = torch.cat([
@@ -72,9 +72,9 @@ class TestHighLevelIntegration(unittest.TestCase):
             torch.randint(0, 4, (8, 1))   # task: categorical
         ], dim=1).float()
         
-        # Filter for loss
-        filtered = model.filter_output_for_loss(out, target)
-        loss_value = loss_fn(**filtered)
+        # Compute loss using ConceptLoss with ModelOutput
+        out.target = target
+        loss_value = loss_fn(out)
         
         self.assertIsInstance(loss_value, torch.Tensor)
         self.assertEqual(loss_value.shape, ())
@@ -108,9 +108,9 @@ class TestHighLevelIntegration(unittest.TestCase):
             torch.randint(0, 4, (8, 1))
         ], dim=1).int()
         
-        # Update metrics  
-        filtered = model.filter_output_for_metrics(out, target)
-        metrics.update(**filtered)
+        # Update metrics with model output
+        out = model(query=query, x=x, return_logits=True)
+        metrics.update(out.logits, target.int())
         
         # Compute metrics
         results = metrics.compute()
@@ -153,19 +153,18 @@ class TestHighLevelIntegration(unittest.TestCase):
             optimizer.zero_grad()
             
             # Forward
-            out = model(query=query, x=x)
+            out = model(query=query, x=x, return_logits=True)
             
             # Loss
-            filtered_loss = model.filter_output_for_loss(out, target.float())
-            loss_value = loss_fn(**filtered_loss)
+            out.target = target.float()
+            loss_value = loss_fn(out)
             
             # Backward
             loss_value.backward()
             optimizer.step()
             
             # Metrics
-            filtered_metrics = model.filter_output_for_metrics(out, target.int())
-            metrics.update(**filtered_metrics)
+            metrics.update(out.logits, target.int())
         
         # Compute final metrics
         results = metrics.compute()
@@ -295,8 +294,8 @@ class TestTwoTrainingModes(unittest.TestCase):
         y = torch.randint(0, 2, (4, 3)).float()
         
         optimizer.zero_grad()
-        out = model(query=['c1', 'c2', 'task'], x=x)
-        loss = loss_fn(out, y)
+        out = model(query=['c1', 'c2', 'task'], x=x, return_logits=True)
+        loss = loss_fn(out.logits, y)
         loss.backward()
         optimizer.step()
         
@@ -334,7 +333,7 @@ class TestTwoTrainingModes(unittest.TestCase):
             out1 = model1(query=query, x=x)
             out2 = model2(query=query, x=x)
         
-        self.assertEqual(out1.shape, out2.shape)
+        self.assertEqual(out1.probs.shape, out2.probs.shape)
 
 
 class TestDistributionHandling(unittest.TestCase):
@@ -348,9 +347,9 @@ class TestDistributionHandling(unittest.TestCase):
                 cardinalities=[1, 3, 1, 4],
                 metadata={
                     'binary1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'cat1': {'type': 'discrete', 'distribution': Categorical},
+                    'cat1': {'type': 'discrete', 'distribution': OneHotCategorical},
                     'binary2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'cat2': {'type': 'discrete', 'distribution': Categorical}
+                    'cat2': {'type': 'discrete', 'distribution': OneHotCategorical}
                 }
             )
         })
@@ -377,7 +376,7 @@ class TestDistributionHandling(unittest.TestCase):
         
         # Verify output shape
         expected_shape = (8, 1 + 3 + 1 + 4)  # sum of cardinalities
-        self.assertEqual(out.shape, expected_shape)
+        self.assertEqual(out.probs.shape, expected_shape)
 
 
 if __name__ == '__main__':

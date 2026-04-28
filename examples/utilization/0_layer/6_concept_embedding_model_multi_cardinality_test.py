@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score
 from torch.nn import ModuleDict
 
 from torch_concepts import seed_everything
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import MixConceptExogegnousToConcept, LinearLatentToExogenous, \
     LinearExogenousToConcept
 

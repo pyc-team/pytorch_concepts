@@ -11,7 +11,7 @@ Architecture::
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts import seed_everything
 from torch_concepts import ConceptVariable, LatentVariable
@@ -34,7 +34,7 @@ def build_pgm_shared(encoder, task_head):
     """Build a PGM using a single shared CPD for all concepts."""
     input_var = LatentVariable("input", distribution=Delta, size=latent_dim)
     concept_vars = ConceptVariable(concept_names, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=Categorical, size=n_classes)
+    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
     cpd_concepts = ParametricCPD(
@@ -42,6 +42,7 @@ def build_pgm_shared(encoder, task_head):
         parametrization=encoder,
         parents=["input"],
         shared=True,
+        shared_name='shared'
     )
     cpd_task = ParametricCPD(
         "task",
@@ -63,7 +64,7 @@ def build_pgm_single(encoder, task_head):
     """
     input_var = LatentVariable("input", distribution=Delta, size=latent_dim)
     concept_vars = ConceptVariable(concept_names, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=Categorical, size=n_classes)
+    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
 
     cpd_input = ParametricCPD("input", parametrization=nn.Identity())
 
@@ -123,7 +124,7 @@ def main():
     print(f"\nSingle result:\n{result_single}")
     print(f"\nShared result:\n{result_shared}")
 
-    assert torch.allclose(result_single, result_shared, atol=1e-6), (
+    assert torch.allclose(result_single.probs, result_shared.probs, atol=1e-6), (
         f"Mismatch!\nSingle:\n{result_single}\nShared:\n{result_shared}"
     )
     print("\nShared CPD output matches single CPD output.")

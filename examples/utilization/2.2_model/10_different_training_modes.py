@@ -28,7 +28,7 @@ from torch_concepts.nn.modules.mid.inference import (
     DeterministicInference,
     IndependentInference
 )
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
 
@@ -51,9 +51,9 @@ def evaluate(model, datamodule, n_concepts, query):
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
             # model.eval() automatically selects eval_inference
-            endogenous = model(x=batch['inputs']['x'], query=query)
-            c_pred = endogenous[:, :n_concepts]
-            y_pred = endogenous[:, n_concepts:]
+            out = model(x=batch['inputs']['x'], query=query)
+            c_pred = out.probs[:, :n_concepts]
+            y_pred = out.probs[:, n_concepts:]
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]

@@ -12,7 +12,7 @@ from torch_concepts.nn import CausallyReliableConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.data.datamodules import BnLearnDataModule
+from torch_concepts.data import BnLearnDataModule
 from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
 
 def main():
@@ -92,15 +92,14 @@ def main():
     x_batch = datamodule.input_data[:batch_size]
     
     # Forward pass
-    query = concept_names
-    print(f"Query variables: {query}")
+    print(f"Query variables: {concept_names}")
     
     device = next(model.parameters()).device
     with torch.no_grad():
-        endogenous = model(x=x_batch.to(device), query=query)
+        concepts = model(x=x_batch.to(device), query=concept_names)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
+    print(f"Output concepts shape: {concepts.probs.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 

@@ -271,7 +271,7 @@ Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base
 
 ```python
 from env import DATA_ROOT
-from torch_concepts.data.datasets import YourDataset
+from torch_concepts.data import YourDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.typing import BackboneType
 
@@ -514,8 +514,7 @@ default_task_names: [outcome, severity]
 Create a test script to verify your implementation:
 
 ```python
-from torch_concepts.data import YourDataset
-from torch_concepts.data.datamodules import YourDataModule
+from torch_concepts.data import YourDataset, YourDataModule
 
 # Test dataset loading
 dataset = YourDataset(
