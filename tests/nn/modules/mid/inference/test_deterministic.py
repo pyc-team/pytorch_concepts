@@ -13,7 +13,7 @@ import pytest
 import torch
 import torch.nn as nn
 from torch.distributions import (
-    Bernoulli, Normal, OneHotCategorical,
+    Bernoulli, OneHotCategorical,
     RelaxedBernoulli, RelaxedOneHotCategorical,
 )
 
@@ -145,7 +145,7 @@ class TestActivateUnknownDistribution:
     def test_raises_for_unknown_distribution(self):
         class _CustomDist(torch.distributions.Distribution):
             pass
-        with pytest.raises(ValueError, match="No default activation"):
+        with pytest.raises(ValueError, match="is not supported"):
             _make_variable('c', _CustomDist)
 
     def test_identity_when_distribution_is_none(self):

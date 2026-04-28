@@ -6,7 +6,7 @@ Tests for Variable, ParametricCPD, and ProbabilisticModel.
 import unittest
 import pytest
 import torch
-from torch.distributions import Bernoulli, Categorical, Normal, OneHotCategorical, RelaxedBernoulli
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli
 
 from torch_concepts.nn.modules.mid.models.variable import (
     Variable,
@@ -59,15 +59,6 @@ class TestVariable(unittest.TestCase):
         )
         self.assertEqual(var.distribution, OneHotCategorical)
         self.assertEqual(var.size, 3)
-
-    def test_variable_with_normal_distribution(self):
-        """Test variable with Normal distribution."""
-        var = Variable(
-            concepts='continuous',
-            distribution=Normal,
-            size=1
-        )
-        self.assertEqual(var.distribution, Normal)
 
     def test_variable_out_features(self):
         """Test out_features property."""
@@ -191,22 +182,12 @@ class TestVariableValidation:
 
     def test_bernoulli_with_size_not_one_raises_error(self):
         """Test that Bernoulli with size != 1 raises error."""
-        with pytest.raises(ValueError, match="Bernoulli Variable must have size=1"):
+        with pytest.raises(ValueError, match="must have size=1"):
             Variable(
                 concepts='bern',
                 distribution=Bernoulli,
                 size=3
             )
-
-    def test_normal_distribution_support(self):
-        """Test that Normal distribution is supported."""
-        var = Variable(
-            concepts='norm',
-            distribution=Normal,
-            size=2
-        )
-        assert var.distribution is Normal
-        assert var.size == 2
 
 
 class TestVariableOutFeatures:
@@ -226,11 +207,6 @@ class TestVariableOutFeatures:
         """Test out_features for OneHotCategorical distribution."""
         var = Variable(concepts='c', distribution=OneHotCategorical, size=5)
         assert var.out_features == 5
-
-    def test_out_features_normal(self):
-        """Test out_features for Normal distribution."""
-        var = Variable(concepts='n', distribution=Normal, size=4)
-        assert var.out_features == 4
 
     def test_out_features_equals_size(self):
         """Test that out_features is always equal to size."""

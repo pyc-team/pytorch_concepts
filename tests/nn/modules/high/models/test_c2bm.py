@@ -15,7 +15,7 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import RelaxedBernoulli
 
 from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn import (
@@ -202,7 +202,7 @@ class TestC2BMInitialization:
         assert model.concept_names == ['A', 'B', 'C']
         # Defaults should have been filled
         meta = model.concept_annotations.metadata
-        assert meta['A']['distribution'] == Bernoulli
+        assert meta['A']['distribution'] == RelaxedBernoulli
 
     def test_diamond_graph_init(self, diamond_graph, binary_diamond_ann):
         model = CausallyReliableConceptBottleneckModel(
@@ -557,7 +557,7 @@ class TestC2BMAncestralInference:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralSamplingInference,
+            inference=AncestralSamplingInference
         )
         model.eval()
         x = torch.randn(8, 8)

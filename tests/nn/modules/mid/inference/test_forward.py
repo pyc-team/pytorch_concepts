@@ -2,14 +2,13 @@ import unittest
 from unittest.mock import patch, MagicMock
 import pytest
 from torch_concepts.nn.modules.low.inference.intervention import _GlobalPolicyInterventionWrapper
-from torch.distributions import Normal
 from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 from torch.nn import Linear, Identity
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.data import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
@@ -27,7 +26,7 @@ class SimpleForwardInference(ForwardInference):
     def activate(self, pred, variable):
         if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
             return torch.bernoulli(torch.sigmoid(pred))
-        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, OneHotCategorical):
             return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
             return pred
@@ -523,7 +522,7 @@ class SimpleForwardInference(ForwardInference):
     def activate(self, pred, variable):
         if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
             return torch.bernoulli(torch.sigmoid(pred))
-        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, OneHotCategorical):
             return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
             return pred
@@ -1367,33 +1366,6 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         self.assertTrue(torch.all((result.probs == 0) | (result.probs == 1)))
 
     # --- activate: generic fallback .rsample() (line 154) ---
-
-    def test_activate_generic_distribution_fallback(self):
-        """A distribution not in the known list should fall through to the generic .rsample() path."""
-        from torch_concepts import LatentVariable, ConceptVariable
-
-        input_var = LatentVariable('input', distribution=Delta, size=5)
-        # Normal takes (loc, scale); loc= pred (positional), scale via dist_kwargs
-        var_A = ConceptVariable(
-            'A', distribution=Normal, size=1,
-            dist_kwargs={'scale': torch.tensor(1.0)},
-        )
-
-        cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1), parents=['input'])
-
-        pgm = ProbabilisticModel(
-            variables=[input_var, var_A],
-            factors=[cpd_input, cpd_A],
-        )
-
-        inference = AncestralSamplingInference(pgm)
-        x = torch.randn(4, 5)
-        result = inference.query(['A'], evidence={'input': x})
-
-        self.assertEqual(result.probs.shape, (4, 1))
-        # Normal .rsample() produces real-valued outputs (not bounded to [0,1])
-        self.assertTrue(result.probs.dtype == torch.float32)
 
     # --- ground_truth_to_evidence: categorical branch (lines 177-180) ---
 

@@ -17,6 +17,7 @@ latent_encoder_kwargs:
 # =============================================================
 # Concept distribution configs
 # =============================================================
+# TODO: hide GroupConfig internally
 variable_distributions:
   _target_: "torch_concepts.GroupConfig"
   binary:   

@@ -423,7 +423,7 @@ def add_default_properties(
         ValueError: If a concept is missing a distribution or activation and
             no default exists for its type group / distribution class.
     """
-    from .nn.modules.mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_ACTIVATIONS
+    from .nn.modules.mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_ACTIVATIONS, _DEFAULT_DIST_KWARGS
 
     if isinstance(annotations, Annotations):
         axis_annotation = annotations.get_axis_annotation(1)
@@ -439,7 +439,10 @@ def add_default_properties(
         if 'distribution' not in metadata:
             group = _get_type_group(metadata, cardinality)
             if group in _DEFAULT_DISTRIBUTIONS:
-                metadata['distribution'] = _DEFAULT_DISTRIBUTIONS[group]
+                dist = _DEFAULT_DISTRIBUTIONS[group]
+                metadata['distribution'] = dist
+                if 'dist_kwargs' not in metadata and dist in _DEFAULT_DIST_KWARGS:
+                    metadata['dist_kwargs'] = dict(_DEFAULT_DIST_KWARGS[dist])
             else:
                 raise ValueError(
                     f"No default distribution for type group '{group}' "

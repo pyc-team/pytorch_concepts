@@ -23,8 +23,9 @@ _SUPPORTED_DISTRIBUTIONS: list = [
     RelaxedBernoulli,
     OneHotCategorical,
     RelaxedOneHotCategorical,
-    Normal,
-    MultivariateNormal,
+    # TODO: add support for continuous distributions
+    # Normal,
+    # MultivariateNormal,
     Delta
 ]
 
@@ -40,6 +41,12 @@ _DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
     'binary': RelaxedBernoulli,
     'categorical': RelaxedOneHotCategorical,
     'continuous': Normal
+}
+
+# Default dist_kwargs for distributions that require constructor arguments.
+_DEFAULT_DIST_KWARGS: Dict[Type[Distribution], Dict[str, Any]] = {
+    RelaxedBernoulli: {'temperature': 0.5},
+    RelaxedOneHotCategorical: {'temperature': 0.5},
 }
 
 # Default logits → probabilities activations per distribution type.

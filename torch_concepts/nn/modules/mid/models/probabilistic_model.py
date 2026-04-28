@@ -72,7 +72,7 @@ class ProbabilisticModel(nn.Module):
                 "All factors must be the same type: either all ParametricCPD "
                 "or all ParametricFactor, not a mix of both."
             )
-        self._is_directed = has_cpds
+        self._is_directed = not has_plain
         self.variables = variables
         self.factors = nn.ModuleDict()
         self.concept_to_variable: Dict[str, Variable] = {}

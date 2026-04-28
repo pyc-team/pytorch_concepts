@@ -14,7 +14,7 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
@@ -61,8 +61,8 @@ class TestCBMInitialization(unittest.TestCase):
         self.assertEqual(model.concept_names, ['color', 'shape', 'size', 'task1'])
         # Defaults should have been filled in
         meta = model.concept_annotations.metadata
-        self.assertEqual(meta['color']['distribution'], OneHotCategorical)
-        self.assertEqual(meta['size']['distribution'], Bernoulli)
+        self.assertEqual(meta['color']['distribution'], RelaxedOneHotCategorical)
+        self.assertEqual(meta['size']['distribution'], RelaxedBernoulli)
     
     def test_init_with_variable_distributions_param(self):
         """Test initialization passing variable_distributions to the model constructor."""
