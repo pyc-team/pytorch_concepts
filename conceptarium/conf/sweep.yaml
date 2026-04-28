@@ -9,7 +9,7 @@ hydra:
     # standard grid search
     params:
       seed: 42
-      dataset: dsprites_regression
+      dataset: dag_asia, dag_sachs
       model: cbm, cem, c2bm
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
