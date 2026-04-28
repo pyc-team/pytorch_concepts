@@ -11,7 +11,6 @@ backbone: resnet50 # facebook/dinov2-base
 precompute_embs: true 
 force_recompute: false
 
-# Task label - which CelebA attribute to predict
 default_task_names: [Attractive]
 
 # splitter

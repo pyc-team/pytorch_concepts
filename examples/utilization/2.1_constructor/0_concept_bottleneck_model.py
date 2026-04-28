@@ -4,7 +4,7 @@ from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import seed_everything
 from torch_concepts import Annotations, AxisAnnotation
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept, \
     RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor
 

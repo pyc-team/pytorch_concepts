@@ -5,3 +5,5 @@ pgmpy
 pandas
 pytorch-lightning
 networkx
+sympy
+sympytorch

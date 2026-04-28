@@ -56,6 +56,8 @@ EXTRAS_REQUIRE = {
         'datasets',
         'transformers',
         'tables',
+        'sympy',
+        'sympytorch',
     ],
     'tests': [
         'pytest-cov',

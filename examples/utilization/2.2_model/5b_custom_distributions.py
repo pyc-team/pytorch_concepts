@@ -20,7 +20,7 @@ from torch.distributions import RelaxedBernoulli
 
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.utils import (
     add_distribution_to_annotations,

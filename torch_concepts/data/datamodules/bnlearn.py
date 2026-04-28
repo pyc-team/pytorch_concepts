@@ -1,6 +1,6 @@
 import os
 
-from ..datasets import BnLearnDataset
+from ..datasets.bnlearn import BnLearnDataset
 
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType

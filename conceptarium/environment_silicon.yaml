@@ -31,3 +31,6 @@ dependencies:
     - gdown # to download files from Google Drive (CelebA dataset)
     - transformers # State-of-the-art pretrained models for backbones
     - hydra-list-sweeper
+    - datasets # HuggingFace datasets (DSprites regression dataset)
+    - sympy # symbolic math (DSprites regression dataset)
+    - sympytorch # sympy to pytorch conversion (DSprites regression dataset)

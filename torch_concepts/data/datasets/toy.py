@@ -210,7 +210,7 @@ class ToyDataset(ConceptDataset):
     --------
     Basic usage with XOR dataset:
 
-    >>> from torch_concepts.data.datasets import ToyDataset
+    >>> from torch_concepts.data import ToyDataset
     >>>
     >>> # Create XOR dataset with 1000 samples
     >>> dataset = ToyDataset(dataset='xor', seed=42, n_gen=1000)
@@ -510,7 +510,7 @@ class CompletenessDataset(ConceptDataset):
     --------
     Basic usage with complete bottleneck:
 
-    >>> from torch_concepts.data.datasets import CompletenessDataset
+    >>> from torch_concepts.data import CompletenessDataset
     >>>
     >>> # Create dataset with complete bottleneck (no hidden concepts)
     >>> dataset = CompletenessDataset(
@@ -526,7 +526,7 @@ class CompletenessDataset(ConceptDataset):
 
     Creating incomplete bottleneck with hidden concepts:
 
-    >>> from torch_concepts.data.datasets import CompletenessDataset
+    >>> from torch_concepts.data import CompletenessDataset
     >>>
     >>> # Create dataset with incomplete bottleneck
     >>> dataset = CompletenessDataset(

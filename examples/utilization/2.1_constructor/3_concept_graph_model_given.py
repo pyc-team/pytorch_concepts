@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedBernoulli
 
 from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, LazyConstructor, \
     LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
     HyperlinearConceptExogenousToConcept, GraphModel, AncestralSamplingInference

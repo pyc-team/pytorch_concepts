@@ -1,26 +1,30 @@
 """
-General utils for training, evaluation and data loading
+Animals with Attributes 2 (AwA2) Dataset
 
-Heavily adapted from https://github.com/xmed-lab/ECBM/blob/main/data/awa2.py and
+Adapted from https://github.com/xmed-lab/ECBM/blob/main/data/awa2.py and
 https://github.com/mateoespinosa/cem/blob/mateo/probcbm/cem/data/awa2_loader.py
 
-Credit goes to Xinyue Xu, Yi Qin, Lu Mi, Hao Wang, and Xiaomeng Li
-and the code accompanying their paper "Energy-Based Concept Bottleneck Models:
-Unifying Prediction, Concept Intervention, and Probabilistic Interpretations"
-
-The data can be downloaded from: https://cvml.ista.ac.at/AwA2/
-
+Credit goes to Xinyue Xu, Yi Qin, Lu Mi, Hao Wang, and Xiaomeng Li and the
+code accompanying their paper "Energy-Based Concept Bottleneck Models:
+Unifying Prediction, Concept Intervention, and Probabilistic Interpretations".
 """
-import numpy as np
+
 import os
 import logging
-import sklearn
+import shutil
+import numpy as np
+import pandas as pd
 import torch
 import torchvision.transforms as transforms
-
-from functools import reduce
 from PIL import Image
-from torch.utils.data import Dataset, Subset, DataLoader
+from typing import List, Mapping, Optional
+import zipfile
+from pathlib import Path
+
+from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts.data.base import ConceptDataset
+from torch_concepts.data.io import download_url_wget, zip_is_valid
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +32,14 @@ logger = logging.getLogger(__name__)
 ## GENERAL DATASET GLOBAL VARIABLES
 ########################################################
 
+URLS = [
+    "https://cvml.ista.ac.at/AwA2/AwA2-base.zip",
+    "https://cvml.ista.ac.at/AwA2/AwA2-features.zip",
+    "http://datasets.d2.mpi-inf.mpg.de/xian/xlsa17.zip",
+    "https://cvml.ista.ac.at/AwA2/AwA2-data.zip",
+]
+
 N_CLASSES = 50
-
-# CAN BE OVERWRITTEN WITH AN ENV VARIABLE DATASET_DIR
-DATASET_DIR = os.environ.get("DATASET_DIR", 'data/AwA2/')
-
-
-#########################################################
-## CONCEPT INFORMATION REGARDING AwA2
-#########################################################
 
 CLASS_NAMES = [
     'antelope',
@@ -215,211 +218,248 @@ CONCEPT_GROUPS = {
 }
 
 
+class AWA2Dataset(ConceptDataset):
+    """Dataset class for Animals with Attributes 2 (AwA2).
 
-class AwA2Dataset(Dataset):
-    """
-    Returns a compatible Torch Dataset object customized for the AwA2 dataset
+    AwA2 pairs 37,322 animal images across 50 classes with 85 binary semantic
+    attributes (colour, shape, behaviour, habitat, ...).
+
+    The concept vector per sample contains:
+
+    - columns 0-84: 85 binary semantic attributes (cardinality 1 each)
+    - column 85:    animal class index 0-49 (cardinality 50)
+
+    Parameters
+    ----------
+    root : str, optional
+        Root directory where the dataset is stored.
+        Defaults to ``./data/AWA2``.
+    image_size : int, optional
+        Side length (px) to resize images to.  Default: 224.
+    concept_subset : list of str, optional
+        Subset of concept names to retain. ``None`` keeps all 86.
+    label_descriptions : dict, optional
+        Mapping from concept name to human-readable description.
     """
 
     def __init__(
         self,
-        root,
-        training_augment=True,
-        split='train',
-        image_size=224,
-        concept_transform=None,
-        sample_transform=None,
-        selected_concepts=None,
-        seed=42,
+        root: str = None,
+        image_size: int = 224,
+        concept_subset: Optional[list] = None,
+        label_descriptions: Optional[Mapping] = None,
     ):
+        if root is None:
+            root = os.path.join(os.getcwd(), 'data', 'AWA2')
         self.root = root
-        self.training_augment = training_augment
-        self.split = split
-        self.concept_transform = concept_transform or (lambda x: x)
-        self.name = 'AwA2'
+        self.image_size = image_size
+        self.label_descriptions = label_descriptions
 
-        if not os.path.exists(self.root):
-            raise ValueError(
-                f'{self.root} does not exist yet. Please download the '
-                f'dataset first.'
-            )
+        filenames, concepts, annotations, graph = self.load()
 
-        if split == 'train':
-            self.transform = get_transform_awa2(
-                train=True,
-                augment_data=training_augment,
-                image_size=image_size,
-                sample_transform=sample_transform,
-            )
-        else:
-            self.transform = get_transform_awa2(
-                train=False,
-                augment_data=False,
-                image_size=image_size,
-                sample_transform=sample_transform,
-            )
+        super().__init__(
+            input_data=filenames,
+            concepts=concepts,
+            annotations=annotations,
+            graph=graph,
+            concept_names_subset=concept_subset,
+            name='AWA2Dataset',
+        )
 
+    # ------------------------------------------------------------------
+    # ConceptDataset interface
+    # ------------------------------------------------------------------
 
-        self.predicate_binary_mat = np.array(np.genfromtxt(
-            os.path.join(root, 'predicate-matrix-binary.txt'),
-            dtype='int',
-        ))
-        self.class_to_index = dict()
-        # Build dictionary of indices to classes
-        with open(f"{root}/classes.txt") as f:
-            for line in f:
-                class_name = line.split('\t')[1].strip()
-                self.class_to_index[class_name] = len(self.class_to_index)
+    @property
+    def raw_filenames(self) -> List[str]:
+        return [
+            "classes.txt",
+            "predicate-matrix-binary.txt",
+            "predicate-matrix.png",
+            "README-attributes.txt",
+            "testclasses.txt",
+            "predicate-matrix-continuous.txt",
+            "predicates.txt",
+            "README-images.txt",
+            "trainclasses.txt",
 
-        for split_attempt in ['train', 'val', 'test']:
-            split_file = os.path.join(
-                self.root,
-                f'{split_attempt}_split.npz',
-            )
-            if not os.path.exists(split_file):
-                logger.info(
-                    f"Split files for AWA2 could not be found. Generating new "
-                    f"train, validation, and test splits with seed {seed}."
+            "Features/ResNet101/AwA2-features.txt",
+            "Features/ResNet101/AwA2-filenames.txt",
+            "Features/ResNet101/AwA2-labels.txt",
+
+            # NOTE: We are not checking if each folder contains all images. Be sure that JPEG images are contained in each class folder.
+            *[f"JPEGImages/{x}" for x in CLASS_NAMES],
+        ]
+
+    @property
+    def processed_filenames(self) -> List[str]:
+        return [
+            'filenames.txt',
+            'concepts.pt',
+            'annotations.pt',
+        ]
+
+    def download(self):
+        """Download raw AwA2 data from official sources.
+
+        Each zip is verified with ``zipfile.testzip()`` after download.  If the
+        CRC check fails the corrupted file is deleted and re-downloaded from
+        scratch (up to ``_MAX_RETRIES`` times).  When ``wget`` is available it
+        is preferred over urllib because it handles large files, retries, and
+        resume much more reliably.
+        """
+        _MAX_RETRIES = 3
+        Path(self.root).mkdir(parents=True, exist_ok=True)
+        for url in URLS:
+            dest = os.path.join(self.root, url.split("/")[-1])
+            for attempt in range(1, _MAX_RETRIES + 1):
+                download_url_wget(url, dest)
+                print(f"  Verifying {os.path.basename(dest)} (attempt {attempt}/{_MAX_RETRIES}) ...")
+                if zip_is_valid(dest):
+                    break
+                print(f"  CRC check failed — deleting corrupted file and retrying ...")
+                os.remove(dest)
+            else:
+                raise RuntimeError(
+                    f"Failed to download a valid '{os.path.basename(dest)}' "
+                    f"after {_MAX_RETRIES} attempts.  "
+                    "Check your network connection or disk space."
                 )
-                self._generate_splits(seed=seed)
-                break
+            print(f"  Extracting {os.path.basename(dest)} ...")
+            with zipfile.ZipFile(dest) as z:
+                z.extractall(self.root)
+            os.remove(dest)
 
-        # And now we can simply load the actual paths and classes to be used
-        # for each split :)
-        split_file = os.path.join(
-            self.root,
-            f'{split}_split.npz',
-        )
-        split_info = np.load(split_file)
-        self.img_paths = split_info['paths']
-        self.img_labels = split_info['labels']
-        if selected_concepts is None:
-            selected_concepts = list(range(len(CONCEPT_SEMANTICS)))
-        self.selected_concepts = selected_concepts
-        self.concept_names = self.concept_attr_names = list(
-            np.array(
-                CONCEPT_SEMANTICS
-            )[selected_concepts]
-        )
-        self.task_names = self.task_attr_names = CLASS_NAMES
+        # Move all the files outside of the nested "Animals_with_Attributes2" folder to the root
+        extracted_folder = os.path.join(self.root, "Animals_with_Attributes2")
+        for item in os.listdir(extracted_folder):
+            src = os.path.join(extracted_folder, item)
+            dst = os.path.join(self.root, item)
+            if os.path.exists(dst):
+                if os.path.isdir(dst):
+                    shutil.rmtree(dst)
+                else:
+                    os.remove(dst)
+            shutil.move(src, dst)
+        os.rmdir(extracted_folder)
 
-    def _generate_splits(self, seed, train_size=0.6, val_size=0.2):
-        # First find all samples and generate a list of their paths
-        image_paths = []
-        image_classes = []
+
+    def build(self):
+        """Process raw AwA2 files and save cached dataset artefacts."""
+        self.maybe_download()
+
+        logger.info(f"Building AWA2 dataset from {self.root} ...")
+
+        # Load predicate matrix (50 classes x 85 attributes)
+        predicate_mat = np.array(
+            np.genfromtxt(
+                os.path.join(self.root, 'predicate-matrix-binary.txt'),
+                dtype='int',
+            )
+        )
+
+        # Build class-name -> index mapping
+        class_to_index = {}
+        with open(os.path.join(self.root, 'classes.txt')) as fh:
+            for line in fh:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    class_to_index[parts[1].strip()] = len(class_to_index)
+
+        # Walk JPEGImages/ to collect image paths and class labels
+        all_paths: List[str] = []
+        all_class_indices: List[int] = []
         img_dir = os.path.join(self.root, 'JPEGImages')
-        for root, _, files in os.walk(img_dir):
-            for file in files:
-                if file.lower().endswith('.jpg'):
-                    image_paths.append(os.path.abspath(os.path.join(root, file)))
-                    parent_dir = os.path.basename(
-                        os.path.dirname(image_paths[-1])
+
+        for dirpath, _, files in os.walk(img_dir):
+            class_name = os.path.basename(dirpath)
+            if class_name not in class_to_index:
+                continue
+            cls_idx = class_to_index[class_name]
+            for fname in sorted(files):
+                if fname.lower().endswith('.jpg'):
+                    all_paths.append(
+                        os.path.abspath(os.path.join(dirpath, fname))
                     )
-                    image_classes.append(self.class_to_index[parent_dir])
+                    all_class_indices.append(cls_idx)
 
-        np.random.seed(seed)
-        indices = np.arange(len(image_paths))
-        np.random.shuffle(indices)
+        all_paths_arr = np.array(all_paths)
+        all_class_arr = np.array(all_class_indices, dtype=np.int64)
+        n = len(all_paths_arr)
 
-        train_end = int(train_size * len(image_paths))
-        val_end = train_end + int(val_size * len(image_paths))
+        # Build concept tensor: 85 binary attrs + 1 class label
+        binary_attrs = predicate_mat[all_class_arr, :]        # (n, 85)
+        class_col = all_class_arr.reshape(-1, 1)               # (n, 1)
+        all_concepts = np.concatenate([binary_attrs, class_col], axis=1)
+        concepts_tensor = torch.tensor(all_concepts, dtype=torch.float32)
 
-        # Now time to generate our split matrices and saving them
-        image_paths = np.array(image_paths)
-        image_classes = np.array(image_classes)
+        # Build Annotations
+        concept_names = CONCEPT_SEMANTICS + ['class']
+        binary_states = [['0'] for _ in CONCEPT_SEMANTICS]
+        class_states = [CLASS_NAMES]
+        states = binary_states + class_states
+        cardinalities = [1] * len(CONCEPT_SEMANTICS) + [N_CLASSES]
+        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
 
-        train_indices = indices[:train_end]
-        train_paths = image_paths[train_indices]
-        train_classes = image_classes[train_indices]
-        np.savez(
-            os.path.join(self.root, 'train_split.npz'),
-            paths=train_paths,
-            labels=train_classes,
-        )
+        annotations = Annotations({
+            1: AxisAnnotation(
+                labels=concept_names,
+                states=states,
+                cardinalities=cardinalities,
+                metadata=concept_metadata,
+            )
+        })
 
-        val_indices = indices[train_end:val_end]
-        val_paths = image_paths[val_indices]
-        val_classes = image_classes[val_indices]
-        np.savez(
-            os.path.join(self.root, 'val_split.npz'),
-            paths=val_paths,
-            labels=val_classes,
-        )
+        # Save artefacts
+        os.makedirs(self.root, exist_ok=True)
+        logger.info(f"Saving AWA2 dataset to {self.root}")
 
-        test_indices = indices[val_end:]
-        test_paths = image_paths[test_indices]
-        test_classes = image_classes[test_indices]
-        np.savez(
-            os.path.join(self.root, 'test_split.npz'),
-            paths=test_paths,
-            labels=test_classes,
-        )
+        with open(self.processed_paths[0], 'w') as fh:
+            fh.write('\n'.join(all_paths_arr.tolist()))
 
-    def __getitem__(self, index):
-        img = Image.open(self.img_paths[index])
-        if img.getbands()[0] == 'L':
-            img = img.convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        label_idx = self.img_labels[index]
-        concepts = self.predicate_binary_mat[label_idx,:]
-        concepts = self.concept_transform(
-            np.array(concepts)[self.selected_concepts]
-        )
-        return img, torch.FloatTensor(concepts), label_idx
+        torch.save(concepts_tensor, self.processed_paths[1])
+        torch.save(annotations, self.processed_paths[2])
 
-    def __len__(self):
-        return len(self.img_paths)
+        logger.info(f"AWA2 dataset saved ({n} samples)")
 
+    def load_raw(self):
+        """Load processed artefacts from disk."""
+        self.maybe_build()
 
-def get_transform_awa2(
-    train,
-    augment_data,
-    image_size=224,
-    sample_transform=None,
-):
-    """Helper function to get the appropiate transformation for the awa2
-    data loader.
+        logger.info(f"Loading AWA2 dataset from {self.root}")
 
-    Args:
-        train (bool): Whether or not this transform is for the training fold
-            of the awa2 dataset or not.
-        augment_data (bool): Whether or not we want to perform standard
-            augmentations (crops and flips) used for the CUB dataset.
-        image_size (int, optional): Size of the width and height of each
-            of the generated images. Defaults to 224.
+        with open(self.processed_paths[0], 'r') as fh:
+            filenames = fh.read().strip().split('\n')
 
-    Returns:
-        torchvision.Transform: a valid torchvision transform to be applied to
-            each image of the awa2 dataset being loaded.
-    """
-    scale = 256.0/224.0
-    sample_transform = (
-        sample_transform if sample_transform is not None
-        else (lambda x: x)
-    )
-    if (not train) or (not augment_data):
-        # Resizes the image to a slightly larger square then crops the center.
-        transform = transforms.Compose([
-            transforms.Resize((
-                int(image_size*scale),
-                int(image_size*scale),
-            )),
-            transforms.CenterCrop(image_size),
-            transforms.ToTensor(),
-            sample_transform,
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-    else:
-        transform = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size,
-                scale=(0.7, 1.0),
-                ratio=(0.75, 1.3333333333333333),
-                interpolation=2),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            sample_transform,
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-    return transform
+        concepts = torch.load(self.processed_paths[1], weights_only=False)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
+        graph = None
+
+        return filenames, concepts, annotations, graph
+
+    def load(self):
+        return self.load_raw()
+
+    def __getitem__(self, item: int) -> dict:
+        if self.embs_precomputed:
+            x = self.input_data[item]
+        else:
+            img_path = self.input_data[item]
+            x = Image.open(img_path)
+            x = x.convert('RGB')  # Ensure 3 channels
+            x = transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
+            x = transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
+        c = self.concepts[item]
+        return {'inputs': {'x': x}, 'concepts': {'c': c}}
+
+    @property
+    def n_samples(self) -> int:
+        return len(self.input_data)
+
+    @property
+    def n_features(self) -> tuple:
+        return tuple(self[0]['inputs']['x'].shape)
+
+    @property
+    def shape(self) -> tuple:
+        return (self.n_samples, *self.n_features)

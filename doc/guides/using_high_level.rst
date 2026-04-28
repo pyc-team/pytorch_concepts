@@ -779,7 +779,7 @@ Putting it all together:
         ConceptLoss,
         ConceptMetrics
     )
-    from torch_concepts.data.datamodules import BnLearnDataModule
+    from torch_concepts.data import BnLearnDataModule
 
     # Use the insurance dataset from BnLearn (mixed binary and categorical concepts)
     datamodule = BnLearnDataModule(

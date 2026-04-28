@@ -1,0 +1,35 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.dsprites_regression.DSpritesRegressionDataModule
+
+name: dsprites_regression
+
+seed: ${seed}
+
+# dataset parameters
+num_samples: null
+concept_subset: null
+# Formulas for the dataset
+formulas: 
+  circle: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
+  square: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
+  heart: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"
+
+# backbone handling and embedding precomputation
+backbone: null
+precompute_embs: False
+force_recompute: False
+
+# Task label - formula-computed regression target
+default_task_names: [target]
+
+label_descriptions:
+  color: "Color of the shape (fixed to 0 in dsprites)"
+  shape: "Shape type (1=square, 2=circle, 3=heart)"
+  scale: "Scale of the shape"
+  orientation: "Orientation angle of the shape"
+  x_position: "X position of the shape center"
+  y_position: "Y position of the shape center"
+  target: "Formula-computed regression target"

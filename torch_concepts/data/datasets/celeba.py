@@ -38,10 +38,6 @@ class CelebADataset(ConceptDataset):
     
     Args:
         root: Root directory where the dataset is stored or will be downloaded.
-        split: The split of the dataset to use ('train', 'valid', or 'test'). Default is 'train'.
-        transform: The transformations to apply to the images. Default is None.
-        download: Whether to download the dataset if it does not exist. Default is False.
-        task_label: The attribute(s) to use for the task. Default is 'Attractive'.
         concept_subset: Optional subset of concept labels to use.
         label_descriptions: Optional dict mapping concept names to descriptions.
     """

@@ -11,8 +11,7 @@ workflows with pre-trained models.
 
 Example
 -------
->>> from torch_concepts.data import ConceptDataModule
->>> from torch_concepts.data.datasets import CelebADataset
+>>> from torch_concepts.data import ConceptDataModule, CelebADataset
 >>> 
 >>> dataset = CelebADataset(root='./data')
 >>> dm = ConceptDataModule(
@@ -119,7 +118,7 @@ class ConceptDataModule(LightningDataModule):
     --------
     Basic usage with random splitting:
 
-    >>> from torch_concepts.data.datasets import ToyDataset
+    >>> from torch_concepts.data import ToyDataset
     >>> dataset = ToyDataset(dataset='xor', n_gen=1000)
     >>> dm = ConceptDataModule(
     ...     dataset=dataset,

@@ -21,7 +21,7 @@ import pandas as pd
 import torch
 import os
 
-from torch_concepts.data.datasets import ToyDAGDataset
+from torch_concepts.data import ToyDAGDataset
 from torch_concepts.annotations import Annotations
 
 

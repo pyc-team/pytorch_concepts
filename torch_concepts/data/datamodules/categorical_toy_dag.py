@@ -5,7 +5,7 @@ import os
 from typing import Dict, List, Tuple, Optional, Union
 import numpy as np
 
-from ..datasets import ToyDAGDataset
+from ..datasets.categorical_toy_dag import ToyDAGDataset
 from ..base.datamodule import ConceptDataModule
 from ...typing import BackboneType
 
