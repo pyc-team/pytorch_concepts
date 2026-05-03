@@ -13,10 +13,9 @@ hydra:
       model: cbm, cem, c2bm
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
-        torch_concepts.nn.IndependentInference,
         torch_concepts.nn.AncestralSamplingInference
       # --- inference params
-      +model.train_inference.p: 0.5
+      +model.train_inference.p: 0.5 # use p=1 for 'independent' training
       # +model.train_inference.log_probs: True
       # +model.inference.log_probs: True
       loss: standard #, unweighted
