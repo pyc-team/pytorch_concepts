@@ -3,6 +3,8 @@
 import inspect
 from typing import Dict, Set
 
+import warnings
+
 import torch
 
 from .forward import ForwardInference
@@ -102,7 +104,7 @@ class AncestralSamplingInference(ForwardInference):
                  probabilistic_model: ProbabilisticModel,
                  graph_learner: BaseGraphLearner = None,
                  detach: bool = False,
-                 lazy: bool = False,
+                 lazy: bool = True,
                  log_probs: bool = True,
                  p: float = 0.0):
         super().__init__(probabilistic_model, graph_learner, detach=detach, lazy=lazy, p=p)
@@ -167,6 +169,7 @@ class AncestralSamplingInference(ForwardInference):
             )
 
         # Decide how to pass pred based on the distribution's accepted params
+        # TODO: make this robust to all distribution choices
         if "logits" in allowed and self.log_probs:
             dist_kwargs["logits"] = pred
             dist = variable.distribution(**dist_kwargs)
@@ -182,31 +185,84 @@ class AncestralSamplingInference(ForwardInference):
         return sample
 
     # TODO: currently assumes discrete, to be extended to continuous 
-    def ground_truth_to_evidence(self, value: torch.Tensor, cardinality: int) -> torch.Tensor:
+    def ground_truth_to_evidence(self, value: torch.Tensor, size: int, type: str) -> torch.Tensor:
         """
-        Convert ground truth to raw states for ancestral sampling.
-        
-        For sampling inference, evidence should be in the same format as samples:
-        - Binary: (batch_size, 1) with values 0.0 or 1.0
-        - Categorical: (batch_size, cardinality) one-hot encoded
-        
+        Convert ground truth to tensors used for propagation.
+
+        Ground-truth propagation keeps the existing discrete encoding: 0.0/1.0
+        for binary variables and one-hot vectors for categorical variables.
+        Dense tensors with shape ``(batch_size, size)`` are passed
+        through directly, which supports already-encoded categorical evidence
+        and continuous variables.
+
+        Supports binary (size=1), categorical (size>1), and dense continuous variables.
+
         Parameters
         ----------
         value : torch.Tensor
-            Ground truth value tensor. Shape: (batch_size,).
-        cardinality : int
-            Number of classes (1 for binary, >1 for categorical).
-            
+            Ground truth tensor. Shape: (batch_size,) or (batch_size, 1).
+            - Binary (size=1): binary values with shape (batch_size, )
+            - Categorical (size>1): class indices with shape (batch_size,) or one-hot vectors with shape (batch_size, size)
+            - Continuous: values with shape (batch_size, size)
+        size : int
+            Number of features/classes for this variable.
+        type : str
+            Type of the variable ('binary', 'categorical', 'continuous' or 'delta').
+
         Returns
         -------
         torch.Tensor
-            State tensor in sample format.
+            Value tensor. Shape: (batch_size, size).
         """
-        if cardinality > 1:
-            return torch.nn.functional.one_hot(
-                value.squeeze(-1).long(), num_classes=cardinality
-            ).float()
-        else:
-            if value.dim() == 1:
-                value = value.unsqueeze(-1)
-            return value.float()
+
+        # Allow (batch,) and unsqueeze to (batch, 1)
+        if value.dim() == 1:
+            value = value.unsqueeze(-1)
+
+        if value.dim() != 2:
+            raise ValueError(
+                f"Expected shape (batch,), (batch, 1), or "
+                f"(batch, {size}), got {tuple(value.shape)}."
+            )
+
+        width = value.shape[-1]
+
+        if type == 'binary':
+            if width != 1:
+                raise ValueError(
+                    f"Expected shape (batch,) or (batch, 1) for binary variable, "
+                    f"got {tuple(value.shape)}."
+                )
+            if not torch.all((value == 0) | (value == 1)):
+                unique_vals = value.unique()
+                warnings.warn(
+                    f"Binary ground truth contains values outside {{0, 1}}: "
+                    f"{unique_vals.tolist()}. Values will be used as-is.",
+                    stacklevel=2,
+                )
+            probs = value.float()
+            return probs
+
+        elif type == 'categorical':
+            if width == size:
+                # Already one-hot encoded
+                one_hot = value.float()
+            elif width != 1:
+                raise ValueError(
+                    f"Expected shape (batch,), (batch, 1), or "
+                    f"(batch, {size}) for categorical variable, got {tuple(value.shape)}."
+                )
+            else:
+                # Class indices → one-hot
+                one_hot = torch.nn.functional.one_hot(
+                    value.squeeze(-1).long(), num_classes=size
+                ).float()
+            return one_hot
+            
+        else:  # 'continuous' or 'delta'
+            if width == size:
+                return value.float()
+            raise ValueError(
+                f"Expected shape (batch, {size}) for {type} variable, "
+                f"got {tuple(value.shape)}."
+            )
