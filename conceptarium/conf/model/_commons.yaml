@@ -35,14 +35,14 @@ variable_distributions:
   binary:   
     - _target_: "hydra.utils.get_class"
       path: "torch.distributions.RelaxedBernoulli"
-    - temperature: 1.
+    - temperature: 0.5
   categorical: 
     - _target_: "hydra.utils.get_class"
       path: "torch.distributions.RelaxedOneHotCategorical"
-    - temperature: 1.
-  # TODO
-  # continuous: 
-    # ... not supported yet
+    - temperature: 0.5
+  continuous: 
+    - _target_: "hydra.utils.get_class"
+      path: "torch.distributions.Normal"
 
 
 # =============================================================
@@ -70,16 +70,7 @@ scheduler_class:
   _target_: "hydra.utils.get_class"
   path: "torch.optim.lr_scheduler.ReduceLROnPlateau"
 scheduler_kwargs:
-  factor: 0.5
-  min_lr: 0.001
+  factor: 0.1
+  min_lr: 1e-6
   patience: 10
   monitor: "val_loss"
-
-
-# TODO: implement this
-# =============================================================
-# Training settings
-# =============================================================
-# train_interv_prob: 0.1
-# test_interv_policy: nodes_true # levels_true, levels_pred, nodes_true, nodes_pred, random
-# test_interv_noise: 0.

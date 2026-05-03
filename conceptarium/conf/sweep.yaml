@@ -18,10 +18,10 @@ hydra:
       +model.train_inference.p: 0.5 # use p=1 for 'independent' training
       # +model.train_inference.log_probs: True
       # +model.inference.log_probs: True
-      loss: standard #, unweighted
+      loss: weighted # standard/weighted
       # --- weighted loss params
-      # loss.concept_weight: 10
-      # loss.task_weight: 1
+      loss.concept_weight: 10
+      loss.task_weight: 1
 
 dataset:
   batch_size: 2048
@@ -45,7 +45,7 @@ trainer:
   logger: null # null / wandb
   log_model: false  # whether to save checkpoint on wandb
   save_top_k: 1.    # whether to save checkpoint locally
-  max_epochs: 200
+  max_epochs: 2000
   patience: 20
 
 matmul_precision: medium
