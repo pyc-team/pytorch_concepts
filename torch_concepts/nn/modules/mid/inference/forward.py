@@ -105,7 +105,7 @@ class ForwardInference(BaseInference, ABC):
         probabilistic_model: ProbabilisticModel, 
         graph_learner: BaseGraphLearner = None, 
         detach: bool = False,
-        lazy: bool = False,
+        lazy: bool = True,
         p: float = 0.0,
         *args, 
         **kwargs

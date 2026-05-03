@@ -58,16 +58,14 @@ class DeterministicInference(ForwardInference):
         graph_learner=None,
         detach: bool = False,
         lazy: bool = False,
+        log_probs: bool = False,
         p: float = 0.0,
-        propagate: str = 'probs',
         *args,
         **kwargs,
     ):
         if not 0.0 <= p <= 1.0:
             raise ValueError(f"p must be in [0, 1], got {p}")
-        if propagate not in ('logits', 'probs'):
-            raise ValueError(f"propagate must be 'logits' or 'probs', got {propagate!r}")
-        self.propagate = propagate
+        self.log_probs = log_probs
         self._coerce_variables_to_delta(probabilistic_model)
         super().__init__(
             probabilistic_model,
@@ -102,7 +100,7 @@ class DeterministicInference(ForwardInference):
 
         for var in probabilistic_model.variables:
             if var in var_to_change:
-                if self.propagate == 'logits':
+                if self.log_probs:
                     var.activation = lambda x: x
                 else:
                     var.activation = _DEFAULT_ACTIVATIONS.get(var.distribution, lambda x: x)
@@ -125,15 +123,7 @@ class DeterministicInference(ForwardInference):
     def ground_truth_to_evidence(self, value: torch.Tensor, size: int, type: str) -> torch.Tensor:
         """
         Convert ground truth to tensors used for propagation.
-
-        Ground-truth propagation keeps the existing discrete encoding: 0.0/1.0
-        for binary variables and one-hot vectors for categorical variables.
-        Dense tensors with shape ``(batch_size, size)`` are passed
-        through directly, which supports already-encoded categorical evidence
-        and continuous variables.
-
-        Supports binary (size=1), categorical (size>1), and
-        dense continuous variables.
+        Supports binary (size=1), categorical (size>1), and dense continuous variables.
 
         Parameters
         ----------
@@ -179,7 +169,7 @@ class DeterministicInference(ForwardInference):
                     stacklevel=2,
                 )
             probs = value.float()
-            return torch.logit(probs, eps=1e-7) if self.propagate == 'logits' else probs
+            return torch.logit(probs, eps=1e-7) if self.log_probs else probs
 
         elif type == 'categorical':
             if width == size:
@@ -195,7 +185,7 @@ class DeterministicInference(ForwardInference):
                 one_hot = torch.nn.functional.one_hot(
                     value.squeeze(-1).long(), num_classes=size
                 ).float()
-            return torch.logit(one_hot, eps=1e-7) if self.propagate == 'logits' else one_hot
+            return torch.logit(one_hot, eps=1e-7) if self.log_probs else one_hot
             
         else:  # 'continuous' or 'delta'
             if width == size:

@@ -1,6 +1,18 @@
 defaults:
   - _self_
 
+inference:
+  _target_: ${model.train_inference._target_}
+  _partial_: true
+  # propagate: 'logits' # 'logits'/'probs' (only for DeterministicInference)
+
+train_inference:  
+  _target_: "torch_concepts.nn.DeterministicInference"
+  _partial_: true
+  # propagate: 'logits' # 'logits'/'probs' (only for DeterministicInference)
+  # detach: false, true
+
+# Allow for lightning training
 lightning: true
 
 # =============================================================
