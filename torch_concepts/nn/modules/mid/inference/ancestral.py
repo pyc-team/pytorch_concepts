@@ -174,6 +174,7 @@ class AncestralSamplingInference(ForwardInference):
             dist_kwargs["logits"] = pred
             dist = variable.distribution(**dist_kwargs)
         elif "probs" in allowed and not self.log_probs:
+            pred = variable.activation(pred)  # ensure pred are probs
             dist_kwargs["probs"] = pred
             dist = variable.distribution(**dist_kwargs)
         else:
