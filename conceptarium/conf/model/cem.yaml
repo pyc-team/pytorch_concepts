@@ -7,11 +7,3 @@ _target_: "torch_concepts.nn.ConceptEmbeddingModel"
 task_names: ${dataset.default_task_names}
 
 embedding_size: 8
-
-inference:
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
-
-train_inference:  
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true

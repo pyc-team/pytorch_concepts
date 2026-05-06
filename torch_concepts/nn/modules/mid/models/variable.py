@@ -23,9 +23,8 @@ _SUPPORTED_DISTRIBUTIONS: list = [
     RelaxedBernoulli,
     OneHotCategorical,
     RelaxedOneHotCategorical,
-    # TODO: add support for continuous distributions
-    # Normal,
-    # MultivariateNormal,
+    Normal,
+    MultivariateNormal,
     Delta
 ]
 
@@ -58,6 +57,16 @@ _DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Te
     Normal: lambda x: x,
     MultivariateNormal: lambda x: x,
     Delta: lambda x: x,
+}
+
+_DEFAULT_TYPES: Dict[Type[Distribution], str] = {
+    Bernoulli: 'binary',
+    RelaxedBernoulli: 'binary',
+    OneHotCategorical: 'categorical',
+    RelaxedOneHotCategorical: 'categorical',
+    Normal: 'continuous',
+    MultivariateNormal: 'continuous',
+    Delta: 'delta'
 }
 
 # Number of raw parameters needed to parameterise each supported distribution
@@ -300,6 +309,7 @@ class Variable:
         self.size = size
         self.dist_kwargs = dist_kwargs if dist_kwargs is not None else {}
         self.metadata = metadata if metadata is not None else {}
+        self.type = _DEFAULT_TYPES[distribution]
         if activation is not None:
             self.activation = activation
         else:

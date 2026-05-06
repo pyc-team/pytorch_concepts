@@ -7,11 +7,3 @@ _target_: "torch_concepts.nn.CausallyReliableConceptBottleneckModel"
 exogenous_size: 8
 hypernet_hidden_size: 8
 hypernet_use_bias: false
-
-inference:
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
-
-train_inference:  
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
