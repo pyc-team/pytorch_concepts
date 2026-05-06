@@ -97,7 +97,7 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
         embedding_size: int = 16,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
-        train_inference: Optional[BaseInference] = DeterministicInference,
+        train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
         **kwargs
@@ -130,7 +130,8 @@ class ConceptEmbeddingModel(BaseBipartiteModel):
             self.model.probabilistic_model, 
             **(inference_kwargs or {})
         )
-        self.train_inference = train_inference(
+        _train_inference_cls = self._resolve_train_inference(inference, train_inference)
+        self.train_inference = _train_inference_cls(
             self.model.probabilistic_model, 
             **(train_inference_kwargs or {})
         )
