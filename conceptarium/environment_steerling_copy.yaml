@@ -1,0 +1,28 @@
+name: steerling
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13
+
+  - numpy
+  - pandas==2.2.*
+  - pytables
+  - tqdm
+  - scikit-learn
+  - scipy
+  - openpyxl
+
+  - pip
+  - pip:
+    - torch
+    - torchvision
+    - torchmetrics
+    - lightning
+    # Other dependencies
+    - hydra-core
+    - wandb
+    - bnlearn # library for Bayesian networks
+    - gdown # to download files from Google Drive (CelebA dataset)
+    - transformers # State-of-the-art pretrained models for backbones
+    - hydra-list-sweeper
