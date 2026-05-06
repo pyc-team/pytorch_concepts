@@ -42,11 +42,12 @@ DATA_ROOT = CACHE
 
 # HuggingFace Hub token for accessing private models/datasets
 # Set this if you need to download from private HF repositories
-HUGGINGFACEHUB_TOKEN = (
-    env.get("HF_TOKEN")
-    or env.get("HUGGINGFACE_HUB_TOKEN")
-    or env.get("HUGGINGFACEHUB_TOKEN", "")
-)
+HUGGINGFACEHUB_TOKEN = ""
+# HUGGINGFACEHUB_TOKEN = (
+#     env.get("HF_TOKEN")
+#     or env.get("HUGGINGFACE_HUB_TOKEN")
+#     or env.get("HUGGINGFACEHUB_TOKEN", "")
+# )
 if HUGGINGFACEHUB_TOKEN:
     env.setdefault("HF_TOKEN", HUGGINGFACEHUB_TOKEN)
     env.setdefault("HUGGINGFACE_HUB_TOKEN", HUGGINGFACEHUB_TOKEN)
