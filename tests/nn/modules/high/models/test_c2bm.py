@@ -213,14 +213,36 @@ class TestC2BMInitialization:
         assert model is not None
 
     def test_independent_train_inference(self, chain_graph, binary_chain_ann):
+        """Using a different train_inference class should raise ValueError."""
+        with pytest.raises(ValueError, match="must be the same class"):
+            CausallyReliableConceptBottleneckModel(
+                input_size=8,
+                annotations=binary_chain_ann,
+                graph=chain_graph,
+                train_inference=IndependentInference,
+            )
+
+    def test_same_train_and_eval_inference_allowed(self, chain_graph, binary_chain_ann):
+        """Passing the same class for train_inference and inference is allowed."""
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            train_inference=IndependentInference,
+            inference=AncestralSamplingInference,
+            train_inference=AncestralSamplingInference,
         )
-        assert isinstance(model.train_inference, IndependentInference)
-        assert isinstance(model.eval_inference, DeterministicInference)
+        assert isinstance(model.eval_inference, AncestralSamplingInference)
+        assert isinstance(model.train_inference, AncestralSamplingInference)
+
+    def test_train_inference_defaults_to_inference_class(self, chain_graph, binary_chain_ann):
+        """When train_inference is omitted, it defaults to the same class as inference."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            inference=AncestralSamplingInference,
+        )
+        assert type(model.train_inference) is type(model.eval_inference)
 
     def test_ancestral_eval_inference(self, chain_graph, binary_chain_ann):
         model = CausallyReliableConceptBottleneckModel(
@@ -347,7 +369,6 @@ class TestC2BMTrainEvalRouting:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            train_inference=IndependentInference,
         )
         model.eval()
         assert model.inference is model.eval_inference
@@ -357,7 +378,6 @@ class TestC2BMTrainEvalRouting:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            train_inference=IndependentInference,
         )
         model.train()
         assert model.inference is model.train_inference
@@ -495,41 +515,16 @@ class TestC2BMManualTraining:
 # ===========================================================================
 
 class TestC2BMIndependentInference:
-    """Test forward pass with IndependentInference (requires GT)."""
+    """Verify that IndependentInference as train_inference raises ValueError."""
 
-    @pytest.fixture(autouse=True)
-    def _setup(self, chain_graph, binary_chain_ann):
-        self.model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            train_inference=IndependentInference,
-        )
-        self.x = torch.randn(4, 8)
-        self.gt = torch.randint(0, 2, (4, 3)).float()
-
-    def test_forward_train_with_gt(self):
-        self.model.train()
-        out = self.model(
-            query=['A', 'B', 'C'], x=self.x,
-            ground_truth=self.gt, concept_names=['A', 'B', 'C'],
-        )
-        assert out.probs.shape == (4, 3)
-
-    def test_forward_eval_no_gt(self):
-        """Eval mode falls back to DeterministicInference — no GT needed."""
-        self.model.eval()
-        out = self.model(query=['A', 'B', 'C'], x=self.x)
-        assert out.probs.shape == (4, 3)
-
-    def test_independent_return_logits(self):
-        self.model.train()
-        out = self.model(
-            query=['A', 'B', 'C'], x=self.x,
-            ground_truth=self.gt, concept_names=['A', 'B', 'C'],
-            return_logits=True,
-        )
-        assert out.logits.shape == (4, 3)
+    def test_different_train_inference_raises(self, chain_graph, binary_chain_ann):
+        with pytest.raises(ValueError, match="must be the same class"):
+            CausallyReliableConceptBottleneckModel(
+                input_size=8,
+                annotations=binary_chain_ann,
+                graph=chain_graph,
+                train_inference=IndependentInference,
+            )
 
 
 # ===========================================================================
@@ -557,7 +552,8 @@ class TestC2BMAncestralInference:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralSamplingInference
+            inference=AncestralSamplingInference,
+            train_inference=AncestralSamplingInference,
         )
         model.eval()
         x = torch.randn(8, 8)
@@ -639,24 +635,18 @@ class TestC2BMLightning:
         assert loss.requires_grad
 
     def test_lightning_with_independent_inference(self, chain_graph, binary_chain_ann):
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            train_inference=IndependentInference,
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01},
-        )
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()},
-        }
-        model.train()
-        loss = model.training_step(batch)
-        assert loss is not None
-        assert loss.requires_grad
+        """Using IndependentInference as train_inference should raise ValueError."""
+        with pytest.raises(ValueError, match="must be the same class"):
+            CausallyReliableConceptBottleneckModel(
+                input_size=8,
+                annotations=binary_chain_ann,
+                graph=chain_graph,
+                train_inference=IndependentInference,
+                lightning=True,
+                loss=nn.BCEWithLogitsLoss(),
+                optim_class=torch.optim.Adam,
+                optim_kwargs={'lr': 0.01},
+            )
 
 
 # ===========================================================================

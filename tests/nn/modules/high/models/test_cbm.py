@@ -362,17 +362,16 @@ class TestCBMFactory(unittest.TestCase):
         self.assertIsInstance(model, BaseLearner)
     
     def test_factory_independent_mode(self):
-        """Test factory creates Lightning model with lightning=True."""
+        """Using a different train_inference raises ValueError."""
         from torch_concepts.nn.modules.mid.inference import IndependentInference
-        model = ConceptBottleneckModel(
-            lightning=True,
-            train_inference=IndependentInference,
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-        
-        self.assertIsInstance(model, BaseLearner)
+        with self.assertRaises(ValueError):
+            ConceptBottleneckModel(
+                lightning=True,
+                train_inference=IndependentInference,
+                input_size=8,
+                annotations=self.ann,
+                task_names=['task']
+            )
     
     def test_factory_default_is_pytorch(self):
         """Test default is pure PyTorch module (no lightning mode)."""
@@ -477,16 +476,10 @@ class TestTrainingModes(unittest.TestCase):
         self.assertEqual(out.probs.shape, (2, 3))
     
     def test_independent_mode_works(self):
-        """Test ConceptBottleneckModel with Lightning training and IndependentInference."""
+        """Using a different train_inference raises ValueError."""
         from torch_concepts.nn.modules.mid.inference import IndependentInference
-        model = ConceptBottleneckModel(lightning=True, train_inference=IndependentInference, **self.kwargs)
-        
-        self.assertIsInstance(model, BaseLearner)
-        x = torch.randn(2, 8)
-        # IndependentInference.query() requires ground_truth tensor with concept_names
-        ground_truth = torch.randint(0, 2, (2, 3)).float()  # (batch, total_concepts)
-        out = model(x=x, query=['c1', 'c2', 'task'], ground_truth=ground_truth, concept_names=['c1', 'c2', 'task'])
-        self.assertEqual(out.probs.shape, (2, 3))
+        with self.assertRaises(ValueError):
+            ConceptBottleneckModel(lightning=True, train_inference=IndependentInference, **self.kwargs)
 
 
 class TestLearnerIntegration(unittest.TestCase):
@@ -537,15 +530,10 @@ class TestLearnerIntegration(unittest.TestCase):
         self.assertTrue(loss.requires_grad)
     
     def test_independent_training_step(self):
-        """Test Lightning learner training step with IndependentInference."""
+        """Using a different train_inference raises ValueError."""
         from torch_concepts.nn.modules.mid.inference import IndependentInference
-        model = self._make_model(lightning=True, train_inference=IndependentInference)
-        model.train()
-        
-        loss = model.training_step(self.batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
+        with self.assertRaises(ValueError):
+            self._make_model(lightning=True, train_inference=IndependentInference)
     
     def test_configure_optimizers_joint(self):
         """Test optimizer configuration for Lightning mode."""
