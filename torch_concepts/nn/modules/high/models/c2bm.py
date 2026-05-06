@@ -30,7 +30,7 @@ class CausallyReliableConceptBottleneckModel(BaseModel):
         hypernet_use_bias: bool = False,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
-        train_inference: Optional[BaseInference] = DeterministicInference,
+        train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False, # wrap the Torch model with Lightning capabilities
         **kwargs
@@ -71,7 +71,8 @@ class CausallyReliableConceptBottleneckModel(BaseModel):
             self.model.probabilistic_model, 
             **(inference_kwargs or {})
         )
-        self.train_inference = train_inference(
+        _train_inference_cls = self._resolve_train_inference(inference, train_inference)
+        self.train_inference = _train_inference_cls(
             self.model.probabilistic_model, 
             **(train_inference_kwargs or {})
         )

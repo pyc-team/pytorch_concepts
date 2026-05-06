@@ -16,7 +16,7 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, RelaxedBernoulli
 from torch_concepts.nn.modules.high.models.cem import (
     ConceptEmbeddingModel
 )
@@ -104,7 +104,7 @@ class TestCEMInitialization(unittest.TestCase):
         self.assertEqual(model.concept_names, ['c1', 'c2', 'task'])
         # Defaults should be filled in
         meta = model.concept_annotations.metadata
-        self.assertEqual(meta['c1']['distribution'], Bernoulli)
+        self.assertEqual(meta['c1']['distribution'], RelaxedBernoulli)
     
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""

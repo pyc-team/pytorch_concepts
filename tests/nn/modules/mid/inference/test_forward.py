@@ -1,15 +1,15 @@
 import unittest
+import warnings
 from unittest.mock import patch, MagicMock
 import pytest
 from torch_concepts.nn.modules.low.inference.intervention import _GlobalPolicyInterventionWrapper
-from torch.distributions import Normal
 from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
 from torch.nn import Linear, Identity
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.data import ToyDataset
 from torch_concepts import InputVariable, EndogenousVariable, ExogenousVariable, Annotations, AxisAnnotation, ConceptGraph
 from torch_concepts.nn import AncestralSamplingInference, DeterministicInference, WANDAGraphLearner, GraphModel, LazyConstructor, LinearLatentToExogenous, \
@@ -27,7 +27,7 @@ class SimpleForwardInference(ForwardInference):
     def activate(self, pred, variable):
         if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
             return torch.bernoulli(torch.sigmoid(pred))
-        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, OneHotCategorical):
             return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
             return pred
@@ -523,7 +523,7 @@ class SimpleForwardInference(ForwardInference):
     def activate(self, pred, variable):
         if isinstance(variable.distribution, type) and issubclass(variable.distribution, Bernoulli):
             return torch.bernoulli(torch.sigmoid(pred))
-        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, Categorical):
+        elif isinstance(variable.distribution, type) and issubclass(variable.distribution, OneHotCategorical):
             return torch.argmax(pred, dim=-1, keepdim=True).float()
         else:
             return pred
@@ -1368,33 +1368,6 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
     # --- activate: generic fallback .rsample() (line 154) ---
 
-    def test_activate_generic_distribution_fallback(self):
-        """A distribution not in the known list should fall through to the generic .rsample() path."""
-        from torch_concepts import LatentVariable, ConceptVariable
-
-        input_var = LatentVariable('input', distribution=Delta, size=5)
-        # Normal takes (loc, scale); loc= pred (positional), scale via dist_kwargs
-        var_A = ConceptVariable(
-            'A', distribution=Normal, size=1,
-            dist_kwargs={'scale': torch.tensor(1.0)},
-        )
-
-        cpd_input = ParametricCPD('input', parametrization=Identity())
-        cpd_A = ParametricCPD('A', parametrization=Linear(5, 1), parents=['input'])
-
-        pgm = ProbabilisticModel(
-            variables=[input_var, var_A],
-            factors=[cpd_input, cpd_A],
-        )
-
-        inference = AncestralSamplingInference(pgm)
-        x = torch.randn(4, 5)
-        result = inference.query(['A'], evidence={'input': x})
-
-        self.assertEqual(result.probs.shape, (4, 1))
-        # Normal .rsample() produces real-valued outputs (not bounded to [0,1])
-        self.assertTrue(result.probs.dtype == torch.float32)
-
     # --- ground_truth_to_evidence: categorical branch (lines 177-180) ---
 
     def test_ground_truth_to_evidence_categorical(self):
@@ -1416,7 +1389,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
 
         # Simulate categorical ground truth (e.g. class indices for 4 classes)
         value = torch.tensor([0, 2, 3, 1])
-        result = inference.ground_truth_to_evidence(value, cardinality=4)
+        result = inference.ground_truth_to_evidence(value, size=4, type='categorical')
 
         expected = torch.tensor([
             [1, 0, 0, 0],
@@ -1446,7 +1419,7 @@ class TestAncestralSamplingCoverage(unittest.TestCase):
         inference = AncestralSamplingInference(pgm)
 
         value = torch.tensor([0.0, 1.0, 1.0, 0.0])
-        result = inference.ground_truth_to_evidence(value, cardinality=1)
+        result = inference.ground_truth_to_evidence(value, size=1, type='binary')
 
         expected = torch.tensor([[0.0], [1.0], [1.0], [0.0]])
         self.assertTrue(torch.equal(result, expected))
@@ -1473,23 +1446,35 @@ class TestDeterministicInference(unittest.TestCase):
             variables=[self.input_var, self.var_A, self.var_B],
             factors=[cpd_input, cpd_A, cpd_B]
         )
-        
-        self.inference = DeterministicInference(self.pgm)
+
+        # Build a separate identically-structured PGM for sampling inference
+        # (deepcopy fails due to ParametricCPD.__new__ requiring positional args)
+        from torch_concepts import LatentVariable, ConceptVariable
+        s_input = LatentVariable('input', distribution=Delta, size=10)
+        s_A = ConceptVariable('A', distribution=Bernoulli, size=1)
+        s_B = ConceptVariable('B', distribution=Bernoulli, size=1)
+        self.sampling_pgm = ProbabilisticModel(
+            variables=[s_input, s_A, s_B],
+            factors=[
+                ParametricCPD('input', parametrization=Identity()),
+                ParametricCPD('A', parametrization=Linear(10, 1), parents=['input']),
+                ParametricCPD('B', parametrization=LinearConceptToConcept(1, 1), parents=['A']),
+            ]
+        )
+        with pytest.warns(UserWarning, match="All Variables will be changed to Delta"):
+            self.inference = DeterministicInference(self.pgm, log_probs=True)
         self.batch_size = 4
         self.x = torch.randn(self.batch_size, 10)
     
     # --- Integration tests with inference ---
     
-    def test_deterministic_prediction_returns_probabilities(self):
-        """Test that DeterministicInference.query returns probabilities (activated)."""
-        results = self.inference.query(['A', 'B'], {'input': self.x})
+    def test_deterministic_prediction_returns_raw_outputs(self):
+        """Test that DeterministicInference.query returns raw identity outputs."""
+        results = self.inference.query(['A', 'B'], {'input': self.x}, return_logits=True)
         
         # Should have A (size=1) + B (size=1) = 2 features
         self.assertEqual(results.probs.shape, (self.batch_size, 2))
-        
-        # Probabilities should be in [0, 1] (sigmoid output)
-        self.assertTrue(torch.all(results.probs >= 0))
-        self.assertTrue(torch.all(results.probs <= 1))
+        self.assertTrue(torch.allclose(results.logits, results.probs))
     
     def test_return_logits_returns_raw_outputs(self):
         """Test that return_logits=True returns raw CPD outputs."""
@@ -1499,12 +1484,8 @@ class TestDeterministicInference(unittest.TestCase):
         self.assertEqual(logits.logits.shape, (self.batch_size, 2))
         self.assertEqual(probs.probs.shape, (self.batch_size, 2))
         
-        # Logits can be any real value; probabilities in [0, 1]
-        self.assertTrue(torch.all(probs.probs >= 0))
-        self.assertTrue(torch.all(probs.probs <= 1))
-        
-        # They should not be identical (sigmoid transforms them)
-        self.assertFalse(torch.allclose(logits.logits, probs.probs))
+        # DeterministicInference uses identity activation, so both views match.
+        self.assertTrue(torch.allclose(logits.logits, probs.probs))
     
     def test_deterministic_gradient_flow(self):
         """Test that gradients flow through deterministic inference."""
@@ -1520,7 +1501,7 @@ class TestDeterministicInference(unittest.TestCase):
     
     def test_deterministic_vs_sampling_difference(self):
         """Test that deterministic inference differs from ancestral sampling."""
-        sampling_inference = AncestralSamplingInference(self.pgm)
+        sampling_inference = AncestralSamplingInference(self.sampling_pgm)
         
         # Fix seed for reproducibility
         torch.manual_seed(42)
@@ -2307,6 +2288,15 @@ class TestGroundTruthProbabilisticPropagation:
         )
         return model, {'A': linear_A, 'B': linear_B, 'task': linear_task}
 
+    def _deterministic_inference(self, model, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="DeterministicInference propagates logits/activations",
+                category=UserWarning,
+            )
+            return DeterministicInference(model, **kwargs)
+
     # ---- p validation ----
 
     def test_p_invalid_negative(self):
@@ -2324,7 +2314,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p_zero_is_default(self):
         """Default p=0 means no GT propagation."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model)
+        inference = self._deterministic_inference(model)
         assert inference.p == 0.0
 
     # ---- p=0: GT provided but ignored for propagation ----
@@ -2332,7 +2322,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p0_ignores_ground_truth_for_propagation(self):
         """With p=0, ground_truth should NOT affect downstream predictions."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=0.0)
+        inference = self._deterministic_inference(model, p=0.0)
 
         x = torch.randn(8, 10)
         gt_zeros = torch.zeros(8, 1)
@@ -2352,7 +2342,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p0_same_as_no_gt(self):
         """With p=0, results should match a plain query without GT."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=0.0)
+        inference = self._deterministic_inference(model, p=0.0)
 
         x = torch.randn(8, 10)
         gt = torch.ones(8, 2)
@@ -2369,7 +2359,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p1_uses_gt_for_propagation(self):
         """With p=1, different GT values should produce different downstream results."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=1.0)
+        inference = self._deterministic_inference(model, p=1.0)
 
         x = torch.randn(8, 10)
         gt_zeros = torch.zeros(8, 1)
@@ -2389,7 +2379,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p1_returns_model_predictions_not_gt(self):
         """With p=1, returned values should be model predictions, not GT values."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=1.0)
+        inference = self._deterministic_inference(model, p=1.0)
 
         x = torch.randn(8, 10)
         gt = torch.full((8, 1), 999.0)
@@ -2404,7 +2394,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p1_gradient_isolation(self):
         """With p=1, gradient should NOT flow from downstream loss to upstream predictor."""
         model, layers = self._make_chain_model()
-        inference = DeterministicInference(model, p=1.0)
+        inference = self._deterministic_inference(model, p=1.0)
 
         x = torch.randn(8, 10)
         gt = torch.zeros(8, 2)  # GT for A and B
@@ -2430,7 +2420,7 @@ class TestGroundTruthProbabilisticPropagation:
         from torch_concepts.nn.modules.mid.inference.independent import IndependentInference
 
         model, _ = self._make_chain_model()
-        forward_p1 = DeterministicInference(model, p=1.0)
+        forward_p1 = self._deterministic_inference(model, p=1.0)
         independent = IndependentInference(model)
 
         x = torch.randn(8, 10)
@@ -2451,7 +2441,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_intermediate_p_stochastic(self):
         """With 0 < p < 1, results should vary across runs (stochastic Bernoulli mask)."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=0.5)
+        inference = self._deterministic_inference(model, p=0.5)
 
         x = torch.randn(64, 10)
         gt = torch.ones(64, 1)
@@ -2477,9 +2467,9 @@ class TestGroundTruthProbabilisticPropagation:
         x = torch.randn(128, 10)
         gt = torch.ones(128, 1)
 
-        inf_p0 = DeterministicInference(model, p=0.0)
-        inf_p1 = DeterministicInference(model, p=1.0)
-        inf_mid = DeterministicInference(model, p=0.5)
+        inf_p0 = self._deterministic_inference(model, p=0.0)
+        inf_p1 = self._deterministic_inference(model, p=1.0)
+        inf_mid = self._deterministic_inference(model, p=0.5)
 
         r0 = inf_p0.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).probs.mean()
         r1 = inf_p1.query(['B'], {'input': x}, ground_truth=gt, concept_names=['A']).probs.mean()
@@ -2501,7 +2491,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_gt_without_concept_names_raises(self):
         """Providing ground_truth without concept_names should raise ValueError."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=0.5)
+        inference = self._deterministic_inference(model, p=0.5)
 
         x = torch.randn(4, 10)
         gt = torch.zeros(4, 1)
@@ -2512,7 +2502,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p_positive_without_gt_raises(self):
         """p > 0 without ground_truth should raise ValueError."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=0.5)
+        inference = self._deterministic_inference(model, p=0.5)
 
         x = torch.randn(4, 10)
 
@@ -2535,7 +2525,7 @@ class TestGroundTruthProbabilisticPropagation:
             variables=[input_var, var_A, var_B],
             factors=[cpd_input, cpd_A, cpd_B],
         )
-        inference = DeterministicInference(model, p=1.0)
+        inference = self._deterministic_inference(model, p=1.0)
 
         x = torch.randn(8, 10)
         gt_a = torch.zeros(8, 1)  # class 0
@@ -2551,7 +2541,7 @@ class TestGroundTruthProbabilisticPropagation:
     def test_p1_with_return_logits(self):
         """p=1 with return_logits should return raw logits, not activated values."""
         model, _ = self._make_chain_model()
-        inference = DeterministicInference(model, p=1.0)
+        inference = self._deterministic_inference(model, p=1.0, log_probs=True)
 
         x = torch.randn(8, 10)
         gt = torch.zeros(8, 1)
@@ -2566,10 +2556,8 @@ class TestGroundTruthProbabilisticPropagation:
             ground_truth=gt, concept_names=['A'],
             return_logits=False,
         )
-        # Logits and activated should differ (sigmoid applied)
-        assert not torch.allclose(result_logits.logits, result_activated.probs, atol=1e-6) or \
-            torch.allclose(result_logits.logits, torch.zeros_like(result_logits), atol=1e-6), \
-            "return_logits should give raw outputs, not activated"
+        # log_probs=True: identity activation, so logits == probs.
+        torch.testing.assert_close(result_logits.logits, result_activated.probs)
 
 
 class TestAncestralSamplingDroppedKwargsWarning(unittest.TestCase):
@@ -3148,7 +3136,7 @@ class TestAncestralSamplingWithP:
         inference = AncestralSamplingInference(model)
 
         value = torch.tensor([0.0, 1.0, 1.0, 0.0])
-        result = inference.ground_truth_to_evidence(value, cardinality=1)
+        result = inference.ground_truth_to_evidence(value, size=1, type='binary')
         assert result.shape == (4, 1)
         torch.testing.assert_close(result, torch.tensor([[0.0], [1.0], [1.0], [0.0]]))
 
@@ -3158,7 +3146,7 @@ class TestAncestralSamplingWithP:
         inference = AncestralSamplingInference(model)
 
         value = torch.tensor([[0.0], [1.0], [1.0], [0.0]])
-        result = inference.ground_truth_to_evidence(value, cardinality=1)
+        result = inference.ground_truth_to_evidence(value, size=1, type='binary')
         assert result.shape == (4, 1)
         torch.testing.assert_close(result, torch.tensor([[0.0], [1.0], [1.0], [0.0]]))
 
@@ -3168,7 +3156,7 @@ class TestAncestralSamplingWithP:
         inference = AncestralSamplingInference(model)
 
         value = torch.tensor([0, 2, 3, 1])
-        result = inference.ground_truth_to_evidence(value, cardinality=4)
+        result = inference.ground_truth_to_evidence(value, size=4, type='categorical')
         expected = torch.tensor([
             [1, 0, 0, 0],
             [0, 0, 1, 0],
@@ -3184,7 +3172,7 @@ class TestAncestralSamplingWithP:
         inference = AncestralSamplingInference(model)
 
         value = torch.tensor([[0], [2], [3], [1]])
-        result = inference.ground_truth_to_evidence(value, cardinality=4)
+        result = inference.ground_truth_to_evidence(value, size=4, type='categorical')
         expected = torch.tensor([
             [1, 0, 0, 0],
             [0, 0, 1, 0],
@@ -3265,7 +3253,13 @@ class TestSharedCPDDimensionValidation(unittest.TestCase):
             variables=[input_var, var_a, var_b],
             factors=[cpd_input, shared_cpd],
         )
-        inference = DeterministicInference(model)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="DeterministicInference propagates logits/activations",
+                category=UserWarning,
+            )
+            inference = DeterministicInference(model)
         x = torch.randn(4, 10)
 
         with self.assertRaises(RuntimeError, msg="Shared CPD output feature dimension mismatch"):

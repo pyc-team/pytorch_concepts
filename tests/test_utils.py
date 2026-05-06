@@ -725,10 +725,10 @@ class TestUtilsCoverage(unittest.TestCase):
         self.assertIs(result.metadata['c']['activation'], torch.sigmoid)
 
     def test_add_activation_backfills_categorical(self):
-        """Categorical distribution gets softmax activation backfilled."""
+        """OneHotCategorical distribution gets softmax activation backfilled."""
         from torch_concepts.utils import add_default_properties
         from functools import partial
-        metadata = {'color': {'type': 'discrete', 'distribution': torch.distributions.Categorical}}
+        metadata = {'color': {'type': 'discrete', 'distribution': torch.distributions.OneHotCategorical}}
         axis_ann = AxisAnnotation(labels=('color',), cardinalities=(3,), metadata=metadata)
         result = add_default_properties(axis_ann)
         self.assertIn('activation', result.metadata['color'])
@@ -756,8 +756,9 @@ class TestUtilsCoverage(unittest.TestCase):
         metadata = {'c': {'type': 'discrete'}}
         axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
         result = add_default_properties(axis_ann)
-        self.assertIs(result.metadata['c']['distribution'], torch.distributions.Bernoulli)
+        self.assertIs(result.metadata['c']['distribution'], torch.distributions.RelaxedBernoulli)
         self.assertIs(result.metadata['c']['activation'], torch.sigmoid)
+        self.assertEqual(result.metadata['c']['dist_kwargs'], {'temperature': 0.5})
 
     def test_add_activation_unknown_distribution_raises(self):
         """Unknown distribution without explicit activation raises ValueError."""
@@ -787,11 +788,11 @@ class TestUtilsCoverage(unittest.TestCase):
         self.assertIs(result.get_axis_annotation(1).metadata['c']['activation'], torch.sigmoid)
 
     def test_add_activation_multiple_concepts(self):
-        """Handles mixed concepts: binary + categorical."""
+        """Handles mixed concepts: binary + OneHotCategorical."""
         from torch_concepts.utils import add_default_properties
         metadata = {
             'binary_c': {'type': 'discrete', 'distribution': torch.distributions.Bernoulli},
-            'cat_c': {'type': 'discrete', 'distribution': torch.distributions.Categorical},
+            'cat_c': {'type': 'discrete', 'distribution': torch.distributions.OneHotCategorical},
         }
         axis_ann = AxisAnnotation(labels=('binary_c', 'cat_c'), cardinalities=(1, 3), metadata=metadata)
         result = add_default_properties(axis_ann)

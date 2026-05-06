@@ -324,6 +324,43 @@ class BaseModel(nn.Module, ABC):
             return self.train_inference
         return self.eval_inference
 
+    @staticmethod
+    def _resolve_train_inference(inference, train_inference):
+        """Validate and resolve the train_inference class.
+
+        If ``train_inference`` is ``None`` it falls back to ``inference``.
+        If it is explicitly set to a *different* class, a ``ValueError`` is
+        raised because mixing inference engines for training and evaluation
+        is not supported.
+
+        Parameters
+        ----------
+        inference : type
+            The evaluation inference class.
+        train_inference : type or None
+            The training inference class, or ``None`` to fall back to
+            ``inference``.
+
+        Returns
+        -------
+        type
+            Resolved training inference class (always ``inference`` or the
+            same class as ``inference``).
+
+        Raises
+        ------
+        ValueError
+            If ``train_inference`` is explicitly set to a different class than
+            ``inference``.
+        """
+        if train_inference is not None and train_inference is not inference:
+            raise ValueError(
+                f"train_inference ({train_inference.__name__}) must be the same "
+                f"class as inference ({inference.__name__}). Different inference "
+                "engines for training and evaluation are not yet supported."
+            )
+        return train_inference if train_inference is not None else inference
+
     def _finalize(self):
         if not hasattr(self, 'model') or self.model is None:
             raise NotImplementedError(
