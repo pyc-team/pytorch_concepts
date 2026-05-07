@@ -106,6 +106,31 @@ class MixConceptExogegnousToConcept(BasePredictor):
             torch.nn.Unflatten(-1, (out_concepts,)),
         )
 
+    def _mix(
+        self,
+        concepts: torch.Tensor,
+        exogenous: torch.Tensor,
+    ) -> torch.Tensor:
+        """Preprocess inputs and compute per-group mixed embeddings.
+
+        Handles the Bernoulli→Categorical expansion for cardinality-1 concepts
+        and returns ``c_mix`` of shape ``(batch, n_groups, exogenous_dim)``.
+        Subclasses can call this and only vary the final aggregation step.
+        """
+        if len(self.mask_cardinality_1) > 0:
+            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
+            concepts_split = torch.cat([
+                concepts[:, self.mask_cardinality_1[:, None]],
+                1 - concepts[:, self.mask_cardinality_1[:, None]],
+            ], dim=-1)
+            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
+            concepts  = replace_expand_cols(concepts,  self.mask_cardinality_1, concepts_split)
+        return grouped_concept_exogenous_mixture(
+            exogenous,
+            concepts,
+            groups=list(self.cardinalities_expanded),
+        )
+    
     def forward(
         self,
         concepts: torch.Tensor,
@@ -122,18 +147,6 @@ class MixConceptExogegnousToConcept(BasePredictor):
             torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
         # For concepts with cardinality 1, split the Bernoulli probability into a categorical distribution
-        if len(self.mask_cardinality_1) > 0:
-            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
-            concepts_split = torch.cat([
-                concepts[:, self.mask_cardinality_1[:, None]],
-                1-concepts[:, self.mask_cardinality_1[:, None]],
-            ], dim=-1)
-            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
-            concepts = replace_expand_cols(concepts, self.mask_cardinality_1, concepts_split)
-
-        c_mix = grouped_concept_exogenous_mixture(
-            exogenous,
-            concepts,
-            groups=list(self.cardinalities_expanded),
-        )
-        return self.predictor(c_mix.flatten(start_dim=1))
+        c_mix = self._mix(concepts, exogenous)  # (batch, n_groups, exogenous_dim)
+        c_mix = c_mix.flatten(start_dim=1)      # (batch, n_groups * exogenous_dim)
+        return self.predictor(c_mix)
