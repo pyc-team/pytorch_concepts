@@ -26,6 +26,7 @@ torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete impl
 
 from abc import ABC, abstractmethod
 from typing import List, Any, Optional, Mapping, Dict
+import functools
 import torch
 import torch.nn as nn
 
@@ -353,10 +354,14 @@ class BaseModel(nn.Module, ABC):
             If ``train_inference`` is explicitly set to a different class than
             ``inference``.
         """
-        if train_inference is not None and train_inference is not inference:
+        
+        def _unwrap(fn):
+            return fn.func if isinstance(fn, functools.partial) else fn
+
+        if train_inference is not None and _unwrap(train_inference) is not _unwrap(inference):
             raise ValueError(
-                f"train_inference ({train_inference.__name__}) must be the same "
-                f"class as inference ({inference.__name__}). Different inference "
+                f"train_inference ({_unwrap(train_inference).__name__}) must be the same "
+                f"class as inference ({_unwrap(inference).__name__}). Different inference "
                 "engines for training and evaluation are not yet supported."
             )
         return train_inference if train_inference is not None else inference
