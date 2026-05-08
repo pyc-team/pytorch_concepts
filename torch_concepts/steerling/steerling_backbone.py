@@ -1,32 +1,31 @@
-"""
-Steerling transformer backbone for text feature extraction.
+"""Steerling transformer backbone for text feature extraction.
 
-Provides a :class:`SteerlingBackbone` that follows the same pattern as
-:class:`~torch_concepts.data.backbone.Backbone` (for images) but wraps
-the Steerling causal-diffusion transformer for text.
+``SteerlingBackbone`` wraps the official Steerling causal-diffusion
+transformer and exposes the PyC-friendly mapping ``input_ids -> hidden``.
+It is responsible only for token-level hidden states; concept scoring and
+concept mixing are handled by the Steerling encoder and mixer layers.
 
-When ``pretrained=True`` the full transformer weights are downloaded
-from HuggingFace Hub (~16 GB for Steerling-8B).
-
-Example::
-
-    from torch_concepts.steerling import SteerlingBackbone
-
-    backbone = SteerlingBackbone(pretrained=True, freeze=True, device="cuda")
-    tokenizer = backbone.tokenizer
-
-    tokens = tokenizer.encode("The key to understanding AI is")
-    input_ids = torch.tensor([tokens], device="cuda")
-    hidden = backbone(input_ids)   # (1, T, 4096)
+By default the backbone builds the Steerling-8B architecture from the Hub
+config, loads backbone weights, freezes them, and exposes the matching
+tokenizer.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
+
+from .steerling_configs import (
+    DEFAULT_MODEL_ID,
+    config_to_dict,
+    resolve_steerling_configs,
+)
+from .steerling_utils import (
+    load_steerling_backbone_weights, get_steerling_tokenizer
+)
 
 logger = logging.getLogger(__name__)
 DEFAULT_VOCAB_SIZE = 100277
@@ -46,43 +45,46 @@ def _import_steerling_transformer():
 
 
 class SteerlingBackbone(nn.Module):
-    """Steerling transformer backbone for text feature extraction.
+    """Steerling text backbone.
 
-    Wraps ``steerling.models.causal_diffusion.CausalDiffusionLM`` and
-    exposes it as a PyC-style backbone: ``input_ids → hidden_states``.
+    The layer wraps ``steerling.models.causal_diffusion.CausalDiffusionLM`` and
+    returns final hidden states with shape ``(batch, sequence, n_embd)``.
 
-    The backbone returns the **final hidden states** after all
-    transformer blocks and layer-norm, with shape ``(B, T, n_embd)``.
+    Args:
+        config: Optional Steerling model config as a mapping, dataclass, or
+            Pydantic-style object. If omitted, the Steerling-8B Hub config is
+            used.
+        vocab_size: Optional vocabulary size override. Defaults to the config
+            value, then to the local Steerling tokenizer vocabulary size.
+        load_weights: If ``True``, load Steerling-8B backbone weights from the
+            Hugging Face Hub.
+        freeze: If ``True``, set all backbone parameters to
+            ``requires_grad=False`` after loading.
+        device: Device for the transformer weights. CUDA requests fall back to
+            CPU when CUDA is unavailable.
 
-    Parameters
-    ----------
-    pretrained : bool or str
-        If ``True``, download Steerling-8B weights from HuggingFace
-        Hub.  A string is interpreted as a custom model id / path.
-        ``False`` = random init (requires explicit config kwargs).
-    freeze : bool
-        If ``True``, freeze all parameters after loading.
-    device : str, optional
-        Device to load onto (``"cpu"``, ``"cuda"``, etc.).
-        Defaults to ``"cpu"``.
-    dtype : torch.dtype, optional
-        Parameter dtype.  Defaults to ``torch.bfloat16`` for pretrained,
-        ``None`` (= float32) for random init.
+    Attributes:
+        out_features: Hidden size ``n_embd`` emitted by :meth:`forward`.
+        vocab_size: Vocabulary size used to instantiate the transformer.
+        tokenizer: Steerling tokenizer matching the configured model id.
+        model_id: Hub model id used for weights/tokenizer, or ``None`` when
+            weights were not loaded.
 
-    Attributes
-    ----------
-    out_features : int
-        Hidden dimension of the transformer (``n_embd``).
-    tokenizer
-        A ``SteerlingTokenizer`` instance for encoding text.
+    Example:
+        >>> backbone = SteerlingBackbone(load_weights=True, freeze=True)
+        >>> input_ids = torch.tensor([[1, 2, 3]])
+        >>> hidden = backbone(input_ids)
+        >>> tuple(hidden.shape)
+        (1, 3, backbone.out_features)
     """
 
     def __init__(
         self,
-        pretrained: bool | str = True,
+        config: Any = None,
+        vocab_size: int = None,
+        load_weights: bool = True,
         freeze: bool = True,
         device: str = "cuda",
-        dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
 
@@ -92,86 +94,74 @@ class SteerlingBackbone(nn.Module):
             logger.warning("CUDA requested but unavailable, falling back to CPU.")
             device = "cpu"
 
+        # Lazily import the Steerling transformer classes
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
-        from torch_concepts.steerling.steerling_utils import (
-            DEFAULT_MODEL_ID,
-            load_steerling_config,
-            load_steerling_backbone_weights,
-        )
 
-        model_id: str | None = (
-            DEFAULT_MODEL_ID if pretrained is True
-            else pretrained if isinstance(pretrained, str) and pretrained
-            else None
-        )
-
-        self._model_id = model_id
-        model_cfg_dict: dict[str, object] = {}
-
-        if model_id is not None:
-            model_cfg_dict, _ = load_steerling_config(model_id)
-            config_values = {
-                k: v for k, v in model_cfg_dict.items()
-                if k in CausalDiffusionConfig.model_fields
-            }
-            config_values.pop("model_type", None)
-            config = CausalDiffusionConfig(**config_values)
+        # Resolve config: use provided dict, or load from HF Hub if pretrained.
+        if config is None:
+            model_cfg_dict, _, _ = resolve_steerling_configs(
+                config_source="hub",
+                model_id=DEFAULT_MODEL_ID,
+            )
         else:
-            config = CausalDiffusionConfig()
+            model_cfg_dict = config_to_dict(config)
+        config = CausalDiffusionConfig(**model_cfg_dict)
 
-        vocab_size = int(model_cfg_dict.get("vocab_size", DEFAULT_VOCAB_SIZE))
-        self.transformer = CausalDiffusionLM(config, vocab_size=vocab_size)
+        self._vocab_size = int(
+            vocab_size if vocab_size is not None
+            else model_cfg_dict.get("vocab_size", DEFAULT_VOCAB_SIZE)
+        )
+
+        # Instantiate the Steerling transformer backbone
+        self.transformer = CausalDiffusionLM(config, vocab_size=self._vocab_size)
         self._out_features = config.n_embd
 
-        if model_id is not None:
-            logger.info("Loading backbone weights from %s...", model_id)
+        # Determine which model weights to load (if any) and set model_id accordingly.
+        model_id: str | None = (DEFAULT_MODEL_ID if load_weights is True else None)
+        self._model_id = model_id
+        if load_weights:
             state_dict = load_steerling_backbone_weights(model_id, device=device)
-            # strict=False: CausalDiffusionLM may declare concept-head keys
-            # that are intentionally absent from the backbone-only state dict.
             self.transformer.load_state_dict(state_dict, strict=False)
-            if dtype is None:
-                dtype = torch.bfloat16
-
-        if dtype is not None:
-            self.transformer = self.transformer.to(dtype=dtype)
+            logger.info("Loaded pretrained weights into transformer.")
 
         self.transformer = self.transformer.to(device)
-        self.transformer.eval()
 
         if freeze:
             self.transformer.requires_grad_(False)
 
-        self._tokenizer: Optional[object] = None
+        self._tokenizer = None
+        self._tokenizer_model_id = model_id or DEFAULT_MODEL_ID
 
     @property
     def out_features(self) -> int:
-        """Hidden dimension of the backbone (``n_embd``)."""
+        """Hidden dimension ``n_embd`` returned by :meth:`forward`."""
         return self._out_features
 
     @property
+    def vocab_size(self) -> int:
+        """Vocabulary size used by the Steerling transformer."""
+        return self._vocab_size
+
+    @property
     def tokenizer(self):
-        """The Steerling ``AutoTokenizer`` for encoding text."""
+        """Tokenizer corresponding to ``model_id`` or the default Steerling model."""
         if self._tokenizer is None:
-            from torch_concepts.steerling.steerling_utils import (
-                get_steerling_tokenizer, DEFAULT_MODEL_ID,
-            )
-            self._tokenizer = get_steerling_tokenizer(
-                self._model_id or DEFAULT_MODEL_ID
-            )
+            self._tokenizer = get_steerling_tokenizer(self._tokenizer_model_id)
         return self._tokenizer
 
+    @property
+    def model_id(self) -> Optional[str]:
+        """Hub model id used for weights/tokenizer, or ``None`` without weights."""
+        return self._model_id
+
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Extract hidden states from the transformer.
+        """Return final transformer hidden states.
 
-        Parameters
-        ----------
-        input_ids : torch.Tensor
-            Token ids, shape ``(B, T)``.
+        Args:
+            input_ids: Integer token ids with shape ``(batch, sequence)``.
 
-        Returns
-        -------
-        torch.Tensor
-            Hidden states ``(B, T, n_embd)`` after all layers + LN.
+        Returns:
+            Hidden states with shape ``(batch, sequence, out_features)``.
         """
         return self.transformer(input_ids, return_hidden=True)
 

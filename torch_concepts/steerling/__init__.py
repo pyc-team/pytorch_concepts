@@ -15,9 +15,7 @@ if os.environ.get("TORCH_CONCEPTS_ENABLE_TORCH_COMPILE", "0") != "1":
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 from .steerling_utils import (
-    DEFAULT_MODEL_ID,
     KNOWN_CONCEPTS_URL,
-    load_steerling_config,
     get_steerling_tokenizer,
     load_steerling_known_head_weights,
     load_steerling_unknown_head_weights,
@@ -26,26 +24,29 @@ from .steerling_utils import (
     load_steerling_concepts,
     load_steerling_concept_names,
     load_steerling_concept_map,
-)
-from .steerling_backbone import SteerlingBackbone
-from .steerling_encoder import (
-    SteerlingLatentToConcept,
-    SteerlingConceptExogenousToLatent,
-    SteerlingConceptsToLatentEmbeddings,
-    SteerlingLatentToLatentFusion,
-)
-from .steerling_decoder import (
-    SteerlingLMHead,
     prepare_generation_sequence,
     prepare_steerling_evidence,
     print_concepts,
 )
+from .steerling_configs import (
+    DEFAULT_MODEL_ID,
+    PYTORCH_CONCEPTS_CONCEPT_DEFAULTS,
+    PYTORCH_CONCEPTS_MODEL_DEFAULTS,
+    load_steerling_hub_config,
+    normalize_steerling_components,
+    resolve_steerling_configs,
+)
+from .steerling_backbone import SteerlingBackbone
+from .model.steerling_low import SteerlingLowLevelModel
+from .model.steerling_mid import SteerlingMidLevelModel
+from .steerling_encoder import SteerlingLatentToConcept
+from .steerling_predictor import MixFactorizedConceptExogenousToConcept
 
 __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
     "KNOWN_CONCEPTS_URL",
-    "load_steerling_config",
+    "load_steerling_hub_config",
     "get_steerling_tokenizer",
     "load_steerling_known_head_weights",
     "load_steerling_unknown_head_weights",
@@ -54,16 +55,20 @@ __all__ = [
     "load_steerling_concepts",
     "load_steerling_concept_names",
     "load_steerling_concept_map",
+    "prepare_generation_sequence",
+    "prepare_steerling_evidence",
+    "print_concepts",
+    "PYTORCH_CONCEPTS_CONCEPT_DEFAULTS",
+    "PYTORCH_CONCEPTS_MODEL_DEFAULTS",
+    "normalize_steerling_components",
+    "resolve_steerling_configs",
+    # out-of-the-box model
+    "SteerlingLowLevelModel",
+    "SteerlingMidLevelModel",
     # Backbone
     "SteerlingBackbone",
     # Encoder
     "SteerlingLatentToConcept",
-    "SteerlingConceptExogenousToLatent",
-    "SteerlingConceptsToLatentEmbeddings",
-    "SteerlingLatentToLatentFusion",
-    # Decoder
-    "SteerlingLMHead",
-    "prepare_generation_sequence",
-    "prepare_steerling_evidence",
-    "print_concepts",
+    # Predictor
+    "MixFactorizedConceptExogenousToConcept",
 ]

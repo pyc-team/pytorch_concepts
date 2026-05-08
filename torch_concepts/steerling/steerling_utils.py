@@ -1,14 +1,12 @@
 """
 Steerling hub utilities — download, cache and access pretrained components.
 
-This module handles HuggingFace Hub interaction for the Steerling family
-of interpretable language models.  It downloads only the artefacts that
-are actually requested (config, tokenizer, individual safetensors shards)
-and caches them via the standard ``huggingface_hub`` cache.
+This module handles HuggingFace Hub interaction for Steerling tokenizers,
+weights, and concept metadata. Config loading lives in
+``steerling_configs.py``.
 
 Public helpers:
 
-* :func:`load_steerling_config`  – fetch and parse ``config.json``.
 * :func:`load_steerling_known_head_weights` – fetch the single shard
   that contains the known-concept-head tensors and return a state dict.
 * :func:`load_steerling_backbone_weights` – fetch all shards for the
@@ -22,15 +20,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import torch
 
 from ..utils import resolve_hf_token
+from .steerling_configs import DEFAULT_MODEL_ID, load_steerling_hub_config
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODEL_ID = "guidelabs/steerling-8b"
 
 # Seed the huggingface_hub global session token once at import time.
 # This suppresses "unauthenticated" warnings from any internal HF Hub
@@ -49,32 +46,6 @@ def _login_hf_hub() -> None:
         pass
 
 _login_hf_hub()
-
-
-# ------------------------------------------------------------------
-# Config
-# ------------------------------------------------------------------
-
-def load_steerling_config(
-    model_name_or_path: str = DEFAULT_MODEL_ID,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Download ``config.json`` and return (model_config, concept_config).
-
-    Both are plain dicts.  The caller is responsible for extracting
-    the fields it needs.
-    """
-    from huggingface_hub import hf_hub_download
-
-    config_path = hf_hub_download(
-        model_name_or_path,
-        "config.json",
-        token=resolve_hf_token(),
-    )
-    with open(config_path) as f:
-        raw = json.load(f)
-
-    concept_cfg = raw.pop("concept", {})
-    return raw, concept_cfg
 
 
 # ------------------------------------------------------------------
@@ -99,24 +70,6 @@ def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
         trust_remote_code=True,
         token=resolve_hf_token(),
     )
-
-
-# ------------------------------------------------------------------
-# Weight loading helpers
-# ------------------------------------------------------------------
-
-def _ensure_hub_deps():
-    """Check that huggingface_hub and safetensors are installed."""
-    try:
-        from huggingface_hub import hf_hub_download  # noqa: F401
-        from safetensors import safe_open  # noqa: F401
-    except ImportError as exc:
-        raise ImportError(
-            "Loading pretrained Steerling weights requires `huggingface_hub` "
-            "and `safetensors`.  Install with:\n"
-            "  pip install huggingface_hub safetensors"
-        ) from exc
-
 
 # In-process cache for the safetensors weight-map index.
 # huggingface_hub already caches the file on disk; this avoids
@@ -159,7 +112,6 @@ def load_steerling_known_head_weights(
     For Steerling-8B this downloads ~1 GB (shard 4/4) and extracts
     ~553 MB of tensors.
     """
-    _ensure_hub_deps()
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
@@ -195,7 +147,6 @@ def load_steerling_unknown_head_weights(
     Keys have the ``unknown_head.`` prefix stripped so they can be loaded
     directly into a ``ConceptHead`` via ``load_state_dict``.
     """
-    _ensure_hub_deps()
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
@@ -232,7 +183,6 @@ def load_steerling_lm_head_weights(
     ``transformer.tok_emb.weight`` and returns it keyed as
     ``{"weight": tensor}``, ready for ``nn.Linear.load_state_dict``.
     """
-    _ensure_hub_deps()
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
@@ -265,7 +215,6 @@ def load_steerling_backbone_weights(
        (all shards are needed because transformer weights are spread
        across shards 1–3).
     """
-    _ensure_hub_deps()
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
@@ -349,6 +298,7 @@ def load_steerling_concepts(
     _concept_labels_cache[url] = df
     return df
 
+
 def load_steerling_concept_names(
     url: str = KNOWN_CONCEPTS_URL,
 ) -> list:
@@ -377,3 +327,126 @@ def load_steerling_concept_map(
     """
     df = load_steerling_concepts(url)
     return dict(zip(df.index, df["concept_name"]))
+
+
+def prepare_generation_sequence(
+    tokenizer,
+    prompt: str,
+    n_new_tokens: int,
+) -> tuple[torch.Tensor, torch.BoolTensor, torch.BoolTensor]:
+    """Build the ``[prompt | MASK × N]`` input for causal-diffusion generation.
+
+    Parameters
+    ----------
+    tokenizer : SteerlingTokenizer
+        Tokenizer with ``mask_token_id``.
+    prompt : str
+        The text prompt.
+    n_new_tokens : int
+        Number of masked positions to append.
+
+    Returns
+    -------
+    input_ids : torch.Tensor
+        Shape ``(1, prompt_len + n_new_tokens)``.
+    prompt_mask : torch.BoolTensor
+        Shape ``(prompt_len + n_new_tokens,)``; ``True`` for prompt positions.
+    gen_mask : torch.BoolTensor
+        Shape ``(prompt_len + n_new_tokens,)``; ``True`` for generation positions.
+    """
+    prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+    prompt_len = len(prompt_ids)
+    total_len = prompt_len + n_new_tokens
+
+    input_ids = torch.full((1, total_len), tokenizer.mask_token_id, dtype=torch.long)
+    input_ids[0, :prompt_len] = torch.tensor(prompt_ids, dtype=torch.long)
+
+    prompt_mask = torch.zeros(total_len, dtype=torch.bool)
+    prompt_mask[:prompt_len] = True
+    gen_mask = ~prompt_mask.clone()
+
+    return input_ids, prompt_mask, gen_mask
+
+
+@torch.no_grad()
+def prepare_steerling_evidence(
+    backbone,
+    prompt: str,
+    n_new_tokens: int = 0,
+) -> dict:
+    """Tokenize, optionally append MASK tokens, and compute hidden states.
+
+    Parameters
+    ----------
+    backbone : SteerlingBackbone
+        Pretrained backbone (used for tokenizer and forward pass).
+    prompt : str
+        The text prompt.
+    n_new_tokens : int
+        Number of MASK tokens to append after the prompt for generation.
+        Use 0 for pure concept-querying (no generation).
+
+    Returns
+    -------
+    dict
+        ``{"input_ids": (1, T), "hidden": (1, T, D)}``
+        where ``T = prompt_len + n_new_tokens`` and ``D = n_embd``.
+        Tensors are float32.
+    """
+    tokenizer = backbone.tokenizer
+
+    if n_new_tokens > 0:
+        input_ids, _, _ = prepare_generation_sequence(
+            tokenizer, prompt, n_new_tokens)
+    else:
+        input_ids = tokenizer(prompt, return_tensors="pt")["input_ids"]
+
+    device = next(backbone.parameters()).device
+    input_ids = input_ids.to(device)
+    hidden = backbone(input_ids).float()
+
+    return {"input_ids": input_ids, "hidden": hidden}
+
+
+def print_concepts(
+    logits: torch.Tensor,
+    topk: int = 10,
+) -> "pandas.DataFrame":  # noqa: F821
+    """Map concept logits to human-readable concept names.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Concept logits, shape ``(T, n_concepts)`` for a single
+        sequence or ``(n_concepts,)`` for a single position.
+    topk : int
+        Number of top concepts to return per token position.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: ``position``, ``concept_idx``, ``concept_name``,
+        ``logit``.
+    """
+    import pandas as pd
+    from torch_concepts.steerling.steerling_utils import load_steerling_concepts
+
+    labels = load_steerling_concepts()
+
+    if logits.dim() == 1:
+        logits = logits.unsqueeze(0)
+
+    rows = []
+    for pos in range(logits.shape[0]):
+        tk = torch.topk(logits[pos], k=topk)
+        for idx, val in zip(tk.indices.tolist(), tk.values.tolist()):
+            rows.append({
+                "position": pos,
+                "concept_idx": idx,
+                "concept_name": labels.loc[idx, "concept_name"]
+                if idx in labels.index
+                else f"<unknown:{idx}>",
+                "logit": round(val, 4),
+            })
+
+    return pd.DataFrame(rows)
