@@ -26,7 +26,7 @@ from .modules.low.encoders.selector import SelectorLatentToExogenous
 
 # Predictors
 from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept
+from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept, MixSumConceptExogenousToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 
@@ -108,6 +108,7 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "MixConceptExogegnousToConcept",
+    "MixSumConceptExogenousToConcept",
     "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
 
