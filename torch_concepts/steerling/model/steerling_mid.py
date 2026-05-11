@@ -46,7 +46,11 @@ from torch_concepts import ConceptVariable, LatentVariable, ExogenousVariable
 from torch_concepts.nn import ParametricCPD, ProbabilisticModel, DeterministicInference, BaseInference
 
 from ...steerling.model.steerling_low import SteerlingLowLevelModel
-from ..steerling_utils import load_steerling_concept_names, prepare_generation_sequence
+from ..steerling_utils import (
+    load_steerling_concept_names,
+    prepare_generation_sequence,
+    print_concepts,
+)
 from ..steerling_configs import DEFAULT_MODEL_ID, SteerlingConfigSource
 
 logger = logging.getLogger(__name__)
@@ -324,6 +328,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         self,
         prompt: str,
         n_new_tokens: int,
+        topk_concepts: int | None = None,
         verbose: bool = True,
     ) -> str:
         """Procedurally unmask and generate tokens via the PGM bottleneck.
@@ -335,6 +340,8 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         Args:
             prompt: Text prompt to condition on.
             n_new_tokens: Number of tokens to generate.
+            topk_concepts: If set, print this many top known concepts for each
+                newly filled token.
             verbose: Print each decoding step to stdout.
 
         Returns:
@@ -353,7 +360,9 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
         for step in range(n_new_tokens):
             # 1. Query token probabilities through the PGM
-            token_probs = self.forward(input_ids, query=["new_token"]).probs
+            query = ["new_token"] + (self.known_names if topk_concepts is not None else [])
+            out = self.forward(input_ids, query=query).probs
+            token_probs = out[..., :self.vocab_size]
 
             # 2. Pick the most confident masked position, take argmax
             masked_positions = (input_ids[0] == mask_id).nonzero(as_tuple=False).squeeze(-1)
@@ -371,6 +380,12 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
             if verbose:
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
+                if topk_concepts is not None:
+                    concepts = print_concepts(
+                        out[0, seq_idx, self.vocab_size:],
+                        topk=topk_concepts,
+                    )
+                    print(concepts.to_string(index=False))
 
         generated_ids  = input_ids[0, prompt_len:].tolist()
         generated_text = tokenizer.decode(generated_ids)

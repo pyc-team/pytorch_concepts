@@ -33,6 +33,7 @@ from ..steerling_utils import (
     load_steerling_lm_head_weights,
     load_steerling_unknown_head_weights,
     prepare_generation_sequence,
+    print_concepts,
 )
 
 logger = logging.getLogger(__name__)
@@ -433,6 +434,7 @@ class SteerlingLowLevelModel(nn.Module):
         prompt: str,
         n_new_tokens: int,
         unknown_path: bool = True,
+        topk_concepts: int | None = None,
         verbose: bool = True,
     ) -> str:
         """Procedurally unmask and generate tokens after a text prompt.
@@ -447,6 +449,8 @@ class SteerlingLowLevelModel(nn.Module):
             n_new_tokens: Number of tokens to generate.
             unknown_path: Whether to include the unknown concept head in the
                 forward pass.
+            topk_concepts: If set, print this many top known concepts for each
+                newly filled token.
             verbose: Print each decoding step to stdout.
 
         Returns:
@@ -484,6 +488,12 @@ class SteerlingLowLevelModel(nn.Module):
             if verbose:
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
+                if topk_concepts is not None:
+                    concepts = print_concepts(
+                        out["known_concepts"][0, seq_idx],
+                        topk=topk_concepts,
+                    )
+                    print(concepts.to_string(index=False))
 
         generated_ids = input_ids[0, prompt_len:].tolist()
         generated_text = tokenizer.decode(generated_ids)
