@@ -323,15 +323,6 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
             pieces[name] = out[..., offset:offset + size]
             offset += size
         return pieces
-    
-    def prepare_input(self, prompt: str, n_new_tokens: int):
-        """Prepare ``input_ids`` with prompt + ``n_new_tokens`` MASK tokens.
-
-        Returns:
-            ``(input_ids, prompt_mask, gen_mask)`` — same as
-            :func:`prepare_generation_sequence`.
-        """
-        return prepare_generation_sequence(self.tokenizer, prompt, n_new_tokens)
 
     @torch.no_grad()
     def generate(

@@ -11,10 +11,12 @@ import logging
 import torch
 import torch.nn as nn
 
+from torch_concepts.nn.modules.low.base.layer import BasePredictor
+
 logger = logging.getLogger(__name__)
 
 
-class MixFactorizedConceptExogenousToConcept(nn.Module):
+class MixFactorizedConceptExogenousToConcept(BasePredictor):
     r"""Mix concept scores with Steerling concept embeddings.
 
     This layer is the PyC-compatible concept-embedding mixing step used after
@@ -103,7 +105,11 @@ class MixFactorizedConceptExogenousToConcept(nn.Module):
             ValueError: If ``cardinalities`` do not sum to ``in_concepts`` or
             if any cardinality is not ``1``.
         """
-        super().__init__()
+        super().__init__(
+            in_concepts=in_concepts,
+            in_exogenous=in_exogenous,
+            out_concepts=out_concepts
+        )
         cardinalities = [1] * in_concepts if cardinalities is None else cardinalities
         if sum(cardinalities) != in_concepts:
             raise ValueError(
