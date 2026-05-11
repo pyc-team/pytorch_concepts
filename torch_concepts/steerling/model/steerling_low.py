@@ -12,6 +12,7 @@ known concepts, unknown concepts, and reconstructed latent features.
 """
 
 import logging
+import gc
 from typing import Any
 
 import torch
@@ -227,33 +228,33 @@ class SteerlingLowLevelModel(nn.Module):
         pretrained = pretrained or []
 
         if "backbone" in pretrained:
-            backbone_sd = load_steerling_backbone_weights(model_id, device=self._device)
+            backbone_sd = load_steerling_backbone_weights(model_id, device="cpu")
             self._load_state_dict(self.backbone.transformer, backbone_sd, "backbone")
+            self._discard_state_dict(backbone_sd)
             self.backbone._model_id = model_id
             self.backbone._tokenizer_model_id = model_id
             logger.info("Loaded pretrained weights into backbone.")
 
         if "known_head" in pretrained:
-            known_sd = load_steerling_known_head_weights(model_id, device=self._device)
+            known_sd = load_steerling_known_head_weights(model_id, device="cpu")
             self._load_state_dict(self.known_concept_head.head, known_sd, "known_head")
+            self._discard_state_dict(known_sd)
             logger.info("Loaded pretrained weights into known concept head.")
 
         if "unknown_head" in pretrained:
             if self.unknown_concept_head is None:
                 logger.info("Skipped unknown concept head weights because use_unknown=False.")
             else:
-                unknown_sd = load_steerling_unknown_head_weights(model_id, device=self._device)
-                self._load_state_dict(
-                    self.unknown_concept_head.head,
-                    unknown_sd,
-                    "unknown_head",
-                )
+                unknown_sd = load_steerling_unknown_head_weights(model_id, device="cpu")
+                self._load_state_dict(self.unknown_concept_head.head, unknown_sd, "unknown_head")
+                self._discard_state_dict(unknown_sd)
                 logger.info("Loaded pretrained weights into unknown concept head.")
 
         if "lm_head" in pretrained:
-            lm_head_sd = load_steerling_lm_head_weights(model_id, device=self._device)
+            lm_head_sd = load_steerling_lm_head_weights(model_id, device="cpu")
             lm_head = self.decoder.predictor if self.compact else self.lm_head
             self._load_state_dict(lm_head, lm_head_sd, "lm_head")
+            self._discard_state_dict(lm_head_sd)
             logger.info("Loaded pretrained weights into LM head.")
 
 
@@ -267,6 +268,14 @@ class SteerlingLowLevelModel(nn.Module):
                 incompatible.missing_keys,
                 incompatible.unexpected_keys,
             )
+
+    @staticmethod
+    def _discard_state_dict(state_dict: dict) -> None:
+        """Release loaded checkpoint tensors after they are copied to modules."""
+        state_dict.clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
     def _freeze_steerling_weights(self, freeze: list | None = None):
