@@ -26,8 +26,12 @@ from torch_concepts.steerling import SteerlingMidLevelModel, print_concepts
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the mid-level model ────────────────────────────
-model = SteerlingMidLevelModel(use_unknown=True, compact=False)
-model.to(device)
+model = SteerlingMidLevelModel(
+    use_unknown=True, 
+    compact=False, 
+    use_epsilon_correction=False
+)
+model.to(device=device, dtype=torch.bfloat16)
 model.eval()
 print(model)
 
