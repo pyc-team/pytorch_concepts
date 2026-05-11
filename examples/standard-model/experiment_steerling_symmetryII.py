@@ -106,7 +106,13 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # ── 1. Mid-level model: backbone + concept heads + PGM + inference ─
-    model = SteerlingMidLevelModel().to(device).eval()
+    model = SteerlingMidLevelModel(
+        use_unknown=True, 
+        compact=False, 
+        use_epsilon_correction=False
+    )
+    model.to(device=device, dtype=torch.bfloat16)
+    model.eval()
     print(model)
 
     # ── 2. Prepare last-token hidden as the differentiation point ──────

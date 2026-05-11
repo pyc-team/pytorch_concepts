@@ -108,8 +108,12 @@ def print_steerling_runtime_info(model):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the high-level model ───────────────────────────
-model = SteerlingLowLevelModel(use_unknown=True, compact=False)
-model.to(device)
+model = SteerlingLowLevelModel(
+    use_unknown=True, 
+    compact=False, 
+    use_epsilon_correction=False
+)
+model.to(device=device, dtype=torch.bfloat16)
 model.eval()
 print(model)
 print_steerling_config(model)
