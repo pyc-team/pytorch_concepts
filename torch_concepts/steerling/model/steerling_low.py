@@ -131,8 +131,8 @@ class SteerlingLowLevelModel(nn.Module):
         # Backbone: tokens -> hidden states.
         self.backbone = SteerlingBackbone(
             config=self.model_cfg,
-            load_weights=False,
-            freeze=False,
+            load_weights=True,
+            freeze=True,
             device=self._device
         )
         self.vocab_size = self.backbone.vocab_size

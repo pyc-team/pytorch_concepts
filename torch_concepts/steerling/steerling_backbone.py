@@ -28,7 +28,7 @@ from .steerling_utils import (
 )
 
 logger = logging.getLogger(__name__)
-DEFAULT_VOCAB_SIZE = 100277
+DEFAULT_VOCAB_SIZE = 100281
 
 
 def _import_steerling_transformer():
@@ -37,6 +37,17 @@ def _import_steerling_transformer():
         from steerling.models.causal_diffusion import CausalDiffusionLM
         from steerling.configs.causal_diffusion import CausalDiffusionConfig
         return CausalDiffusionLM, CausalDiffusionConfig
+    except ImportError as exc:
+        raise ImportError(
+            "SteerlingBackbone requires the `steerling` package. "
+            "Install it with: pip install steerling  (requires Python >= 3.13)"
+        ) from exc
+
+def _import_steerling_generator():
+    """Lazily import the official Steerling inference loader."""
+    try:
+        from steerling import SteerlingGenerator
+        return SteerlingGenerator
     except ImportError as exc:
         raise ImportError(
             "SteerlingBackbone requires the `steerling` package. "
@@ -97,40 +108,78 @@ class SteerlingBackbone(nn.Module):
         # Lazily import the Steerling transformer classes
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
 
-        # Resolve config: use provided dict, or load from HF Hub if pretrained.
+        if config is None and load_weights:
+            SteerlingGenerator = _import_steerling_generator()
+            generator = SteerlingGenerator.from_pretrained(
+                DEFAULT_MODEL_ID,
+                device=device,
+            )
+            full_model = generator.model
+            self.transformer = getattr(full_model, "transformer", full_model).to(device)
+
+            self._out_features = int(generator.model_config.n_embd)
+            self._vocab_size = int(
+                vocab_size if vocab_size is not None
+                else getattr(generator.tokenizer, "vocab_size", DEFAULT_VOCAB_SIZE)
+            )
+            self._model_id = DEFAULT_MODEL_ID
+            self._tokenizer = generator.tokenizer
+            self._tokenizer_model_id = DEFAULT_MODEL_ID
+
+            if freeze:
+                self.transformer.requires_grad_(False)
+            
+            return
+
+        # Fallback path: build the plain CausalDiffusionLM backbone directly.
+        # Used when config is provided, or when load_weights=False.
         if config is None:
             model_cfg_dict, _, _ = resolve_steerling_configs(
-                config_source="hub",
+                config_source="pyc",
                 model_id=DEFAULT_MODEL_ID,
             )
         else:
             model_cfg_dict = config_to_dict(config)
+
         config = CausalDiffusionConfig(**model_cfg_dict)
 
         self._vocab_size = int(
-            vocab_size if vocab_size is not None
+            vocab_size
+            if vocab_size is not None
             else model_cfg_dict.get("vocab_size", DEFAULT_VOCAB_SIZE)
         )
 
-        # Instantiate the Steerling transformer backbone
-        self.transformer = CausalDiffusionLM(config, vocab_size=self._vocab_size)
-        self._out_features = config.n_embd
+        self.transformer = CausalDiffusionLM(
+            config,
+            vocab_size=self._vocab_size,
+        ).to(device)
 
-        # Determine which model weights to load (if any) and set model_id accordingly.
-        model_id: str | None = (DEFAULT_MODEL_ID if load_weights is True else None)
+        self._out_features = int(config.n_embd)
+
+        model_id: str | None = DEFAULT_MODEL_ID if load_weights else None
         self._model_id = model_id
-        if load_weights:
-            state_dict = load_steerling_backbone_weights(model_id, device=device)
-            self.transformer.load_state_dict(state_dict, strict=False)
-            logger.info("Loaded pretrained weights into transformer.")
 
-        self.transformer = self.transformer.to(device)
+        if load_weights:
+            state_dict = load_steerling_backbone_weights(
+                DEFAULT_MODEL_ID,
+                device=device,
+            )
+            missing, unexpected = self.transformer.load_state_dict(
+                state_dict,
+                strict=False,
+            )
+            logger.info(
+                "Loaded pretrained Steerling backbone weights. "
+                "Missing keys: %s; unexpected keys: %s",
+                missing,
+                unexpected,
+            )
 
         if freeze:
             self.transformer.requires_grad_(False)
 
         self._tokenizer = None
-        self._tokenizer_model_id = model_id or DEFAULT_MODEL_ID
+        self._tokenizer_model_id = DEFAULT_MODEL_ID
 
     @property
     def out_features(self) -> int:
@@ -154,16 +203,25 @@ class SteerlingBackbone(nn.Module):
         """Hub model id used for weights/tokenizer, or ``None`` without weights."""
         return self._model_id
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Return final transformer hidden states.
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        input_embeds: torch.Tensor | None = None,
+        return_hidden: bool = True,
+    ) -> torch.Tensor:
+        """
+        Forward pass.
 
         Args:
-            input_ids: Integer token ids with shape ``(batch, sequence)``.
+            input_ids: Token indices [B, T] (may contain mask tokens)
+            input_embeds: Pre-computed embeddings [B, T, D]. If provided, input_ids is ignored.
+            return_hidden: If True, return hidden states before lm_head.
 
         Returns:
-            Hidden states with shape ``(batch, sequence, out_features)``.
+            logits [B, T, vocab_size] or hidden_states [B, T, n_embd]
         """
-        return self.transformer(input_ids, return_hidden=True)
+        return self.transformer(input_ids, return_hidden=return_hidden, input_embeds=input_embeds)
 
     def __repr__(self) -> str:
         params_b = sum(p.numel() for p in self.parameters()) / 1e9
