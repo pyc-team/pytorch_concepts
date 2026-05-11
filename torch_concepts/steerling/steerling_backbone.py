@@ -83,8 +83,6 @@ class SteerlingBackbone(nn.Module):
             ``config`` is omitted.
         vocab_size: Optional vocabulary size override. Defaults to the config
             value, then to the local Steerling default vocabulary size.
-        device: Device for the transformer weights. CUDA requests fall back to
-            CPU when CUDA is unavailable.
 
     Attributes:
         out_features: Hidden size ``n_embd`` emitted by :meth:`forward`.
@@ -106,15 +104,8 @@ class SteerlingBackbone(nn.Module):
         model_id: str = DEFAULT_MODEL_ID,
         config_source: SteerlingConfigSource = "hub",
         vocab_size: int = None,
-        device: str = "cuda",
     ):
         super().__init__()
-
-        # Resolve device before any downloads or model instantiation.
-        # Falls back to CPU gracefully if CUDA is requested but unavailable.
-        if device.startswith("cuda") and not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable, falling back to CPU.")
-            device = "cpu"
 
         # Lazily import the Steerling transformer classes
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
@@ -142,7 +133,7 @@ class SteerlingBackbone(nn.Module):
         self.transformer = CausalDiffusionLM(
             config,
             vocab_size=self._vocab_size,
-        ).to(device)
+        )
 
         self._out_features = int(config.n_embd)
 

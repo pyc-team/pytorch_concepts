@@ -25,7 +25,8 @@ from torch_concepts.steerling import SteerlingLowLevelModel, print_concepts
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the high-level model ───────────────────────────
-model = SteerlingLowLevelModel(use_unknown=True, compact=False, device=device)
+model = SteerlingLowLevelModel(use_unknown=True, compact=False)
+model.to(device)
 model.eval()
 print(model)
 

@@ -78,12 +78,9 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
     is routed through a :class:`ProbabilisticModel` so individual variables
     (concepts, latents, tokens) can be queried or intervened upon directly.
 
-    Args:
-        device: Target device (``"cuda"``, ``"cpu"``, etc.).
-
     Example::
 
-        model = SteerlingMidLevelModel(device="cuda")
+        model = SteerlingMidLevelModel().to("cuda")
         model.eval()
 
         # End-to-end: tokens → concept bottleneck → next-token logits
@@ -120,7 +117,6 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         config_source: SteerlingConfigSource = "hub",
         model_config_overrides: dict[str, Any] | None = None,
         concept_config_overrides: dict[str, Any] | None = None,
-        device: str = "cuda",
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
     ):
@@ -138,7 +134,6 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
             config_source=config_source,
             model_config_overrides=model_config_overrides,
             concept_config_overrides=concept_config_overrides,
-            device=device,
         )
         self.use_unknown = use_unknown
 
@@ -262,7 +257,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
     def _evidence(self, input_ids: torch.Tensor) -> dict:
         """Build full evidence dict: backbone hidden states + both embedding matrices."""
-        hidden = self.backbone(input_ids.to(self._device)).float()
+        hidden = self.backbone(input_ids).float()
         evidence = {"input": hidden}
         evidence["K"] = self.known_embeddings
         if self.use_unknown:
@@ -349,7 +344,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         mask_id = tokenizer.mask_token_id
 
         input_ids, _, _ = self.prepare_input(prompt, n_new_tokens)
-        input_ids = input_ids.to(self._device)
+        input_ids = input_ids.to(self.device)
 
         prompt_len = (input_ids[0] != mask_id).sum().item()
 
