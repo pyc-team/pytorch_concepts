@@ -121,9 +121,6 @@ class MixFactorizedConceptExogenousToConcept(BasePredictor):
                 "MixFactorizedConceptExogenousToConcept only supports "
                 "Bernoulli concepts for now; all cardinalities must be 1."
             )
-        self.in_concepts = in_concepts
-        self.in_exogenous = in_exogenous
-        self.out_concepts = out_concepts
         self.cardinalities = cardinalities
         self.factorized = factorized
         self.add_linear_head = add_linear_head

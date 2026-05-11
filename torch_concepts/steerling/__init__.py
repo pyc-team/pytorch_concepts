@@ -16,6 +16,7 @@ if os.environ.get("TORCH_CONCEPTS_ENABLE_TORCH_COMPILE", "0") != "1":
 
 from .steerling_utils import (
     KNOWN_CONCEPTS_URL,
+    active_concepts,
     get_steerling_tokenizer,
     load_steerling_known_head_weights,
     load_steerling_unknown_head_weights,
@@ -36,7 +37,7 @@ from .steerling_configs import (
     normalize_steerling_components,
     resolve_steerling_configs,
 )
-from .steerling_backbone import SteerlingBackbone
+from .steerling_backbone import CausalDiffusionTextBackbone
 from .model.steerling_low import SteerlingLowLevelModel
 from .model.steerling_mid import SteerlingMidLevelModel
 from .steerling_encoder import SteerlingLatentToConcept
@@ -46,6 +47,7 @@ __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
     "KNOWN_CONCEPTS_URL",
+    "active_concepts",
     "load_steerling_hub_config",
     "get_steerling_tokenizer",
     "load_steerling_known_head_weights",
@@ -66,7 +68,7 @@ __all__ = [
     "SteerlingLowLevelModel",
     "SteerlingMidLevelModel",
     # Backbone
-    "SteerlingBackbone",
+    "CausalDiffusionTextBackbone",
     # Encoder
     "SteerlingLatentToConcept",
     # Predictor

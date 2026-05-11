@@ -48,6 +48,8 @@ PYTORCH_CONCEPTS_MODEL_DEFAULTS: dict[str, Any] = {
 }
 
 PYTORCH_CONCEPTS_CONCEPT_DEFAULTS: dict[str, Any] = {
+    # Aligned with upstream `steerling.configs.concept.ConceptConfig` defaults
+    # so loading Hub weights succeeds regardless of `config_source`.
     "n_concepts": 33732,
     "n_unknown_concepts": 101196,
     "max_concepts": 16,
@@ -55,17 +57,17 @@ PYTORCH_CONCEPTS_CONCEPT_DEFAULTS: dict[str, Any] = {
     "use_attention_known": False,
     "use_attention_unknown": False,
     "topk_known": 16,
-    "topk_known_features": None,
+    "topk_known_features": 32,
     "use_unknown": True,
-    "factorize_unknown": False,
+    "factorize_unknown": True,
     "factorize_rank": 256,
-    "unknown_topk": 16,
-    "use_epsilon_correction": False,
-    "block_size": 8192,
+    "unknown_topk": 128,
+    "use_epsilon_correction": True,
+    "block_size": 4096,
     "pad_multiple": 16,
     "topk_on_logits": False,
     "store_unknown_weights": False,
-    "apply_topk_to_unknown": False,
+    "apply_topk_to_unknown": True,
     "inject_layer": 16,
     "inject_alpha": 1.0,
 }
@@ -128,6 +130,10 @@ def load_steerling_hub_config(
     """
     from huggingface_hub import hf_hub_download
 
+    # Late import to avoid a circular dependency with ``steerling_utils``.
+    from .steerling_utils import _ensure_hf_login
+    _ensure_hf_login()
+
     config_path = hf_hub_download(
         model_name_or_path,
         "config.json",
@@ -175,8 +181,15 @@ def _source_defaults(
         return model_cfg, concept_cfg, "steerling"
     if source == "hub":
         assert model_id is not None, "model_id must be provided when config_source='hub'"
-        model_cfg, concept_cfg = load_steerling_hub_config(model_id)
-        return dict(model_cfg), dict(concept_cfg), "hub"
+        hub_model_cfg, hub_concept_cfg = load_steerling_hub_config(model_id)
+        # Merge under PyC defaults so any key the Hub config omits has a
+        # single, well-known fallback instead of being scattered across
+        # `dict.get(..., …)` call sites.
+        merged_model = deepcopy(PYTORCH_CONCEPTS_MODEL_DEFAULTS)
+        merged_model.update(hub_model_cfg)
+        merged_concept = deepcopy(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS)
+        merged_concept.update(hub_concept_cfg)
+        return merged_model, merged_concept, "hub"
     raise ValueError(
         "config_source must be one of 'pyc', 'steerling', or 'hub'"
     )
@@ -185,7 +198,6 @@ def _source_defaults(
 def resolve_steerling_configs(
     *,
     config_source: SteerlingConfigSource = "hub",
-    use_unknown: bool = True,
     model_id: str | None = None,
     model_config_overrides: Mapping[str, Any] | None = None,
     concept_config_overrides: Mapping[str, Any] | None = None,
@@ -193,6 +205,8 @@ def resolve_steerling_configs(
     """Resolve effective model/concept configs for Steerling wrappers.
 
     Explicit override dictionaries always win over the selected preset.
+    To toggle the unknown concept head, pass
+    ``concept_config_overrides={"use_unknown": False}``.
     """
     model_cfg, concept_cfg, resolved_source = _source_defaults(config_source, model_id)
 
@@ -200,8 +214,6 @@ def resolve_steerling_configs(
         model_cfg.update(model_config_overrides)
     if concept_config_overrides:
         concept_cfg.update(concept_config_overrides)
-    
-    concept_cfg["use_unknown"] = use_unknown
 
     concept_cfg = normalize_concept_config(concept_cfg)
     return model_cfg, concept_cfg, resolved_source

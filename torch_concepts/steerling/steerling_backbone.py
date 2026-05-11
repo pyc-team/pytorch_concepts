@@ -1,6 +1,6 @@
 """Steerling transformer backbone for text feature extraction.
 
-``SteerlingBackbone`` wraps the official Steerling causal-diffusion
+``CausalDiffusionTextBackbone`` wraps the official Steerling causal-diffusion
 transformer and exposes the PyC-friendly mapping ``input_ids -> hidden``.
 It is responsible only for token-level hidden states; concept scoring and
 concept mixing are handled by the Steerling encoder and mixer layers.
@@ -38,7 +38,7 @@ def _import_steerling_transformer():
         return CausalDiffusionLM, CausalDiffusionConfig
     except ImportError as exc:
         raise ImportError(
-            "SteerlingBackbone requires the `steerling` package. "
+            "CausalDiffusionTextBackbone requires the `steerling` package. "
             "Install it with: pip install steerling  (requires Python >= 3.13)"
         ) from exc
 
@@ -67,7 +67,7 @@ def _to_causal_diffusion_config_kwargs(
     return {key: value for key, value in config.items() if key in fields}
 
 
-class SteerlingBackbone(nn.Module):
+class CausalDiffusionTextBackbone(nn.Module):
     """Steerling text backbone.
 
     The layer wraps ``steerling.models.causal_diffusion.CausalDiffusionLM`` and
@@ -91,11 +91,11 @@ class SteerlingBackbone(nn.Module):
         model_id: Hub model id used for default config and tokenizer.
 
     Example:
-        >>> backbone = SteerlingBackbone()
+        >>> backbone = CausalDiffusionTextBackbone()
         >>> input_ids = torch.tensor([[1, 2, 3]])
         >>> hidden = backbone(input_ids)
-        >>> tuple(hidden.shape)
-        (1, 3, backbone.out_features)
+        >>> hidden.shape[-1] == backbone.out_features
+        True
     """
 
     def __init__(
@@ -174,18 +174,22 @@ class SteerlingBackbone(nn.Module):
         Forward pass.
 
         Args:
-            input_ids: Token indices [B, T] (may contain mask tokens)
-            input_embeds: Pre-computed embeddings [B, T, D]. If provided, input_ids is ignored.
-            return_hidden: If True, return hidden states before lm_head.
+            input_ids: Token indices [B, T] (may contain mask tokens).
+            input_embeds: Pre-computed embeddings [B, T, D]. If provided,
+                ``input_ids`` is ignored.
+            return_hidden: If True (the default), return hidden states before
+                the language-model head; otherwise return token logits.
 
         Returns:
-            logits [B, T, vocab_size] or hidden_states [B, T, n_embd]
+            With the default ``return_hidden=True``, hidden states with shape
+            ``(B, T, n_embd)``. With ``return_hidden=False``, token logits with
+            shape ``(B, T, vocab_size)``.
         """
         return self.transformer(input_ids, return_hidden=return_hidden, input_embeds=input_embeds)
 
     def __repr__(self) -> str:
         params_b = sum(p.numel() for p in self.parameters()) / 1e9
         return (
-            f"SteerlingBackbone(out_features={self._out_features}, "
+            f"CausalDiffusionTextBackbone(out_features={self._out_features}, "
             f"params={params_b:.1f}B)"
         )

@@ -39,6 +39,23 @@ _CONCEPT_CONFIG_ALIASES = {
     },
 }
 
+# Top-k inference is not implemented yet in the PyC encoder.  These are the
+# (already-resolved) ``ConceptHead`` kwargs that would activate it.
+_TOPK_HEAD_KWARGS = ("topk", "topk_features", "apply_topk_to_unknown", "topk_on_logits")
+
+
+def _is_topk_enabled(key: str, value: Any) -> bool:
+    """Return True if ``value`` would actually enable top-k for ``key``."""
+    if value is None or value is False:
+        return False
+    if key in ("apply_topk_to_unknown", "topk_on_logits"):
+        return bool(value)
+    # Numeric topk keys: any positive int counts as enabled.
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
 
 def _concept_head_init_keys(ConceptHead: type[nn.Module]) -> set[str]:
     """Return kwargs accepted by upstream ``ConceptHead.__init__``."""
@@ -75,7 +92,7 @@ def _filter_concept_head_config(
         else:
             ignored_keys.append(key)
     if ignored_keys:
-        print(f"Ignoring unsupported ConceptHead config keys: {ignored_keys}")
+        logger.info("Ignoring unsupported ConceptHead config keys: %s", ignored_keys)
     return filtered
 
 
@@ -239,17 +256,29 @@ class SteerlingLatentToConcept(BaseEncoder):
             factorize_rank=factorize_rank,
         )
 
-        # Enforce dense logits for all heads.
+        # Top-k inference is not implemented yet in the PyC encoder.
         # TODO: Re-enable top-k in the future.
+        enabled = [
+            key
+            for key in _TOPK_HEAD_KWARGS
+            if key in head_kwargs and _is_topk_enabled(key, head_kwargs[key])
+        ]
+        if enabled:
+            raise NotImplementedError(
+                "Top-k inference is not yet implemented in the PyC "
+                "SteerlingLatentToConcept encoder. Got non-disabled "
+                f"top-k keys in the resolved ConceptHead config: {enabled}. "
+                "Pass them as None/False (or their `topk_known` / "
+                "`unknown_topk` / `topk_known_features` aliases) when "
+                "constructing the head."
+            )
+
+        # Explicitly fix them at the disabled values so the wrapped
+        # ConceptHead never enters a top-k path.
         head_kwargs.update(
             {
-                key: value
-                for key, value in {
-                    "topk": None,
-                    "topk_features": None,
-                    "apply_topk_to_unknown": False,
-                    "topk_on_logits": False,
-                }.items()
+                key: (False if key in ("apply_topk_to_unknown", "topk_on_logits") else None)
+                for key in _TOPK_HEAD_KWARGS
                 if key in allowed_keys
             }
         )
@@ -323,6 +352,10 @@ class SteerlingLatentToConcept(BaseEncoder):
                 block_size=int(getattr(self.head, "block_size", 8192)),
             )
         elif self.factorize:
+            # TODO: use the factorized score path
+            # (`q_compressed = latent @ basis.T` → `q_compressed @ coef.T`)
+            # instead of materializing the full (C, D) predictor weight, to
+            # recover the memory win of factorization at inference time.
             weight = self.head._get_predictor_weight()[:self.out_concepts]
             logits = (latent @ weight.T).float().clamp(-15, 15)
         else:

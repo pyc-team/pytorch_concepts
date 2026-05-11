@@ -29,12 +29,20 @@ from .steerling_configs import DEFAULT_MODEL_ID, load_steerling_hub_config
 
 logger = logging.getLogger(__name__)
 
-# Seed the huggingface_hub global session token once at import time.
-# This suppresses "unauthenticated" warnings from any internal HF Hub
-# calls (e.g. within the steerling package) that do not go through our
+# Seed the huggingface_hub global session token lazily — on the first Hub
+# fetch — so importing this module is free of side effects.  This
+# suppresses "unauthenticated" warnings from any internal HF Hub calls
+# (e.g. within the steerling package) that do not go through our
 # resolve_hf_token() helpers.
-def _login_hf_hub() -> None:
-    """Silently log in to the HF Hub if a token is available."""
+_hf_login_attempted = False
+
+
+def _ensure_hf_login() -> None:
+    """Seed the HF Hub global session token once per process, if available."""
+    global _hf_login_attempted
+    if _hf_login_attempted:
+        return
+    _hf_login_attempted = True
     token = resolve_hf_token()
     if token is None:
         return
@@ -44,8 +52,6 @@ def _login_hf_hub() -> None:
     except Exception:
         # huggingface_hub is optional; token is still passed per-call.
         pass
-
-_login_hf_hub()
 
 
 # ------------------------------------------------------------------
@@ -65,6 +71,7 @@ def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
             "get_steerling_tokenizer requires `transformers`. "
             "Install with: pip install transformers"
         ) from exc
+    _ensure_hf_login()
     return AutoTokenizer.from_pretrained(
         model_name_or_path,
         trust_remote_code=True,
@@ -88,6 +95,7 @@ def _download_index(model_name_or_path: str) -> Dict[str, str]:
 
     from huggingface_hub import hf_hub_download
 
+    _ensure_hf_login()
     index_path = hf_hub_download(
         model_name_or_path,
         "model.safetensors.index.json",
@@ -397,7 +405,7 @@ def prepare_steerling_evidence(
 
     Parameters
     ----------
-    backbone : SteerlingBackbone
+    backbone : CausalDiffusionTextBackbone
         Pretrained backbone (used for tokenizer and forward pass).
     prompt : str
         The text prompt.
@@ -425,6 +433,117 @@ def prepare_steerling_evidence(
     hidden = backbone(input_ids).float()
 
     return {"input_ids": input_ids, "hidden": hidden}
+
+
+def active_concepts(
+    forward_output: dict,
+    *,
+    threshold: float | None = 0.5,
+    top_k: int | None = None,
+    positions: int | slice | None = None,
+    concept_names: list[str] | None = None,
+) -> "pandas.DataFrame":  # noqa: F821
+    """Extract active known concepts from a ``SteerlingLowLevelModel`` forward output.
+
+    Reads ``forward_output["known_concepts"]`` (raw logits) and returns the
+    concepts whose sigmoid score is above ``threshold`` and/or in the top
+    ``top_k`` per position.  This is a *post-processing* helper — it does
+    no extra forward passes.
+
+    Parameters
+    ----------
+    forward_output : dict
+        The dict returned by ``SteerlingLowLevelModel.forward(input_ids)``.
+        Must contain ``"known_concepts"`` with shape ``(B, T, C)`` or
+        ``(T, C)``.
+    threshold : float or None
+        Keep concepts with sigmoid probability ``>= threshold``.  Pass
+        ``None`` to skip the threshold filter (use ``top_k`` alone).
+    top_k : int or None
+        Keep only the top ``top_k`` concepts per position (by probability).
+        ``None`` keeps all that pass ``threshold``.  If both are set, the
+        thresholded set is further restricted to its top-``k``.
+    positions : int, slice, or None
+        Restrict to a specific position (e.g. ``-1`` for the last token) or
+        a slice.  ``None`` returns one row per position.
+    concept_names : list[str] or None
+        Optional pre-loaded list of concept names indexed by ``concept_idx``.
+        If omitted, ``load_steerling_concept_names`` is called.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: ``batch``, ``position``, ``concept_idx``, ``concept_name``,
+        ``probability``, ``logit``.  Sorted by ``(batch, position,
+        -probability)``.
+    """
+    import pandas as pd
+
+    if threshold is None and top_k is None:
+        raise ValueError("Pass at least one of `threshold` or `top_k`.")
+
+    logits = forward_output["known_concepts"]
+    if logits is None:
+        raise ValueError("forward_output['known_concepts'] is None.")
+
+    if logits.dim() == 2:
+        logits = logits.unsqueeze(0)
+    elif logits.dim() != 3:
+        raise ValueError(
+            "Expected known_concepts with shape (T, C) or (B, T, C); "
+            f"got shape {tuple(logits.shape)}."
+        )
+
+    if positions is not None:
+        logits = logits[:, positions]
+        if logits.dim() == 2:
+            logits = logits.unsqueeze(1)
+
+    if concept_names is None:
+        concept_names = load_steerling_concept_names()
+
+    probs = torch.sigmoid(logits.float())
+
+    rows = []
+    B, T, _ = probs.shape
+    for b in range(B):
+        for t in range(T):
+            p = probs[b, t]
+            if threshold is not None:
+                mask = p >= threshold
+                idx = mask.nonzero(as_tuple=False).squeeze(-1)
+            else:
+                idx = torch.arange(p.numel(), device=p.device)
+            if idx.numel() == 0:
+                continue
+            sel_probs = p[idx]
+            sel_logits = logits[b, t][idx]
+            if top_k is not None and idx.numel() > top_k:
+                k = min(top_k, idx.numel())
+                topv, topi = torch.topk(sel_probs, k)
+                idx = idx[topi]
+                sel_probs = topv
+                sel_logits = sel_logits[topi]
+            order = torch.argsort(sel_probs, descending=True)
+            for i in order.tolist():
+                ci = int(idx[i].item())
+                rows.append({
+                    "batch": b,
+                    "position": t,
+                    "concept_idx": ci,
+                    "concept_name": (
+                        concept_names[ci]
+                        if 0 <= ci < len(concept_names)
+                        else f"<unknown:{ci}>"
+                    ),
+                    "probability": round(float(sel_probs[i].item()), 6),
+                    "logit": round(float(sel_logits[i].item()), 4),
+                })
+
+    return pd.DataFrame(
+        rows,
+        columns=["batch", "position", "concept_idx", "concept_name", "probability", "logit"],
+    )
 
 
 def print_concepts(
