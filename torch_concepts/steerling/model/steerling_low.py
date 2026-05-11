@@ -304,8 +304,31 @@ class SteerlingLowLevelModel(nn.Module):
 
         if "backbone" in pretrained:
             backbone_sd = load_steerling_backbone_weights(model_id, device="cpu")
-            self._load_state_dict(self.backbone.transformer, backbone_sd, "backbone")
+            # When the backbone uses weight sharing (the Steerling default),
+            # the checkpoint stores only `tok_emb.weight`; the transformer's
+            # `lm_head.weight` is the same tensor at runtime.  Treat that
+            # specific missing key as expected.
+            weight_sharing = bool(self.model_cfg.get("weight_sharing", False))
+            expected_missing: tuple[str, ...] = (
+                ("lm_head.weight",) if weight_sharing else ()
+            )
+            self._load_state_dict(
+                self.backbone.transformer,
+                backbone_sd,
+                "backbone",
+                expected_missing=expected_missing,
+            )
             self._discard_state_dict(backbone_sd)
+            if weight_sharing:
+                # Re-tie defensively in case the upstream module rebuilt
+                # `lm_head.weight` during construction without sharing.
+                transformer = self.backbone.transformer
+                if (
+                    hasattr(transformer, "lm_head")
+                    and hasattr(transformer, "tok_emb")
+                    and transformer.lm_head.weight is not transformer.tok_emb.weight
+                ):
+                    transformer.lm_head.weight = transformer.tok_emb.weight
             self.backbone._model_id = model_id
             self.backbone._tokenizer_model_id = model_id
             logger.info("Loaded pretrained weights into backbone.")
@@ -340,17 +363,25 @@ class SteerlingLowLevelModel(nn.Module):
         name: str,
         *,
         allow_partial: bool = False,
+        expected_missing: tuple[str, ...] | list[str] = (),
     ) -> None:
         """Strict load by default; accept missing/unexpected keys only when
-        explicitly requested via ``allow_partial``.
+        explicitly requested via ``allow_partial`` (or for keys that are
+        documented as legitimately missing, via ``expected_missing``).
 
         A non-empty missing/unexpected list almost always means the wrapper
         was built with a config that doesn't match the checkpoint
         (factorize_unknown, use_attention_*).  Failing loudly is better than
         silent weight corruption.
+
+        ``expected_missing`` covers known exceptions (e.g. weight-tied
+        ``lm_head.weight`` inside the backbone, where the checkpoint stores
+        only ``tok_emb.weight``).
         """
         incompatible = module.load_state_dict(state_dict, strict=False)
-        if not (incompatible.missing_keys or incompatible.unexpected_keys):
+        expected = set(expected_missing)
+        unexpected_missing = [k for k in incompatible.missing_keys if k not in expected]
+        if not (unexpected_missing or incompatible.unexpected_keys):
             return
         if allow_partial:
             logger.warning(
@@ -365,7 +396,7 @@ class SteerlingLowLevelModel(nn.Module):
             "with the wrapped module. This usually means the wrapper config "
             "(e.g. factorize_unknown, use_attention_*) does not match the "
             "checkpoint. "
-            f"missing_keys={incompatible.missing_keys}, "
+            f"missing_keys={unexpected_missing}, "
             f"unexpected_keys={incompatible.unexpected_keys}. "
             "Pass `allow_partial=True` to bypass for debugging."
         )
