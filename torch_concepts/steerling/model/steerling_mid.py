@@ -23,7 +23,7 @@ Data-flow::
     h_bar      ──► token_cpd ──► new_token (B, T, vocab)
 
 Mid-level modules used:
-    - :class:`SteerlingBackbone`
+    - :class:`CausalDiffusionTextBackbone`
     - :class:`SteerlingLatentToConcept`           (known + unknown)
     - :class:`MixFactorizedConceptExogenousToConcept`
     - :class:`LatentFusion`
@@ -35,7 +35,7 @@ Mid-level modules used:
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -51,7 +51,6 @@ from ..steerling_utils import (
     prepare_generation_sequence,
     print_concepts,
 )
-from ..steerling_configs import DEFAULT_MODEL_ID, SteerlingConfigSource
 
 logger = logging.getLogger(__name__)
 
@@ -103,43 +102,23 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
     def __init__(
         self,
-        pretrained_components: bool | str | list[str] | tuple[str, ...] | None = (
-            "backbone",
-            "known_head",
-            "unknown_head",
-            "lm_head",
-        ),
-        freeze_components: bool | str | list[str] | tuple[str, ...] | None = (
-            "backbone",
-            "known_head",
-            "unknown_head",
-            "lm_head",
-        ),
-        use_unknown: bool = True,
+        *args,
         compact: bool = False,
-        model_id: str = DEFAULT_MODEL_ID,
-        config_source: SteerlingConfigSource = "hub",
-        model_config_overrides: dict[str, Any] | None = None,
-        concept_config_overrides: dict[str, Any] | None = None,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
+        **kwargs,
     ):
         if compact:
             raise NotImplementedError(
                 "compact=True is currently supported only by "
                 "SteerlingLowLevelModel, not by the mid-level PyC graph."
             )
-        super().__init__(
-            pretrained_components=pretrained_components,
-            freeze_components=freeze_components,
-            use_unknown=use_unknown,
-            compact=False,
-            model_id=model_id,
-            config_source=config_source,
-            model_config_overrides=model_config_overrides,
-            concept_config_overrides=concept_config_overrides,
-        )
-        self.use_unknown = use_unknown
+        super().__init__(*args, compact=False, **kwargs)
+        # The low-level wrapper has resolved `use_unknown` from the merged
+        # concept config (elevated kwarg + config_source).  Read it back
+        # rather than re-deriving it from kwargs.
+        self.use_unknown = bool(self.concept_cfg.get("use_unknown", True))
+        use_unknown = self.use_unknown
 
         # ── PGM variables ─────────────────────────────────────────────────
         emb_dim = self.embedding_dim

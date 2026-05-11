@@ -125,7 +125,7 @@ print(f"\nPrompt: {prompt!r}")
 print(f"Tokens: {input_ids.shape}")
 
 with torch.no_grad():
-    out = model(input_ids, unknown_path=True)
+    out = model(input_ids)
 
 print(f"Next-token logits:      {out['out_tokens'].shape}")
 print(f"Known concept logits:   {out['known_concepts'].shape}")
@@ -140,4 +140,4 @@ print("\nTop-5 known concepts at last prompt token:")
 print(df.to_string(index=False))
 
 # ── 3. Full masked diffusion generation ───────────────────────────
-model.generate(prompt, n_new_tokens=n_new_tokens, unknown_path=True, verbose=True)
+model.generate(prompt, n_new_tokens=n_new_tokens, verbose=True)
