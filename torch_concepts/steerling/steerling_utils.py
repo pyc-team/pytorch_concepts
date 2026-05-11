@@ -176,18 +176,37 @@ def load_steerling_lm_head_weights(
     model_name_or_path: str = DEFAULT_MODEL_ID,
     device: str = "cpu",
 ) -> Dict[str, torch.Tensor]:
-    """Download only the token-embedding shard and return a state dict.
+    """Download the LM-head/tied-token-embedding shard and return a state dict.
 
-    The Steerling LM head is weight-tied with ``tok_emb``, so this
-    downloads the single safetensors shard that contains
-    ``transformer.tok_emb.weight`` and returns it keyed as
+    Steerling checkpoints may either store an explicit ``lm_head.weight`` or
+    rely on the standard tied-weight layout where the output projection uses
+    ``transformer.tok_emb.weight``.  The returned dict is keyed as
     ``{"weight": tensor}``, ready for ``nn.Linear.load_state_dict``.
     """
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
     weight_map = _download_index(model_name_or_path)
-    shard_file = weight_map["transformer.tok_emb.weight"]
+    weight_key = next(
+        (
+            key
+            for key in (
+                "lm_head.weight",
+                "transformer.lm_head.weight",
+                "transformer.tok_emb.weight",
+            )
+            if key in weight_map
+        ),
+        None,
+    )
+    if weight_key is None:
+        raise KeyError(
+            "Could not find LM-head weights in the Steerling checkpoint index. "
+            "Expected one of 'lm_head.weight', 'transformer.lm_head.weight', "
+            "or 'transformer.tok_emb.weight'."
+        )
+
+    shard_file = weight_map[weight_key]
     shard_path = hf_hub_download(
         model_name_or_path,
         shard_file,
@@ -195,9 +214,9 @@ def load_steerling_lm_head_weights(
     )
 
     with safe_open(shard_path, framework="pt", device=device) as f:
-        weight = f.get_tensor("transformer.tok_emb.weight")
+        weight = f.get_tensor(weight_key)
 
-    logger.info("Loaded lm_head weights from %s", model_name_or_path)
+    logger.info("Loaded lm_head weights from %s:%s", model_name_or_path, weight_key)
     return {"weight": weight}
 
 
