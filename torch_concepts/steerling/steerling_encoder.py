@@ -131,9 +131,6 @@ class SteerlingLatentToConcept(BaseEncoder):
             ``None`` means use the resolved config value or ``256``.
         config: Optional concept config mapping/object. If omitted, the Hub
             default concept config is resolved.
-        device: Device for the wrapped ``ConceptHead``. CUDA requests fall
-            back to CPU when CUDA is unavailable.
-
     Attributes:
         head: Wrapped Steerling ``ConceptHead`` module.
         embedding_size: Concept embedding dimension.
@@ -159,15 +156,8 @@ class SteerlingLatentToConcept(BaseEncoder):
         factorize: bool | None = None,
         factorize_rank: int | None = None,
         config: Optional[Dict[str, Any]] = None,
-        device: str = "cuda",
     ):
         super().__init__(in_latent=in_latent, out_concepts=out_concepts)
-
-        # Resolve device before any downloads or model instantiation.
-        # Falls back to CPU gracefully if CUDA is requested but unavailable.
-        if device.startswith("cuda") and not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable, falling back to CPU.")
-            device = "cpu"
 
         ConceptHead, _ = _import_concept_head()
 
@@ -201,7 +191,6 @@ class SteerlingLatentToConcept(BaseEncoder):
             getattr(self.head, "use_attention", head_kwargs["use_attention"])
         )
         self.factorize = bool(getattr(self.head, "factorize", head_kwargs["factorize"]))
-        self.head = self.head.to(device)
 
     @staticmethod
     def _build_concept_head_kwargs(

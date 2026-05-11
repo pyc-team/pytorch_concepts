@@ -57,11 +57,12 @@ class SteerlingLowLevelModel(nn.Module):
         config_source: Config source passed to ``resolve_steerling_configs``.
         model_config_overrides: Optional model config overrides.
         concept_config_overrides: Optional concept config overrides.
-        device: Target device. CUDA requests fall back to CPU when unavailable.
+        Modules are constructed and loaded on CPU. Move the model afterward
+        with the standard PyTorch ``model.to(device)`` pattern.
 
     Example::
 
-        model = SteerlingLowLevelModel(device="cuda")
+        model = SteerlingLowLevelModel().to("cuda")
 
         # End-to-end: tokens → concept bottleneck → next-token logits
         out = model(input_ids)
@@ -94,15 +95,8 @@ class SteerlingLowLevelModel(nn.Module):
         config_source: SteerlingConfigSource = "hub",
         model_config_overrides: dict[str, Any] | None = None,
         concept_config_overrides: dict[str, Any] | None = None,
-        device: str = "cuda"
     ):
         super().__init__()
-
-        # Resolve device once; fall back to CPU if CUDA is unavailable.
-        if device.startswith("cuda") and not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable, falling back to CPU.")
-            device = "cpu"
-        self._device = device
 
         self.pretrained_components = normalize_steerling_components(pretrained_components)
         self.freeze_components = normalize_steerling_components(freeze_components)
@@ -133,7 +127,6 @@ class SteerlingLowLevelModel(nn.Module):
         self.backbone = SteerlingBackbone(
             config=self.model_cfg,
             model_id=model_id,
-            device=self._device
         )
         self.vocab_size = self.backbone.vocab_size
 
@@ -146,7 +139,6 @@ class SteerlingLowLevelModel(nn.Module):
             is_unknown=False,
             factorize=False,
             config=self.concept_cfg,
-            device=self._device
         )
         # unknown (unsupervised): h → u dense concept logits
         if use_unknown and n_unknown == 0:
@@ -159,7 +151,6 @@ class SteerlingLowLevelModel(nn.Module):
                 is_unknown=True,
                 factorize=self.factorize_unknown,
                 config=self.concept_cfg,
-                device=self._device
             )
         else:
             self.unknown_concept_head = None
@@ -202,7 +193,11 @@ class SteerlingLowLevelModel(nn.Module):
             else:
                 self.unknown_concept_mixer = None
 
-            self.lm_head = nn.Linear(embedding_dim, self.vocab_size, bias=False)
+            self.lm_head = nn.Linear(
+                embedding_dim,
+                self.vocab_size,
+                bias=False,
+            )
 
         # Load and freeze pretrained weights.
         self._load_steerling_weights(model_id, pretrained=self.pretrained_components)
@@ -309,6 +304,11 @@ class SteerlingLowLevelModel(nn.Module):
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def device(self) -> torch.device:
+        """Current device of the model parameters."""
+        return next(self.parameters()).device
 
     @property
     def tokenizer(self):
@@ -456,7 +456,7 @@ class SteerlingLowLevelModel(nn.Module):
         mask_id = tokenizer.mask_token_id
 
         input_ids, _, _ = self.prepare_input(prompt, n_new_tokens)
-        input_ids = input_ids.to(self._device)
+        input_ids = input_ids.to(self.device)
 
         prompt_len = (input_ids[0] != mask_id).sum().item()
 
@@ -500,6 +500,5 @@ class SteerlingLowLevelModel(nn.Module):
             f"n_unknown={self.n_unknown}, "
             f"latent_dim={self.latent_dim}, "
             f"vocab={self.vocab_size}, "
-            f"config_source={self.config_source!r}, "
-            f"device={self._device!r})"
+            f"config_source={self.config_source!r})"
         )
