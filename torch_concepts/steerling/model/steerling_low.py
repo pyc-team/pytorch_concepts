@@ -131,8 +131,7 @@ class SteerlingLowLevelModel(nn.Module):
         # Backbone: tokens -> hidden states.
         self.backbone = SteerlingBackbone(
             config=self.model_cfg,
-            load_weights=True,
-            freeze=True,
+            model_id=model_id,
             device=self._device
         )
         self.vocab_size = self.backbone.vocab_size
@@ -228,14 +227,14 @@ class SteerlingLowLevelModel(nn.Module):
         pretrained = pretrained or []
 
         if "backbone" in pretrained:
-            backbone_sd = load_steerling_backbone_weights(model_id)
+            backbone_sd = load_steerling_backbone_weights(model_id, device=self._device)
             self._load_state_dict(self.backbone.transformer, backbone_sd, "backbone")
             self.backbone._model_id = model_id
             self.backbone._tokenizer_model_id = model_id
             logger.info("Loaded pretrained weights into backbone.")
 
         if "known_head" in pretrained:
-            known_sd = load_steerling_known_head_weights(model_id)
+            known_sd = load_steerling_known_head_weights(model_id, device=self._device)
             self._load_state_dict(self.known_concept_head.head, known_sd, "known_head")
             logger.info("Loaded pretrained weights into known concept head.")
 
@@ -243,7 +242,7 @@ class SteerlingLowLevelModel(nn.Module):
             if self.unknown_concept_head is None:
                 logger.info("Skipped unknown concept head weights because use_unknown=False.")
             else:
-                unknown_sd = load_steerling_unknown_head_weights(model_id)
+                unknown_sd = load_steerling_unknown_head_weights(model_id, device=self._device)
                 self._load_state_dict(
                     self.unknown_concept_head.head,
                     unknown_sd,
@@ -252,7 +251,7 @@ class SteerlingLowLevelModel(nn.Module):
                 logger.info("Loaded pretrained weights into unknown concept head.")
 
         if "lm_head" in pretrained:
-            lm_head_sd = load_steerling_lm_head_weights(model_id)
+            lm_head_sd = load_steerling_lm_head_weights(model_id, device=self._device)
             lm_head = self.decoder.predictor if self.compact else self.lm_head
             self._load_state_dict(lm_head, lm_head_sd, "lm_head")
             logger.info("Loaded pretrained weights into LM head.")
