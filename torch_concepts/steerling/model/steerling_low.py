@@ -26,6 +26,8 @@ from ..steerling_configs import (
     resolve_steerling_configs,
 )
 from ..steerling_encoder import SteerlingLatentToConcept
+from torch_concepts.nn import ResidualCorrectionOp
+
 from ..steerling_predictor import MixFactorizedConceptExogenousToConcept
 from ..steerling_utils import (
     load_steerling_backbone_weights,
@@ -89,9 +91,6 @@ class SteerlingLowLevelModel(nn.Module):
             When ``False``, the wrapper mirrors upstream's no-unknown-head
             path (``composed ≈ hidden``) so the LM head sees the raw
             backbone state.
-        compact: Use one combined concept mixer plus linear head. This is only
-            supported when the enabled concept embeddings share the same dense
-            layout.
         model_id: Hugging Face model id or local path for Steerling weights.
         config_source: Config source passed to ``resolve_steerling_configs``.
         model_config_overrides: Optional model config overrides.
@@ -137,7 +136,6 @@ class SteerlingLowLevelModel(nn.Module):
             "lm_head",
         ),
         use_unknown: bool | None = None,
-        compact: bool = False,
         model_id: str = DEFAULT_MODEL_ID,
         config_source: SteerlingConfigSource = "hub",
         model_config_overrides: dict[str, Any] | None = None,
@@ -208,16 +206,6 @@ class SteerlingLowLevelModel(nn.Module):
                 f"{embedding_dim} != {latent_dim}."
             )
         self.embedding_dim = embedding_dim
-        self.compact = compact
-        if compact and self.factorize_unknown:
-            raise NotImplementedError(
-                "compact=True is not supported when factorize_unknown=True. "
-                f"factorize_unknown={self.factorize_unknown} was resolved "
-                f"from config_source={self.config_source!r}. To unblock, "
-                "either set compact=False (the default Steerling-8B path) "
-                "or pass factorize_unknown=False to SteerlingLowLevelModel "
-                "(equivalently `concept_config_overrides={'factorize_unknown': False}`)."
-            )
 
         # The encoders never see top-k values — the wrapper enforces dense
         # inference for now.
@@ -255,43 +243,52 @@ class SteerlingLowLevelModel(nn.Module):
         else:
             self.unknown_concept_head = None
 
-        # Concept-logit + embedding mixing combined with LM head.
-        if compact:
-            self.decoder = MixFactorizedConceptExogenousToConcept(
-                in_concepts=n_known + (n_unknown_resolved if use_unknown else 0),
+        # Concept-logit + embedding mixing.
+        # We use the mixing layer, but stop at the concept embeddings without the linear head.
+        self.known_concept_mixer = MixFactorizedConceptExogenousToConcept(
+            in_concepts=n_known,
+            in_exogenous=embedding_dim,
+            out_concepts=self.vocab_size,
+            factorized=False,
+            add_linear_head=False,
+            bias=False
+        )
+        if self.unknown_concept_head is not None:
+            self.unknown_concept_mixer = MixFactorizedConceptExogenousToConcept(
+                in_concepts=n_unknown_resolved,
                 in_exogenous=embedding_dim,
                 out_concepts=self.vocab_size,
                 factorized=self.factorize_unknown,
-                add_linear_head=True,
-                bias=False
-            )
-        else:
-            # Concept-logit + embedding mixing, split from the concept encoder.
-            self.known_concept_mixer = MixFactorizedConceptExogenousToConcept(
-                in_concepts=n_known,
-                in_exogenous=embedding_dim,
-                out_concepts=self.vocab_size,
-                factorized=False,
                 add_linear_head=False,
                 bias=False
             )
-            if self.unknown_concept_head is not None:
-                self.unknown_concept_mixer = MixFactorizedConceptExogenousToConcept(
-                    in_concepts=n_unknown_resolved,
-                    in_exogenous=embedding_dim,
-                    out_concepts=self.vocab_size,
-                    factorized=self.factorize_unknown,
-                    add_linear_head=False,
-                    bias=False
-                )
-            else:
-                self.unknown_concept_mixer = None
+        else:
+            self.unknown_concept_mixer = None
 
-            self.lm_head = nn.Linear(
-                embedding_dim,
-                self.vocab_size,
-                bias=False,
-            )
+        # Alias the backbone's LM head.  Under upstream ``weight_sharing=True``
+        # (Steerling default) its weight is tied to ``transformer.tok_emb.weight``
+        # via ``_tie_weights``, so a single underlying Parameter is shared by
+        # ``self.lm_head``, ``self.backbone.transformer.lm_head``, and the
+        # backbone's input embedding.
+        self.lm_head = self.backbone.transformer.lm_head
+
+        # Epsilon correction term for h_bar = k_hat + u_hat + epsilon.
+        #   (has_unknown, use_epsilon)  →  (mode,           stop_grad_parts)
+        #   (True,  True)               →  ("block_parts",  ())
+        #   (True,  False)              →  ("off",          (1,))  stop-grad on u_hat
+        #   (False, True)               →  ("block_parts",  ())
+        #   (False, False)              →  ("keep_parts",   ())
+        self.has_unknown = self.unknown_concept_head is not None
+        use_eps = self.config_use_epsilon_correction
+        self.epsilon_correction = ResidualCorrectionOp(
+            input_size=embedding_dim,
+            n_terms=2 if self.has_unknown else 1,
+            residual_mode=(
+                "block_parts" if use_eps
+                else ("off" if self.has_unknown else "keep_parts")
+            ),
+            stop_grad_parts=(1,) if self.has_unknown and not use_eps else (),
+        )
 
         # Load and freeze pretrained weights.
         self._load_steerling_weights(model_id, pretrained=self.pretrained_components)
@@ -349,11 +346,20 @@ class SteerlingLowLevelModel(nn.Module):
                 logger.info("Loaded pretrained weights into unknown concept head.")
 
         if "lm_head" in pretrained:
-            lm_head_sd = load_steerling_lm_head_weights(model_id, device="cpu")
-            lm_head = self.decoder.predictor if self.compact else self.lm_head
-            self._load_state_dict(lm_head, lm_head_sd, "lm_head")
-            self._discard_state_dict(lm_head_sd)
-            logger.info("Loaded pretrained weights into LM head.")
+            weight_sharing = bool(self.model_cfg.get("weight_sharing", False))
+            if weight_sharing and "backbone" in pretrained:
+                # `self.lm_head` aliases `transformer.lm_head`, whose weight is
+                # tied to `tok_emb.weight`.  The backbone load above (followed
+                # by the defensive re-tie) already populated it; an explicit
+                # load would just overwrite the shared tensor with itself.
+                logger.info(
+                    "Skipped LM head weight load (tied to tok_emb, loaded with backbone)."
+                )
+            else:
+                lm_head_sd = load_steerling_lm_head_weights(model_id, device="cpu")
+                self._load_state_dict(self.lm_head, lm_head_sd, "lm_head")
+                self._discard_state_dict(lm_head_sd)
+                logger.info("Loaded pretrained weights into LM head.")
 
 
     @staticmethod
@@ -433,8 +439,7 @@ class SteerlingLowLevelModel(nn.Module):
                 logger.info("Froze unknown concept head parameters.")
 
         if "lm_head" in freeze:
-            lm_head = self.decoder.predictor if self.compact else self.lm_head
-            for p in lm_head.parameters():
+            for p in self.lm_head.parameters():
                 p.requires_grad = False
             logger.info("Froze LM head parameters.")
 
@@ -503,93 +508,49 @@ class SteerlingLowLevelModel(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        use_epsilon_correction: bool | None = None,
     ) -> dict[str, torch.Tensor | None]:
         """End-to-end forward through the concept bottleneck.
 
         Mirrors the upstream Steerling reference path
-        (``InterpretableCausalDiffusionLM.forward``) verbatim, including the
-        residual-unknown fallback when ``use_unknown=False``.
+        (``InterpretableCausalDiffusionLM.forward``) by decomposing the
+        reconstructed latent as ``h_bar = k_hat + u_hat + epsilon``, where
+        ``epsilon`` is computed by a :class:`~torch_concepts.nn.ResidualCorrectionOp`
+        configured at construction from the ``use_unknown`` and
+        ``use_epsilon_correction`` concept-config flags.
 
         Args:
             input_ids: Token ids, shape ``(B, T)``.
-            use_epsilon_correction: Override for the residual correction
-                that recovers the backbone hidden state.  ``None`` (the
-                default) reads the value from the resolved concept config.
 
         Returns:
             Dict with ``out_tokens``, ``known_concepts``,
-            ``unknown_concepts``, and ``reconstructed_latent``.
+            ``unknown_concepts``, ``known_mixed``, ``unknown_mixed``,
+            ``epsilon``, and ``reconstructed_latent``.
         """
-        if use_epsilon_correction is None:
-            use_epsilon_correction = self.config_use_epsilon_correction
-
         h = self.backbone(input_ids)
-
         k = self.known_concept_head(h)
-        k_embeddings = self.known_embeddings
+        k_hat = self.known_concept_mixer(
+            torch.sigmoid(k).to(h.dtype), self.known_embeddings
+        )
 
-        if self.unknown_concept_head is not None:
-            # Upstream detaches `hidden` before the unknown head so the
-            # unknown loss cannot back-propagate into the transformer.
+        u = u_hat = None
+        if self.has_unknown:
+            # Detach so unknown loss can't back-prop into the transformer.
             u = self.unknown_concept_head(h.detach())
-            u_embeddings = self.unknown_embeddings
-        else:
-            u = None
-            u_embeddings = None
-
-        # Cast sigmoid outputs back to ``h.dtype`` so the mixer and lm_head
-        # operate in the backbone's native precision (matches upstream's
-        # ``weights.to(E.dtype)``).
-        if self.compact:
-            if u is not None:
-                if use_epsilon_correction:
-                    # Numerical equivalent of (unk_for_lm + k_hat) under the
-                    # epsilon correction (see non-compact branch below).
-                    h_bar = h
-                else:
-                    concepts = torch.cat([k, u], dim=-1)
-                    embeddings = torch.cat([k_embeddings, u_embeddings], dim=0)
-                    h_bar = self.decoder.mix(
-                        torch.sigmoid(concepts).to(h.dtype), embeddings
-                    )
-            else:
-                # No unknown head: mirror upstream's residual fallback,
-                # composed = (h - k_hat.detach()) + k_hat ≈ h.
-                k_hat = self.decoder.mix(
-                    torch.sigmoid(k).to(h.dtype), k_embeddings
-                )
-                if use_epsilon_correction:
-                    h_bar = h - k_hat + k_hat
-                else:
-                    h_bar = h - k_hat.detach() + k_hat
-            out_tokens = self.decoder.predictor(h_bar)
-        else:
-            k_hat = self.known_concept_mixer.mix(
-                torch.sigmoid(k).to(h.dtype), k_embeddings
+            u_hat = self.unknown_concept_mixer(
+                torch.sigmoid(u).to(h.dtype), self.unknown_embeddings
             )
-            if u is not None:
-                u_hat = self.unknown_concept_mixer.mix(
-                    torch.sigmoid(u).to(h.dtype), u_embeddings
-                )
-                # Upstream: unk_for_lm = unk_hat.detach()
-                unk_for_lm = u_hat.detach()
-            else:
-                # Upstream falls back to the raw residual when the
-                # unknown head is missing.
-                unk_for_lm = h - k_hat.detach()
 
-            if use_epsilon_correction:
-                epsilon = h - (unk_for_lm + k_hat)
-                unk_for_lm = unk_for_lm + epsilon
-
-            h_bar = unk_for_lm + k_hat
-            out_tokens = self.lm_head(h_bar)
+        parts = (k_hat,) if u_hat is None else (k_hat, u_hat)
+        epsilon = self.epsilon_correction.compute(h, *parts)
+        h_bar = sum(parts) + epsilon
 
         return {
-            "out_tokens": out_tokens,
+            "out_tokens": self.lm_head(h_bar),
             "known_concepts": k,
             "unknown_concepts": u,
+            "known_mixed": k_hat,
+            "unknown_mixed": u_hat,
+            "epsilon": epsilon,
             "reconstructed_latent": h_bar,
         }
 
@@ -701,7 +662,6 @@ class SteerlingLowLevelModel(nn.Module):
             f"n_unknown={self.n_unknown}, "
             f"latent_dim={self.latent_dim}, "
             f"vocab={self.vocab_size}, "
-            f"compact={self.compact}, "
             f"factorize_unknown={self.factorize_unknown}, "
             f"use_epsilon_correction={self.config_use_epsilon_correction}, "
             f"pretrained={self.pretrained_components}, "

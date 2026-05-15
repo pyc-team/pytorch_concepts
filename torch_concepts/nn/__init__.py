@@ -31,7 +31,7 @@ from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcep
 from .modules.low.predictors.call import CallableConceptToConcept
 
 # Dense layers
-from .modules.low.dense_layers import Dense, ResidualMLP, MLP
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP, SumOp, ResidualCorrectionOp
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
@@ -116,6 +116,8 @@ __all__ = [
     "Dense",
     "ResidualMLP",
     "MLP",
+    "SumOp",
+    "ResidualCorrectionOp",
 
     "SelectorLatentToExogenous",
 
