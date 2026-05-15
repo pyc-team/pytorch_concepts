@@ -256,7 +256,12 @@ class SteerlingLatentToConcept(BaseEncoder):
             factorize_rank=factorize_rank,
         )
 
-        # Top-k inference is not implemented yet in the PyC encoder.
+        # Top-k inference is not implemented yet in the PyC encoder.  Silently
+        # disable any top-k values in the resolved ConceptHead config so the
+        # encoder works against raw Hub configs (Steerling-8B's config.json
+        # enables top-k by default).  Fail-loud on user-explicit top-k
+        # requests is handled one level up by :class:`SteerlingLowLevelModel`,
+        # which inspects ``concept_config_overrides`` directly.
         # TODO: Re-enable top-k in the future.
         enabled = [
             key
@@ -264,17 +269,10 @@ class SteerlingLatentToConcept(BaseEncoder):
             if key in head_kwargs and _is_topk_enabled(key, head_kwargs[key])
         ]
         if enabled:
-            raise NotImplementedError(
-                "Top-k inference is not yet implemented in the PyC "
-                "SteerlingLatentToConcept encoder. Got non-disabled "
-                f"top-k keys in the resolved ConceptHead config: {enabled}. "
-                "Pass them as None/False (or their `topk_known` / "
-                "`unknown_topk` / `topk_known_features` aliases) when "
-                "constructing the head."
+            logger.info(
+                "Disabling resolved top-k ConceptHead kwargs (not yet implemented in PyC): %s",
+                enabled,
             )
-
-        # Explicitly fix them at the disabled values so the wrapped
-        # ConceptHead never enters a top-k path.
         head_kwargs.update(
             {
                 key: (False if key in ("apply_topk_to_unknown", "topk_on_logits") else None)

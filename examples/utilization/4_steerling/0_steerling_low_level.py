@@ -4,7 +4,7 @@ SteerlingLowLevelModel — end-to-end concept bottleneck demo
 
 Tokenize a text prompt and run it through ``SteerlingLowLevelModel``,
 which internally wires backbone → known/unknown concept heads →
-concept-to-latent decoder → LM head.
+concept embedding mixers + residual correction → LM head.
 
 Requirements:
     pip install steerling huggingface_hub safetensors
@@ -52,8 +52,6 @@ def print_steerling_config(model):
         ("factorize_rank", concept_cfg.get("factorize_rank")),
         ("use_attention_known", concept_cfg.get("use_attention_known")),
         ("use_attention_unknown", concept_cfg.get("use_attention_unknown")),
-        ("topk_known", concept_cfg.get("topk_known")),
-        ("unknown_topk", concept_cfg.get("unknown_topk")),
         ("use_epsilon_correction", concept_cfg.get("use_epsilon_correction")),
     ]
 
@@ -70,11 +68,7 @@ def print_steerling_runtime_info(model):
         if model.unknown_embeddings is None
         else tuple(model.unknown_embeddings.shape)
     )
-    lm_head_weight = (
-        tuple(model.lm_head.weight.shape)
-        if hasattr(model, "lm_head")
-        else "compact decoder"
-    )
+    lm_head_weight = tuple(model.lm_head.weight.shape)
     tokenizer = model.tokenizer
 
     rows = [
@@ -107,10 +101,9 @@ def print_steerling_runtime_info(model):
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ── 1. Instantiate the high-level model ───────────────────────────
+# ── 1. Instantiate the low-level model ────────────────────────────
 model = SteerlingLowLevelModel(
-    use_unknown=True, 
-    compact=False, 
+    use_unknown=True,
     use_epsilon_correction=False
 )
 model.to(device=device, dtype=torch.bfloat16)
@@ -134,6 +127,9 @@ with torch.no_grad():
 print(f"Next-token logits:      {out['out_tokens'].shape}")
 print(f"Known concept logits:   {out['known_concepts'].shape}")
 print(f"Unknown concept logits: {out['unknown_concepts'].shape}")
+print(f"Known mixed (k_hat):    {out['known_mixed'].shape}")
+print(f"Unknown mixed (u_hat):  {out['unknown_mixed'].shape}")
+print(f"Epsilon correction:     {out['epsilon'].shape}")
 print(f"Reconstructed latent:   {out['reconstructed_latent'].shape}")
 
 # Top-5 known concepts at the last token of the prompt
