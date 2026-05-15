@@ -23,6 +23,13 @@ STEERLING_COMPONENTS = ("backbone", "known_head", "unknown_head", "lm_head")
 # TODO: at some point, consider moving these to hydra YAML
 
 PYTORCH_CONCEPTS_MODEL_DEFAULTS: dict[str, Any] = {
+    # Aligned with upstream `steerling.configs.causal_diffusion.CausalDiffusionConfig`
+    # defaults so `config_source="pyc"` ≈ `config_source="steerling"`.  Note that
+    # the Hub config.json for Steerling-8B overrides `interpretable=True`; under
+    # the default `config_source="hub"` that override wins, so the trained model
+    # is built as interpretable.  The HF custom-code `SteerlingConfig` wrapper
+    # also defaults `interpretable=True`, but that's a model-specific wrapper,
+    # not the underlying source class.
     "model_type": "causal_diffusion",
     "interpretable": False,
     "n_layers": 32,
