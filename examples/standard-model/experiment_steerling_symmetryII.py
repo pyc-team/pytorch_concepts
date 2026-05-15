@@ -44,53 +44,91 @@ def normalized_gradient_alignment_metric(g_c, g_y):
     return raw_loss / max_val
 
 
-def _compute_jacobian_sliced(inference, query, evidence, target_indices):
-    """Reverse-mode Jacobian for a small slice of outputs.
+def _compute_jacobian(inference, query, evidence, *, chunk_size=None, target_indices=None):
+    """Reverse-mode Jacobian of ``query`` outputs w.r.t. ``evidence["input"]``.
 
-    ``jacrev`` differentiates only with respect to ``evidence["input"]``.
-    Everything else in ``evidence`` (K, U, ...) is captured as a constant.
+    Differentiates only w.r.t. ``evidence["input"]``; all other entries in
+    ``evidence`` (K, U, ...) are captured as constants so they don't enter
+    the autograd graph.
+
+    Args:
+        inference: PyC inference engine (e.g. ``model.inference``).
+        query: List of variable names to differentiate.
+        evidence: Evidence dict; ``"input"`` is the tensor we differentiate
+            with respect to.
+        chunk_size: Forwarded to ``torch.func.jacrev``.  Number of output
+            rows whose backward is run per chunk.  ``None`` runs all rows
+            at once (fastest, highest peak memory).  ``1`` runs one
+            backward per output dim (slowest, lowest peak memory).  Use a
+            small integer (e.g. ``32``) to trade speed for memory.
+        target_indices: Optional 1-D index tensor.  When set, the output
+            is sliced ``logits[..., target_indices]`` *before*
+            differentiation — essential when the raw output is huge
+            (e.g. full vocab) but only a few rows matter (e.g. Yes/No
+            target tokens).  Reverse-mode cost scales with the post-slice
+            output dimension.
     """
     input_tensor = evidence["input"]
     static = {key: value for key, value in evidence.items() if key != "input"}
 
-    def inference_fn(e_tensor):
-        full_evidence = {"input": e_tensor, **static}
-        outputs = inference.query(query=query, evidence=full_evidence, return_logits=True)
-        return outputs.logits[..., target_indices]
+    def inference_fn(input_):
+        full_evidence = {"input": input_, **static}
+        out = inference.query(query=query, evidence=full_evidence, return_logits=True)
+        logits = out.logits
+        if target_indices is not None:
+            logits = logits[..., target_indices]
+        return logits
 
-    return jacrev(inference_fn, chunk_size=1)(input_tensor)
+    return jacrev(inference_fn, chunk_size=chunk_size)(input_tensor)
 
 
-def _compute_jacobian_jvp(inference, query, evidence):
-    """Forward-mode Jacobian column-by-column via JVP.
+# def _compute_jacobian_sliced(inference, query, evidence, target_indices):
+#     """Reverse-mode Jacobian for a small slice of outputs.
 
-    One forward pass per input dimension; no compute graph is retained
-    between columns, which keeps peak memory low even when the output
-    dimension is large (e.g. ``h_bar`` has 4096 dims).
-    """
-    from tqdm import tqdm
+#     ``jacrev`` differentiates only with respect to ``evidence["input"]``.
+#     Everything else in ``evidence`` (K, U, ...) is captured as a constant.
+#     """
+#     input_tensor = evidence["input"]
+#     static = {key: value for key, value in evidence.items() if key != "input"}
 
-    input_tensor = evidence["input"]
-    static = {key: value for key, value in evidence.items() if key != "input"}
+#     def inference_fn(e_tensor):
+#         full_evidence = {"input": e_tensor, **static}
+#         outputs = inference.query(query=query, evidence=full_evidence, return_logits=True)
+#         return outputs.logits[..., target_indices]
 
-    def f(x):
-        full_evidence = {"input": x, **static}
-        outputs = inference.query(query=query, evidence=full_evidence, return_logits=True)
-        return outputs.logits
+#     return jacrev(inference_fn, chunk_size=1)(input_tensor)
 
-    cols = []
-    last_jv = None
-    for i in tqdm(range(input_tensor.numel()), desc="JVP Jacobian", unit="col"):
-        tangent = torch.zeros_like(input_tensor)
-        tangent.reshape(-1)[i] = 1.0
-        _, jv = jvp(f, (input_tensor,), (tangent,))
-        cols.append(jv.detach().cpu())
-        last_jv = jv
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
-    jacobian = torch.stack(cols, dim=-1)
-    return jacobian.reshape(*last_jv.shape, *input_tensor.shape)
+# def _compute_jacobian_jvp(inference, query, evidence):
+#     """Forward-mode Jacobian column-by-column via JVP.
+
+#     One forward pass per input dimension; no compute graph is retained
+#     between columns, which keeps peak memory low even when the output
+#     dimension is large (e.g. ``h_bar`` has 4096 dims).
+#     """
+#     from tqdm import tqdm
+
+#     input_tensor = evidence["input"]
+#     static = {key: value for key, value in evidence.items() if key != "input"}
+
+#     def f(x):
+#         full_evidence = {"input": x, **static}
+#         outputs = inference.query(query=query, evidence=full_evidence, return_logits=True)
+#         return outputs.logits
+
+#     cols = []
+#     last_jv = None
+#     for i in tqdm(range(input_tensor.numel()), desc="JVP Jacobian", unit="col"):
+#         tangent = torch.zeros_like(input_tensor)
+#         tangent.reshape(-1)[i] = 1.0
+#         _, jv = jvp(f, (input_tensor,), (tangent,))
+#         cols.append(jv.detach().cpu())
+#         last_jv = jv
+#         if torch.cuda.is_available():
+#             torch.cuda.empty_cache()
+
+#     jacobian = torch.stack(cols, dim=-1)
+#     return jacobian.reshape(*last_jv.shape, *input_tensor.shape)
 
 
 def main():
@@ -107,8 +145,7 @@ def main():
 
     # ── 1. Mid-level model: backbone + concept heads + PGM + inference ─
     model = SteerlingMidLevelModel(
-        use_unknown=True, 
-        compact=False, 
+        use_unknown=True,
         use_epsilon_correction=False
     )
     model.to(device=device, dtype=torch.bfloat16)
@@ -121,19 +158,12 @@ def main():
     print(f"\nPrompt: {prompt!r}")
     print(f"Tokens: {tuple(input_ids.shape)}")
 
-    with torch.no_grad():
-        hidden = model.backbone(input_ids)             # (1, T, D)
-    hidden = hidden[:, -1, :].detach()                  # (1, D)
-    hidden.requires_grad_(True)
-    print(f"Last-token hidden: {tuple(hidden.shape)}")
-
-    # Full PGM evidence (input + concept embeddings).  K/U are constants —
-    # only `input` carries gradients.
-    evidence = {
-        "input": hidden,
-        "K": model.known_embeddings,
-        "U": model.unknown_embeddings,
-    }
+    # prepare the evidence dict for inference; we only need the "input" key for gradients
+    # only take the last token's hidden state
+    evidence = model._evidence(input_ids)
+    evidence["input"] = evidence["input"][:, -1, :].detach()  # (1, D)
+    evidence["input"].requires_grad_(True)
+    print(f"Last-token hidden: {tuple(evidence["input"].shape)}")
 
     # ── 3. Yes / No target tokens ──────────────────────────────────────
     tokenizer = model.tokenizer
@@ -155,8 +185,11 @@ def main():
         input_gradients = torch.load(cache_in)
     else:
         print("\nComputing ∂(Yes/No logits) / ∂(input)…")
-        input_gradients = _compute_jacobian_sliced(
-            model.inference, ["new_token"], evidence, target_indices=target_indices
+        input_gradients = _compute_jacobian(
+            model.inference, 
+            ["new_token"], 
+            evidence, 
+            target_indices=target_indices
         )
         torch.save(input_gradients.cpu(), cache_in)
     print(f"Input Jacobian shape: {tuple(input_gradients.shape)}")
@@ -167,8 +200,15 @@ def main():
         print(f"\nLoading cached h_bar gradients from {cache_hbar}")
         h_bar_gradients = torch.load(cache_hbar)
     else:
-        print("\nComputing ∂(h_bar) / ∂(input) via JVP…")
-        h_bar_gradients = _compute_jacobian_jvp(model.inference, ["h_bar"], evidence)
+        print("\nComputing ∂(h_bar) / ∂(input)…")
+        # h_bar has 4096 output dims — chunk_size=1 caps peak memory at one
+        # backward per output row at the cost of more sequential passes.
+        h_bar_gradients = _compute_jacobian(
+            model.inference, 
+            ["h_bar"], 
+            evidence, 
+            chunk_size=1
+        )
         torch.save(h_bar_gradients.cpu(), cache_hbar)
     print(f"h_bar Jacobian shape: {tuple(h_bar_gradients.shape)}")
 
