@@ -137,7 +137,7 @@ print(f"Known concept logits:   {out['known_concepts'].shape}")
 print(f"Unknown concept logits: {out['unknown_concepts'].shape}")
 print(f"Known mixed (k_hat):    {out['known_mixed'].shape}")
 print(f"Unknown mixed (u_hat):  {out['unknown_mixed'].shape}")
-print(f"Epsilon correction:     {out['epsilon'].shape}")
+print(f"Epsilon correction:     {out['epsilon'].shape}, values: {out['epsilon'][0, -1, :5]}")
 print(f"Reconstructed latent:   {out['reconstructed_latent'].shape}")
 
 # Top-5 known concepts at the last token of the prompt
