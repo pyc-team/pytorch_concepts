@@ -84,16 +84,12 @@ class DeterministicInference(ForwardInference):
         ]
 
         if var_to_change:
-            non_delta_summary = ", ".join(
-                f"{var.concept} ({getattr(var.distribution, '__name__', var.distribution)})"
-                for var in var_to_change
-            )
             with warnings.catch_warnings():
                 warnings.simplefilter("always", UserWarning)
                 warnings.warn(
                     "DeterministicInference assumes all variables are Delta() variables. " \
                     "All Variables will be changed to Delta(), with activations set to identity. "
-                    f"Non-Delta variables: {non_delta_summary}.",
+                    f"Number of non-Delta variables converted: {len(var_to_change)}.",
                     UserWarning,
                     stacklevel=3,
                 )
