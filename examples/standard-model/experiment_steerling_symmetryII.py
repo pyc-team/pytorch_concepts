@@ -15,7 +15,8 @@ import os
 
 import torch
 import torch.nn.functional as F
-from torch.func import jacrev, jvp
+from torch.func import jacrev, jvp, vjp
+from tqdm.auto import tqdm
 
 from torch_concepts.steerling import SteerlingMidLevelModel
 
@@ -44,7 +45,7 @@ def normalized_gradient_alignment_metric(g_c, g_y):
     return raw_loss / max_val
 
 
-def _compute_jacobian(inference, query, evidence, *, chunk_size=None, target_indices=None):
+def _compute_jacobian(inference, query, evidence, *, chunk_size=None, target_indices=None, progress=False):
     """Reverse-mode Jacobian of ``query`` outputs w.r.t. ``evidence["input"]``.
 
     Differentiates only w.r.t. ``evidence["input"]``; all other entries in
@@ -67,6 +68,10 @@ def _compute_jacobian(inference, query, evidence, *, chunk_size=None, target_ind
             (e.g. full vocab) but only a few rows matter (e.g. Yes/No
             target tokens).  Reverse-mode cost scales with the post-slice
             output dimension.
+        progress: If ``True``, run the row-by-row backward loop in Python
+            with a ``tqdm`` progress bar (mathematically equivalent to
+            ``jacrev(..., chunk_size=1)`` but visible).  Ignores
+            ``chunk_size`` — always one output row per backward.
     """
     input_tensor = evidence["input"]
     static = {key: value for key, value in evidence.items() if key != "input"}
@@ -78,6 +83,18 @@ def _compute_jacobian(inference, query, evidence, *, chunk_size=None, target_ind
         if target_indices is not None:
             logits = logits[..., target_indices]
         return logits
+
+    if progress:
+        output, vjp_fn = vjp(inference_fn, input_tensor)
+        output_shape = output.shape
+        n_out = output.numel()
+        rows = []
+        for i in tqdm(range(n_out), desc=f"jacrev[{','.join(query)}]"):
+            cot = torch.zeros(n_out, dtype=output.dtype, device=output.device)
+            cot[i] = 1.0
+            (grad,) = vjp_fn(cot.reshape(output_shape))
+            rows.append(grad.detach())
+        return torch.stack(rows, dim=0).reshape(*output_shape, *input_tensor.shape)
 
     return jacrev(inference_fn, chunk_size=chunk_size)(input_tensor)
 
@@ -209,10 +226,11 @@ def main():
         # h_bar has 4096 output dims — chunk_size=1 caps peak memory at one
         # backward per output row at the cost of more sequential passes.
         h_bar_gradients = _compute_jacobian(
-            model.inference, 
-            ["h_bar"], 
-            evidence, 
-            chunk_size=1
+            model.inference,
+            ["h_bar"],
+            evidence,
+            chunk_size=1,
+            # progress=False,
         )
         torch.save(h_bar_gradients.cpu(), cache_hbar)
     print(f"h_bar Jacobian shape: {tuple(h_bar_gradients.shape)}")

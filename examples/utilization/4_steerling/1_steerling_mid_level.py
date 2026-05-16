@@ -99,7 +99,7 @@ if "unknown_concepts" in parts:
 print(f"Known latent mix:       {parts['k_hat'].shape}")
 if "u_hat" in parts:
     print(f"Unknown latent mix:     {parts['u_hat'].shape}")
-print(f"Epsilon correction:     {parts['epsilon'].shape}")
+print(f"Epsilon correction:     {parts['epsilon'].shape}, values: {parts['epsilon'][0, -1, :5]}")
 print(f"Reconstructed latent:   {parts['h_bar'].shape}")
 print(f"Next-token scores:      {parts['new_token'].shape}")
 
