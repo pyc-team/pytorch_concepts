@@ -620,13 +620,16 @@ class SteerlingLowLevelModel(nn.Module):
             out = self.forward(input_ids)
             token_logits = out["out_tokens"]                           # (1, T, vocab)
 
-            # 2. Pick the most confident masked position, take argmax
+            # 2. Pick the most confident masked position, take argmax.
+            # Confidence = max softmax probability per position — the
+            # standard masked-diffusion convention (MaskGIT and successors).
             masked_positions = (input_ids[0] == mask_id).nonzero(as_tuple=False).squeeze(-1)
             if masked_positions.numel() == 0:
                 break
 
             masked_logits = token_logits[0, masked_positions]         # (n_masked, vocab)
-            confidences = masked_logits.max(dim=-1).values            # (n_masked,)
+            masked_probs = torch.softmax(masked_logits.float(), dim=-1)
+            confidences = masked_probs.max(dim=-1).values             # (n_masked,)
             best = confidences.argmax()
             seq_idx = masked_positions[best].item()
             chosen_token = masked_logits[best].argmax().item()
