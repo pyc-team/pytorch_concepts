@@ -528,17 +528,13 @@ class SteerlingLowLevelModel(nn.Module):
         """
         h = self.backbone(input_ids)
         k = self.known_concept_head(h)
-        k_hat = self.known_concept_mixer(
-            torch.sigmoid(k).to(h.dtype), self.known_embeddings
-        )
+        k_hat = self.known_concept_mixer(torch.sigmoid(k), self.known_embeddings)
 
         u = u_hat = None
         if self.has_unknown:
             # Detach so unknown loss can't back-prop into the transformer.
             u = self.unknown_concept_head(h.detach())
-            u_hat = self.unknown_concept_mixer(
-                torch.sigmoid(u).to(h.dtype), self.unknown_embeddings
-            )
+            u_hat = self.unknown_concept_mixer(torch.sigmoid(u), self.unknown_embeddings)
 
         parts = (k_hat,) if u_hat is None else (k_hat, u_hat)
         epsilon = self.epsilon_correction.compute(h, *parts)

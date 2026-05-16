@@ -363,4 +363,8 @@ class SteerlingLatentToConcept(BaseEncoder):
                 .clamp(-15, 15)
             )
 
+        # Restore the caller's dtype.  `.float()` above is for safe clamping
+        # in fp32.
+        logits = logits.to(latent.dtype)
+
         return logits.squeeze(1) if squeeze else logits
