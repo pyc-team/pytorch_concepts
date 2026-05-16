@@ -1,4 +1,4 @@
-"""Deterministic inference engine — propagates NN-derived parameters (§5.2)."""
+"""Deterministic inference engine — sample-free parameter propagation."""
 from __future__ import annotations
 
 from typing import Dict, List
@@ -6,13 +6,15 @@ from typing import Dict, List
 import pyro.distributions as dist
 import torch
 
-from ..models.probabilistic_model import ProbabilisticModel
+from ..models.bayesian_network import BayesianNetwork
 from .base import InferenceEngine
 from .result import InferenceOutput
 
 
 def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """Pick the value to propagate to children from a CPD parameter dict."""
+    """Pick the canonical point estimate to feed to children from a CPD's
+    parameter dict: ``probs`` for discrete families, ``loc`` for Gaussian
+    families, ``v`` for ``Delta``."""
     if distribution in (dist.Bernoulli, dist.Categorical, dist.OneHotCategorical):
         return params["probs"]
     if distribution in (dist.Normal, dist.MultivariateNormal):
@@ -23,7 +25,8 @@ def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Te
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
-    """Coerce a ground-truth label to match the dtype/shape of ``ref``."""
+    """Coerce a ground-truth label tensor to the dtype and shape of ``ref``
+    by squeezing/unsqueezing a trailing singleton dim and casting as needed."""
     g = gt
     if g.dtype != ref.dtype:
         g = g.to(ref.dtype)
@@ -42,7 +45,9 @@ def _teacher_force(
     gt: torch.Tensor,
     p_int: float,
 ) -> torch.Tensor:
-    """Per-sample-per-variable Bernoulli mask with probability ``p_int`` (§5.2 step 4)."""
+    """Mix the model's prediction with the ground truth on a per-sample basis:
+    each sample is replaced by ``gt`` with probability ``p_int`` and left as
+    ``nn_value`` otherwise."""
     gt = _align_gt(gt, nn_value)
     if p_int >= 1.0:
         return gt
@@ -57,11 +62,19 @@ def _teacher_force(
 
 
 class DeterministicInference(InferenceEngine):
-    """Propagate the NN output (after bounding); optional teacher-forcing (§5.2)."""
+    """Sample-free inference engine.
+
+    Walks the PGM in topological order and propagates each CPD's bounded
+    parameter point estimate (``probs`` / ``loc`` / ``v``) to its children;
+    no random sampling. When a non-evidence variable also appears in ``data``,
+    its label is teacher-forced with per-sample probability ``p_int``
+    (default ``1.0`` — full teacher-forcing). Returns the CPD parameters of
+    every queried variable in ``InferenceOutput.model_params``.
+    """
 
     name = "DeterministicInference"
 
-    def __init__(self, pgm: ProbabilisticModel, p_int: float = 1.0):
+    def __init__(self, pgm: BayesianNetwork, p_int: float = 1.0):
         super().__init__(pgm)
         if not 0.0 <= float(p_int) <= 1.0:
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
@@ -79,7 +92,7 @@ class DeterministicInference(InferenceEngine):
         query_set = set(query)
 
         for var in self.pgm.sorted_variables:
-            name = var.concept
+            name = var.name
             f = self.pgm.factors[name]
 
             if f.is_root:
@@ -90,7 +103,7 @@ class DeterministicInference(InferenceEngine):
                     out.model_params[name] = {"v": value}
                 continue
 
-            parent_values = [cache[p.concept] for p in f.parents]
+            parent_values = {p.name: cache[p.name] for p in f.parents}
             params = f(parent_values=parent_values)
             nn_value = _propagated_value(var.distribution, params)
 

@@ -1,4 +1,4 @@
-"""Variational inference engine — eager guide instantiation per family (§5.4)."""
+"""Variational inference engine with amortised guides."""
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from pyro.nn import PyroModule
 
-from ..models.probabilistic_model import ProbabilisticModel
+from ..models.bayesian_network import BayesianNetwork
 from ..models.variable import ExogenousVariable, Variable, param_dim
 from .base import (
     InferenceEngine,
@@ -51,7 +51,13 @@ class _BaseGuide(PyroModule):
 
 
 class STBernoulliGuide(_BaseGuide):
-    """ST-relaxed Bernoulli guide."""
+    """Amortised variational guide for ``Bernoulli`` latents.
+
+    Reads the concatenated exogenous inputs, predicts per-sample probabilities
+    through a 2-layer MLP (hidden=64) with sigmoid output, and emits a
+    ``pyro.sample`` site drawn from
+    ``RelaxedBernoulliStraightThrough(temperature, logits)``.
+    """
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         raw = self.net(x)
@@ -62,11 +68,13 @@ class STBernoulliGuide(_BaseGuide):
         q = dist.RelaxedBernoulliStraightThrough(temperature=temperature, logits=logits)
         if self.variable.size > 1:
             q = q.to_event(1)
-        return pyro.sample(self.variable.concept, q)
+        return pyro.sample(self.variable.name, q)
 
 
 class STOneHotGuide(_BaseGuide):
-    """ST-relaxed OneHotCategorical guide."""
+    """Amortised variational guide for ``OneHotCategorical`` latents using a
+    ``RelaxedOneHotCategoricalStraightThrough`` distribution; same MLP
+    architecture as ``STBernoulliGuide``."""
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         raw = self.net(x)
@@ -75,11 +83,13 @@ class STOneHotGuide(_BaseGuide):
         q = dist.RelaxedOneHotCategoricalStraightThrough(
             temperature=temperature, logits=logits
         )
-        return pyro.sample(self.variable.concept, q)
+        return pyro.sample(self.variable.name, q)
 
 
 class NormalGuide(_BaseGuide):
-    """Reparameterised Normal guide."""
+    """Amortised variational guide for ``Normal`` latents using a
+    reparameterised ``Normal(loc, scale)`` distribution; same MLP
+    architecture as ``STBernoulliGuide``, with softplus on the scale."""
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         raw = self.net(x)
@@ -92,11 +102,14 @@ class NormalGuide(_BaseGuide):
         q = dist.Normal(loc=loc, scale=scale)
         if s > 1:
             q = q.to_event(1)
-        return pyro.sample(self.variable.concept, q)
+        return pyro.sample(self.variable.name, q)
 
 
 class MVNGuide(_BaseGuide):
-    """Reparameterised MultivariateNormal guide."""
+    """Amortised variational guide for ``MultivariateNormal`` latents using a
+    reparameterised ``MultivariateNormal(loc, scale_tril)`` distribution;
+    same MLP architecture as ``STBernoulliGuide``, with softplus on the
+    diagonal of the lower-triangular Cholesky factor."""
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         raw = self.net(x)
@@ -111,7 +124,7 @@ class MVNGuide(_BaseGuide):
             torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
         )
         q = dist.MultivariateNormal(loc=loc, scale_tril=tril)
-        return pyro.sample(self.variable.concept, q)
+        return pyro.sample(self.variable.name, q)
 
 
 DEFAULT_GUIDES: Dict[Type[dist.Distribution], Type[_BaseGuide]] = {
@@ -124,7 +137,9 @@ DEFAULT_GUIDES: Dict[Type[dist.Distribution], Type[_BaseGuide]] = {
 
 # --------------------------------------------------------------------------
 class _GuideContainer(PyroModule):
-    """Holds per-latent guides and exposes a callable ``forward(data, temperature)``."""
+    """Registers one guide module per latent and, when called, feeds them the
+    concatenation of every exogenous variable from ``data`` as conditioning
+    input."""
 
     def __init__(
         self,
@@ -155,13 +170,24 @@ class _GuideContainer(PyroModule):
 
 # --------------------------------------------------------------------------
 class VariationalInference(InferenceEngine):
-    """Variational inference engine (§5.4)."""
+    """Variational inference engine with amortised, family-keyed guides.
+
+    At construction time, builds one guide per name in ``latents`` using
+    ``DEFAULT_GUIDES`` (overridable via ``default_guides``); guides for
+    ``dist.Delta`` latents are skipped. At call time, traces the guide,
+    replays the model under that trace, conditions on ``evidence``, and
+    populates ``InferenceOutput.model_params`` and
+    ``InferenceOutput.guide_params`` with the parameter dicts of every
+    stochastic site. The relaxation temperature follows the ``annealing``
+    schedule (``constant`` / ``exponential`` / ``linear`` / callable); call
+    ``engine.step()`` to advance it.
+    """
 
     name = "VariationalInference"
 
     def __init__(
         self,
-        pgm: ProbabilisticModel,
+        pgm: BayesianNetwork,
         latents: List[str],
         default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
         n_samples: int = 1,
@@ -178,7 +204,7 @@ class VariationalInference(InferenceEngine):
 
         # Conditioning input: all exogenous variables (always in evidence).
         exog_names = [
-            v.concept for v in pgm.variables if isinstance(v, ExogenousVariable)
+            v.name for v in pgm.variables if isinstance(v, ExogenousVariable)
         ]
         if not exog_names:
             raise ValueError(
@@ -186,17 +212,17 @@ class VariationalInference(InferenceEngine):
                 "supply the guides' conditioning input."
             )
         # Compute parent_dim = sum of exogenous variable sizes.
-        parent_dim = sum(pgm.concept_to_variable[n].size for n in exog_names)
+        parent_dim = sum(pgm.name_to_variable[n].size for n in exog_names)
 
         guides: Dict[str, _BaseGuide] = {}
         for name in latents:
-            if name not in pgm.concept_to_variable:
+            if name not in pgm.name_to_variable:
                 raise ValueError(
                     f"{self.name}: latent {name!r} is not a variable of the PGM."
                 )
-            v = pgm.concept_to_variable[name]
+            v = pgm.name_to_variable[name]
             if v.distribution is dist.Delta:
-                # Delta guides are degenerate — skip silently (§5.4).
+                # Delta latents are degenerate (point masses): no guide needed.
                 continue
             if v.distribution is None:
                 raise ValueError(
@@ -230,7 +256,9 @@ class VariationalInference(InferenceEngine):
 
     # ------------------------------------------------------------------
     def guide_fn(self, data: Dict[str, torch.Tensor]):
-        """Pyro-callable guide. Use this when calling Trace_ELBO directly."""
+        """Plain Pyro-compatible guide callable bound to the engine's current
+        temperature. Pass this directly to ``pyro.infer.Trace_ELBO`` (or any
+        other Pyro inference object) when bypassing the engine's ``_run``."""
         return self.guide(data, self.temperature)
 
     # ------------------------------------------------------------------

@@ -1,4 +1,5 @@
-"""ParametricCPD — neural-network parameterised conditional distribution."""
+"""ParametricCPD — Conditional distribution parameterised by a neural network."""
+
 from __future__ import annotations
 
 import copy
@@ -14,7 +15,9 @@ from .variable import Variable, param_dim
 
 
 def _infer_out_features(module: nn.Module) -> Optional[int]:
-    """Best-effort static introspection of a module's output feature dim."""
+    """Given a PyTorch module, infer its output feature dimension. 
+    Returns an int if successful, else None.
+    """
     if isinstance(module, nn.Identity):
         return None  # depth-dependent
     if isinstance(module, nn.Linear):
@@ -34,107 +37,118 @@ def _infer_out_features(module: nn.Module) -> Optional[int]:
 
 
 class ParametricCPD(ParametricFactor):
-    """Directed factor :math:`p(c_i \\mid \\mathrm{PA}(c_i))` (§2.2)."""
+    """Conditional distribution parameterised by a neural network
+    :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
+
+    The wrapped ``nn.Module`` maps the concatenation of parent values to the
+    raw parameter tensor of ``variable.distribution``; bounding activations
+    (sigmoid / softmax / softplus / lower-triangular) are applied automatically.
+    Roots take their tensor value as direct input and emit it via
+    ``pyro.deterministic`` (pass ``nn.Identity()`` for an untransformed root).
+
+    Passing a list of ``Variable`` instances returns a list of independent CPDs
+    sharing the same parent list; ``parametrization`` may be a single module
+    (deep-copied per CPD) or a per-CPD list of modules.
+    """
 
     def __new__(
         cls,
-        concepts: Union[str, List[str]],
+        variable: Union[Variable, List[Variable]],
         parametrization: Union[nn.Module, List[nn.Module]],
-        parents: Optional[List[Union[Variable, str]]] = None,
+        parents: Optional[List[Variable]] = None,
     ):
-        # Single-name path.
-        if isinstance(concepts, str):
+        # Single-Variable path: defer to normal __init__.
+        if isinstance(variable, Variable):
             if isinstance(parametrization, list):
                 raise ValueError(
-                    "ParametricCPD: when `concepts` is a string, "
+                    "ParametricCPD: when `variable` is a single Variable, "
                     "`parametrization` must be a single nn.Module, not a list."
                 )
             return super().__new__(cls)
 
-        if not isinstance(concepts, list) or not all(
-            isinstance(n, str) for n in concepts
+        # List path: broadcast.
+        if not isinstance(variable, list) or not all(
+            isinstance(v, Variable) for v in variable
         ):
             raise TypeError(
-                "ParametricCPD: `concepts` must be a string or a list of "
-                f"strings, got {type(concepts).__name__}."
+                "ParametricCPD: `variable` must be a Variable or a list of "
+                f"Variables, got {type(variable).__name__}."
             )
 
-        n = len(concepts)
-        # List-of-modules: assign each to its concept (no deepcopy).
+        n = len(variable)
         if isinstance(parametrization, list):
             if len(parametrization) != n:
                 raise ValueError(
                     f"ParametricCPD: `parametrization` list length "
-                    f"{len(parametrization)} does not match `concepts` length {n}."
+                    f"{len(parametrization)} does not match `variable` length {n}."
                 )
             modules = list(parametrization)
         else:
-            # Single module broadcast: deep-copy once per concept.
+            # Single module broadcast: deep-copy once per Variable so each CPD
+            # owns an independent parameter set.
             modules = [copy.deepcopy(parametrization) for _ in range(n)]
 
         return [
             cls(
-                name,
+                v,
                 modules[i],
                 parents=list(parents) if parents is not None else None,
             )
-            for i, name in enumerate(concepts)
+            for i, v in enumerate(variable)
         ]
 
     def __init__(
         self,
-        concepts: Union[str, List[str]],
-        parametrization: Union[nn.Module, List[nn.Module]],
-        parents: Optional[List[Union[Variable, str]]] = None,
+        variable: Variable,
+        parametrization: nn.Module,
+        parents: Optional[List[Variable]] = None,
     ):
         super().__init__()
-        # When __new__ returned a list, __init__ is invoked once per element
-        # with the singular form already.
-        if not isinstance(concepts, str):
+        # When __new__ returned a list, __init__ is also invoked once per
+        # element with a singular Variable, so the list-path is a no-op here.
+        if not isinstance(variable, Variable):
             return  # pragma: no cover
-        if parametrization is None or isinstance(parametrization, list):
+        if parametrization is None or isinstance(parametrization, list) or not isinstance(parametrization, nn.Module):
             raise ValueError(
-                f"ParametricCPD({concepts!r}): `parametrization` must be a "
-                "single nn.Module; pass nn.Identity() for an untransformed root."
+                f"ParametricCPD({variable.name!r}): `parametrization` must "
+                "be a single nn.Module; pass nn.Identity() for an untransformed root."
             )
-        self.concept: str = concepts
+        if parents is not None:
+            for p in parents:
+                if not isinstance(p, Variable):
+                    raise TypeError(
+                        f"ParametricCPD({variable.name!r}): every parent "
+                        f"must be a Variable, got {type(p).__name__}."
+                    )
+
+        self.variable: Variable = variable
         self.parametrization: nn.Module = parametrization
-        # Parents may be Variable instances or names (resolved later).
-        self._raw_parents: List[Union[Variable, str]] = (
-            list(parents) if parents else []
-        )
-        self.parents: List[Variable] = []   # filled by ProbabilisticModel._bind
-        self._variable: Optional[Variable] = None  # filled by _bind
+        self.parents: List[Variable] = list(parents) if parents else []
 
-    @property
-    def is_root(self) -> bool:
-        return len(self._raw_parents) == 0
-
-    # ------------------------------------------------------------------ bind
-    def _bind(self, variable: Variable, parents: List[Variable]) -> None:
-        """Resolve parent strings to Variables; validate output dim statically."""
-        self._variable = variable
-        self.parents = parents
-        if not self.is_root:
-            in_dim = sum(p.size for p in parents)
+        # Check whether the parametrization's output dim matches the variable's distributional parameter count.
+        if self.parents and variable.distribution is not None:
             need = param_dim(variable.distribution, variable.size)
             got = _infer_out_features(self.parametrization)
             if got is not None and got != need:
                 raise ValueError(
-                    f"ParametricCPD({variable.concept!r}): parametrization "
-                    f"output dim is {got} but param_dim({variable.distribution.__name__ if variable.distribution else None}, "
-                    f"{variable.size}) = {need}. Adjust the network's last layer."
+                    f"ParametricCPD({variable.name!r}): parametrization "
+                    f"output dim is {got} but param_dim("
+                    f"{variable.distribution.__name__}, {variable.size}) = {need}. "
+                    "Adjust the network's last layer."
                 )
-            # in_dim is informational; we can't reliably check Identity-input
-            # CPDs here, but we record it for reference.
-            self._expected_in_dim = in_dim
-        else:
-            self._expected_in_dim = None
+
+    @property
+    def is_root(self) -> bool:
+        return len(self.parents) == 0
 
     # ------------------------------------------------------------------ split
     def _split_params(self, raw: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Split network output into named distribution parameters with bounding (§3.3)."""
-        v = self._variable
+        """Map the raw network output to a named-parameter dict for the variable's
+        distribution, applying the appropriate bounding activation
+        (sigmoid for ``Bernoulli``, softmax for categorical families,
+        softplus on the scale for ``Normal``/``MultivariateNormal``, identity
+        for ``Delta``)."""
+        v = self.variable
         D = v.distribution
         s = v.size
         if D is dist.Bernoulli:
@@ -168,23 +182,44 @@ class ParametricCPD(ParametricFactor):
     def forward(
         self,
         evidence_value: Optional[torch.Tensor] = None,
-        parent_values: Optional[List[torch.Tensor]] = None,
+        parent_values: Optional[Dict[str, torch.Tensor]] = None,
     ):
-        """Root branch: returns ``parametrization(evidence_value)`` raw.
-        Non-root: concatenates parents along the last dim and returns a
-        dict of named distribution parameters.
+        """Compute the CPD output.
+
+        For roots, returns ``parametrization(evidence_value)`` as a raw tensor.
+        For non-roots, ``parent_values`` is a ``Dict[str, Tensor]`` keyed by
+        parent name; values are gathered in ``self.parents`` order, concatenated
+        along the last dim, passed through ``parametrization``, and returned as
+        a dict of named distribution parameters (e.g. ``{'probs': ...}`` or
+        ``{'loc': ..., 'scale': ...}``).
         """
         if self.is_root:
             assert evidence_value is not None
             return self.parametrization(evidence_value)
-        assert parent_values is not None
+
+        assert parent_values is not None, (
+            f"ParametricCPD({self.variable.name!r}): non-root forward requires "
+            "parent_values."
+        )
+        expected = {p.name for p in self.parents}
+        got = set(parent_values.keys())
+        if expected != got:
+            missing = expected - got
+            extra = got - expected
+            raise ValueError(
+                f"ParametricCPD({self.variable.name!r}): parent_values keys "
+                f"do not match parents. expected={sorted(expected)}, "
+                f"got={sorted(got)}, missing={sorted(missing)}, extra={sorted(extra)}."
+            )
+
+        ordered: List[torch.Tensor] = [parent_values[p.name] for p in self.parents]
+
         # Concatenate along feature axis. Each parent value has shape
         # (..., parent.size); Bernoulli observed values may be scalar so we
         # unsqueeze if needed.
         normed: List[torch.Tensor] = []
-        for p_val, p_var in zip(parent_values, self.parents):
+        for p_val, p_var in zip(ordered, self.parents):
             if p_val.dim() < 1 or (p_var.size > 1 and p_val.shape[-1] != p_var.size):
-                # Try to broadcast a scalar/last-dim-missing parent up.
                 if p_var.size == 1 and (p_val.dim() == 0 or p_val.shape[-1] != 1):
                     p_val = p_val.unsqueeze(-1)
             elif p_var.size == 1 and p_val.shape[-1] != 1:

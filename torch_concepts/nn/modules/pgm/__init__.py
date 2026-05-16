@@ -12,6 +12,7 @@ import pyro as _pyro
 _pyro.settings.set(module_local_params=True)
 
 from .models import (
+    BayesianNetwork,
     ConceptVariable,
     EndogenousVariable,
     ExogenousVariable,
@@ -46,6 +47,7 @@ __all__ = [
     "param_dim",
     "ParametricFactor",
     "ParametricCPD",
+    "BayesianNetwork",
     "ProbabilisticModel",
     "InferenceOutput",
     "InferenceResult",

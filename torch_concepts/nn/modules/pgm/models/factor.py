@@ -5,7 +5,11 @@ from pyro.nn import PyroModule
 
 
 class ParametricFactor(PyroModule):
-    """Abstract base — not directly instantiable (§2.1)."""
+    """PGM factor whose parameters are produced by a neural network.
+
+    Subclasses :class:`~pyro.nn.PyroModule`. Concrete factor types (e.g.
+    ``ParametricCPD``) subclass this. Direct instantiation is not supported.
+    """
 
     def __init__(self, *args, **kwargs):
         if type(self) is ParametricFactor:

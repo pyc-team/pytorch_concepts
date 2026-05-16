@@ -1,4 +1,4 @@
-"""Ancestral inference engine — single-sample propagation (§5.3)."""
+"""Ancestral inference engine — single-sample differentiable propagation."""
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Union
@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Union
 import pyro.distributions as dist
 import torch
 
-from ..models.probabilistic_model import ProbabilisticModel
+from ..models.bayesian_network import BayesianNetwork
 from .base import InferenceEngine, make_temperature_schedule
 from .deterministic import _align_gt, _teacher_force
 from .result import InferenceOutput
@@ -17,7 +17,10 @@ def _sample_from(
     params: Dict[str, torch.Tensor],
     temperature: torch.Tensor,
 ) -> torch.Tensor:
-    """Draw one (reparameterised / ST-relaxed) sample from ``var``'s CPD."""
+    """Draw one differentiable sample from ``var``'s CPD: Straight-Through
+    relaxed for ``Bernoulli`` / ``OneHotCategorical`` (at the given
+    ``temperature``), reparameterised ``rsample`` for ``Normal`` /
+    ``MultivariateNormal``, identity for ``Delta``."""
     D = var.distribution
     if D is dist.Bernoulli:
         # Need logits for the ST-relaxed family; recover from probs.
@@ -50,13 +53,24 @@ def _sample_from(
 
 
 class AncestralInference(InferenceEngine):
-    """Single-sample ancestral propagation; optional teacher-forcing (§5.3)."""
+    """Single-sample ancestral inference engine.
+
+    Walks the PGM in topological order and propagates one differentiable
+    sample per non-evidence variable to its children (Straight-Through for
+    discrete families, ``rsample`` for Gaussian, identity for ``Delta``).
+    When a non-evidence variable also appears in ``data``, its label is
+    teacher-forced with per-sample probability ``p_int``. The relaxation
+    temperature follows the ``annealing`` schedule (``constant`` /
+    ``exponential`` / ``linear`` / callable); call ``engine.step()`` to
+    advance it. ``InferenceOutput.model_params`` carries the CPD parameters
+    and ``InferenceOutput.samples`` the realised values.
+    """
 
     name = "AncestralInference"
 
     def __init__(
         self,
-        pgm: ProbabilisticModel,
+        pgm: BayesianNetwork,
         p_int: float = 1.0,
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
@@ -91,7 +105,7 @@ class AncestralInference(InferenceEngine):
         temp = self.temperature
 
         for var in self.pgm.sorted_variables:
-            name = var.concept
+            name = var.name
             f = self.pgm.factors[name]
 
             if f.is_root:
@@ -104,7 +118,7 @@ class AncestralInference(InferenceEngine):
                 out.samples[name] = value
                 continue
 
-            parent_values = [cache[p.concept] for p in f.parents]
+            parent_values = {p.name: cache[p.name] for p in f.parents}
             params = f(parent_values=parent_values)
             sampled = _sample_from(var, params, temp)
 

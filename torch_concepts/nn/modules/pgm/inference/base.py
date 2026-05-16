@@ -10,12 +10,13 @@ import torch
 import torch.nn as nn
 from pyro.nn import PyroModule
 
-from ..models.probabilistic_model import ProbabilisticModel
+from ..models.bayesian_network import BayesianNetwork
 from ..models.variable import ExogenousVariable
 from .result import InferenceOutput, ParamDict
 
 
-# Per-distribution parameter names returned in InferenceResult (§5.1).
+# Canonical parameter names emitted in InferenceOutput.model_params /
+# InferenceOutput.guide_params, keyed by distribution family.
 _PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
     dist.Bernoulli: ("probs",),
     dist.Categorical: ("probs",),
@@ -45,7 +46,9 @@ def _peel(d: dist.Distribution) -> dist.Distribution:
 
 
 def dist_to_params(d: dist.Distribution) -> ParamDict:
-    """Extract the canonical parameter dict for a distribution (§2.4 names)."""
+    """Return the canonical named-parameter dict of a distribution
+    (e.g. ``{'probs': ...}`` or ``{'loc': ..., 'scale': ...}``), peeling
+    ``Independent`` / masked / expanded wrappers first."""
     base = _peel(d)
     names: Optional[Tuple[str, ...]] = None
     for k, v in _PARAM_NAMES.items():
@@ -61,7 +64,8 @@ def dist_to_params(d: dist.Distribution) -> ParamDict:
 
 
 def trace_to_params(trace: poutine.Trace) -> Dict[str, ParamDict]:
-    """Walk a trace and collect distribution parameters per non-deterministic sample site."""
+    """Walk a Pyro trace and collect ``dist_to_params`` for every stochastic
+    (non-deterministic) sample site, keyed by site name."""
     out: Dict[str, ParamDict] = {}
     for name, node in trace.nodes.items():
         if node["type"] != "sample":
@@ -79,7 +83,12 @@ def make_temperature_schedule(
     annealing: Union[str, Callable[[int], float]],
     annealing_rate: float,
 ) -> Callable[[int], float]:
-    """Return a callable ``step -> temperature`` (§5.5)."""
+    """Build a ``step -> temperature`` schedule.
+
+    ``annealing`` may be ``'constant'``, ``'exponential'`` (decays as
+    ``T0 * exp(-rate * step)``), ``'linear'`` (decays as
+    ``max(eps, T0 - rate * step)``), or a user-supplied callable.
+    """
     if callable(annealing):
         return annealing
     if annealing == "constant":
@@ -98,14 +107,18 @@ def make_temperature_schedule(
 
 # -----------------------------------------------------------------------------
 class InferenceEngine(PyroModule):
-    """Common entrypoint with validation (§5.1).
+    """Base class for all inference engines.
 
-    Subclasses implement ``_run(query, evidence, data) -> InferenceOutput``.
+    Calling ``engine(query, evidence, data)`` validates that ``query`` and
+    ``evidence`` reference known variables, that ``evidence`` is a subset of
+    ``data.keys()``, and that every ``ExogenousVariable`` of the PGM is
+    listed in ``evidence``; it then dispatches to the subclass-specific
+    ``_run`` and returns an ``InferenceOutput``.
     """
 
     name: str = "InferenceEngine"
 
-    def __init__(self, pgm: ProbabilisticModel):
+    def __init__(self, pgm: BayesianNetwork):
         super().__init__()
         self.pgm = pgm
 
@@ -116,7 +129,7 @@ class InferenceEngine(PyroModule):
         evidence: List[str],
         data: Dict[str, torch.Tensor],
     ) -> None:
-        all_names = set(self.pgm.concept_to_variable.keys())
+        all_names = set(self.pgm.name_to_variable.keys())
         unknown_q = set(query) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")
@@ -135,9 +148,9 @@ class InferenceEngine(PyroModule):
             )
 
         for v in self.pgm.variables:
-            if isinstance(v, ExogenousVariable) and v.concept not in evidence:
+            if isinstance(v, ExogenousVariable) and v.name not in evidence:
                 raise ValueError(
-                    f"{self.name}: ExogenousVariable {v.concept!r} must appear "
+                    f"{self.name}: ExogenousVariable {v.name!r} must appear "
                     "in `evidence` (and therefore in `data`)."
                 )
 

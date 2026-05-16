@@ -7,7 +7,7 @@ from .variable import (
 )
 from .factor import ParametricFactor
 from .cpd import ParametricCPD
-from .probabilistic_model import ProbabilisticModel
+from .bayesian_network import BayesianNetwork, ProbabilisticModel
 
 __all__ = [
     "Variable",
@@ -17,5 +17,6 @@ __all__ = [
     "param_dim",
     "ParametricFactor",
     "ParametricCPD",
+    "BayesianNetwork",
     "ProbabilisticModel",
 ]
