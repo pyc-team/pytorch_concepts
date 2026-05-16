@@ -144,10 +144,15 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # ── 1. Mid-level model: backbone + concept heads + PGM + inference ─
-    model = SteerlingMidLevelModel(
-        use_unknown=True,
-        use_epsilon_correction=False
-    )
+    _prev_default_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        model = SteerlingMidLevelModel(
+                use_unknown=True,
+                use_epsilon_correction=False
+            )
+    finally:
+        torch.set_default_dtype(_prev_default_dtype)
     model.to(device=device, dtype=torch.bfloat16)
     model.eval()
     print(model)
