@@ -170,7 +170,7 @@ class _GuideContainer(PyroModule):
 
 # --------------------------------------------------------------------------
 class VariationalInference(InferenceEngine):
-    """Variational inference engine with amortised, family-keyed guides.
+    """Variational inference engine with amortised guides.
 
     At construction time, builds one guide per name in ``latents`` using
     ``DEFAULT_GUIDES`` (overridable via ``default_guides``); guides for
@@ -227,7 +227,7 @@ class VariationalInference(InferenceEngine):
             if v.distribution is None:
                 raise ValueError(
                     f"{self.name}: latent {name!r} has distribution=None; "
-                    "such variables are roots and cannot be latent."
+                    "specify the distribution."
                 )
             cls = merged.get(v.distribution)
             if cls is None:
