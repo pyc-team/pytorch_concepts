@@ -10,10 +10,10 @@ from ..models.bayesian_network import BayesianNetwork
 from .base import InferenceEngine, make_temperature_schedule
 from .deterministic import _align_gt, _teacher_force
 from .result import InferenceOutput
-
+from ..models.variable import ExogenousVariable, ConceptVariable
 
 def _sample_from(
-    var,
+    var: Union[ExogenousVariable, ConceptVariable],
     params: Dict[str, torch.Tensor],
     temperature: torch.Tensor,
 ) -> torch.Tensor:

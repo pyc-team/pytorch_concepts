@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 import pyro.distributions as dist
 import pyro.poutine as poutine
 import torch
-import torch.nn as nn
 from pyro.nn import PyroModule
 
 from ..models.bayesian_network import BayesianNetwork
@@ -30,7 +29,12 @@ _PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
 
 
 def _peel(d: dist.Distribution) -> dist.Distribution:
-    """Strip Independent/Masked/Expanded wrappers."""
+    """Strip Independent/Masked/Expanded wrappers.
+    Pyro wraps distributions in the following way:
+        - Independent(base, reinterpreted_batch_ndims): declares batch dimension as independent events.
+        - MaskedDistribution(base, mask): masks out some batch dims (e.g., to avoid log prob computation)
+        - ExpandedDistribution(base, batch_shape): adds batch dim.
+    """
     while True:
         if isinstance(d, dist.Independent):
             d = d.base_dist
@@ -64,7 +68,7 @@ def dist_to_params(d: dist.Distribution) -> ParamDict:
 
 
 def trace_to_params(trace: poutine.Trace) -> Dict[str, ParamDict]:
-    """Walk a Pyro trace and collect ``dist_to_params`` for every stochastic
+    """Use the Pyro trace to collect ``dist_to_params`` for every stochastic
     (non-deterministic) sample site, keyed by site name."""
     out: Dict[str, ParamDict] = {}
     for name, node in trace.nodes.items():
@@ -122,7 +126,6 @@ class InferenceEngine(PyroModule):
         super().__init__()
         self.pgm = pgm
 
-    # ------------------------------------------------------------------
     def _validate(
         self,
         query: List[str],
@@ -154,7 +157,6 @@ class InferenceEngine(PyroModule):
                     "in `evidence` (and therefore in `data`)."
                 )
 
-    # ------------------------------------------------------------------
     def __call__(
         self,
         query: List[str],

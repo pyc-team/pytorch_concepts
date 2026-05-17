@@ -12,7 +12,7 @@ from .result import InferenceOutput
 
 
 def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """Pick the canonical point estimate to feed to children from a CPD's
+    """Pick the parameter of the distribution to propagate to the children from a CPD's
     parameter dict: ``probs`` for discrete families, ``loc`` for Gaussian
     families, ``v`` for ``Delta``."""
     if distribution in (dist.Bernoulli, dist.Categorical, dist.OneHotCategorical):
@@ -25,8 +25,24 @@ def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Te
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
-    """Coerce a ground-truth label tensor to the dtype and shape of ``ref``
-    by squeezing/unsqueezing a trailing singleton dim and casting as needed."""
+    """
+    Adjust the ground-truth tensor ``gt`` to match the dtype and shape of
+    the CPD point-estimate ``ref``.
+
+    Two adjustments are applied, in order:
+
+    1. **dtype** — casts ``gt`` to ``ref.dtype`` if they differ.
+
+    2. **trailing singleton** — if the two tensors differ by exactly one
+    dimension of size 1 on the right, it is squeezed or unsqueezed to
+    match:
+    - ``(B, 1)`` → ``(B,)`` when ``ref`` has shape ``(B,)``.
+    - ``(B,)`` → ``(B, 1)`` when ``ref`` has shape ``(B, 1)``.
+
+    If the shapes still differ after those adjustments, ``expand_as`` is
+    attempted for broadcast-compatible cases (e.g. a scalar label broadcast
+    over a batch). Incompatible shapes raise a ``RuntimeError`` from PyTorch.
+    """
     g = gt
     if g.dtype != ref.dtype:
         g = g.to(ref.dtype)
@@ -62,14 +78,20 @@ def _teacher_force(
 
 
 class DeterministicInference(InferenceEngine):
-    """Sample-free inference engine.
+    """Deterministic inference engine.
 
-    Walks the PGM in topological order and propagates each CPD's bounded
-    parameter point estimate (``probs`` / ``loc`` / ``v``) to its children;
-    no random sampling. When a non-evidence variable also appears in ``data``,
-    its label is teacher-forced with per-sample probability ``p_int``
-    (default ``1.0`` — full teacher-forcing). Returns the CPD parameters of
-    every queried variable in ``InferenceOutput.model_params``.
+    Walks the PGM in topological order and propagates each CPD's parameter
+    point estimate (``probs`` / ``loc`` / ``v``) to its children.
+    When a non-evidence variable also appears in ``data``, its label is
+    teacher-forced with per-sample probability ``p_int`` (default ``1.0``).
+    The choice of ``p_int`` determines the effective training mode:
+
+    - ``p_int=1.0`` — sequential training [1].
+    - ``p_int=0.0`` — joint training [1].
+    - ``0.0 < p_int < 1.0`` — sequential with random interventions [2].
+
+    Returns the CPD parameters of every queried variable in
+    ``InferenceOutput.model_params``.
     """
 
     name = "DeterministicInference"
@@ -86,6 +108,7 @@ class DeterministicInference(InferenceEngine):
         evidence: List[str],
         data: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
+        
         out = InferenceOutput()
         cache: Dict[str, torch.Tensor] = {}
         evidence_set = set(evidence)
