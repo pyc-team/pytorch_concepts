@@ -272,21 +272,23 @@ class SteerlingLowLevelModel(nn.Module):
         # backbone's input embedding.
         self.lm_head = self.backbone.transformer.lm_head
 
-        # Epsilon correction term for h_bar = k_hat + u_hat + epsilon.
+        # Epsilon correction term for h_bar = k_hat + (u_hat) + epsilon.
+        # `use_epsilon` toggles whether the residual recovers `h` exactly
+        # (`block_parts`) or leaves `h_bar` as the pure concept
+        # reconstruction (`off`).  `stop_grad_parts` detaches `u_hat`
+        # specifically when unknown concepts are present and epsilon is
+        # off, so the unknown branch doesn't backprop into the backbone.
         #   (has_unknown, use_epsilon)  →  (mode,           stop_grad_parts)
         #   (True,  True)               →  ("block_parts",  ())
         #   (True,  False)              →  ("off",          (1,))  stop-grad on u_hat
         #   (False, True)               →  ("block_parts",  ())
-        #   (False, False)              →  ("keep_parts",   ())
+        #   (False, False)              →  ("off",          ())   h_bar = k_hat
         self.has_unknown = self.unknown_concept_head is not None
         use_eps = self.config_use_epsilon_correction
         self.epsilon_correction = ResidualCorrectionOp(
             input_size=embedding_dim,
             n_terms=2 if self.has_unknown else 1,
-            residual_mode=(
-                "block_parts" if use_eps
-                else ("off" if self.has_unknown else "keep_parts")
-            ),
+            residual_mode="block_parts" if use_eps else "off",
             stop_grad_parts=(1,) if self.has_unknown and not use_eps else (),
         )
 
