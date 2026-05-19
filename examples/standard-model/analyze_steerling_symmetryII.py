@@ -114,6 +114,7 @@ def plot_jacobian_spectrum(
     out_path: str,
     label: str | None = None,
     expected_drop: int | None = None,
+    log_x: bool = False,
 ) -> None:
     """Plot sorted-descending singular values of one Jacobian on a log-y axis.
 
@@ -127,19 +128,27 @@ def plot_jacobian_spectrum(
         out_path: Full path for the saved figure.
         label: Optional legend label for the spectrum.
         expected_drop: Optional rank to mark with a vertical dashed line.
+        log_x: If ``True``, also put the x-axis (index) on log scale.
+            Useful when the spectrum has many indices and you want to
+            see the head decay clearly — a log-log plot turns power-law
+            decay into a straight line.  Default ``False`` (linear x).
     """
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
     vals = s.detach().cpu().float().numpy()
-    ax.semilogy(range(1, len(vals) + 1), vals, marker="o", markersize=3, label=label)
+    plot = ax.loglog if log_x else ax.semilogy
+    plot(range(1, len(vals) + 1), vals, marker="o", markersize=3, label=label)
     if expected_drop is not None:
         ax.axvline(
             x=expected_drop + 0.5,
             color="red", linestyle="--", alpha=0.6,
             label=f"expected drop after rank {expected_drop}",
         )
-    ax.set_xlabel("singular value index (sorted descending)")
+    ax.set_xlabel(
+        "singular value index (sorted descending)"
+        + (" — log scale" if log_x else "")
+    )
     ax.set_ylabel("singular value (log scale)")
     ax.set_title("Jacobian spectrum")
     ax.grid(True, alpha=0.3, which="both")
@@ -156,6 +165,7 @@ def plot_concept_activations(
     out_path: str,
     topk_marker: int | None = None,
     log_y: bool = True,
+    log_x: bool = False,
 ) -> None:
     """Plot known-concept activations sorted descending (highest → lowest).
 
@@ -174,6 +184,9 @@ def plot_concept_activations(
         log_y: Use a log-scale y-axis (default). Set to ``False`` for a
             linear axis, useful when activations are already in ``[0, 1]``
             and you want to read absolute magnitudes.
+        log_x: Use a log-scale x-axis (default ``False``). Helpful when
+            ``n_known`` is large (~33k) — a log-x plot lets you read the
+            head, body, and tail of the distribution in one view.
     """
     import matplotlib.pyplot as plt
 
@@ -183,7 +196,14 @@ def plot_concept_activations(
     )
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
-    plot = ax.semilogy if log_y else ax.plot
+    if log_x and log_y:
+        plot = ax.loglog
+    elif log_x:
+        plot = ax.semilogx
+    elif log_y:
+        plot = ax.semilogy
+    else:
+        plot = ax.plot
     plot(range(1, len(vals) + 1), vals, linewidth=1)
     if topk_marker is not None:
         ax.axvline(
@@ -192,10 +212,61 @@ def plot_concept_activations(
             label=f"top-{topk_marker}",
         )
         ax.legend()
-    ax.set_xlabel("concept index (sorted descending by activation)")
+    ax.set_xlabel(
+        "concept index (sorted descending by activation)"
+        + (" — log scale" if log_x else "")
+    )
     ax.set_ylabel("activation" + (" (log scale)" if log_y else ""))
     ax.set_title(f"Known concept activations ({len(vals)} concepts)")
-    ax.grid(True, alpha=0.3, which="both" if log_y else "major")
+    ax.grid(True, alpha=0.3, which="both" if (log_y or log_x) else "major")
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_jacobian_spectra_comparison(
+    spectra: list[tuple[torch.Tensor, str, float | None]],
+    *,
+    out_path: str,
+    expected_drop: int | None = None,
+    log_x: bool = False,
+) -> None:
+    """Plot multiple Jacobian spectra on the same axes for side-by-side comparison.
+
+    Each input entry is ``(singular_values, label, metric)``.  If ``metric``
+    is not ``None``, it is appended to the label so the legend doubles as
+    the summary readout.
+
+    Args:
+        spectra: List of ``(s, label, metric)`` tuples. ``s`` is a 1-D
+            tensor of sorted-descending singular values. ``metric`` may
+            be ``None`` (no annotation) or a float.
+        out_path: Full path for the saved figure.
+        expected_drop: Optional rank to mark with a vertical dashed line.
+        log_x: If ``True``, use log-log axes (default linear x, log y).
+    """
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    plot = ax.loglog if log_x else ax.semilogy
+    for s, label, metric in spectra:
+        vals = s.detach().cpu().float().numpy()
+        full_label = label if metric is None else f"{label} (metric={metric:.4f})"
+        plot(range(1, len(vals) + 1), vals, marker="o", markersize=2, label=full_label)
+    if expected_drop is not None:
+        ax.axvline(
+            x=expected_drop + 0.5,
+            color="red", linestyle="--", alpha=0.6,
+            label=f"expected drop after rank {expected_drop}",
+        )
+    ax.set_xlabel(
+        "singular value index (sorted descending)"
+        + (" — log scale" if log_x else "")
+    )
+    ax.set_ylabel("singular value (log scale)")
+    ax.set_title("Jacobian spectra — comparison")
+    ax.grid(True, alpha=0.3, which="both")
+    ax.legend()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -243,8 +314,8 @@ def main():
     concepts_g_topk = torch.load(os.path.join(OUT_DIR, f"concept_gradients_False_True_16.pt"))
     print(f"Loaded masked concept Jacobian: {tuple(concepts_g_topk.shape)}")
     concepts_g_topk = concepts_g_topk.reshape(concepts_g_topk.shape[0], -1, concepts_g_topk.shape[-1])
-    svd_metric, s_h_bar, s_concept = normalized_gradient_alignment_metric_svd(h_bar_g_topk, concepts_g_topk)
-    print(f"Symmetry-II metric (SVD) with masking in forward pass (topk = 16) (should be close to 0.): {svd_metric.item():.6f}")
+    svd_metric_masked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g_topk, concepts_g_topk)
+    print(f"Symmetry-II metric (SVD) with masking in forward pass (topk = 16) (should be close to 0.): {svd_metric_masked.item():.6f}")
 
     # --- 2. Plot spectra without masking
     # load the Joacobian of h_bar without masking topk logits.
@@ -262,8 +333,20 @@ def main():
     concepts_g = torch.load(os.path.join(OUT_DIR, f"concept_gradients_False_False_16.pt"))
     print(f"Loaded unmasked concept Jacobian: {tuple(concepts_g.shape)}")
     concepts_g = concepts_g.reshape(concepts_g.shape[0], -1, concepts_g.shape[-1])
-    svd_metric, s_h_bar, s_concept = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g)
-    print(f"Symmetry-II metric (SVD) without masking in forward pass (topk = 16): {svd_metric.item():.6f}")
+    svd_metric_unmasked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g)
+    print(f"Symmetry-II metric (SVD) without masking in forward pass (topk = 16): {svd_metric_unmasked.item():.6f}")
+
+    # --- 4. Summary: superpose masked and unmasked spectra with metrics
+    out_png = os.path.join(OUT_DIR, f"spectra_summary_16.png")
+    plot_jacobian_spectra_comparison(
+        [
+            (s_h_bar_topk,      "∇h_bar (masked)",   svd_metric_masked.item()),
+            (s_h_bar_unmasked,  "∇h_bar (unmasked)", svd_metric_unmasked.item()),
+        ],
+        out_path=out_png,
+        expected_drop=16,
+    )
+    print(f"Saved summary spectra plot: {out_png}")
 
 
 if __name__ == "__main__":
