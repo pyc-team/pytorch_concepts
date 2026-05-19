@@ -1,14 +1,18 @@
-"""Symmetry-II gradient-alignment experiment for Steerling.
+"""Symmetry-II Jacobian-computation pass for Steerling.
 
-Measures how aligned the gradient subspace of the ``Yes``/``No`` token
-logits is with the gradient subspace of the reconstructed latent
-``h_bar``, both taken with respect to the last-token backbone hidden
-state.  A perfectly faithful concept bottleneck would give zero
-normalized Frobenius distance between the two projection matrices.
+Builds the mid-level model, optionally masks all but the top-k known
+concepts, and computes / caches the Jacobians needed by the symmetry-II
+analysis:
 
-The PGM is built once by :class:`SteerlingMidLevelModel`; this script
-only sits on top of ``model.inference`` and pulls Jacobians out via
-``torch.func``.
+* ``concept_gradients_{use_unknown}_{mask_topk}.pt`` — ``∂concepts/∂input``
+  for the top-k known concepts (shape ``(1, k, 1, D)``).
+* ``h_bar_gradients_{use_unknown}_{mask_topk}.pt``   — ``∂h_bar/∂input``
+  (shape ``(1, D, 1, D)``).
+
+The analysis (subspace alignment metrics + spectrum plot) lives in
+:mod:`analyze_steerling_symmetryII` and reads these caches.  Keep
+``USE_UNKNOWN``/``MASK_TOPK`` in sync across the two files so the cache
+filenames match.
 """
 
 import os
@@ -20,6 +24,13 @@ from torch.func import jacrev, jvp, vjp
 from tqdm.auto import tqdm
 
 from torch_concepts.steerling import SteerlingMidLevelModel
+
+# Keep these in sync with analyze_steerling_symmetryII.py so the cache
+# filenames match.
+OUT_DIR = "steerling_experiment"
+USE_UNKNOWN = False # Bool. Whether to use the "unknown" token in the concept bottleneck.
+TOPK = 16           # Int. Number of top concepts to keep when masking the concept head.
+MASK_TOPK = False   # Bool. Whether to mask all but the top-k most attended known concept in the bottleneck. 
 
 
 class TopKMaskedHead(nn.Module):
@@ -54,90 +65,6 @@ class TopKMaskedHead(nn.Module):
             return super().__getattr__(name)
         except AttributeError:
             return getattr(self.base, name)
-
-
-def normalized_gradient_alignment_metric(g_c, g_y):
-    """Normalized Frobenius distance between two gradient subspaces.
-
-    Each input has shape ``(Batch, InputDim, EmbDim)`` and is treated as
-    ``InputDim`` row vectors spanning a subspace of ``R^EmbDim``.  The
-    two inputs must share ``Batch`` and ``EmbDim``; ``InputDim`` may
-    differ (``k_c`` vs ``k_y``).
-    """
-    # 1. Orthonormal bases (QR on the (EmbDim, InputDim) view).
-    # Cast to fp32: torch.linalg.qr has no bf16 CPU kernel, and QR is
-    # more numerically stable in fp32. Cost is negligible at (4096, k).
-    q_c, _ = torch.linalg.qr(g_c.float().transpose(1, 2), mode='reduced')  # (B, D, k_c)
-    q_y, _ = torch.linalg.qr(g_y.float().transpose(1, 2), mode='reduced')  # (B, D, k_y)
-
-    k_c = q_c.shape[2]
-    k_y = q_y.shape[2]
-
-    # 2. Projection matrices P = Q @ Q.T  →  (B, D, D).
-    p_c = torch.bmm(q_c, q_c.transpose(1, 2))
-    p_y = torch.bmm(q_y, q_y.transpose(1, 2))
-
-    raw_loss = torch.linalg.matrix_norm(p_c - p_y, ord='fro')
-
-    # 3. Normalize by the maximum possible distance between two rank-k subspaces.
-    max_val = torch.sqrt(torch.tensor(k_c + k_y, dtype=raw_loss.dtype, device=raw_loss.device))
-    return raw_loss / max_val
-
-
-def normalized_gradient_alignment_metric_svd(g_c, g_y, *, rtol: float | None = None):
-    """SVD-truncated variant of the gradient-subspace alignment metric.
-
-    The QR-based metric is only faithful when ``InputDim < EmbDim`` and
-    the row vectors are linearly independent.  When the Jacobian is
-    "tall and rank-deficient" — e.g. ``h_bar`` has 4096 rows in
-    ``R^4096`` but lives in a rank-16 subspace because only 16 concepts
-    are active — reduced QR returns an orthonormal-completed basis with
-    ``min(D, InputDim)`` columns and the projection collapses to ``I``.
-
-    This variant uses singular values to drop columns of ``U`` whose
-    ``s`` is below ``rtol * s.max()``, so ``Q`` has the *numerical* rank
-    of ``g.transpose(1, 2)``.  The projection ``Q @ Q.T`` is then the
-    true column-space projector.
-
-    Args:
-        g_c, g_y: Tensors of shape ``(Batch, InputDim, EmbDim)`` with
-            matching ``Batch`` (assumed 1 below) and ``EmbDim``.
-            ``InputDim`` and effective rank may differ.
-        rtol: Relative tolerance for singular-value truncation. ``None``
-            falls back to NumPy/MATLAB's
-            ``max(D, InputDim) * eps(dtype)`` convention.
-    """
-    if g_c.shape[0] != 1 or g_y.shape[0] != 1:
-        raise NotImplementedError(
-            "SVD-truncation path assumes Batch=1 (ragged ranks per batch "
-            "would need a list output)."
-        )
-
-    def _proj(g):
-        # g: (1, InputDim, EmbDim) → flatten to (k, D), then SVD on (D, k).
-        g_2d = g.float().reshape(-1, g.shape[-1])                  # (k, D)
-        u, s, _ = torch.linalg.svd(g_2d.T, full_matrices=False)    # u: (D, min(D, k))
-        if s.numel() == 0:
-            d = g_2d.shape[-1]
-            return torch.zeros(d, d, dtype=g_2d.dtype, device=g_2d.device), 0
-        tol = rtol if rtol is not None else (
-            max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
-        )
-        cutoff = float(s.max()) * tol
-        keep = s > cutoff
-        q = u[:, keep]                                              # (D, rank)
-        return q @ q.T, int(keep.sum())
-
-    p_c, k_c = _proj(g_c)
-    p_y, k_y = _proj(g_y)
-
-    raw_loss = torch.linalg.matrix_norm(p_c - p_y, ord='fro')
-    if k_c + k_y == 0:
-        return raw_loss  # both Jacobians vanish → 0/0; report 0
-    max_val = torch.sqrt(torch.tensor(
-        float(k_c + k_y), dtype=raw_loss.dtype, device=raw_loss.device,
-    ))
-    return raw_loss / max_val
 
 
 def _compute_jacobian(
@@ -252,7 +179,7 @@ def _compute_jacobian(
 
 
 def main():
-    out_dir = "steerling_experiment"
+    out_dir = OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     
     prompt = (
@@ -260,9 +187,6 @@ def main():
         "Question: Is Socrates older than Plato?"
     )
     n_new_tokens = 1
-    use_unknown = False  # Bool. Whether to use the "unknown" token in the concept bottleneck.
-    mask_topk = 16  # None | int. Whether to mask all but the top-k most attended known concept in the bottleneck.
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # ── 1. Mid-level model: backbone + concept heads + PGM + inference ─
@@ -270,7 +194,7 @@ def main():
     torch.set_default_dtype(torch.bfloat16)
     try:
         model = SteerlingMidLevelModel(
-            use_unknown=use_unknown,
+            use_unknown=USE_UNKNOWN,
             use_epsilon_correction=False
         )
     finally:
@@ -292,15 +216,23 @@ def main():
     evidence["input"].requires_grad_(True)
     print(f"Last-token hidden: {tuple(evidence["input"].shape)}")
 
-    topk_indices = None
-    if mask_topk is not None:
-        # 1. Pick top-k known concepts at the current input (no autograd).
-        with torch.no_grad():
-            out = model.inference.query(model.known_names, evidence=evidence, return_logits=True)
-            _, topk_indices = torch.topk(out.logits[0], k=mask_topk)
-        topk_names = [model.known_names[i] for i in topk_indices.cpu().tolist()]
-        print(f"Top-{mask_topk} known concepts: {topk_names}")
+    # 1. Single query of all known concepts (no autograd).
+    #    Returns both raw logits (for top-k selection) and probs (post-sigmoid
+    #    activations).  Saved for downstream analysis (concept ranking, mask
+    #    design, etc.) — independent of MASK_TOPK so the file isn't suffixed
+    #    by it.
+    with torch.no_grad():
+        out = model.inference.query(model.known_names, evidence=evidence, return_logits=True)
+    cache_act = os.path.join(OUT_DIR, f"known_concept_activations.pt")
+    torch.save(out.probs.cpu(), cache_act)
+    print(f"Saved known concept activations ({tuple(out.probs.shape)}): {cache_act}")
 
+    # 2. Pick top-k from the same query.
+    _, topk_indices = torch.topk(out.logits[0], k=TOPK)
+    topk_names = [model.known_names[i] for i in topk_indices.cpu().tolist()]
+    print(f"Top-{TOPK} known concepts: {topk_names}")
+
+    if MASK_TOPK:
         # 2. Swap the concept head for a top-k-masked wrapper.
         # Evidence injection on individual concepts of a shared CPD is
         # silently ignored by the inference engine, so we mask *inside*
@@ -353,7 +285,7 @@ def main():
     # print(f"Input Jacobian shape: {tuple(input_gradients.shape)}")
 
     # ── 5. Jacobian of concepts w.r.t. input hidden ───────────────
-    cache_in = os.path.join(out_dir, f"concept_gradients_{use_unknown}_{mask_topk}.pt")
+    cache_in = os.path.join(OUT_DIR, f"concept_gradients_{USE_UNKNOWN}_{MASK_TOPK}_{TOPK}.pt")
     if os.path.exists(cache_in):
         print(f"\nLoading cached input gradients from {cache_in}")
         concept_gradients = torch.load(cache_in)
@@ -365,13 +297,13 @@ def main():
             evidence, 
             chunk_size=1,
             progress=True,
-            target_indices=topk_indices if mask_topk is not None else None
+            target_indices=topk_indices
         )
         torch.save(concept_gradients.cpu(), cache_in)
     print(f"Concept Jacobian shape: {tuple(concept_gradients.shape)}")
 
     # ── 6. Jacobian of h_bar w.r.t. input hidden ───────────────────────
-    cache_hbar = os.path.join(out_dir, f"h_bar_gradients_{use_unknown}_{mask_topk}.pt")
+    cache_hbar = os.path.join(OUT_DIR, f"h_bar_gradients_{USE_UNKNOWN}_{MASK_TOPK}_{TOPK}.pt")
     if os.path.exists(cache_hbar):
         print(f"\nLoading cached h_bar gradients from {cache_hbar}")
         h_bar_gradients = torch.load(cache_hbar)
@@ -389,21 +321,10 @@ def main():
         torch.save(h_bar_gradients.cpu(), cache_hbar)
     print(f"h_bar Jacobian shape: {tuple(h_bar_gradients.shape)}")
 
-    # ── 6. Symmetry-II metric ──────────────────────────────────────────
-    # Collapse the Jacobian's intermediate singleton dims so the metric
-    # sees (Batch, InputDim, EmbDim).  _compute_jacobian returns
-    # (*output_shape, *input_shape), which for last-token evidence is
-    # (1, k, 1, EmbDim) — fold the leading dims into InputDim.
-    h_bar_g = h_bar_gradients.reshape(h_bar_gradients.shape[0], -1, h_bar_gradients.shape[-1])
-    concept_g = concept_gradients.reshape(concept_gradients.shape[0], -1, concept_gradients.shape[-1])
-
-    # metric = normalized_gradient_alignment_metric(h_bar_g, concept_g)
-    metric = normalized_gradient_alignment_metric_svd(h_bar_g, concept_g)
-    
-    print(f"\nSymmetry-II metric: {metric.item():.8f}")
-
-    with open(os.path.join(out_dir, "results.csv"), "a") as f:
-        f.write(f"h_bar,{metric.item()}\n")
+    print(
+        f"\nCached Jacobians in {OUT_DIR}/. "
+        "Run analyze_steerling_symmetryII.py to compute metrics and plot spectra."
+    )
 
 
 if __name__ == "__main__":
