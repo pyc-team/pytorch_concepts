@@ -272,6 +272,69 @@ def plot_jacobian_spectra_comparison(
     plt.close(fig)
 
 
+def plot_metric_vs_topk(
+    runs: list[tuple[int, torch.Tensor, torch.Tensor]],
+    *,
+    out_path: str,
+    label: str | None = None,
+    rtol: float | None = None,
+    log_x: bool = False,
+) -> None:
+    """Plot the SVD subspace-alignment metric as a function of ``TOPK``.
+
+    Each entry in ``runs`` is ``(topk, h_bar_g, concepts_g)`` — the
+    Jacobians produced by an experiment run configured with that
+    specific ``TOPK``.  For each entry the function computes the metric
+    once and plots the resulting ``(topk, metric)`` pair.
+
+    Interpretation: if the concept bottleneck is faithful, the metric
+    should stay near zero across all ``TOPK`` values (the masked ``h_bar``
+    subspace is always perfectly recovered by the top-``TOPK`` concept
+    gradients).  Departures from zero signal that some directions of
+    ``∂h_bar/∂input`` are *not* spanned by the concept gradients — either
+    because of numerical noise (small) or because the bottleneck isn't
+    truly rank-``TOPK`` (large).
+
+    Args:
+        runs: List of ``(topk, h_bar_g, concepts_g)`` tuples.  Each
+            ``h_bar_g`` / ``concepts_g`` is already reshaped to
+            ``(Batch=1, InputDim, EmbDim)`` and was computed with the
+            paired ``topk`` masking configuration.
+        out_path: Full path for the saved figure.
+        label: Optional legend label for the curve.
+        rtol: Forwarded to
+            :func:`normalized_gradient_alignment_metric_svd`.
+        log_x: If ``True``, put the x-axis (TOPK) on log scale — useful
+            when sweeping ``TOPK`` over many orders of magnitude
+            (e.g. 1, 2, 4, 8, 16, 32, …).
+    """
+    import matplotlib.pyplot as plt
+
+    runs_sorted = sorted(runs, key=lambda r: r[0])
+    topks: list[int] = []
+    metrics: list[float] = []
+    for topk, h_bar_g, concepts_g in runs_sorted:
+        m, _, _ = normalized_gradient_alignment_metric_svd(
+            h_bar_g, concepts_g, rtol=rtol,
+        )
+        topks.append(topk)
+        metrics.append(m.item())
+
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    plot = ax.semilogx if log_x else ax.plot
+    plot(topks, metrics, marker="o", markersize=5, label=label)
+    ax.set_xlabel("TOPK (size of unmasked concept bottleneck)")
+    ax.set_ylabel("Symmetry-II metric (SVD)")
+    ax.set_title("Metric vs. TOPK across experiment runs")
+    ax.set_ylim(bottom=0.0)
+    ax.grid(True, alpha=0.3, which="both" if log_x else "major")
+    if label is not None:
+        ax.legend()
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _effective_rank(s: torch.Tensor, rtol: float) -> int:
     if s.numel() == 0:
         return 0
@@ -301,7 +364,7 @@ def main():
     # plot and save the jacobian spectra plot.
     out_png = os.path.join(OUT_DIR, f"spectra_h_bar_False_True_16.png")
     s_h_bar_topk = _singular_values(h_bar_g_topk)
-    plot_jacobian_spectrum(s_h_bar_topk, out_path=out_png, label="∇h_bar (masked)", expected_drop=16)
+    plot_jacobian_spectrum(s_h_bar_topk, out_path=out_png, label="∇h_bar (masked)", expected_drop=16, log_x=True)
     print(f"Saved masked-spectrum plot: {out_png}")
 
     # --- 1.1 plot of known concept activation values
@@ -326,7 +389,7 @@ def main():
     # plot and save the jacobian spectra plot.
     out_png = os.path.join(OUT_DIR, f"spectra_h_bar_False_False_16.png")
     s_h_bar_unmasked = _singular_values(h_bar_g)
-    plot_jacobian_spectrum(s_h_bar_unmasked, out_path=out_png, label="∇h_bar (unmasked)")
+    plot_jacobian_spectrum(s_h_bar_unmasked, out_path=out_png, label="∇h_bar (unmasked)", log_x=True)
     print(f"Saved unmasked-spectrum plot: {out_png}")
 
     # --- 3. metric without masking
@@ -335,6 +398,8 @@ def main():
     concepts_g = concepts_g.reshape(concepts_g.shape[0], -1, concepts_g.shape[-1])
     svd_metric_unmasked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g)
     print(f"Symmetry-II metric (SVD) without masking in forward pass (topk = 16): {svd_metric_unmasked.item():.6f}")
+    svd_metric_valid, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g_topk)
+    print(f"Symmetry-II metric (SVD) validation using masked concept Jacobian (should be same as above): {svd_metric_valid.item():.6f}")
 
     # --- 4. Summary: superpose masked and unmasked spectra with metrics
     out_png = os.path.join(OUT_DIR, f"spectra_summary_16.png")
@@ -345,8 +410,37 @@ def main():
         ],
         out_path=out_png,
         expected_drop=16,
+        log_x=True,
     )
     print(f"Saved summary spectra plot: {out_png}")
+
+    # --- 5. Metric vs. TOPK across separate experiment runs.
+    # Each entry below requires the experiment file to have been run with
+    # the corresponding TOPK value (and MASK_TOPK=True, USE_UNKNOWN=False).
+    # Missing caches are skipped with a notice — extend the list as you
+    # run more configurations.
+    runs = []
+    h = h_bar_g
+    for topk in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]:
+        concepts_path = os.path.join(OUT_DIR, f"concept_gradients_False_False_{topk}.pt")
+        if not os.path.exists(concepts_path):
+            print(f"Skipping TOPK={topk}: missing {concepts_path}.")
+            continue
+        c = torch.load(concepts_path)
+        c = c.reshape(c.shape[0], -1, c.shape[-1])
+        runs.append((topk, h, c))
+
+    if runs:
+        out_png = os.path.join(OUT_DIR, "metric_vs_topk.png")
+        plot_metric_vs_topk(
+            runs,
+            out_path=out_png,
+            label="∇h_bar (masked)",
+            log_x=True,
+        )
+        print(f"Saved metric-vs-topk plot: {out_png}")
+    else:
+        print("Skipped metric-vs-topk plot: no qualifying caches found.")
 
 
 if __name__ == "__main__":

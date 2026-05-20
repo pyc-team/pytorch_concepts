@@ -29,7 +29,7 @@ from torch_concepts.steerling import SteerlingMidLevelModel
 # filenames match.
 OUT_DIR = "steerling_experiment"
 USE_UNKNOWN = False # Bool. Whether to use the "unknown" token in the concept bottleneck.
-TOPK = 16           # Int. Number of top concepts to keep when masking the concept head.
+# TOPK = 16           # Int. Number of top concepts to keep when masking the concept head.
 MASK_TOPK = False   # Bool. Whether to mask all but the top-k most attended known concept in the bottleneck. 
 
 
@@ -119,7 +119,7 @@ def _compute_jacobian(
         output_shape = output.shape
         n_out = output.numel()
         rows = []
-        for i in tqdm(range(n_out), desc=f"jacrev[{','.join(query)}]"):
+        for i in tqdm(range(n_out), desc=f"jacrev"):
             cot = torch.zeros(n_out, dtype=output.dtype, device=output.device)
             cot[i] = 1.0
             (grad,) = vjp_fn(cot.reshape(output_shape))
@@ -178,7 +178,7 @@ def _compute_jacobian(
 #     return jacobian.reshape(*last_jv.shape, *input_tensor.shape)
 
 
-def main():
+def main(TOPK: int):
     out_dir = OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     
@@ -224,8 +224,9 @@ def main():
     with torch.no_grad():
         out = model.inference.query(model.known_names, evidence=evidence, return_logits=True)
     cache_act = os.path.join(OUT_DIR, f"known_concept_activations.pt")
-    torch.save(out.probs.cpu(), cache_act)
-    print(f"Saved known concept activations ({tuple(out.probs.shape)}): {cache_act}")
+    if not os.path.exists(cache_act):
+        torch.save(out.probs.cpu(), cache_act)
+        print(f"Saved known concept activations ({tuple(out.probs.shape)}): {cache_act}")
 
     # 2. Pick top-k from the same query.
     _, topk_indices = torch.topk(out.logits[0], k=TOPK)
@@ -302,24 +303,24 @@ def main():
         torch.save(concept_gradients.cpu(), cache_in)
     print(f"Concept Jacobian shape: {tuple(concept_gradients.shape)}")
 
-    # ── 6. Jacobian of h_bar w.r.t. input hidden ───────────────────────
-    cache_hbar = os.path.join(OUT_DIR, f"h_bar_gradients_{USE_UNKNOWN}_{MASK_TOPK}_{TOPK}.pt")
-    if os.path.exists(cache_hbar):
-        print(f"\nLoading cached h_bar gradients from {cache_hbar}")
-        h_bar_gradients = torch.load(cache_hbar)
-    else:
-        print("\nComputing ∂(h_bar) / ∂(input)…")
-        # h_bar has 4096 output dims — chunk_size=1 caps peak memory at one
-        # backward per output row at the cost of more sequential passes.
-        h_bar_gradients = _compute_jacobian(
-            model.inference,
-            ["h_bar"],
-            evidence,
-            chunk_size=1,
-            progress=True
-        )
-        torch.save(h_bar_gradients.cpu(), cache_hbar)
-    print(f"h_bar Jacobian shape: {tuple(h_bar_gradients.shape)}")
+    # # ── 6. Jacobian of h_bar w.r.t. input hidden ───────────────────────
+    # cache_hbar = os.path.join(OUT_DIR, f"h_bar_gradients_{USE_UNKNOWN}_{MASK_TOPK}_{TOPK}.pt")
+    # if os.path.exists(cache_hbar):
+    #     print(f"\nLoading cached h_bar gradients from {cache_hbar}")
+    #     h_bar_gradients = torch.load(cache_hbar)
+    # else:
+    #     print("\nComputing ∂(h_bar) / ∂(input)…")
+    #     # h_bar has 4096 output dims — chunk_size=1 caps peak memory at one
+    #     # backward per output row at the cost of more sequential passes.
+    #     h_bar_gradients = _compute_jacobian(
+    #         model.inference,
+    #         ["h_bar"],
+    #         evidence,
+    #         chunk_size=1,
+    #         progress=True
+    #     )
+    #     torch.save(h_bar_gradients.cpu(), cache_hbar)
+    # print(f"h_bar Jacobian shape: {tuple(h_bar_gradients.shape)}")
 
     print(
         f"\nCached Jacobians in {OUT_DIR}/. "
@@ -328,4 +329,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    topk_values = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]
+    for value in topk_values:
+        print(f"\n\n=== Running with TOPK={value} ===")
+        main(TOPK=value)
