@@ -13,6 +13,17 @@ import pyro.distributions as dist
 from .factor import ParametricFactor
 from .variable import Variable, param_dim
 
+# Expected parameter names per distribution family, used to validate and
+# dispatch per-parameter module dicts.
+_DIST_PARAM_NAMES: Dict[type, List[str]] = {
+    dist.Bernoulli: ["probs"],
+    dist.Categorical: ["probs"],
+    dist.OneHotCategorical: ["probs"],
+    dist.Normal: ["loc", "scale"],
+    dist.MultivariateNormal: ["loc", "scale_tril"],
+    dist.Delta: ["v"],
+}
+
 
 def _infer_out_features(module: nn.Module) -> Optional[int]:
     """Given a PyTorch module, infer its output feature dimension. 
@@ -40,11 +51,9 @@ class ParametricCPD(ParametricFactor):
     """Conditional distribution parameterised by a neural network
     :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
 
-    The wrapped ``nn.Module`` maps the concatenation of parent values to the
-    raw parameter tensor of ``variable.distribution``; bounding activations
-    (sigmoid / softmax / softplus / lower-triangular) are applied automatically.
-    Roots take their tensor value as direct input and emit it via
-    ``pyro.deterministic`` (pass ``nn.Identity()`` for an untransformed root).
+    The wrapped ``nn.Module`` maps parent values, or no arguments for roots,
+    to the raw parameter tensor of ``variable.distribution``; bounding
+    activations are applied automatically.
 
     Passing a list of ``Variable`` instances returns a list of independent CPDs
     sharing the same parent list; ``parametrization`` may be a single module
@@ -54,7 +63,7 @@ class ParametricCPD(ParametricFactor):
     def __new__(
         cls,
         variable: Union[Variable, List[Variable]],
-        parametrization: Union[nn.Module, List[nn.Module]],
+        parametrization: Optional[Union[nn.Module, List[nn.Module]]] = None,
         parents: Optional[List[Variable]] = None,
     ):
         # Single-Variable path: defer to normal __init__.
@@ -83,24 +92,22 @@ class ParametricCPD(ParametricFactor):
                     f"{len(parametrization)} does not match `variable` length {n}."
                 )
             modules = list(parametrization)
-        else:
+        elif parametrization is not None:
             # Single module broadcast: deep-copy once per Variable so each CPD
             # owns an independent parameter set.
             modules = [copy.deepcopy(parametrization) for _ in range(n)]
+        else:
+            modules = [None] * n
 
         return [
-            cls(
-                v,
-                modules[i],
-                parents=list(parents) if parents is not None else None,
-            )
+            cls(v, modules[i], parents=parents)
             for i, v in enumerate(variable)
         ]
 
     def __init__(
         self,
         variable: Variable,
-        parametrization: nn.Module,
+        parametrization: Optional[nn.Module] = None,
         parents: Optional[List[Variable]] = None,
     ):
         super().__init__()
@@ -108,11 +115,45 @@ class ParametricCPD(ParametricFactor):
         # element with a singular Variable, so the list-path is a no-op here.
         if not isinstance(variable, Variable):
             return  # pragma: no cover
-        if parametrization is None or isinstance(parametrization, list) or not isinstance(parametrization, nn.Module):
+        if isinstance(parametrization, list) or (
+            parametrization is not None
+            and not isinstance(parametrization, (nn.Module, dict))
+        ):
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): `parametrization` must "
-                "be a single nn.Module; pass nn.Identity() for an untransformed root."
+                "be an nn.Module, a dict mapping parameter names to nn.Modules, or None."
             )
+        if isinstance(parametrization, dict):
+            expected_keys = set(_DIST_PARAM_NAMES.get(variable.distribution, []))
+            got_keys = set(parametrization.keys())
+            if not got_keys:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): `parametrization` dict "
+                    "must not be empty."
+                )
+            missing = expected_keys - got_keys
+            if missing:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): `parametrization` dict is "
+                    f"missing keys {sorted(missing)} required for "
+                    f"{variable.distribution.__name__}."
+                )
+            extra = got_keys - expected_keys
+            if extra:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): `parametrization` dict has "
+                    f"unexpected keys {sorted(extra)} for "
+                    f"{variable.distribution.__name__}. "
+                    f"Expected: {sorted(expected_keys)}."
+                )
+            for pname, mod in parametrization.items():
+                if not isinstance(mod, nn.Module):
+                    raise TypeError(
+                        f"ParametricCPD({variable.name!r}): "
+                        f"parametrization[{pname!r}] must be an nn.Module, "
+                        f"got {type(mod).__name__}."
+                    )
+            parametrization = nn.ModuleDict(parametrization)
         if parents is not None:
             for p in parents:
                 if not isinstance(p, Variable):
@@ -121,12 +162,18 @@ class ParametricCPD(ParametricFactor):
                         f"must be a Variable, got {type(p).__name__}."
                     )
 
+        if parametrization is None:
+            if parents:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): `parametrization` is "
+                    "required for non-root CPDs."
+                )
+
         self.variable: Variable = variable
-        self.parametrization: nn.Module = parametrization
+        self.parametrization: Optional[nn.Module] = parametrization
         self.parents: List[Variable] = list(parents) if parents else []
 
-        # Check whether the parametrization's output dim matches the variable's distributional parameter count.
-        if self.parents and variable.distribution is not None:
+        if self.parents:
             need = param_dim(variable.distribution, variable.size)
             got = _infer_out_features(self.parametrization)
             if got is not None and got != need:
@@ -178,24 +225,81 @@ class ParametricCPD(ParametricFactor):
             return {"v": raw}
         raise ValueError(f"Unsupported distribution {D!r}")
 
+    # ------------------------------------------------------ per-param activate
+    def _activate_param(self, param_name: str, raw: torch.Tensor) -> torch.Tensor:
+        """Apply the bounding activation for a single named distribution parameter.
+
+        Used by the per-parameter-module path when ``parametrization`` is an
+        ``nn.ModuleDict``.  Each sub-module produces the raw (pre-activation)
+        tensor for its parameter; this method maps it to the bounded value.
+        """
+        D = self.variable.distribution
+        s = self.variable.size
+        if D is dist.Bernoulli:
+            if param_name == "probs":
+                return torch.sigmoid(raw if s > 1 else raw.squeeze(-1))
+        elif D in (dist.Categorical, dist.OneHotCategorical):
+            if param_name == "probs":
+                return torch.softmax(raw, dim=-1)
+        elif D is dist.Normal:
+            if param_name == "loc":
+                return raw.squeeze(-1) if s == 1 else raw
+            if param_name == "scale":
+                raw_ = raw.squeeze(-1) if s == 1 else raw
+                return torch.nn.functional.softplus(raw_) + 1e-6
+        elif D is dist.MultivariateNormal:
+            if param_name == "loc":
+                return raw
+            if param_name == "scale_tril":
+                tril = torch.zeros(
+                    *raw.shape[:-1], s, s, device=raw.device, dtype=raw.dtype
+                )
+                idx = torch.tril_indices(s, s)
+                tril[..., idx[0], idx[1]] = raw
+                diag_idx = torch.arange(s)
+                tril[..., diag_idx, diag_idx] = (
+                    torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
+                )
+                return tril
+        elif D is dist.Delta:
+            if param_name == "v":
+                return raw
+        raise ValueError(
+            f"ParametricCPD._activate_param: unknown parameter {param_name!r} "
+            f"for distribution {D!r}."
+        )
+
     # ------------------------------------------------------------------ fwd
     def forward(
         self,
         evidence_value: Optional[torch.Tensor] = None,
         parent_values: Optional[Dict[str, torch.Tensor]] = None,
     ):
-        """Compute the CPD output.
+        """Compute the CPD output as a dict of distribution parameters.
 
-        For roots, returns ``parametrization(evidence_value)`` as a raw tensor.
-        For non-roots, ``parent_values`` is a ``Dict[str, Tensor]`` keyed by
-        parent name; values are gathered in ``self.parents`` order, concatenated
-        along the last dim, passed through ``parametrization``, and returned as
-        a dict of named distribution parameters (e.g. ``{'probs': ...}`` or
-        ``{'loc': ..., 'scale': ...}``).
+        Root parametrizations are called with no arguments and the raw output
+        is split into the family's named parameter dict by ``_split_params``.
+
+        Non-root CPDs gather parent tensors from ``parent_values`` in
+        ``self.parents`` order, concatenate along the last dim, push through
+        ``parametrization``, and split into the family's parameter dict.
         """
         if self.is_root:
-            assert evidence_value is not None
-            return self.parametrization(evidence_value)
+            if evidence_value is not None:
+                raise ValueError(
+                    f"ParametricCPD({self.variable.name!r}): root CPD "
+                    "does not accept evidence_value; it has no input."
+                )
+            if parent_values is not None and len(parent_values) > 0:
+                raise ValueError(
+                    f"ParametricCPD({self.variable.name!r}): root "
+                    "prior CPD received non-empty parent_values; pass None or {}."
+                )
+            if isinstance(self.parametrization, nn.ModuleDict):
+                raw_params = {pname: mod() for pname, mod in self.parametrization.items()}
+                return {k: self._activate_param(k, v) for k, v in raw_params.items()}
+            raw = self.parametrization()
+            return self._split_params(raw)
 
         assert parent_values is not None, (
             f"ParametricCPD({self.variable.name!r}): non-root forward requires "
@@ -226,5 +330,8 @@ class ParametricCPD(ParametricFactor):
                 p_val = p_val.unsqueeze(-1)
             normed.append(p_val.float() if not p_val.is_floating_point() else p_val)
         cat = torch.cat(normed, dim=-1)
+        if isinstance(self.parametrization, nn.ModuleDict):
+            raw_params = {pname: mod(cat) for pname, mod in self.parametrization.items()}
+            return {k: self._activate_param(k, v) for k, v in raw_params.items()}
         raw = self.parametrization(cat)
         return self._split_params(raw)

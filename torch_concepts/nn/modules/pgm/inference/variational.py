@@ -11,13 +11,13 @@ import torch.nn as nn
 from pyro.nn import PyroModule
 
 from ..models.bayesian_network import BayesianNetwork
-from ..models.variable import ExogenousVariable, Variable, param_dim
+from ..models.variable import Variable, param_dim
 from .base import (
-    InferenceEngine,
+    BaseInference,
     make_temperature_schedule,
     trace_to_params,
 )
-from .result import InferenceOutput
+from .outputs import InferenceOutput
 
 
 # --------------------------------------------------------------------------
@@ -26,11 +26,9 @@ from .result import InferenceOutput
 # Each guide:
 # - takes ``variable`` and ``parent_dim`` at construction time;
 # - builds a 2-layer MLP (hidden=64) producing ``param_dim(distribution, size)``;
-# - on ``forward(data, temperature)``, reads the concatenation of every
-#   ExogenousVariable from ``data`` as its conditioning input, applies the
-#   family-appropriate output bounding, and emits ``pyro.sample(name, q_dist)``
-#   only if ``name`` is not already observed (handled by the engine via
-#   ``poutine.condition``).
+# - on ``forward(x, temperature)``, receives the concatenated conditioning
+#   input for that specific latent (selected by ``_GuideContainer``), applies
+#   the family-appropriate output bounding, and emits ``pyro.sample(name, q_dist)``.
 # --------------------------------------------------------------------------
 
 
@@ -137,24 +135,40 @@ DEFAULT_GUIDES: Dict[Type[dist.Distribution], Type[_BaseGuide]] = {
 
 # --------------------------------------------------------------------------
 class _GuideContainer(PyroModule):
-    """Registers one guide module per latent and, when called, feeds them the
-    concatenation of every exogenous variable from ``data`` as conditioning
-    input."""
+    """Registers one guide module per latent and, when called, feeds each
+    guide the conditioning input declared for it at construction time."""
 
     def __init__(
         self,
         guides: Dict[str, _BaseGuide],
-        exogenous_names: List[str],
+        conditioning: Dict[str, List[str]],  # latent_name -> list of conditioning var names
     ):
         super().__init__()
         self._latent_order: List[str] = list(guides.keys())
-        self._exogenous_names = list(exogenous_names)
+        # Per-latent conditioning variable names (declared order).
+        self._conditioning: Dict[str, List[str]] = conditioning
         for name, g in guides.items():
             setattr(self, f"guide_{name}", g)
 
-    def _conditioning_input(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _conditioning_input(
+        self, data: Dict[str, torch.Tensor], latent_name: str
+    ) -> torch.Tensor:
+        """Concatenate the tensors named in the conditioning list for ``latent_name``.
+        Returns a ``(B, sum_sizes)`` tensor, or ``(B, 0)`` for an unconditional guide.
+        """
+        names = self._conditioning[latent_name]
+        if not names:
+            # Unconditional guide: return a (B, 0) dummy so the MLP still runs.
+            B = next(iter(data.values())).shape[0] if data else 1
+            device = next(iter(data.values())).device if data else torch.device("cpu")
+            return torch.zeros(B, 0, device=device)
         parts = []
-        for n in self._exogenous_names:
+        for n in names:
+            if n not in data:
+                raise ValueError(
+                    f"_GuideContainer: conditioning variable {n!r} for guide "
+                    f"of {latent_name!r} is missing from data."
+                )
             t = data[n]
             if t.dim() == 1:
                 t = t.unsqueeze(-1)
@@ -162,25 +176,28 @@ class _GuideContainer(PyroModule):
         return torch.cat(parts, dim=-1)
 
     def forward(self, data: Dict[str, torch.Tensor], temperature: torch.Tensor):
-        x = self._conditioning_input(data)
         for name in self._latent_order:
+            x = self._conditioning_input(data, name)
             getattr(self, f"guide_{name}")(x, temperature)
         return None
 
 
 # --------------------------------------------------------------------------
-class VariationalInference(InferenceEngine):
+class VariationalInference(BaseInference):
     """Variational inference engine with amortised guides.
 
-    At construction time, builds one guide per name in ``latents`` using
-    ``DEFAULT_GUIDES`` (overridable via ``default_guides``); guides for
-    ``dist.Delta`` latents are skipped. At call time, traces the guide,
-    replays the model under that trace, conditions on ``evidence``, and
-    populates ``InferenceOutput.model_params`` and
-    ``InferenceOutput.guide_params`` with the parameter dicts of every
-    stochastic site. The relaxation temperature follows the ``annealing``
-    schedule (``constant`` / ``exponential`` / ``linear`` / callable); call
-    ``engine.step()`` to advance it.
+    At construction time, auto-detects non-root latent variables and builds one guide
+    per latent using ``DEFAULT_GUIDES`` (overridable via ``default_guides``).
+    The conditioning input for each guide is declared via ``condition_on``:
+
+    - ``None``: condition every latent on root variables (raises if none).
+    - ``List[str]``: apply the same list to every latent.
+    - ``Dict[str, List[str]]``: per-latent, keys must equal the latent set.
+
+    At call time, traces the guide, replays the model under that trace,
+    conditions on evidence, and populates ``InferenceOutput.params`` and
+    ``InferenceOutput.guide_params``. The relaxation temperature follows the
+    ``annealing`` schedule; call ``engine.step()`` to advance it.
     """
 
     name = "VariationalInference"
@@ -188,7 +205,7 @@ class VariationalInference(InferenceEngine):
     def __init__(
         self,
         pgm: BayesianNetwork,
-        latents: List[str],
+        condition_on: Optional[Union[List[str], Dict[str, List[str]]]] = None,
         default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
         n_samples: int = 1,
         max_plate_nesting: int = 0,
@@ -202,33 +219,56 @@ class VariationalInference(InferenceEngine):
         if default_guides is not None:
             merged.update(default_guides)
 
-        # Conditioning input: all exogenous variables (always in evidence).
-        exog_names = [
-            v.name for v in pgm.variables if isinstance(v, ExogenousVariable)
-        ]
-        if not exog_names:
-            raise ValueError(
-                f"{self.name}: at least one ExogenousVariable is required to "
-                "supply the guides' conditioning input."
-            )
-        # Compute parent_dim = sum of exogenous variable sizes.
-        parent_dim = sum(pgm.name_to_variable[n].size for n in exog_names)
+        latents = [v.name for v in pgm.variables if not pgm.factors[v.name].is_root]
+        latent_set = set(latents)
 
+        # Resolve condition_on to Dict[latent_name, List[str]].
+        if condition_on is None:
+            roots = [v.name for v in pgm.variables if pgm.factors[v.name].is_root]
+            if not roots:
+                raise ValueError(
+                    f"{self.name}: no condition_on provided and no "
+                    "root variables exist; cannot build guides."
+                )
+            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latents}
+        elif isinstance(condition_on, list):
+            conditioning = {lat: list(condition_on) for lat in latents}
+        elif isinstance(condition_on, dict):
+            expected_keys = set(latents)
+            got_keys = set(condition_on.keys())
+            missing = expected_keys - got_keys
+            extra = got_keys - expected_keys
+            if missing or extra:
+                raise ValueError(
+                    f"{self.name}: condition_on dict keys do not match latent set. "
+                    f"Missing: {sorted(missing)}, Extra: {sorted(extra)}."
+                )
+            conditioning = {k: list(v) for k, v in condition_on.items()}
+        else:
+            raise TypeError(
+                f"{self.name}: condition_on must be None, a list, or a dict, "
+                f"got {type(condition_on).__name__}."
+            )
+
+        # Validate each conditioning list: names must exist and must not be latents.
+        for latent_name, cond_names in conditioning.items():
+            for cname in cond_names:
+                if cname not in pgm.name_to_variable:
+                    raise ValueError(
+                        f"{self.name}: conditioning name {cname!r} for guide of "
+                        f"{latent_name!r} is not a variable of the PGM."
+                    )
+                if cname in latent_set:
+                    raise ValueError(
+                        f"Guide for {latent_name!r} cannot condition on "
+                        f"latent variable {cname!r}."
+                    )
+
+        # Build one guide per latent with its own parent_dim.
         guides: Dict[str, _BaseGuide] = {}
         for name in latents:
-            if name not in pgm.name_to_variable:
-                raise ValueError(
-                    f"{self.name}: latent {name!r} is not a variable of the PGM."
-                )
             v = pgm.name_to_variable[name]
-            if v.distribution is dist.Delta:
-                # Delta latents are degenerate (point masses): no guide needed.
-                continue
-            if v.distribution is None:
-                raise ValueError(
-                    f"{self.name}: latent {name!r} has distribution=None; "
-                    "specify the distribution."
-                )
+            # Latents are non-Delta (filtered above); no extra guard needed.
             cls = merged.get(v.distribution)
             if cls is None:
                 raise ValueError(
@@ -236,10 +276,13 @@ class VariationalInference(InferenceEngine):
                     f"distribution {v.distribution!r}. Pass `default_guides=` "
                     "with an entry for this family."
                 )
+            parent_dim = sum(
+                pgm.name_to_variable[n].size for n in conditioning[name]
+            )
             guides[name] = cls(variable=v, parent_dim=parent_dim)
 
-        self.latents: List[str] = list(latents)
-        self.guide: _GuideContainer = _GuideContainer(guides, exog_names)
+        self.latents: List[str] = latents
+        self.guide: _GuideContainer = _GuideContainer(guides, conditioning)
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
         self._schedule = make_temperature_schedule(
@@ -264,20 +307,23 @@ class VariationalInference(InferenceEngine):
     # ------------------------------------------------------------------
     def _run(
         self,
-        query: List[str],
-        evidence: List[str],
-        data: Dict[str, torch.Tensor],
+        query: Dict[str, Optional[torch.Tensor]],
+        evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
-        # Build the model-side observation dict from evidence only.
-        obs_data = {k: data[k] for k in evidence}
+        # data = evidence + any non-None query values (used to condition the guide).
+        data = dict(evidence)
+        for name, val in query.items():
+            if val is not None:
+                data[name] = val
+
+        batch_size = next(iter(evidence.values())).shape[0] if evidence else None
 
         guide_fn = lambda: self.guide(data, self.temperature)
         guide_tr = poutine.trace(guide_fn).get_trace()
         replayed = poutine.replay(self.pgm, trace=guide_tr)
-        model_tr = poutine.trace(replayed).get_trace(obs_data)
+        model_tr = poutine.trace(replayed).get_trace(evidence, batch_size=batch_size)
 
-        out = InferenceOutput(
-            model_params=trace_to_params(model_tr),
+        return InferenceOutput(
+            params=trace_to_params(model_tr),
             guide_params=trace_to_params(guide_tr),
         )
-        return out

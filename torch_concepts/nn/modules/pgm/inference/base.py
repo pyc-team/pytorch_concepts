@@ -10,11 +10,10 @@ import torch
 from pyro.nn import PyroModule
 
 from ..models.bayesian_network import BayesianNetwork
-from ..models.variable import ExogenousVariable
-from .result import InferenceOutput, ParamDict
+from .outputs import InferenceOutput, ParamDict
 
 
-# Canonical parameter names emitted in InferenceOutput.model_params /
+# Canonical parameter names emitted in InferenceOutput.params /
 # InferenceOutput.guide_params, keyed by distribution family.
 _PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
     dist.Bernoulli: ("probs",),
@@ -110,66 +109,88 @@ def make_temperature_schedule(
 
 
 # -----------------------------------------------------------------------------
-class InferenceEngine(PyroModule):
+class BaseInference(PyroModule):
     """Base class for all inference engines.
 
-    Calling ``engine(query, evidence, data)`` validates that ``query`` and
-    ``evidence`` reference known variables, that ``evidence`` is a subset of
-    ``data.keys()``, and that every ``ExogenousVariable`` of the PGM is
-    listed in ``evidence``; it then dispatches to the subclass-specific
-    ``_run`` and returns an ``InferenceOutput``.
+    ``query`` and ``evidence`` are attribute-style containers keyed by PGM
+    variable name. ``__call__`` delegates to ``query``.
     """
 
-    name: str = "InferenceEngine"
+    name: str = "BaseInference"
 
     def __init__(self, pgm: BayesianNetwork):
         super().__init__()
         self.pgm = pgm
 
-    def _validate(
+    def _validate_containers(
         self,
-        query: List[str],
-        evidence: List[str],
-        data: Dict[str, torch.Tensor],
+        query: Dict[str, Optional[torch.Tensor]],
+        evidence: Dict[str, torch.Tensor],
     ) -> None:
         all_names = set(self.pgm.name_to_variable.keys())
-        unknown_q = set(query) - all_names
+        unknown_q = set(query.keys()) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")
-        unknown_e = set(evidence) - all_names
+        unknown_e = set(evidence.keys()) - all_names
         if unknown_e:
             raise ValueError(f"{self.name}: unknown evidence names {sorted(unknown_e)}.")
-        unknown_d = set(data.keys()) - all_names
-        if unknown_d:
-            raise ValueError(f"{self.name}: unknown data keys {sorted(unknown_d)}.")
 
-        missing = set(evidence) - set(data.keys())
-        if missing:
-            raise ValueError(
-                f"{self.name}: every evidence variable must appear in `data`. "
-                f"Missing: {sorted(missing)}."
-            )
-
-        for v in self.pgm.variables:
-            if isinstance(v, ExogenousVariable) and v.name not in evidence:
+        for name, val in evidence.items():
+            if not isinstance(val, torch.Tensor):
                 raise ValueError(
-                    f"{self.name}: ExogenousVariable {v.name!r} must appear "
-                    "in `evidence` (and therefore in `data`)."
+                    f"{self.name}: evidence[{name!r}] must be a Tensor, "
+                    f"got {type(val).__name__}."
                 )
+
+        if not query and not evidence:
+            raise ValueError("nothing to do")
+
+        all_tensors = {name: val for name, val in query.items() if val is not None}
+        all_tensors.update(evidence)
+        batch_sizes = {name: t.shape[0] for name, t in all_tensors.items()}
+        if len(set(batch_sizes.values())) > 1:
+            shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
+            raise ValueError(f"{self.name}: mismatched batch sizes {shapes}.")
+
+    def query(
+        self,
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
+        evidence: Dict[str, torch.Tensor],
+    ) -> InferenceOutput:
+        if isinstance(query, list):
+            query = {name: None for name in query}
+        self._validate_containers(query, evidence)
+        out = self._run(query, evidence)
+
+        named_values = {name: val for name, val in query.items() if val is not None}
+        if named_values:
+            from .forward import _align_gt, _propagated_value
+
+            log_probability = 0.0
+            for name, value in named_values.items():
+                variable = self.pgm.name_to_variable[name]
+                distribution = variable.distribution(**out.params[name])
+                point = _propagated_value(variable.distribution, out.params[name])
+                site_log_probability = distribution.log_prob(_align_gt(value, point))
+                while site_log_probability.dim() > 1:
+                    site_log_probability = site_log_probability.sum(dim=-1)
+                log_probability = log_probability + site_log_probability
+            out.probabilities = log_probability.exp()
+        return out
 
     def __call__(
         self,
-        query: List[str],
-        evidence: List[str],
-        data: Dict[str, torch.Tensor],
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
+        evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
-        self._validate(list(query), list(evidence), data)
-        return self._run(list(query), list(evidence), data)
+        return self.query(query=query, evidence=evidence)
 
     def _run(
         self,
-        query: List[str],
-        evidence: List[str],
-        data: Dict[str, torch.Tensor],
+        query: Dict[str, Optional[torch.Tensor]],
+        evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
         raise NotImplementedError
+
+
+InferenceEngine = BaseInference

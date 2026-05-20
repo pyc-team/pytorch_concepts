@@ -1,5 +1,6 @@
-from .result import InferenceOutput, InferenceResult, ParamDict
-from .base import InferenceEngine, dist_to_params, make_temperature_schedule
+from .outputs import InferenceOutput, ParamDict
+from .base import BaseInference, InferenceEngine, dist_to_params, make_temperature_schedule
+from .forward import ForwardInference
 from .deterministic import DeterministicInference
 from .ancestral import AncestralInference
 from .variational import (
@@ -13,9 +14,11 @@ from .variational import (
 
 __all__ = [
     "InferenceOutput",
-    "InferenceResult",
     "ParamDict",
+    "VariableEvidenceContainer",
+    "BaseInference",
     "InferenceEngine",
+    "ForwardInference",
     "DeterministicInference",
     "AncestralInference",
     "VariationalInference",

@@ -1,7 +1,7 @@
 from .variable import (
     ConceptVariable,
     EndogenousVariable,
-    ExogenousVariable,
+    OpaqueVariable,
     Variable,
     param_dim,
 )
@@ -12,7 +12,7 @@ from .bayesian_network import BayesianNetwork, ProbabilisticModel
 __all__ = [
     "Variable",
     "ConceptVariable",
-    "ExogenousVariable",
+    "OpaqueVariable",
     "EndogenousVariable",
     "param_dim",
     "ParametricFactor",

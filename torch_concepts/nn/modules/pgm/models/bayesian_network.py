@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -22,9 +22,7 @@ class BayesianNetwork(PyroModule):
     Validates the structure (one factor per variable, no duplicate names,
     every parent reference resolves, DAG only), runs a topological sort,
     and exposes itself as a Pyro stochastic function: calling ``pgm(data)``
-    emits one ``pyro.sample`` site per non-root variable (with
-    ``obs=data[name]`` for variables present in ``data``) and one
-    ``pyro.deterministic`` site per root.
+    emits one ``pyro.sample`` site per variable.
     """
 
     def __init__(
@@ -65,17 +63,6 @@ class BayesianNetwork(PyroModule):
         # Validate parent references against the variables table and dedup.
         self._validate_graph()
 
-        # Validate: distribution=None is only allowed for roots.
-        for v in self.variables:
-            if (
-                v.distribution is None
-                and not self.factors[v.name].is_root
-            ):
-                raise ValueError(
-                    f"Variable {v.name!r}: distribution=None is only allowed "
-                    "for root nodes. Use dist.Delta for deterministic non-root "
-                    "variables."
-                )
 
         # ---- topological order ---------------------------------------------
         self.sorted_variables: List[Variable] = self._topological_sort()
@@ -163,29 +150,48 @@ class BayesianNetwork(PyroModule):
         return D(**params, **var.dist_kwargs)
 
     # ----------------------------------------------------------- forward
-    def forward(self, data: Dict[str, torch.Tensor]):
+    def forward(self, data: Dict[str, torch.Tensor], batch_size: Optional[int] = None):
         """Run the PGM as a Pyro stochastic function.
 
-        Iterates variables in topological order; for each non-root variable,
-        evaluates its CPD on cached parent values and registers a
-        ``pyro.sample`` site with ``obs=data[name]`` if ``name`` is in
-        ``data`` and ``None`` otherwise. Roots must appear in ``data`` and
-        are recorded as ``pyro.deterministic`` sites. Returns a dict mapping
-        every variable name to its propagated value.
+        Iterates variables in topological order. Every variable is emitted as a
+        ``pyro.sample`` site; three flat branches dispatch on the variable's
+        role:
+
+                * **Root**: ``parametrization()`` is called with no arguments; the
+                    resulting unbatched params are broadcast to ``(B, ...)`` and
+                    ``obs=data.get(name)`` is passed when available.
+        * **Non-root**: parent values are gathered from the cache (or from
+          ``data`` as a fallback for variables not yet visited because they are
+          provided as evidence), pushed through the CPD, and emitted with
+          ``obs=data.get(name)``.
+
+        The batch dimension ``B`` is taken from the first tensor in ``data``
+        when non-empty, otherwise from the ``batch_size`` argument. Raises
+        ``ValueError`` if neither is available.
         """
+        # Resolve batch size.
+        if data:
+            B = next(iter(data.values())).shape[0]
+        elif batch_size is not None:
+            B = batch_size
+        else:
+            raise ValueError(
+                "Cannot infer batch dimension: data is empty and "
+                "batch_size was not provided."
+            )
+
         cache: Dict[str, torch.Tensor] = {}
         for var in self.sorted_variables:
             name = var.name
             f: ParametricCPD = self.factors[name]
+
+            # --- 1. Build the parameter dict for this variable's distribution.
             if f.is_root:
-                if name not in data:
-                    raise ValueError(
-                        f"BayesianNetwork.forward: root variable {name!r} "
-                        "must appear in data."
-                    )
-                value = f(evidence_value=data[name])
-                pyro.deterministic(name, value, event_dim=1)
-                cache[name] = value
+                params = f(parent_values={})
+                params = {
+                    k: v.unsqueeze(0).expand(B, *v.shape)
+                    for k, v in params.items()
+                }
             else:
                 parent_values: Dict[str, torch.Tensor] = {}
                 for p in f.parents:
@@ -196,13 +202,15 @@ class BayesianNetwork(PyroModule):
                     else:
                         raise ValueError(
                             f"forward: parent {p.name!r} of {name!r} is "
-                            "neither cached nor in data — graph order issue."
+                            "neither cached nor in data."
                         )
                 params = f(parent_values=parent_values)
-                d = self._build_distribution(var, params)
-                obs = data.get(name, None)
-                value = pyro.sample(name, d, obs=obs)
-                cache[name] = value
+
+            # --- 2. Sample.
+            d = self._build_distribution(var, params)
+            obs = data.get(name, None)
+            value = pyro.sample(name, d, obs=obs)
+            cache[name] = value
         return cache
 
 
