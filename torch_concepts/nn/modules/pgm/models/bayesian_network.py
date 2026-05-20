@@ -154,12 +154,12 @@ class BayesianNetwork(PyroModule):
         """Run the PGM as a Pyro stochastic function.
 
         Iterates variables in topological order. Every variable is emitted as a
-        ``pyro.sample`` site; three flat branches dispatch on the variable's
+        ``pyro.sample`` site; two flat branches dispatch on the variable's
         role:
 
-                * **Root**: ``parametrization()`` is called with no arguments; the
-                    resulting unbatched params are broadcast to ``(B, ...)`` and
-                    ``obs=data.get(name)`` is passed when available.
+        * **Root**: ``parametrization()`` is called with no arguments; the
+            resulting unbatched params are broadcast to ``(B, ...)`` and
+            ``obs=data.get(name)`` is passed when available.
         * **Non-root**: parent values are gathered from the cache (or from
           ``data`` as a fallback for variables not yet visited because they are
           provided as evidence), pushed through the CPD, and emitted with
@@ -181,36 +181,41 @@ class BayesianNetwork(PyroModule):
             )
 
         cache: Dict[str, torch.Tensor] = {}
-        for var in self.sorted_variables:
-            name = var.name
-            f: ParametricCPD = self.factors[name]
+        
+        # dim=-1 is correct even though your tensor batch axis is 0, 
+        # because Pyro plate dims refer to distribution batch dimensions from the right, 
+        # while event dimensions remain on the trailing tensor axes.
+        with pyro.plate("batch", B, dim=-1): 
+            for var in self.sorted_variables:
+                name = var.name
+                f: ParametricCPD = self.factors[name]
 
-            # --- 1. Build the parameter dict for this variable's distribution.
-            if f.is_root:
-                params = f(parent_values={})
-                params = {
-                    k: v.unsqueeze(0).expand(B, *v.shape)
-                    for k, v in params.items()
-                }
-            else:
-                parent_values: Dict[str, torch.Tensor] = {}
-                for p in f.parents:
-                    if p.name in cache:
-                        parent_values[p.name] = cache[p.name]
-                    elif p.name in data:
-                        parent_values[p.name] = data[p.name]
-                    else:
-                        raise ValueError(
-                            f"forward: parent {p.name!r} of {name!r} is "
-                            "neither cached nor in data."
-                        )
-                params = f(parent_values=parent_values)
+                # --- 1. Build the parameter dict for this variable's distribution.
+                if f.is_root:
+                    params = f(parent_values={})
+                    params = {
+                        k: v.unsqueeze(0).expand(B, *v.shape)
+                        for k, v in params.items()
+                    }
+                else:
+                    parent_values: Dict[str, torch.Tensor] = {}
+                    for p in f.parents:
+                        if p.name in cache:
+                            parent_values[p.name] = cache[p.name]
+                        elif p.name in data:
+                            parent_values[p.name] = data[p.name]
+                        else:
+                            raise ValueError(
+                                f"forward: parent {p.name!r} of {name!r} is "
+                                "neither cached nor in data."
+                            )
+                    params = f(parent_values=parent_values)
 
-            # --- 2. Sample.
-            d = self._build_distribution(var, params)
-            obs = data.get(name, None)
-            value = pyro.sample(name, d, obs=obs)
-            cache[name] = value
+                # --- 2. Sample.
+                d = self._build_distribution(var, params)
+                obs = data.get(name, None)
+                value = pyro.sample(name, d, obs=obs)
+                cache[name] = value
         return cache
 
 

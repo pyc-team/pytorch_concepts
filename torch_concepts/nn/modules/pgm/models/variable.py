@@ -45,7 +45,7 @@ def _broadcast(value, n: int, name: str):
 class Variable:
     """Random variable.
 
-    Holds the node name (``name``), its distribution family, its event size,
+    Holds the node name (``name``), its distribution family (``distribution``), its dimensionality (``size``),
     and any extra distribution kwargs. Does not own parameters and is not a
     Pyro primitive — it is consumed by ``ParametricCPD`` and
     ``ProbabilisticModel`` to build the actual stochastic function.

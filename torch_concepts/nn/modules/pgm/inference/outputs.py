@@ -25,12 +25,11 @@ class InferenceOutput:
     ----------
     params : dict[str, dict[str, Tensor]]
         Per-variable named parameter tensors of the model-side distribution
-        (e.g. ``{'c': {'probs': ...}}``). Populated for every queried variable.
+        (e.g. ``{'c': {'probs': ...}}``). 
     guide_params : dict[str, dict[str, Tensor]]
         Per-latent named parameter tensors of the variational guide.
-        Populated only by ``VariationalInference``.
     samples : dict[str, Tensor]
-        Per-variable sampled values. Populated only by ``AncestralInference``.
+        Per-variable sampled values.
     probabilities : Tensor or None
         Joint conditional probabilities for a fully realised query batch.
     """

@@ -12,17 +12,20 @@ from .outputs import InferenceOutput
 
 
 def _bern_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Reparameterised sample from a Bernoulli via straight-through relaxation."""
     probs = params["probs"]
     logits = torch.log(probs.clamp(min=1e-8)) - torch.log((1.0 - probs).clamp(min=1e-8))
     return dist.RelaxedBernoulliStraightThrough(temperature=temperature, logits=logits).rsample()
 
 
 def _ohc_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Reparameterised sample from a OneHotCategorical via straight-through relaxation."""
     logits = torch.log(params["probs"].clamp(min=1e-8))
     return dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, logits=logits).rsample()
 
 
 def _cat_sampler_or_reject(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Always raises: plain Categorical cannot be ancestrally sampled; use OneHotCategorical."""
     raise ValueError(
         "AncestralInference: plain Categorical is rejected as the prior of "
         "an unobserved variable. Declare the variable as OneHotCategorical."
@@ -30,14 +33,17 @@ def _cat_sampler_or_reject(params: Dict[str, torch.Tensor], temperature: torch.T
 
 
 def _normal_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Reparameterised sample from a Normal distribution."""
     return dist.Normal(**params).rsample()
 
 
 def _mvn_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Reparameterised sample from a MultivariateNormal distribution."""
     return dist.MultivariateNormal(**params).rsample()
 
 
 def _delta_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
+    """Delta 'sample': returns the deterministic value v unchanged."""
     return params["v"]
 
 
@@ -52,6 +58,7 @@ _DIST_OPS = {
 
 
 def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Return the primary parameter tensor used as the deterministic propagated value."""
     try:
         param_name, _ = _DIST_OPS[distribution]
     except KeyError as exc:
@@ -64,6 +71,7 @@ def _sample_from(
     params: Dict[str, torch.Tensor],
     temperature: torch.Tensor,
 ) -> torch.Tensor:
+    """Dispatch to the family-specific sampler for the given variable."""
     try:
         _, sampler = _DIST_OPS[variable.distribution]
     except KeyError as exc:
@@ -72,6 +80,7 @@ def _sample_from(
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    """Cast and reshape ground-truth tensor to match the dtype and shape of ref."""
     aligned = gt.to(ref.dtype) if gt.dtype != ref.dtype else gt
     if aligned.shape != ref.shape:
         if aligned.dim() == ref.dim() + 1 and aligned.shape[-1] == 1:
@@ -82,6 +91,7 @@ def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
 
 
 def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> torch.Tensor:
+    """Stochastically replace nn_value with ground truth at rate p_int."""
     aligned = _align_gt(gt, nn_value)
     if p_int >= 1.0:
         return aligned
@@ -122,11 +132,13 @@ class ForwardInference(BaseInference):
         if self.mode == "ancestral":
             self._step += 1
 
-    def _run(
+    def query(
         self,
-        query: Dict[str, Optional[torch.Tensor]],
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
+        query = self._normalize_query(query)
+        self._validate_containers(query, evidence)
         all_tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
         batch_size = all_tensors[0].shape[0] if all_tensors else 1
         out = InferenceOutput()

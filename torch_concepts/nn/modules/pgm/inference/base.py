@@ -152,31 +152,13 @@ class BaseInference(PyroModule):
             shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
             raise ValueError(f"{self.name}: mismatched batch sizes {shapes}.")
 
-    def query(
-        self,
+    @staticmethod
+    def _normalize_query(
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
-        evidence: Dict[str, torch.Tensor],
-    ) -> InferenceOutput:
+    ) -> Dict[str, Optional[torch.Tensor]]:
         if isinstance(query, list):
-            query = {name: None for name in query}
-        self._validate_containers(query, evidence)
-        out = self._run(query, evidence)
-
-        named_values = {name: val for name, val in query.items() if val is not None}
-        if named_values:
-            from .forward import _align_gt, _propagated_value
-
-            log_probability = 0.0
-            for name, value in named_values.items():
-                variable = self.pgm.name_to_variable[name]
-                distribution = variable.distribution(**out.params[name])
-                point = _propagated_value(variable.distribution, out.params[name])
-                site_log_probability = distribution.log_prob(_align_gt(value, point))
-                while site_log_probability.dim() > 1:
-                    site_log_probability = site_log_probability.sum(dim=-1)
-                log_probability = log_probability + site_log_probability
-            out.probabilities = log_probability.exp()
-        return out
+            return {name: None for name in query}
+        return query
 
     def __call__(
         self,
@@ -184,13 +166,6 @@ class BaseInference(PyroModule):
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
         return self.query(query=query, evidence=evidence)
-
-    def _run(
-        self,
-        query: Dict[str, Optional[torch.Tensor]],
-        evidence: Dict[str, torch.Tensor],
-    ) -> InferenceOutput:
-        raise NotImplementedError
 
 
 InferenceEngine = BaseInference

@@ -176,9 +176,11 @@ class _GuideContainer(PyroModule):
         return torch.cat(parts, dim=-1)
 
     def forward(self, data: Dict[str, torch.Tensor], temperature: torch.Tensor):
-        for name in self._latent_order:
-            x = self._conditioning_input(data, name)
-            getattr(self, f"guide_{name}")(x, temperature)
+        B = next(iter(data.values())).shape[0] if data else 1
+        with pyro.plate("batch", B, dim=-1):
+            for name in self._latent_order:
+                x = self._conditioning_input(data, name)
+                getattr(self, f"guide_{name}")(x, temperature)
         return None
 
 
@@ -208,7 +210,7 @@ class VariationalInference(BaseInference):
         condition_on: Optional[Union[List[str], Dict[str, List[str]]]] = None,
         default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
         n_samples: int = 1,
-        max_plate_nesting: int = 0,
+        max_plate_nesting: int = 1,
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
@@ -301,15 +303,17 @@ class VariationalInference(BaseInference):
     def guide_fn(self, data: Dict[str, torch.Tensor]):
         """Plain Pyro-compatible guide callable bound to the engine's current
         temperature. Pass this directly to ``pyro.infer.Trace_ELBO`` (or any
-        other Pyro inference object) when bypassing the engine's ``_run``."""
+        other Pyro inference object) when bypassing the engine's ``query``."""
         return self.guide(data, self.temperature)
 
     # ------------------------------------------------------------------
-    def _run(
+    def query(
         self,
-        query: Dict[str, Optional[torch.Tensor]],
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
+        query = self._normalize_query(query)
+        self._validate_containers(query, evidence)
         # data = evidence + any non-None query values (used to condition the guide).
         data = dict(evidence)
         for name, val in query.items():

@@ -107,7 +107,7 @@ class ParametricCPD(ParametricFactor):
     def __init__(
         self,
         variable: Variable,
-        parametrization: Optional[nn.Module] = None,
+        parametrization: Optional[Union[nn.Module, Dict[str, nn.Module]]] = None,
         parents: Optional[List[Variable]] = None,
     ):
         super().__init__()
@@ -190,40 +190,23 @@ class ParametricCPD(ParametricFactor):
 
     # ------------------------------------------------------------------ split
     def _split_params(self, raw: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Map the raw network output to a named-parameter dict for the variable's
-        distribution, applying the appropriate bounding activation
-        (sigmoid for ``Bernoulli``, softmax for categorical families,
-        softplus on the scale for ``Normal``/``MultivariateNormal``, identity
-        for ``Delta``)."""
-        v = self.variable
-        D = v.distribution
-        s = v.size
+        """Split the raw network output into per-parameter chunks, then activate
+        each chunk via ``_activate_param``.  Activation logic lives only there."""
+        D = self.variable.distribution
+        s = self.variable.size
         if D is dist.Bernoulli:
-            probs = torch.sigmoid(raw if s > 1 else raw.squeeze(-1))
-            return {"probs": probs}
-        if D in (dist.Categorical, dist.OneHotCategorical):
-            return {"probs": torch.softmax(raw, dim=-1)}
-        if D is dist.Normal:
-            loc, scale = raw[..., :s], raw[..., s:]
-            if s == 1:
-                loc = loc.squeeze(-1)
-                scale = scale.squeeze(-1)
-            return {"loc": loc, "scale": torch.nn.functional.softplus(scale) + 1e-6}
-        if D is dist.MultivariateNormal:
-            loc = raw[..., :s]
-            tril_flat = raw[..., s:]
-            tril = torch.zeros(*raw.shape[:-1], s, s, device=raw.device, dtype=raw.dtype)
-            idx = torch.tril_indices(s, s)
-            tril[..., idx[0], idx[1]] = tril_flat
-            diag_idx = torch.arange(s)
-            tril[..., diag_idx, diag_idx] = (
-                torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
-            )
-            return {"loc": loc, "scale_tril": tril}
-        if D is dist.Delta:
-            # Sampling is identity; no bounding activation.
-            return {"v": raw}
-        raise ValueError(f"Unsupported distribution {D!r}")
+            chunks = {"probs": raw}
+        elif D in (dist.Categorical, dist.OneHotCategorical):
+            chunks = {"probs": raw}
+        elif D is dist.Normal:
+            chunks = {"loc": raw[..., :s], "scale": raw[..., s:]}
+        elif D is dist.MultivariateNormal:
+            chunks = {"loc": raw[..., :s], "scale_tril": raw[..., s:]}
+        elif D is dist.Delta:
+            chunks = {"v": raw}
+        else:
+            raise ValueError(f"Unsupported distribution {D!r}")
+        return {k: self._activate_param(k, v) for k, v in chunks.items()}
 
     # ------------------------------------------------------ per-param activate
     def _activate_param(self, param_name: str, raw: torch.Tensor) -> torch.Tensor:
@@ -272,7 +255,6 @@ class ParametricCPD(ParametricFactor):
     # ------------------------------------------------------------------ fwd
     def forward(
         self,
-        evidence_value: Optional[torch.Tensor] = None,
         parent_values: Optional[Dict[str, torch.Tensor]] = None,
     ):
         """Compute the CPD output as a dict of distribution parameters.
@@ -285,11 +267,6 @@ class ParametricCPD(ParametricFactor):
         ``parametrization``, and split into the family's parameter dict.
         """
         if self.is_root:
-            if evidence_value is not None:
-                raise ValueError(
-                    f"ParametricCPD({self.variable.name!r}): root CPD "
-                    "does not accept evidence_value; it has no input."
-                )
             if parent_values is not None and len(parent_values) > 0:
                 raise ValueError(
                     f"ParametricCPD({self.variable.name!r}): root "
