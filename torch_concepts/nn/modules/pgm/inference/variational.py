@@ -188,13 +188,19 @@ class _GuideContainer(PyroModule):
 class VariationalInference(BaseInference):
     """Variational inference engine with amortised guides.
 
-    At construction time, auto-detects non-root latent variables and builds one guide
-    per latent using ``DEFAULT_GUIDES`` (overridable via ``default_guides``).
-    The conditioning input for each guide is declared via ``condition_on``:
+    At construction time, builds one amortised guide per variable declared in
+    ``latents`` using ``DEFAULT_GUIDES`` (overridable via ``default_guides``).
+    ``latents`` specifies both *which* variables are latent and how each guide
+    is conditioned:
 
-    - ``None``: condition every latent on root variables (raises if none).
-    - ``List[str]``: apply the same list to every latent.
-    - ``Dict[str, List[str]]``: per-latent, keys must equal the latent set.
+    - ``List[str]``: treat these variables as latent; every guide is
+      conditioned on all root variables of the PGM (raises if no roots exist).
+    - ``Dict[str, List[str]]``: maps each latent variable name to the list of
+      (non-latent) PGM variables its guide conditions on.
+
+    All parameters — both model CPDs and guide MLPs — are registered as
+    submodules of this engine. Pass ``vi.parameters()`` to your optimiser to
+    collect them all at once.
 
     At call time, traces the guide, replays the model under that trace,
     conditions on evidence, and populates ``InferenceOutput.params`` and
@@ -207,7 +213,7 @@ class VariationalInference(BaseInference):
     def __init__(
         self,
         pgm: BayesianNetwork,
-        condition_on: Optional[Union[List[str], Dict[str, List[str]]]] = None,
+        latents: Union[List[str], Dict[str, List[str]]],
         default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
         n_samples: int = 1,
         max_plate_nesting: int = 1,
@@ -221,56 +227,54 @@ class VariationalInference(BaseInference):
         if default_guides is not None:
             merged.update(default_guides)
 
-        latents = [v.name for v in pgm.variables if not pgm.factors[v.name].is_root]
-        latent_set = set(latents)
+        all_var_names = set(pgm.name_to_variable.keys())
 
-        # Resolve condition_on to Dict[latent_name, List[str]].
-        if condition_on is None:
+        # Resolve latents → (latent_list, conditioning).
+        if isinstance(latents, list):
+            latent_list: List[str] = list(latents)
             roots = [v.name for v in pgm.variables if pgm.factors[v.name].is_root]
             if not roots:
                 raise ValueError(
-                    f"{self.name}: no condition_on provided and no "
-                    "root variables exist; cannot build guides."
+                    f"{self.name}: no root variables found; cannot condition guides "
+                    "automatically. Pass a dict to specify conditioning explicitly."
                 )
-            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latents}
-        elif isinstance(condition_on, list):
-            conditioning = {lat: list(condition_on) for lat in latents}
-        elif isinstance(condition_on, dict):
-            expected_keys = set(latents)
-            got_keys = set(condition_on.keys())
-            missing = expected_keys - got_keys
-            extra = got_keys - expected_keys
-            if missing or extra:
-                raise ValueError(
-                    f"{self.name}: condition_on dict keys do not match latent set. "
-                    f"Missing: {sorted(missing)}, Extra: {sorted(extra)}."
-                )
-            conditioning = {k: list(v) for k, v in condition_on.items()}
+            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latent_list}
+        elif isinstance(latents, dict):
+            latent_list = list(latents.keys())
+            conditioning = {k: list(v) for k, v in latents.items()}
         else:
             raise TypeError(
-                f"{self.name}: condition_on must be None, a list, or a dict, "
-                f"got {type(condition_on).__name__}."
+                f"{self.name}: latents must be a list or dict, "
+                f"got {type(latents).__name__}."
+            )
+
+        latent_set = set(latent_list)
+
+        # Validate latent names.
+        unknown_latents = latent_set - all_var_names
+        if unknown_latents:
+            raise ValueError(
+                f"{self.name}: unknown latent variable names {sorted(unknown_latents)}."
             )
 
         # Validate each conditioning list: names must exist and must not be latents.
         for latent_name, cond_names in conditioning.items():
             for cname in cond_names:
-                if cname not in pgm.name_to_variable:
+                if cname not in all_var_names:
                     raise ValueError(
                         f"{self.name}: conditioning name {cname!r} for guide of "
                         f"{latent_name!r} is not a variable of the PGM."
                     )
                 if cname in latent_set:
                     raise ValueError(
-                        f"Guide for {latent_name!r} cannot condition on "
+                        f"{self.name}: guide for {latent_name!r} cannot condition on "
                         f"latent variable {cname!r}."
                     )
 
         # Build one guide per latent with its own parent_dim.
         guides: Dict[str, _BaseGuide] = {}
-        for name in latents:
-            v = pgm.name_to_variable[name]
-            # Latents are non-Delta (filtered above); no extra guard needed.
+        for lat_name in latent_list:
+            v = pgm.name_to_variable[lat_name]
             cls = merged.get(v.distribution)
             if cls is None:
                 raise ValueError(
@@ -279,11 +283,11 @@ class VariationalInference(BaseInference):
                     "with an entry for this family."
                 )
             parent_dim = sum(
-                pgm.name_to_variable[n].size for n in conditioning[name]
+                pgm.name_to_variable[n].size for n in conditioning[lat_name]
             )
-            guides[name] = cls(variable=v, parent_dim=parent_dim)
+            guides[lat_name] = cls(variable=v, parent_dim=parent_dim)
 
-        self.latents: List[str] = latents
+        self.latents: List[str] = latent_list
         self.guide: _GuideContainer = _GuideContainer(guides, conditioning)
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)

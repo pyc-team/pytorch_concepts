@@ -1,7 +1,9 @@
 """Shared scaffolding for inference engines."""
 from __future__ import annotations
 
+import inspect
 import math
+import warnings
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import pyro.distributions as dist
@@ -151,6 +153,34 @@ class BaseInference(PyroModule):
         if len(set(batch_sizes.values())) > 1:
             shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
             raise ValueError(f"{self.name}: mismatched batch sizes {shapes}.")
+
+        # Warn about root variables whose parametrization requires input arguments.
+        # Such roots have no parents to feed them, so evidence must always be supplied.
+        roots_needing_input: List[str] = [
+            v.name
+            for v in self.pgm.variables
+            if self.pgm.factors[v.name].is_root
+            and len(
+                inspect.signature(
+                    self.pgm.factors[v.name].parametrization.forward
+                ).parameters
+            ) > 0
+        ]
+        if roots_needing_input:
+            missing = [name for name in roots_needing_input if name not in evidence]
+            if missing:
+                warnings.warn(
+                    "\033[33m"
+                    "If a variable is root, it must be either a constant evidence during inference or it "
+                    "must have a parametrization that does not require input arguments.\n"
+                    f"All roots in this PGM whose parametrization requires inputs: "
+                    f"{roots_needing_input}.\n"
+                    f"The parametrization's forward() requires input arguments "
+                    f"for those root variable(s) {missing}. "
+                    "\033[0m",
+                    UserWarning,
+                    stacklevel=3,
+                )
 
     @staticmethod
     def _normalize_query(
