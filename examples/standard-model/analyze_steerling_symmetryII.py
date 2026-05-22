@@ -21,10 +21,34 @@ import torch
 OUT_DIR = "steerling_experiment"
 
 
+def _set_publication_style() -> None:
+    """Apply a LaTeX-like serif style with publication-grade font sizes.
+
+    Idempotent — safe to call from every plot function.  Uses matplotlib's
+    built-in Computer Modern mathtext rather than ``text.usetex=True`` so
+    no external LaTeX install is required.
+    """
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["cmr10", "Computer Modern Roman", "DejaVu Serif"],
+        "mathtext.fontset": "cm",
+        "axes.unicode_minus": False,
+        "font.size": 13,
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 11,
+        "figure.titlesize": 16,
+    })
+
+
 # Relative tolerance for "is this singular value real or numerical noise?".
 # bf16 noise floor is ~1e-3 of S.max(); fp32 is ~1e-7.  Use a value above
 # the bf16 noise floor when Jacobians came from a bf16 forward pass.
 EFFECTIVE_RANK_RTOL = 1e-4
+FRACTION_ENERGY = 0.999 # Capture 99.9% of the energy
 
 
 def normalized_gradient_alignment_metric(g_c, g_y):
@@ -55,31 +79,55 @@ def normalized_gradient_alignment_metric(g_c, g_y):
     return raw_loss / max_val
 
 
-def normalized_gradient_alignment_metric_svd(g_c, g_y, *, rtol: float | None = None):
+def normalized_gradient_alignment_metric_svd(
+    g_c, g_y,
+    *,
+    method: str = "rtol",
+    rtol: float | None = None,
+    fraction: float = 0.99,
+):
     """SVD-truncated variant of the gradient-subspace alignment metric.
 
     The QR-based metric collapses on square rank-deficient Jacobians
     (returns ``p = I`` regardless of true rank).  This variant truncates
-    columns of ``U`` whose singular value is below ``rtol * s.max()`` so
-    ``Q`` has the *numerical* rank of ``g.transpose(1, 2)``.
+    columns of ``U`` and selects a rank ``r`` per input via one of two
+    strategies, controlled by ``method``:
+
+    * ``method="rtol"`` (default).  Keep singular values greater than
+      ``rtol * s.max()``.  Reasonable when the spectrum has a clear
+      cliff; brittle on smoothly-decaying spectra (you have to invent a
+      cutoff).
+    * ``method="energy"``.  Keep the smallest ``r`` such that the top-r
+      singular values capture ``fraction`` of the squared Frobenius
+      norm.  More principled for smooth spectra — ``0.99`` is a sensible
+      default.
+
+    The resulting projections ``P = Q Q.T`` and the denominator
+    ``sqrt(r_c + r_y)`` **both** use the chosen rank, so the metric is
+    self-consistent.
 
     Args:
         g_c, g_y: Tensors of shape ``(Batch=1, InputDim, EmbDim)`` with
-            matching ``EmbDim``.  ``InputDim`` and effective rank may
-            differ.
-        rtol: Relative tolerance for singular-value truncation. ``None``
-            falls back to NumPy/MATLAB's
+            matching ``EmbDim``.
+        method: ``"rtol"`` or ``"energy"``.  Truncation strategy.
+        rtol: Relative tolerance, used only when ``method="rtol"``.
+            ``None`` falls back to NumPy/MATLAB's
             ``max(D, InputDim) * eps(dtype)`` convention.
+        fraction: Cumulative-energy target in ``(0, 1]``, used only
+            when ``method="energy"``.
 
     Returns:
         Tuple ``(metric, s_c, s_y)`` with metric a scalar tensor and
-        ``s_c``/``s_y`` the sorted-descending singular values.
+        ``s_c``/``s_y`` the (full, untruncated) sorted-descending
+        singular values — handy for plotting the spectrum.
     """
     if g_c.shape[0] != 1 or g_y.shape[0] != 1:
         raise NotImplementedError(
             "SVD-truncation path assumes Batch=1 (ragged ranks per batch "
             "would need a list output)."
         )
+    if method not in ("rtol", "energy"):
+        raise ValueError(f"method must be 'rtol' or 'energy', got {method!r}.")
 
     def _proj(g):
         g_2d = g.float().reshape(-1, g.shape[-1])                  # (k, D)
@@ -88,13 +136,16 @@ def normalized_gradient_alignment_metric_svd(g_c, g_y, *, rtol: float | None = N
             d = g_2d.shape[-1]
             zero = torch.zeros(d, d, dtype=g_2d.dtype, device=g_2d.device)
             return zero, 0, s
-        tol = rtol if rtol is not None else (
-            max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
-        )
-        cutoff = float(s.max()) * tol
-        keep = s > cutoff
-        q = u[:, keep]                                              # (D, rank)
-        return q @ q.T, int(keep.sum()), s
+        if method == "energy":
+            r = _effective_rank_energy(s, fraction)
+        else:  # "rtol"
+            tol = rtol if rtol is not None else (
+                max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
+            )
+            cutoff = float(s.max()) * tol
+            r = int((s > cutoff).sum().item())
+        q = u[:, :r]                                                # (D, r)
+        return q @ q.T, r, s                                        # (D, D), rank, full s
 
     p_c, k_c, s_c = _proj(g_c)
     p_y, k_y, s_y = _proj(g_y)
@@ -106,6 +157,83 @@ def normalized_gradient_alignment_metric_svd(g_c, g_y, *, rtol: float | None = N
         float(k_c + k_y), dtype=raw_loss.dtype, device=raw_loss.device,
     ))
     return raw_loss / max_val, s_c, s_y
+
+
+def normalized_gradient_alignment_metric_containment(
+    g_h, g_c,
+    *,
+    method: str = "rtol",
+    rtol: float | None = None,
+    fraction: float = 0.99,
+):
+    """Asymmetric containment metric: how much of ``g_h`` is captured by ``g_c``?
+
+    Unlike the symmetric Frobenius-of-projection-difference metric, this
+    one-sided variant doesn't penalize ``g_c`` for spanning *more*
+    directions than ``g_h``.  It directly answers "does the concept
+    Jacobian span ``∂h_bar/∂input``'s subspace?", which is the
+    Symmetry-II faithfulness question.
+
+    Definition::
+
+        m² = 1 - ||Q_cᵀ Q_h||²_F / rank(Q_h)
+
+    where ``Q_h``, ``Q_c`` are orthonormal bases for the truncated row
+    spans of ``g_h`` and ``g_c`` respectively.  The numerator
+    ``||Q_cᵀ Q_h||²_F = trace(P_c P_h) = sum_i cos²(θ_i)`` is the sum of
+    squared cosines of the principal angles between the two subspaces.
+
+    * ``m = 0``: row span of ``g_h`` is fully contained in row span of
+      ``g_c``.
+    * ``m = 1``: the two row spans are orthogonal.
+
+    Adding more directions to ``g_c`` can only *increase* the overlap,
+    so the metric is monotonically non-increasing as ``g_c`` grows —
+    no "right-tail rise" like the symmetric metric.
+
+    Args mirror :func:`normalized_gradient_alignment_metric_svd`.  The
+    truncation strategy (``method``, ``rtol``, ``fraction``) is applied
+    to **both** Jacobians symmetrically, just as in the SVD metric.
+
+    Returns:
+        Tuple ``(metric, s_h, s_c)`` — scalar metric and the full
+        (untruncated) sorted-descending singular values of ``g_h`` and
+        ``g_c`` respectively.  Note the order matches the input order
+        ``(g_h, g_c)``, *not* the SVD metric's ``(g_c, g_y)``.
+    """
+    if g_h.shape[0] != 1 or g_c.shape[0] != 1:
+        raise NotImplementedError(
+            "Containment metric assumes Batch=1."
+        )
+    if method not in ("rtol", "energy"):
+        raise ValueError(f"method must be 'rtol' or 'energy', got {method!r}.")
+
+    def _basis(g):
+        g_2d = g.float().reshape(-1, g.shape[-1])
+        u, s, _ = torch.linalg.svd(g_2d.T, full_matrices=False)
+        if s.numel() == 0:
+            d = g_2d.shape[-1]
+            return torch.zeros(d, 0, dtype=g_2d.dtype, device=g_2d.device), 0, s
+        if method == "energy":
+            r = _effective_rank_energy(s, fraction)
+        else:
+            tol = rtol if rtol is not None else (
+                max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
+            )
+            cutoff = float(s.max()) * tol
+            r = int((s > cutoff).sum().item())
+        return u[:, :r], r, s
+
+    q_h, r_h, s_h = _basis(g_h)
+    q_c, _, s_c = _basis(g_c)
+
+    if r_h == 0:
+        # Degenerate: g_h has no signal → trivially contained.
+        return torch.zeros((), dtype=q_h.dtype, device=q_h.device), s_h, s_c
+
+    overlap_sq = (q_c.T @ q_h).square().sum()                  # ||Q_cᵀ Q_h||²_F
+    m_sq = (1.0 - overlap_sq / float(r_h)).clamp(min=0.0)      # guard against tiny <0
+    return m_sq.sqrt(), s_h, s_c
 
 
 def plot_jacobian_spectrum(
@@ -134,8 +262,9 @@ def plot_jacobian_spectrum(
             decay into a straight line.  Default ``False`` (linear x).
     """
     import matplotlib.pyplot as plt
+    _set_publication_style()
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
     vals = s.detach().cpu().float().numpy()
     plot = ax.loglog if log_x else ax.semilogy
     plot(range(1, len(vals) + 1), vals, marker="o", markersize=3, label=label)
@@ -143,19 +272,15 @@ def plot_jacobian_spectrum(
         ax.axvline(
             x=expected_drop + 0.5,
             color="red", linestyle="--", alpha=0.6,
-            label=f"expected drop after rank {expected_drop}",
+            label=f"rank = {expected_drop}",
         )
-    ax.set_xlabel(
-        "singular value index (sorted descending)"
-        + (" — log scale" if log_x else "")
-    )
-    ax.set_ylabel("singular value (log scale)")
-    ax.set_title("Jacobian spectrum")
+    ax.set_xlabel(r"singular value index $i$")
+    ax.set_ylabel(r"$\sigma_i$")
     ax.grid(True, alpha=0.3, which="both")
     if label is not None or expected_drop is not None:
-        ax.legend()
+        ax.legend(loc="best")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -189,13 +314,14 @@ def plot_concept_activations(
             head, body, and tail of the distribution in one view.
     """
     import matplotlib.pyplot as plt
+    _set_publication_style()
 
     vals = (
         activations.detach().cpu().float().reshape(-1)
         .sort(descending=True).values.numpy()
     )
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
     if log_x and log_y:
         plot = ax.loglog
     elif log_x:
@@ -204,23 +330,19 @@ def plot_concept_activations(
         plot = ax.semilogy
     else:
         plot = ax.plot
-    plot(range(1, len(vals) + 1), vals, linewidth=1)
+    plot(range(1, len(vals) + 1), vals, linewidth=1.4)
     if topk_marker is not None:
         ax.axvline(
             x=topk_marker + 0.5,
             color="red", linestyle="--", alpha=0.6,
-            label=f"top-{topk_marker}",
+            label=fr"top-{topk_marker}",
         )
-        ax.legend()
-    ax.set_xlabel(
-        "concept index (sorted descending by activation)"
-        + (" — log scale" if log_x else "")
-    )
-    ax.set_ylabel("activation" + (" (log scale)" if log_y else ""))
-    ax.set_title(f"Known concept activations ({len(vals)} concepts)")
+        ax.legend(loc="best")
+    ax.set_xlabel(r"concept index $i$ (sorted by activation)")
+    ax.set_ylabel(r"activation $\sigma(\nabla_z c_i)$")
     ax.grid(True, alpha=0.3, which="both" if (log_y or log_x) else "major")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -246,39 +368,44 @@ def plot_jacobian_spectra_comparison(
         log_x: If ``True``, use log-log axes (default linear x, log y).
     """
     import matplotlib.pyplot as plt
+    _set_publication_style()
 
-    fig, ax = plt.subplots(figsize=(7.5, 5))
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
     plot = ax.loglog if log_x else ax.semilogy
     for s, label, metric in spectra:
         vals = s.detach().cpu().float().numpy()
-        full_label = label if metric is None else f"{label} (metric={metric:.4f})"
-        plot(range(1, len(vals) + 1), vals, marker="o", markersize=2, label=full_label)
+        full_label = label if metric is None else fr"{label}  $m{{=}}{metric:.3f}$"
+        plot(range(1, len(vals) + 1), vals, marker="o", markersize=2.5, label=full_label)
     if expected_drop is not None:
         ax.axvline(
             x=expected_drop + 0.5,
             color="red", linestyle="--", alpha=0.6,
-            label=f"expected drop after rank {expected_drop}",
+            label=fr"rank = {expected_drop}",
         )
-    ax.set_xlabel(
-        "singular value index (sorted descending)"
-        + (" — log scale" if log_x else "")
-    )
-    ax.set_ylabel("singular value (log scale)")
-    ax.set_title("Jacobian spectra — comparison")
+    ax.set_xlabel(r"singular value index $i$")
+    ax.set_ylabel(r"$\sigma_i$")
     ax.grid(True, alpha=0.3, which="both")
-    ax.legend()
+    ax.legend(loc="best")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_metric_vs_topk(
-    runs: list[tuple[int, torch.Tensor, torch.Tensor]],
+    tracks: list[tuple[str, list[tuple[int, torch.Tensor, torch.Tensor]]]],
     *,
     out_path: str,
-    label: str | None = None,
+    method: str = "rtol",
     rtol: float | None = None,
+    fraction: float = 0.99,
     log_x: bool = False,
+    mark_rank: int | None = None,
+    mark_label: str | None = None,
+    mark_ranks: list[tuple[str, int]] | None = None,
+    show_mark_ranks: bool = True,
+    mark_cmap: str = "Reds",
+    metric_fn=None,
+    title: str = "",
 ) -> None:
     """Plot the SVD subspace-alignment metric as a function of ``TOPK``.
 
@@ -309,29 +436,57 @@ def plot_metric_vs_topk(
             (e.g. 1, 2, 4, 8, 16, 32, …).
     """
     import matplotlib.pyplot as plt
+    _set_publication_style()
 
-    runs_sorted = sorted(runs, key=lambda r: r[0])
-    topks: list[int] = []
-    metrics: list[float] = []
-    for topk, h_bar_g, concepts_g in runs_sorted:
-        m, _, _ = normalized_gradient_alignment_metric_svd(
-            h_bar_g, concepts_g, rtol=rtol,
+    if metric_fn is None:
+        metric_fn = normalized_gradient_alignment_metric_svd
+
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
+    plot_fn = ax.semilogx if log_x else ax.plot
+
+    for track_label, runs in tracks:
+        runs_sorted = sorted(runs, key=lambda r: r[0])
+        topks: list[int] = []
+        metrics: list[float] = []
+        for topk, h_bar_g, concepts_g in runs_sorted:
+            m, _, _ = metric_fn(
+                h_bar_g, concepts_g,
+                method=method, rtol=rtol, fraction=fraction,
+            )
+            topks.append(topk)
+            metrics.append(m.item())
+        plot_fn(topks, metrics, marker="o", markersize=5, linewidth=1.8, label=track_label)
+
+    if show_mark_ranks and mark_ranks:
+        # Gradient-color vertical lines for a set of (label, rank) pairs.
+        # Drawn *before* `mark_rank` so the latter sits on top.
+        cmap = plt.get_cmap(mark_cmap)
+        n = len(mark_ranks)
+        for i, (lbl, rnk) in enumerate(mark_ranks):
+            t = 0.3 + 0.55 * (i / max(n - 1, 1))
+            ax.axvline(
+                x=rnk, color=cmap(t), linestyle="--",
+                alpha=0.55, linewidth=1.0, label=lbl,
+            )
+    if mark_rank is not None:
+        ax.axvline(
+            x=mark_rank,
+            color="gray", linestyle="--", alpha=0.75, linewidth=1.4,
+            zorder=4,
+            label=mark_label if mark_label is not None else fr"rank = {mark_rank}",
         )
-        topks.append(topk)
-        metrics.append(m.item())
-
-    fig, ax = plt.subplots(figsize=(7.5, 5))
-    plot = ax.semilogx if log_x else ax.plot
-    plot(topks, metrics, marker="o", markersize=5, label=label)
-    ax.set_xlabel("TOPK (size of unmasked concept bottleneck)")
-    ax.set_ylabel("Symmetry-II metric (SVD)")
-    ax.set_title("Metric vs. TOPK across experiment runs")
+    ax.set_xlabel(r"concept bottleneck size")
+    ax.set_ylabel(r"$\sqrt{\mathrm{Symmetry\ II\ constraint}}$")
+    if title:
+        ax.set_title(title)
     ax.set_ylim(bottom=0.0)
+    # Anchor x-axis at 0 (or 1 on log scale, since log(0) = -∞).
+    ax.set_xlim(left=1 if log_x else 0)
     ax.grid(True, alpha=0.3, which="both" if log_x else "major")
-    if label is not None:
-        ax.legend()
+    if tracks or mark_rank is not None or (show_mark_ranks and mark_ranks):
+        ax.legend(loc="best")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -339,6 +494,31 @@ def _effective_rank(s: torch.Tensor, rtol: float) -> int:
     if s.numel() == 0:
         return 0
     return int((s > s.max() * rtol).sum().item())
+
+
+def _effective_rank_energy(s: torch.Tensor, fraction: float = 0.99) -> int:
+    """Smallest k such that the top-k singular values capture ``fraction``
+    of the squared Frobenius norm.
+
+    More principled than an ``rtol`` cutoff when the spectrum decays
+    smoothly (no clean cliff to find). Equivalent to the "99% energy"
+    convention used in classical PCA dimensionality selection.
+
+    Args:
+        s: 1-D tensor of singular values (sorted descending).
+        fraction: Energy fraction in ``(0, 1]``.
+
+    Returns:
+        Effective rank in ``[1, len(s)]`` (or ``0`` if ``s`` is empty).
+    """
+    if s.numel() == 0:
+        return 0
+    s32 = s.float()
+    energy = (s32 ** 2).cumsum(0)
+    target = float(fraction) * float(energy[-1])
+    # First index whose cumulative energy reaches the target.
+    k = int((energy < target).sum().item()) + 1
+    return min(k, int(s.numel()))
 
 
 def _singular_values(g: torch.Tensor) -> torch.Tensor:
@@ -377,7 +557,7 @@ def main():
     concepts_g_topk = torch.load(os.path.join(OUT_DIR, f"concept_gradients_False_True_16.pt"))
     print(f"Loaded masked concept Jacobian: {tuple(concepts_g_topk.shape)}")
     concepts_g_topk = concepts_g_topk.reshape(concepts_g_topk.shape[0], -1, concepts_g_topk.shape[-1])
-    svd_metric_masked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g_topk, concepts_g_topk)
+    svd_metric_masked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g_topk, concepts_g_topk, method="energy", fraction=FRACTION_ENERGY)
     print(f"Symmetry-II metric (SVD) with masking in forward pass (topk = 16) (should be close to 0.): {svd_metric_masked.item():.6f}")
 
     # --- 2. Plot spectra without masking
@@ -396,51 +576,64 @@ def main():
     concepts_g = torch.load(os.path.join(OUT_DIR, f"concept_gradients_False_False_16.pt"))
     print(f"Loaded unmasked concept Jacobian: {tuple(concepts_g.shape)}")
     concepts_g = concepts_g.reshape(concepts_g.shape[0], -1, concepts_g.shape[-1])
-    svd_metric_unmasked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g)
+    svd_metric_unmasked, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g, method="energy", fraction=FRACTION_ENERGY)
     print(f"Symmetry-II metric (SVD) without masking in forward pass (topk = 16): {svd_metric_unmasked.item():.6f}")
-    svd_metric_valid, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g_topk)
+    svd_metric_valid, _, _ = normalized_gradient_alignment_metric_svd(h_bar_g, concepts_g_topk, method="energy", fraction=FRACTION_ENERGY)
     print(f"Symmetry-II metric (SVD) validation using masked concept Jacobian (should be same as above): {svd_metric_valid.item():.6f}")
 
-    # --- 4. Summary: superpose masked and unmasked spectra with metrics
-    out_png = os.path.join(OUT_DIR, f"spectra_summary_16.png")
-    plot_jacobian_spectra_comparison(
-        [
-            (s_h_bar_topk,      "∇h_bar (masked)",   svd_metric_masked.item()),
-            (s_h_bar_unmasked,  "∇h_bar (unmasked)", svd_metric_unmasked.item()),
-        ],
-        out_path=out_png,
-        expected_drop=16,
-        log_x=True,
-    )
-    print(f"Saved summary spectra plot: {out_png}")
-
-    # --- 5. Metric vs. TOPK across separate experiment runs.
-    # Each entry below requires the experiment file to have been run with
-    # the corresponding TOPK value (and MASK_TOPK=True, USE_UNKNOWN=False).
-    # Missing caches are skipped with a notice — extend the list as you
-    # run more configurations.
-    runs = []
-    h = h_bar_g
-    for topk in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]:
+    # --- 4. Metric vs. TOPK across separate experiment runs.
+    # Two tracks share the same concept-gradient sweep but use different
+    # h_bar Jacobians:
+    #   - unmasked: full h_bar (no head masking) → effective rank ~r_star.
+    #   - masked:   h_bar with the LM head masked to top-16 concepts → effective rank ≤ 16.
+    # The masked track should drop at TOPK = 16 (concept subspace
+    # finally large enough to contain the rank-16 masked-h_bar subspace).
+    runs_unmasked = []
+    runs_masked = []
+    for topk in [2, 4, 8, 15, 16, 17, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]:
         concepts_path = os.path.join(OUT_DIR, f"concept_gradients_False_False_{topk}.pt")
         if not os.path.exists(concepts_path):
             print(f"Skipping TOPK={topk}: missing {concepts_path}.")
             continue
         c = torch.load(concepts_path)
         c = c.reshape(c.shape[0], -1, c.shape[-1])
-        runs.append((topk, h, c))
+        runs_unmasked.append((topk, h_bar_g, c))
+        runs_masked.append((topk, h_bar_g_topk, c))
 
-    if runs:
-        out_png = os.path.join(OUT_DIR, "metric_vs_topk.png")
-        plot_metric_vs_topk(
-            runs,
-            out_path=out_png,
-            label="∇h_bar (masked)",
-            log_x=True,
+    # Effective rank of ∂h_bar/∂input across several energy fractions.
+    rank_fractions = [0.9, 0.99, 0.999, 0.9999, 0.99999]
+    rank_marks: list[tuple[str, int]] = []
+    for f in rank_fractions:
+        r = _effective_rank_energy(s_h_bar_unmasked, f)
+        print(f"Effective rank of ∇h_bar (unmasked, energy={f}): {r}")
+        rank_marks.append((fr"$E{{=}}{f}$ ($r{{=}}{r}$)", r))
+
+    r_star = _effective_rank_energy(s_h_bar_unmasked, FRACTION_ENERGY)
+
+    if runs_unmasked:
+        # Containment metric — asymmetric, monotonically non-increasing.
+        # Masked-h_bar track should drop sharply at TOPK = 16.
+        out_png = os.path.join(
+            OUT_DIR, f"metric_vs_topk_containment_{FRACTION_ENERGY}.png"
         )
-        print(f"Saved metric-vs-topk plot: {out_png}")
+        plot_metric_vs_topk(
+            [
+                (r"unmasked $\nabla_z \bar h$", runs_unmasked),
+                (r"masked $\nabla_z \bar h$  ($K{=}16$)", runs_masked),
+            ],
+            out_path=out_png,
+            method="energy", fraction=FRACTION_ENERGY,
+            log_x=True,
+            mark_rank=r_star,
+            mark_label=r"effective rank($\nabla_z \bar h$)",
+            mark_ranks=rank_marks,
+            show_mark_ranks=False,
+            mark_cmap="Reds",
+            metric_fn=normalized_gradient_alignment_metric_containment,
+        )
+        print(f"Saved containment-metric-vs-topk plot: {out_png}")
     else:
-        print("Skipped metric-vs-topk plot: no qualifying caches found.")
+        print("Skipped containment-metric-vs-topk plot: no qualifying caches found.")
 
 
 if __name__ == "__main__":

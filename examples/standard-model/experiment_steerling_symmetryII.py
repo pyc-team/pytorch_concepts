@@ -329,7 +329,7 @@ def main(TOPK: int):
 
 
 if __name__ == "__main__":
-    topk_values = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]
+    topk_values = [2, 4, 8, 15, 16, 17, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 33732]
     for value in topk_values:
         print(f"\n\n=== Running with TOPK={value} ===")
         main(TOPK=value)
