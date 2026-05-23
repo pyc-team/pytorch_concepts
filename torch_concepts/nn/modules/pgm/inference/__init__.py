@@ -3,19 +3,21 @@ from .base import BaseInference, InferenceEngine, dist_to_params, make_temperatu
 from .forward import ForwardInference
 from .deterministic import DeterministicInference
 from .ancestral import AncestralInference
-from .variational import (
+from .variational import VariationalInference
+
+# Re-exported for backwards compatibility; the guide classes themselves now
+# live in ``torch_concepts.nn.modules.pgm.models.guides``.
+from ..models.guides import (
     DEFAULT_GUIDES,
     MVNGuide,
     NormalGuide,
     STBernoulliGuide,
     STOneHotGuide,
-    VariationalInference,
 )
 
 __all__ = [
     "InferenceOutput",
     "ParamDict",
-    "VariableEvidenceContainer",
     "BaseInference",
     "InferenceEngine",
     "ForwardInference",

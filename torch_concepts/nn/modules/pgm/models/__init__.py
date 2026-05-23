@@ -7,6 +7,19 @@ from .variable import (
 )
 from .factor import ParametricFactor
 from .cpd import ParametricCPD
+from .guides import (
+    DEFAULT_GUIDES,
+    MVNGuide,
+    NormalGuide,
+    STBernoulliGuide,
+    STOneHotGuide,
+)
+from .samplers import (
+    build_distribution,
+    build_relaxed_distribution,
+    propagated_value,
+    sample_from,
+)
 from .bayesian_network import BayesianNetwork, ProbabilisticModel
 
 __all__ = [
@@ -19,4 +32,13 @@ __all__ = [
     "ParametricCPD",
     "BayesianNetwork",
     "ProbabilisticModel",
+    "DEFAULT_GUIDES",
+    "STBernoulliGuide",
+    "STOneHotGuide",
+    "NormalGuide",
+    "MVNGuide",
+    "build_distribution",
+    "build_relaxed_distribution",
+    "propagated_value",
+    "sample_from",
 ]

@@ -124,6 +124,27 @@ class BaseInference(PyroModule):
         super().__init__()
         self.pgm = pgm
 
+        roots_needing_input: List[str] = [
+            v.name
+            for v in pgm.variables
+            if pgm.factors[v.name].is_root
+            and len(
+                inspect.signature(
+                    pgm.factors[v.name].parametrization.forward
+                ).parameters
+            ) > 0
+        ]
+        if roots_needing_input:
+            warnings.warn(
+                "\033[33m"
+                f"{self.name}: the following root variables have a parametrization "
+                f"that requires input arguments: {roots_needing_input}. "
+                "These must be supplied as constant evidence on every query call."
+                "\033[0m",
+                UserWarning,
+                stacklevel=2,
+            )
+
     def _validate_containers(
         self,
         query: Dict[str, Optional[torch.Tensor]],
@@ -153,34 +174,6 @@ class BaseInference(PyroModule):
         if len(set(batch_sizes.values())) > 1:
             shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
             raise ValueError(f"{self.name}: mismatched batch sizes {shapes}.")
-
-        # Warn about root variables whose parametrization requires input arguments.
-        # Such roots have no parents to feed them, so evidence must always be supplied.
-        roots_needing_input: List[str] = [
-            v.name
-            for v in self.pgm.variables
-            if self.pgm.factors[v.name].is_root
-            and len(
-                inspect.signature(
-                    self.pgm.factors[v.name].parametrization.forward
-                ).parameters
-            ) > 0
-        ]
-        if roots_needing_input:
-            missing = [name for name in roots_needing_input if name not in evidence]
-            if missing:
-                warnings.warn(
-                    "\033[33m"
-                    "If a variable is root, it must be either a constant evidence during inference or it "
-                    "must have a parametrization that does not require input arguments.\n"
-                    f"All roots in this PGM whose parametrization requires inputs: "
-                    f"{roots_needing_input}.\n"
-                    f"The parametrization's forward() requires input arguments "
-                    f"for those root variable(s) {missing}. "
-                    "\033[0m",
-                    UserWarning,
-                    stacklevel=3,
-                )
 
     @staticmethod
     def _normalize_query(

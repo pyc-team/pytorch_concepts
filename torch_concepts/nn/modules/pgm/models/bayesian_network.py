@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,8 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule
 
 from .cpd import ParametricCPD
+from .guides import DEFAULT_GUIDES, _BaseGuide
+from .samplers import build_distribution, build_relaxed_distribution
 from .variable import Variable
 
 
@@ -23,6 +25,12 @@ class BayesianNetwork(PyroModule):
     every parent reference resolves, DAG only), runs a topological sort,
     and exposes itself as a Pyro stochastic function: calling ``pgm(data)``
     emits one ``pyro.sample`` site per variable.
+
+    Amortised variational guides can be registered later by calling
+    ``setup_guides``. They are stored as submodules of this network, so
+    ``pgm.parameters()`` covers both the prior CPDs and the guides once they
+    have been configured by
+    :class:`~torch_concepts.nn.modules.pgm.inference.variational.VariationalInference`.
     """
 
     def __init__(
@@ -63,9 +71,13 @@ class BayesianNetwork(PyroModule):
         # Validate parent references against the variables table and dedup.
         self._validate_graph()
 
-
         # ---- topological order ---------------------------------------------
         self.sorted_variables: List[Variable] = self._topological_sort()
+
+        # ---- guides (optional) ---------------------------------------------
+        # Guide modules are stored here so pgm.parameters() includes them.
+        # The latent/conditioning contract lives on the inference engine, not here.
+        self.guides: nn.ModuleDict = nn.ModuleDict()
 
     # ----------------------------------------------------------- validate
     def _validate_graph(self) -> None:
@@ -125,49 +137,178 @@ class BayesianNetwork(PyroModule):
             )
         return out
 
-    # ----------------------------------------------------------- distribution
-    @staticmethod
-    def _build_distribution(var: Variable, params: Dict[str, torch.Tensor]):
-        """Build a Pyro distribution for a given variable and its parameters."""
-        D = var.distribution
-        if D is dist.Bernoulli:
-            d = D(**params, **var.dist_kwargs)
-            if var.size > 1:
-                d = d.to_event(1)
-            return d
-        if D is dist.Normal:
-            d = D(**params, **var.dist_kwargs)
-            if var.size > 1:
-                d = d.to_event(1)
-            return d
-        if D is dist.Delta:
-            d = dist.Delta(**params, **var.dist_kwargs)
-            if var.size > 1:
-                d = d.to_event(1)
-            return d
-        # OneHotCategorical / Categorical / MultivariateNormal already carry the
-        # right event shape from their K-vector / scale_tril parameter.
-        return D(**params, **var.dist_kwargs)
+    # ----------------------------------------------------------- guides
+    def setup_guides(
+        self,
+        latents: Union[List[str], Dict[str, List[str]]],
+        default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """Resolve ``latents`` into ``(latent_list, conditioning)``, validate
+        names, and build one amortised guide per latent.
+
+        Guides are stored as a ``nn.ModuleDict`` keyed by latent name on
+        ``self.guides`` so ``self.parameters()`` includes them. Calling this
+        method replaces any guides previously registered on the PGM.
+
+        Returns
+        -------
+        latent_list
+            Ordered list of latent variable names.
+        conditioning
+            Per-latent ordered list of conditioning variable names.
+        """
+        merged = dict(DEFAULT_GUIDES)
+        if default_guides is not None:
+            merged.update(default_guides)
+
+        self.guides = nn.ModuleDict()
+
+        all_var_names = set(self.name_to_variable.keys())
+
+        # Resolve latents → (latent_list, conditioning).
+        if isinstance(latents, list):
+            latent_list: List[str] = list(latents)
+            roots = [v.name for v in self.variables if self.factors[v.name].is_root]
+            if latent_list and not roots:
+                raise ValueError(
+                    "BayesianNetwork: no root variables found; cannot condition "
+                    "guides automatically. Pass `latents` as a dict to specify "
+                    "conditioning explicitly."
+                )
+            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latent_list}
+        elif isinstance(latents, dict):
+            latent_list = list(latents.keys())
+            conditioning = {k: list(v) for k, v in latents.items()}
+        else:
+            raise TypeError(
+                "BayesianNetwork: `latents` must be a list or dict, "
+                f"got {type(latents).__name__}."
+            )
+
+        latent_set = set(latent_list)
+
+        unknown_latents = latent_set - all_var_names
+        if unknown_latents:
+            raise ValueError(
+                f"BayesianNetwork: unknown latent variable names "
+                f"{sorted(unknown_latents)}."
+            )
+
+        for latent_name, cond_names in conditioning.items():
+            for cname in cond_names:
+                if cname not in all_var_names:
+                    raise ValueError(
+                        f"BayesianNetwork: conditioning name {cname!r} for "
+                        f"guide of {latent_name!r} is not a variable of the PGM."
+                    )
+                if cname in latent_set:
+                    raise ValueError(
+                        f"BayesianNetwork: guide for {latent_name!r} cannot "
+                        f"condition on latent variable {cname!r}."
+                    )
+
+        for lat_name in latent_list:
+            v = self.name_to_variable[lat_name]
+            cls = merged.get(v.distribution)
+            if cls is None:
+                raise ValueError(
+                    f"BayesianNetwork: no default guide registered for "
+                    f"distribution {v.distribution!r}. Pass `default_guides=` "
+                    "with an entry for this family."
+                )
+            parent_dim = sum(
+                self.name_to_variable[n].size for n in conditioning[lat_name]
+            )
+            self.guides[lat_name] = cls(variable=v, parent_dim=parent_dim)
+
+        return latent_list, conditioning
+
+    @property
+    def has_guides(self) -> bool:
+        """Whether any guide modules have been registered on this PGM."""
+        return len(self.guides) > 0
+
+    # ----------------------------------------------------------- guide forward
+    def _guide_input(
+        self,
+        data: Dict[str, torch.Tensor],
+        latent_name: str,
+        conditioning: Dict[str, List[str]],
+    ) -> torch.Tensor:
+        """Concatenate the conditioning tensors for ``latent_name``. Returns a
+        ``(B, sum_sizes)`` tensor, or ``(B, 0)`` for an unconditional guide."""
+        names = conditioning[latent_name]
+        if not names:
+            B = next(iter(data.values())).shape[0] if data else 1
+            device = next(iter(data.values())).device if data else torch.device("cpu")
+            return torch.zeros(B, 0, device=device)
+        parts = []
+        for n in names:
+            if n not in data:
+                raise ValueError(
+                    f"BayesianNetwork.guide: conditioning variable {n!r} for "
+                    f"guide of {latent_name!r} is missing from data."
+                )
+            t = data[n]
+            if t.dim() == 1:
+                t = t.unsqueeze(-1)
+            parts.append(t.float())
+        return torch.cat(parts, dim=-1)
+
+    def guide(
+        self,
+        data: Dict[str, torch.Tensor],
+        temperature: torch.Tensor,
+        latent_names: List[str],
+        conditioning: Dict[str, List[str]],
+    ) -> None:
+        """Pyro stochastic function for the variational posterior.
+
+        For each name in ``latent_names``, fetches its conditioning input from
+        ``data`` (using ``conditioning``) and runs the registered guide module,
+        emitting the corresponding ``pyro.sample`` site.
+
+        The latent contract (``latent_names``, ``conditioning``) is owned by
+        the inference engine and passed in at call time; the PGM only stores
+        the guide modules themselves.
+        """
+        B = next(iter(data.values())).shape[0] if data else 1
+        with pyro.plate("batch", B, dim=-1):
+            for name in latent_names:
+                x = self._guide_input(data, name, conditioning)
+                self.guides[name](x, temperature)
+        return None
 
     # ----------------------------------------------------------- forward
-    def forward(self, data: Dict[str, torch.Tensor], batch_size: Optional[int] = None):
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        batch_size: Optional[int] = None,
+        temperature: Optional[torch.Tensor] = None,
+    ):
         """Run the PGM as a Pyro stochastic function.
 
         Iterates variables in topological order. Every variable is emitted as a
-        ``pyro.sample`` site; two flat branches dispatch on the variable's
-        role:
+        ``pyro.sample`` site. The choice of distribution at each site depends
+        on whether the site has an observation in ``data``:
 
-        * **Root**: ``parametrization()`` is called with no arguments; the
-            resulting unbatched params are broadcast to ``(B, ...)`` and
-            ``obs=data.get(name)`` is passed when available.
-        * **Non-root**: parent values are gathered from the cache (or from
-          ``data`` as a fallback for variables not yet visited because they are
-          provided as evidence), pushed through the CPD, and emitted with
-          ``obs=data.get(name)``.
+        - With ``obs``: the *exact* declared distribution
+          (e.g. ``Bernoulli``, ``Normal``) is used so the observation is
+          scored against the true likelihood.
+        - Without ``obs``: a reparameterised surrogate is used so gradients
+          can flow through the sampled value (straight-through relaxations
+          for discrete families; exact distribution for already-reparameterised
+          families). ``temperature`` controls the relaxation sharpness;
+          defaults to ``1.0`` when not supplied.
 
-        The batch dimension ``B`` is taken from the first tensor in ``data``
-        when non-empty, otherwise from the ``batch_size`` argument. Raises
-        ``ValueError`` if neither is available.
+        Parameters
+        ----------
+        data
+            Per-variable evidence tensors keyed by variable name.
+        batch_size
+            Fallback batch size when ``data`` is empty.
+        temperature
+            Optional temperature tensor for the relaxed surrogates.
         """
         # Resolve batch size.
         if data:
@@ -180,12 +321,15 @@ class BayesianNetwork(PyroModule):
                 "batch_size was not provided."
             )
 
+        if temperature is None:
+            temperature = torch.tensor(1.0)
+
         cache: Dict[str, torch.Tensor] = {}
-        
-        # dim=-1 is correct even though your tensor batch axis is 0, 
-        # because Pyro plate dims refer to distribution batch dimensions from the right, 
+
+        # dim=-1 is correct even though your tensor batch axis is 0,
+        # because Pyro plate dims refer to distribution batch dimensions from the right,
         # while event dimensions remain on the trailing tensor axes.
-        with pyro.plate("batch", B, dim=-1): 
+        with pyro.plate("batch", B, dim=-1):
             for var in self.sorted_variables:
                 name = var.name
                 f: ParametricCPD = self.factors[name]
@@ -211,9 +355,14 @@ class BayesianNetwork(PyroModule):
                             )
                     params = f(parent_values=parent_values)
 
-                # --- 2. Sample.
-                d = self._build_distribution(var, params)
+                # --- 2. Build the right distribution depending on observability.
                 obs = data.get(name, None)
+                if obs is None:
+                    d = build_relaxed_distribution(var, params, temperature)
+                else:
+                    d = build_distribution(var, params)
+
+                # --- 3. Sample.
                 value = pyro.sample(name, d, obs=obs)
                 cache[name] = value
         return cache

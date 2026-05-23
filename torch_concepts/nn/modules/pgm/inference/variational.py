@@ -1,17 +1,32 @@
-"""Variational inference engine with amortised guides."""
+"""Variational inference engine.
+
+Thin orchestrator that configures and runs guides registered on the
+:class:`~torch_concepts.nn.modules.pgm.models.bayesian_network.BayesianNetwork`.
+Both the prior CPDs and the variational guides live on the PGM, so a single
+``pgm.parameters()`` collects everything an optimiser needs.
+
+Contract (different from the other engines!):
+
+- The set of latent variables is declared when constructing this inference
+    engine; the corresponding guide modules are registered on the PGM. The
+    latent/conditioning contract itself lives on the engine, not the model.
+- At call time pass all variables in ``query``: observed variables carry a
+  tensor value, latent variables are absent or mapped to ``None``.
+  ``evidence`` is still accepted and merged (``query`` values take priority).
+- Querying with some non-latent variables omitted is allowed but unsupported:
+  the engine emits a yellow warning and gives no guarantees on the result.
+"""
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union
+import sys
+from typing import Callable, Dict, List, Optional, Type, Union
 
-import pyro
-import pyro.distributions as dist
 import pyro.poutine as poutine
+import pyro.distributions as dist
 import torch
-import torch.nn as nn
-from pyro.nn import PyroModule
 
 from ..models.bayesian_network import BayesianNetwork
-from ..models.variable import Variable, param_dim
+from ..models.guides import _BaseGuide
 from .base import (
     BaseInference,
     make_temperature_schedule,
@@ -20,192 +35,52 @@ from .base import (
 from .outputs import InferenceOutput
 
 
-# --------------------------------------------------------------------------
-# Default per-family guide modules.
-#
-# Each guide:
-# - takes ``variable`` and ``parent_dim`` at construction time;
-# - builds a 2-layer MLP (hidden=64) producing ``param_dim(distribution, size)``;
-# - on ``forward(x, temperature)``, receives the concatenated conditioning
-#   input for that specific latent (selected by ``_GuideContainer``), applies
-#   the family-appropriate output bounding, and emits ``pyro.sample(name, q_dist)``.
-# --------------------------------------------------------------------------
+_YELLOW_START = "\033[33m"
+_YELLOW_END = "\033[0m"
 
 
-def _default_mlp(parent_dim: int, out_dim: int) -> nn.Module:
-    return nn.Sequential(
-        nn.Linear(parent_dim, 64),
-        nn.ReLU(),
-        nn.Linear(64, out_dim),
-    )
+def _yellow_notice(msg: str) -> None:
+    """Print a yellow notice on ``stderr``. Always shown — bypasses the
+    standard ``warnings`` machinery so a global ``filterwarnings('ignore')``
+    cannot hide it."""
+    print(f"{_YELLOW_START}{msg}{_YELLOW_END}", file=sys.stderr, flush=True)
 
 
-class _BaseGuide(PyroModule):
-    def __init__(self, variable: Variable, parent_dim: int):
-        super().__init__()
-        self.variable = variable
-        self.parent_dim = parent_dim
-        self.net = _default_mlp(parent_dim, param_dim(variable.distribution, variable.size))
-
-
-class STBernoulliGuide(_BaseGuide):
-    """Amortised variational guide for ``Bernoulli`` latents.
-
-    Reads the concatenated exogenous inputs, predicts per-sample probabilities
-    through a 2-layer MLP (hidden=64) with sigmoid output, and emits a
-    ``pyro.sample`` site drawn from
-    ``RelaxedBernoulliStraightThrough(temperature, logits)``.
-    """
-
-    def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
-        raw = self.net(x)
-        if self.variable.size == 1:
-            raw = raw.squeeze(-1)
-        probs = torch.sigmoid(raw)
-        logits = torch.log(probs.clamp(min=1e-8)) - torch.log((1 - probs).clamp(min=1e-8))
-        q = dist.RelaxedBernoulliStraightThrough(temperature=temperature, logits=logits)
-        if self.variable.size > 1:
-            q = q.to_event(1)
-        return pyro.sample(self.variable.name, q)
-
-
-class STOneHotGuide(_BaseGuide):
-    """Amortised variational guide for ``OneHotCategorical`` latents using a
-    ``RelaxedOneHotCategoricalStraightThrough`` distribution; same MLP
-    architecture as ``STBernoulliGuide``."""
-
-    def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
-        raw = self.net(x)
-        probs = torch.softmax(raw, dim=-1)
-        logits = torch.log(probs.clamp(min=1e-8))
-        q = dist.RelaxedOneHotCategoricalStraightThrough(
-            temperature=temperature, logits=logits
-        )
-        return pyro.sample(self.variable.name, q)
-
-
-class NormalGuide(_BaseGuide):
-    """Amortised variational guide for ``Normal`` latents using a
-    reparameterised ``Normal(loc, scale)`` distribution; same MLP
-    architecture as ``STBernoulliGuide``, with softplus on the scale."""
-
-    def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
-        raw = self.net(x)
-        s = self.variable.size
-        loc, scale = raw[..., :s], raw[..., s:]
-        if s == 1:
-            loc = loc.squeeze(-1)
-            scale = scale.squeeze(-1)
-        scale = torch.nn.functional.softplus(scale) + 1e-6
-        q = dist.Normal(loc=loc, scale=scale)
-        if s > 1:
-            q = q.to_event(1)
-        return pyro.sample(self.variable.name, q)
-
-
-class MVNGuide(_BaseGuide):
-    """Amortised variational guide for ``MultivariateNormal`` latents using a
-    reparameterised ``MultivariateNormal(loc, scale_tril)`` distribution;
-    same MLP architecture as ``STBernoulliGuide``, with softplus on the
-    diagonal of the lower-triangular Cholesky factor."""
-
-    def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
-        raw = self.net(x)
-        s = self.variable.size
-        loc = raw[..., :s]
-        tril_flat = raw[..., s:]
-        tril = torch.zeros(*raw.shape[:-1], s, s, device=raw.device, dtype=raw.dtype)
-        idx = torch.tril_indices(s, s)
-        tril[..., idx[0], idx[1]] = tril_flat
-        diag_idx = torch.arange(s)
-        tril[..., diag_idx, diag_idx] = (
-            torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
-        )
-        q = dist.MultivariateNormal(loc=loc, scale_tril=tril)
-        return pyro.sample(self.variable.name, q)
-
-
-DEFAULT_GUIDES: Dict[Type[dist.Distribution], Type[_BaseGuide]] = {
-    dist.Bernoulli: STBernoulliGuide,
-    dist.OneHotCategorical: STOneHotGuide,
-    dist.Normal: NormalGuide,
-    dist.MultivariateNormal: MVNGuide,
-}
-
-
-# --------------------------------------------------------------------------
-class _GuideContainer(PyroModule):
-    """Registers one guide module per latent and, when called, feeds each
-    guide the conditioning input declared for it at construction time."""
-
-    def __init__(
-        self,
-        guides: Dict[str, _BaseGuide],
-        conditioning: Dict[str, List[str]],  # latent_name -> list of conditioning var names
-    ):
-        super().__init__()
-        self._latent_order: List[str] = list(guides.keys())
-        # Per-latent conditioning variable names (declared order).
-        self._conditioning: Dict[str, List[str]] = conditioning
-        for name, g in guides.items():
-            setattr(self, f"guide_{name}", g)
-
-    def _conditioning_input(
-        self, data: Dict[str, torch.Tensor], latent_name: str
-    ) -> torch.Tensor:
-        """Concatenate the tensors named in the conditioning list for ``latent_name``.
-        Returns a ``(B, sum_sizes)`` tensor, or ``(B, 0)`` for an unconditional guide.
-        """
-        names = self._conditioning[latent_name]
-        if not names:
-            # Unconditional guide: return a (B, 0) dummy so the MLP still runs.
-            B = next(iter(data.values())).shape[0] if data else 1
-            device = next(iter(data.values())).device if data else torch.device("cpu")
-            return torch.zeros(B, 0, device=device)
-        parts = []
-        for n in names:
-            if n not in data:
-                raise ValueError(
-                    f"_GuideContainer: conditioning variable {n!r} for guide "
-                    f"of {latent_name!r} is missing from data."
-                )
-            t = data[n]
-            if t.dim() == 1:
-                t = t.unsqueeze(-1)
-            parts.append(t.float())
-        return torch.cat(parts, dim=-1)
-
-    def forward(self, data: Dict[str, torch.Tensor], temperature: torch.Tensor):
-        B = next(iter(data.values())).shape[0] if data else 1
-        with pyro.plate("batch", B, dim=-1):
-            for name in self._latent_order:
-                x = self._conditioning_input(data, name)
-                getattr(self, f"guide_{name}")(x, temperature)
-        return None
-
-
-# --------------------------------------------------------------------------
 class VariationalInference(BaseInference):
-    """Variational inference engine with amortised guides.
+    """Variational inference engine.
 
-    At construction time, builds one amortised guide per variable declared in
-    ``latents`` using ``DEFAULT_GUIDES`` (overridable via ``default_guides``).
-    ``latents`` specifies both *which* variables are latent and how each guide
-    is conditioned:
+    The engine declares which PGM variables are latent through ``latents=``;
+    the corresponding amortised guides are then registered as submodules on
+    the PGM. Beyond that setup, the engine is stateless except for the
+    temperature schedule. At call time it traces ``pgm.guide`` when guides are
+    available, replays ``pgm`` under that trace and conditions on the supplied
+    data, and returns the per-site parameters of both the model CPDs
+    (``out.params``) and the guides (``out.guide_params``).
 
-    - ``List[str]``: treat these variables as latent; every guide is
-      conditioned on all root variables of the PGM (raises if no roots exist).
-    - ``Dict[str, List[str]]``: maps each latent variable name to the list of
-      (non-latent) PGM variables its guide conditions on.
+    Parameters
+    ----------
+    pgm : BayesianNetwork
+        The probabilistic graphical model. Guide modules are registered on
+        this object during engine construction.
+    latents
+        Declaration of latent (unobservable) variables and the conditioning of
+        their guides. If omitted or empty, no guides are registered and the
+        engine warns that variational inference may not behave as expected.
+        Accepted forms:
 
-    All parameters — both model CPDs and guide MLPs — are registered as
-    submodules of this engine. Pass ``vi.parameters()`` to your optimiser to
-    collect them all at once.
+        - ``List[str]``: treat these variables as latent; every guide is
+          conditioned on all root variables of the PGM.
+        - ``Dict[str, List[str]]``: maps each latent variable name to the
+          ordered list of (non-latent) PGM variables its guide conditions on.
 
-    At call time, traces the guide, replays the model under that trace,
-    conditions on evidence, and populates ``InferenceOutput.params`` and
-    ``InferenceOutput.guide_params``. The relaxation temperature follows the
-    ``annealing`` schedule; call ``engine.step()`` to advance it.
+    default_guides
+        Optional override of the per-family guide class mapping.
+    n_samples, max_plate_nesting
+        Reserved for future use (Monte-Carlo ELBO with multiple samples and
+        nested plates respectively).
+    initial_temperature, annealing, annealing_rate
+        Temperature schedule for the relaxed-discrete sites; see
+        :func:`make_temperature_schedule`.
     """
 
     name = "VariationalInference"
@@ -213,7 +88,7 @@ class VariationalInference(BaseInference):
     def __init__(
         self,
         pgm: BayesianNetwork,
-        latents: Union[List[str], Dict[str, List[str]]],
+        latents: Optional[Union[List[str], Dict[str, List[str]]]] = None,
         default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
         n_samples: int = 1,
         max_plate_nesting: int = 1,
@@ -223,115 +98,166 @@ class VariationalInference(BaseInference):
     ):
         super().__init__(pgm)
 
-        merged = dict(DEFAULT_GUIDES)
-        if default_guides is not None:
-            merged.update(default_guides)
+        self._latent_names, self._guide_conditioning = pgm.setup_guides(
+            latents=[] if latents is None else latents,
+            default_guides=default_guides,
+        )
 
-        all_var_names = set(pgm.name_to_variable.keys())
-
-        # Resolve latents → (latent_list, conditioning).
-        if isinstance(latents, list):
-            latent_list: List[str] = list(latents)
-            roots = [v.name for v in pgm.variables if pgm.factors[v.name].is_root]
-            if not roots:
-                raise ValueError(
-                    f"{self.name}: no root variables found; cannot condition guides "
-                    "automatically. Pass a dict to specify conditioning explicitly."
-                )
-            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latent_list}
-        elif isinstance(latents, dict):
-            latent_list = list(latents.keys())
-            conditioning = {k: list(v) for k, v in latents.items()}
-        else:
-            raise TypeError(
-                f"{self.name}: latents must be a list or dict, "
-                f"got {type(latents).__name__}."
-            )
-
-        latent_set = set(latent_list)
-
-        # Validate latent names.
-        unknown_latents = latent_set - all_var_names
-        if unknown_latents:
-            raise ValueError(
-                f"{self.name}: unknown latent variable names {sorted(unknown_latents)}."
-            )
-
-        # Validate each conditioning list: names must exist and must not be latents.
-        for latent_name, cond_names in conditioning.items():
-            for cname in cond_names:
-                if cname not in all_var_names:
-                    raise ValueError(
-                        f"{self.name}: conditioning name {cname!r} for guide of "
-                        f"{latent_name!r} is not a variable of the PGM."
-                    )
-                if cname in latent_set:
-                    raise ValueError(
-                        f"{self.name}: guide for {latent_name!r} cannot condition on "
-                        f"latent variable {cname!r}."
-                    )
-
-        # Build one guide per latent with its own parent_dim.
-        guides: Dict[str, _BaseGuide] = {}
-        for lat_name in latent_list:
-            v = pgm.name_to_variable[lat_name]
-            cls = merged.get(v.distribution)
-            if cls is None:
-                raise ValueError(
-                    f"{self.name}: no default guide registered for "
-                    f"distribution {v.distribution!r}. Pass `default_guides=` "
-                    "with an entry for this family."
-                )
-            parent_dim = sum(
-                pgm.name_to_variable[n].size for n in conditioning[lat_name]
-            )
-            guides[lat_name] = cls(variable=v, parent_dim=parent_dim)
-
-        self.latents: List[str] = latent_list
-        self.guide: _GuideContainer = _GuideContainer(guides, conditioning)
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
+        self._warned_latent_evidence = False
         self._schedule = make_temperature_schedule(
             initial_temperature, annealing, annealing_rate
         )
         self._step: int = 0
+        # Cached temperature: a buffer so it travels with .to(device) and is
+        # mutated in place by ``step`` rather than re-allocated each call.
+        self.register_buffer(
+            "_temperature",
+            torch.tensor(float(self._schedule(self._step))),
+        )
+
+        # --- Construction-time yellow notices ---------------------------
+        if self._latent_names:
+            # 1) Show which variables have been declared latent/unobservable.
+            _yellow_notice(
+                f"{self.name} Warning:\nDeclared latent (unobservable) variables: "
+                f"{self._latent_names}. This inference algorithm expects to be queried "
+                "with those variables absent from `query` (or mapped to None)."
+                "No guarantees if you query with any of these variables observed, or if you "
+                "query with other unobserved variables that are not declared latent."
+            )
+        else:
+            _yellow_notice(
+                f"{self.name} Warning:\nYou are using variational inference without "
+                "declaring unobservable variables. The engine might not "
+                "behave as expected."
+            )
+        # 2) Remind the caller about the query-primary contract.
+        _yellow_notice(
+            f"{self.name} Warning:\nContract — pass all variables in `query`: observed "
+            "variables with tensor values, latent variables absent or set to None. "
+            "`evidence` is still accepted and merged (`query` values take priority)."
+        )
+
+    # ------------------------------------------------------------------
+    @property
+    def latent_names(self) -> List[str]:
+        """Ordered list of latent variable names declared for this engine."""
+        return list(self._latent_names)
+
+    @property
+    def guide_conditioning(self) -> Dict[str, List[str]]:
+        """Per-latent conditioning variable names as declared at construction."""
+        return {k: list(v) for k, v in self._guide_conditioning.items()}
 
     @property
     def temperature(self) -> torch.Tensor:
-        return torch.tensor(float(self._schedule(self._step)))
+        """Current relaxation temperature (a cached buffer)."""
+        return self._temperature
 
     def step(self) -> None:
+        """Advance the temperature schedule by one step (in place)."""
         self._step += 1
+        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def guide_fn(self, data: Dict[str, torch.Tensor]):
-        """Plain Pyro-compatible guide callable bound to the engine's current
-        temperature. Pass this directly to ``pyro.infer.Trace_ELBO`` (or any
-        other Pyro inference object) when bypassing the engine's ``query``."""
-        return self.guide(data, self.temperature)
+        """Plain Pyro-compatible guide callable bound to the engine's
+        current temperature. Pass this directly to
+        ``pyro.infer.Trace_ELBO`` (or any other Pyro inference object) when
+        bypassing the engine's ``query``."""
+        return self.pgm.guide(data, self.temperature, self._latent_names, self._guide_conditioning)
+
+    # ------------------------------------------------------------------
+    def _merge_observables(
+        self,
+        query: Dict[str, Optional[torch.Tensor]],
+        evidence: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Merge ``evidence`` and non-None ``query`` entries into a single
+        observables dict. Non-None ``query`` values take precedence over
+        ``evidence`` values for the same name."""
+        data: Dict[str, torch.Tensor] = dict(evidence)
+        for name, val in query.items():
+            if val is not None:
+                data[name] = val
+        return data
 
     # ------------------------------------------------------------------
     def query(
         self,
-        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
-        evidence: Dict[str, torch.Tensor],
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]], None] = None,
+        evidence: Dict[str, torch.Tensor] = None,
     ) -> InferenceOutput:
+        """Run variational inference and return model and guide parameters.
+
+        **New contract (query-primary):** pass all variables in ``query``.
+        Observed variables carry a tensor value; latent variables are absent
+        or mapped to ``None``. ``evidence`` is still accepted for backwards
+        compatibility and is merged after ``query`` (``query`` values take
+        priority on duplicates).
+        """
+        if query is None:
+            query = {}
+        if evidence is None:
+            evidence = {}
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
-        # data = evidence + any non-None query values (used to condition the guide).
-        data = dict(evidence)
-        for name, val in query.items():
-            if val is not None:
-                data[name] = val
 
-        batch_size = next(iter(evidence.values())).shape[0] if evidence else None
+        data = self._merge_observables(query, evidence)
 
-        guide_fn = lambda: self.guide(data, self.temperature)
-        guide_tr = poutine.trace(guide_fn).get_trace()
-        replayed = poutine.replay(self.pgm, trace=guide_tr)
-        model_tr = poutine.trace(replayed).get_trace(evidence, batch_size=batch_size)
+        supplied_latents = [name for name in self._latent_names if name in data]
+        if supplied_latents and not self._warned_latent_evidence:
+            _yellow_notice(
+                f"{self.name} Warning:\nDeclared latent variables were supplied as "
+                f"observations: {supplied_latents}. Variational inference is "
+                "guaranteed only when declared latent variables match the "
+                "unobserved variables."
+            )
+            self._warned_latent_evidence = True
+
+        # Soft check on the implicit "observables = everything non-latent"
+        # contract. We never error: at test time the user is allowed to
+        # leave non-latents unobserved, with the understanding that the
+        # result is no longer the ELBO.
+        non_latent_missing = [
+            v.name
+            for v in self.pgm.variables
+            if v.name not in self._latent_names and v.name not in data
+        ]
+        if non_latent_missing:
+            _yellow_notice(
+                f"{self.name} Warning:\nThe following non-latent variables were not "
+                f"supplied: {non_latent_missing}. They will be sampled from "
+                "the respective distributions; we cannot guarantee the result."
+            )
+
+        batch_size = next(iter(data.values())).shape[0] if data else None
+
+        temperature = self.temperature
+        if self.pgm.has_guides:
+            # we execute all the guides in the model.
+            guide_fn = lambda: self.pgm.guide(data, temperature, self._latent_names, self._guide_conditioning)
+            # We get the trace of the guide execution.
+            guide_tr = poutine.trace(guide_fn).get_trace()
+            # replay allows to use the samples from the guide q(z|x) 
+            # instead of the model samples p(z).
+            replayed = poutine.replay(self.pgm, trace=guide_tr)
+            # We get the trace of the model execution, which will use the guide samples
+            #  for the latent variables.
+            model_tr = poutine.trace(replayed).get_trace(
+                data, batch_size=batch_size, temperature=temperature
+            )
+            # Get the guide parameters.
+            guide_params = trace_to_params(guide_tr)
+        else:
+            model_tr = poutine.trace(self.pgm).get_trace(
+                data, batch_size=batch_size, temperature=temperature
+            )
+            guide_params = {}
 
         return InferenceOutput(
             params=trace_to_params(model_tr),
-            guide_params=trace_to_params(guide_tr),
+            guide_params=guide_params,
         )

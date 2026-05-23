@@ -1,82 +1,29 @@
+"""ForwardInference — non-Pyro forward pass through a :class:`BayesianNetwork`.
+
+Two modes:
+
+- ``"deterministic"``: every variable is propagated by its canonical
+  parameter (``loc`` for Normal/MVN, ``probs`` for Bernoulli/OneHotCat,
+  ``v`` for Delta).
+- ``"ancestral"``: every variable is sampled with the same reparameterised
+  distributions used by ``BayesianNetwork.forward`` for unobserved sites
+  (straight-through relaxations for the discrete families).
+
+Reparameterised samplers live in
+:mod:`torch_concepts.nn.modules.pgm.models.samplers` so the model and this
+engine stay in lockstep.
+"""
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
-import pyro.distributions as dist
 import torch
 
 from ..models.bayesian_network import BayesianNetwork
+from ..models.samplers import propagated_value, sample_from
 from ..models.variable import Variable
 from .base import BaseInference, make_temperature_schedule
 from .outputs import InferenceOutput
-
-
-def _bern_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Reparameterised sample from a Bernoulli via straight-through relaxation."""
-    probs = params["probs"]
-    logits = torch.log(probs.clamp(min=1e-8)) - torch.log((1.0 - probs).clamp(min=1e-8))
-    return dist.RelaxedBernoulliStraightThrough(temperature=temperature, logits=logits).rsample()
-
-
-def _ohc_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Reparameterised sample from a OneHotCategorical via straight-through relaxation."""
-    logits = torch.log(params["probs"].clamp(min=1e-8))
-    return dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, logits=logits).rsample()
-
-
-def _cat_sampler_or_reject(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Always raises: plain Categorical cannot be ancestrally sampled; use OneHotCategorical."""
-    raise ValueError(
-        "AncestralInference: plain Categorical is rejected as the prior of "
-        "an unobserved variable. Declare the variable as OneHotCategorical."
-    )
-
-
-def _normal_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Reparameterised sample from a Normal distribution."""
-    return dist.Normal(**params).rsample()
-
-
-def _mvn_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Reparameterised sample from a MultivariateNormal distribution."""
-    return dist.MultivariateNormal(**params).rsample()
-
-
-def _delta_sampler(params: Dict[str, torch.Tensor], temperature: torch.Tensor) -> torch.Tensor:
-    """Delta 'sample': returns the deterministic value v unchanged."""
-    return params["v"]
-
-
-_DIST_OPS = {
-    dist.Bernoulli: ("probs", _bern_sampler),
-    dist.OneHotCategorical: ("probs", _ohc_sampler),
-    dist.Categorical: ("probs", _cat_sampler_or_reject),
-    dist.Normal: ("loc", _normal_sampler),
-    dist.MultivariateNormal: ("loc", _mvn_sampler),
-    dist.Delta: ("v", _delta_sampler),
-}
-
-
-def _propagated_value(distribution, params: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """Return the primary parameter tensor used as the deterministic propagated value."""
-    try:
-        param_name, _ = _DIST_OPS[distribution]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported distribution {distribution!r}") from exc
-    return params[param_name]
-
-
-def _sample_from(
-    variable: Variable,
-    params: Dict[str, torch.Tensor],
-    temperature: torch.Tensor,
-) -> torch.Tensor:
-    """Dispatch to the family-specific sampler for the given variable."""
-    try:
-        _, sampler = _DIST_OPS[variable.distribution]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported distribution {variable.distribution!r}") from exc
-    return sampler(params, temperature)
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
@@ -123,14 +70,21 @@ class ForwardInference(BaseInference):
         self.p_int = float(p_int)
         self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
         self._step = 0
+        # Cached temperature: a buffer so it travels with .to(device) and is
+        # mutated in place by ``step`` rather than re-allocated each call.
+        self.register_buffer(
+            "_temperature",
+            torch.tensor(float(self._schedule(self._step))),
+        )
 
     @property
     def temperature(self) -> torch.Tensor:
-        return torch.tensor(float(self._schedule(self._step)))
+        return self._temperature
 
     def step(self) -> None:
         if self.mode == "ancestral":
             self._step += 1
+            self._temperature.fill_(float(self._schedule(self._step)))
 
     def query(
         self,
@@ -183,5 +137,5 @@ class ForwardInference(BaseInference):
         temperature: torch.Tensor,
     ) -> torch.Tensor:
         if self.mode == "deterministic":
-            return _propagated_value(variable.distribution, params)
-        return _sample_from(variable, params, temperature)
+            return propagated_value(variable.distribution, params)
+        return sample_from(variable, params, temperature)
