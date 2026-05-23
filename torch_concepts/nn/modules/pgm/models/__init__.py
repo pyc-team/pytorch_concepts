@@ -11,6 +11,7 @@ from .guides import (
     DEFAULT_GUIDES,
     MVNGuide,
     NormalGuide,
+    CustomGuide,
     STBernoulliGuide,
     STOneHotGuide,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "BayesianNetwork",
     "ProbabilisticModel",
     "DEFAULT_GUIDES",
+    "CustomGuide",
     "STBernoulliGuide",
     "STOneHotGuide",
     "NormalGuide",

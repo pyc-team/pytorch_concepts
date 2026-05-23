@@ -25,26 +25,91 @@ _DIST_PARAM_NAMES: Dict[type, List[str]] = {
 }
 
 
-def _infer_out_features(module: nn.Module) -> Optional[int]:
-    """Given a PyTorch module, infer its output feature dimension. 
-    Returns an int if successful, else None.
+def _split_raw_params(variable: "Variable", raw: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """Split and activate a flat raw tensor into the named parameter dict for
+    ``variable``'s distribution family.
+
+    ``raw`` must already be flat in its feature dimension, i.e. shape
+    ``(*batch, flat_size)`` for non-root CPDs or ``(flat_size,)`` for root
+    CPDs.  Call :func:`_activate_raw_param` on each chunk.
     """
-    if isinstance(module, nn.Identity):
-        return None  # depth-dependent
-    if isinstance(module, nn.Linear):
-        return module.out_features
-    if isinstance(module, nn.Sequential):
-        for m in reversed(list(module.children())):
-            d = _infer_out_features(m)
-            if d is not None:
-                return d
-        return None
-    if hasattr(module, "out_features"):
-        try:
-            return int(module.out_features)
-        except Exception:
-            return None
-    return None
+    D = variable.distribution
+    s = variable.size
+    if D is dist.Bernoulli:
+        chunks: Dict[str, torch.Tensor] = {"probs": raw}
+    elif D in (dist.Categorical, dist.OneHotCategorical):
+        chunks = {"probs": raw}
+    elif D is dist.Normal:
+        chunks = {"loc": raw[..., :s], "scale": raw[..., s:]}
+    elif D is dist.MultivariateNormal:
+        chunks = {"loc": raw[..., :s], "scale_tril": raw[..., s:]}
+    elif D is dist.Delta:
+        chunks = {"v": raw}
+    else:
+        raise ValueError(f"Unsupported distribution {D!r}")
+    return {k: _activate_raw_param(variable, k, v) for k, v in chunks.items()}
+
+
+def _activate_raw_param(
+    variable: "Variable", param_name: str, raw: torch.Tensor
+) -> torch.Tensor:
+    """Apply the bounding activation for a single named distribution parameter.
+
+    ``raw`` must already be flat in its feature dimension.
+    """
+    D = variable.distribution
+    s = variable.size
+    if D is dist.Bernoulli:
+        if param_name == "probs":
+            return torch.sigmoid(raw if s > 1 else raw.squeeze(-1))
+    elif D in (dist.Categorical, dist.OneHotCategorical):
+        if param_name == "probs":
+            return torch.softmax(raw, dim=-1)
+    elif D is dist.Normal:
+        if param_name == "loc":
+            return raw.squeeze(-1) if s == 1 else raw
+        if param_name == "scale":
+            raw_ = raw.squeeze(-1) if s == 1 else raw
+            return torch.nn.functional.softplus(raw_) + 1e-6
+    elif D is dist.MultivariateNormal:
+        if param_name == "loc":
+            return raw
+        if param_name == "scale_tril":
+            tril = torch.zeros(
+                *raw.shape[:-1], s, s, device=raw.device, dtype=raw.dtype
+            )
+            idx = torch.tril_indices(s, s)
+            tril[..., idx[0], idx[1]] = raw
+            diag_idx = torch.arange(s)
+            tril[..., diag_idx, diag_idx] = (
+                torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
+            )
+            return tril
+    elif D is dist.Delta:
+        if param_name == "v":
+            return raw
+    raise ValueError(
+        f"_activate_raw_param: unknown parameter {param_name!r} "
+        f"for distribution {D!r}."
+    )
+
+
+
+class _ParameterModule(nn.Module):
+    """Thin ``nn.Module`` wrapper around a single ``nn.Parameter``.
+
+    Its ``forward()`` takes no arguments and returns the stored parameter
+    tensor.  Used internally by :class:`ParametricCPD` when the caller
+    supplies an ``nn.Parameter`` directly as the ``parametrization`` of a
+    root (no-parent) CPD.
+    """
+
+    def __init__(self, param: nn.Parameter) -> None:
+        super().__init__()
+        self.param = param
+
+    def forward(self, *args, **kwargs) -> torch.Tensor:  # type: ignore[override]
+        return self.param
 
 
 class ParametricCPD(ParametricFactor):
@@ -55,6 +120,15 @@ class ParametricCPD(ParametricFactor):
     to the raw parameter tensor of ``variable.distribution``; bounding
     activations are applied automatically.
 
+    For root (no-parent) CPDs the ``parametrization`` argument also accepts a
+    bare ``nn.Parameter``, which is automatically wrapped in a thin module
+    whose ``forward()`` returns it.  This lets you write::
+
+        prior = ParametricCPD(
+            variable=z,
+            parametrization=nn.Parameter(torch.zeros(z.size)),
+        )
+
     Passing a list of ``Variable`` instances returns a list of independent CPDs
     sharing the same parent list; ``parametrization`` may be a single module
     (deep-copied per CPD) or a per-CPD list of modules.
@@ -63,7 +137,7 @@ class ParametricCPD(ParametricFactor):
     def __new__(
         cls,
         variable: Union[Variable, List[Variable]],
-        parametrization: Optional[Union[nn.Module, List[nn.Module]]] = None,
+        parametrization: Optional[Union[nn.Parameter, nn.Module, List[nn.Module]]] = None,
         parents: Optional[List[Variable]] = None,
     ):
         # Single-Variable path: defer to normal __init__.
@@ -107,7 +181,7 @@ class ParametricCPD(ParametricFactor):
     def __init__(
         self,
         variable: Variable,
-        parametrization: Optional[Union[nn.Module, Dict[str, nn.Module]]] = None,
+        parametrization: Optional[Union[nn.Parameter, nn.Module, Dict[str, Union[nn.Module, nn.Parameter]]]] = None,
         parents: Optional[List[Variable]] = None,
     ):
         super().__init__()
@@ -117,11 +191,12 @@ class ParametricCPD(ParametricFactor):
             return  # pragma: no cover
         if isinstance(parametrization, list) or (
             parametrization is not None
-            and not isinstance(parametrization, (nn.Module, dict))
+            and not isinstance(parametrization, (nn.Parameter, nn.Module, dict))
         ):
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): `parametrization` must "
-                "be an nn.Module, a dict mapping parameter names to nn.Modules, or None."
+                "be an nn.Parameter, an nn.Module, a dict mapping parameter names "
+                "to nn.Modules, or None."
             )
         if isinstance(parametrization, dict):
             expected_keys = set(_DIST_PARAM_NAMES.get(variable.distribution, []))
@@ -147,13 +222,32 @@ class ParametricCPD(ParametricFactor):
                     f"Expected: {sorted(expected_keys)}."
                 )
             for pname, mod in parametrization.items():
-                if not isinstance(mod, nn.Module):
+                if not isinstance(mod, (nn.Module, nn.Parameter)):
                     raise TypeError(
                         f"ParametricCPD({variable.name!r}): "
-                        f"parametrization[{pname!r}] must be an nn.Module, "
-                        f"got {type(mod).__name__}."
+                        f"parametrization[{pname!r}] must be an nn.Module or "
+                        f"nn.Parameter, got {type(mod).__name__}."
                     )
-            parametrization = nn.ModuleDict(parametrization)
+            parametrization = nn.ModuleDict({
+                pname: _ParameterModule(mod) if isinstance(mod, nn.Parameter) else mod
+                for pname, mod in parametrization.items()
+            })
+        if isinstance(parametrization, nn.Parameter):
+            if parents:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): nn.Parameter parametrization "
+                    "is only valid for root (no-parent) CPDs."
+                )
+            need = param_dim(variable.distribution, variable.size)
+            got_n = parametrization.numel()
+            if got_n != need:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): nn.Parameter has {got_n} "
+                    f"element(s) but param_dim({variable.distribution.__name__}, "
+                    f"{variable.size}) = {need}. "
+                    f"Use nn.Parameter(torch.zeros({need}))."
+                )
+            parametrization = _ParameterModule(parametrization)
         if parents is not None:
             for p in parents:
                 if not isinstance(p, Variable):
@@ -173,84 +267,19 @@ class ParametricCPD(ParametricFactor):
         self.parametrization: Optional[nn.Module] = parametrization
         self.parents: List[Variable] = list(parents) if parents else []
 
-        if self.parents:
-            need = param_dim(variable.distribution, variable.size)
-            got = _infer_out_features(self.parametrization)
-            if got is not None and got != need:
-                raise ValueError(
-                    f"ParametricCPD({variable.name!r}): parametrization "
-                    f"output dim is {got} but param_dim("
-                    f"{variable.distribution.__name__}, {variable.size}) = {need}. "
-                    "Adjust the network's last layer."
-                )
-
     @property
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
     # ------------------------------------------------------------------ split
     def _split_params(self, raw: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Split the raw network output into per-parameter chunks, then activate
-        each chunk via ``_activate_param``.  Activation logic lives only there."""
-        D = self.variable.distribution
-        s = self.variable.size
-        if D is dist.Bernoulli:
-            chunks = {"probs": raw}
-        elif D in (dist.Categorical, dist.OneHotCategorical):
-            chunks = {"probs": raw}
-        elif D is dist.Normal:
-            chunks = {"loc": raw[..., :s], "scale": raw[..., s:]}
-        elif D is dist.MultivariateNormal:
-            chunks = {"loc": raw[..., :s], "scale_tril": raw[..., s:]}
-        elif D is dist.Delta:
-            chunks = {"v": raw}
-        else:
-            raise ValueError(f"Unsupported distribution {D!r}")
-        return {k: self._activate_param(k, v) for k, v in chunks.items()}
+        """Delegate to the module-level :func:`_split_raw_params`."""
+        return _split_raw_params(self.variable, raw)
 
     # ------------------------------------------------------ per-param activate
     def _activate_param(self, param_name: str, raw: torch.Tensor) -> torch.Tensor:
-        """Apply the bounding activation for a single named distribution parameter.
-
-        Used by the per-parameter-module path when ``parametrization`` is an
-        ``nn.ModuleDict``.  Each sub-module produces the raw (pre-activation)
-        tensor for its parameter; this method maps it to the bounded value.
-        """
-        D = self.variable.distribution
-        s = self.variable.size
-        if D is dist.Bernoulli:
-            if param_name == "probs":
-                return torch.sigmoid(raw if s > 1 else raw.squeeze(-1))
-        elif D in (dist.Categorical, dist.OneHotCategorical):
-            if param_name == "probs":
-                return torch.softmax(raw, dim=-1)
-        elif D is dist.Normal:
-            if param_name == "loc":
-                return raw.squeeze(-1) if s == 1 else raw
-            if param_name == "scale":
-                raw_ = raw.squeeze(-1) if s == 1 else raw
-                return torch.nn.functional.softplus(raw_) + 1e-6
-        elif D is dist.MultivariateNormal:
-            if param_name == "loc":
-                return raw
-            if param_name == "scale_tril":
-                tril = torch.zeros(
-                    *raw.shape[:-1], s, s, device=raw.device, dtype=raw.dtype
-                )
-                idx = torch.tril_indices(s, s)
-                tril[..., idx[0], idx[1]] = raw
-                diag_idx = torch.arange(s)
-                tril[..., diag_idx, diag_idx] = (
-                    torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
-                )
-                return tril
-        elif D is dist.Delta:
-            if param_name == "v":
-                return raw
-        raise ValueError(
-            f"ParametricCPD._activate_param: unknown parameter {param_name!r} "
-            f"for distribution {D!r}."
-        )
+        """Delegate to the module-level :func:`_activate_raw_param`."""
+        return _activate_raw_param(self.variable, param_name, raw)
 
     # ------------------------------------------------------------------ fwd
     def forward(
@@ -274,9 +303,9 @@ class ParametricCPD(ParametricFactor):
                 )
             if isinstance(self.parametrization, nn.ModuleDict):
                 raw_params = {pname: mod() for pname, mod in self.parametrization.items()}
-                return {k: self._activate_param(k, v) for k, v in raw_params.items()}
+                return {k: self._activate_param(k, v.flatten()) for k, v in raw_params.items()}
             raw = self.parametrization()
-            return self._split_params(raw)
+            return self._split_params(raw.flatten())
 
         assert parent_values is not None, (
             f"ParametricCPD({self.variable.name!r}): non-root forward requires "
@@ -307,8 +336,21 @@ class ParametricCPD(ParametricFactor):
                 p_val = p_val.unsqueeze(-1)
             normed.append(p_val.float() if not p_val.is_floating_point() else p_val)
         cat = torch.cat(normed, dim=-1)
+        # ``batch_ndim`` is the number of leading batch dimensions in ``cat``
+        # (everything except the last feature axis).  We flatten the network
+        # output from that point onward so that _split_params always receives
+        # a flat feature vector, regardless of the internal output shape.
+        batch_ndim = cat.dim() - 1
         if isinstance(self.parametrization, nn.ModuleDict):
             raw_params = {pname: mod(cat) for pname, mod in self.parametrization.items()}
-            return {k: self._activate_param(k, v) for k, v in raw_params.items()}
+            # Only flatten feature dims if the module output actually has batch
+            # dims (e.g. nn.Linear). _ParameterModule returns a bare parameter
+            # with no batch axis, so leave it unchanged.
+            return {
+                k: self._activate_param(
+                    k, v.reshape(*v.shape[:batch_ndim], -1) if v.dim() > batch_ndim else v
+                )
+                for k, v in raw_params.items()
+            }
         raw = self.parametrization(cat)
-        return self._split_params(raw)
+        return self._split_params(raw.reshape(*raw.shape[:batch_ndim], -1))

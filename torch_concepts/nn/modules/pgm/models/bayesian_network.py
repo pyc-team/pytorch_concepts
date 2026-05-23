@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -12,7 +12,6 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule
 
 from .cpd import ParametricCPD
-from .guides import DEFAULT_GUIDES, _BaseGuide
 from .samplers import build_distribution, build_relaxed_distribution
 from .variable import Variable
 
@@ -26,11 +25,10 @@ class BayesianNetwork(PyroModule):
     and exposes itself as a Pyro stochastic function: calling ``pgm(data)``
     emits one ``pyro.sample`` site per variable.
 
-    Amortised variational guides can be registered later by calling
-    ``setup_guides``. They are stored as submodules of this network, so
-    ``pgm.parameters()`` covers both the prior CPDs and the guides once they
-    have been configured by
-    :class:`~torch_concepts.nn.modules.pgm.inference.variational.VariationalInference`.
+    Amortised variational guides are registered on this network by
+    :class:`~torch_concepts.nn.modules.pgm.inference.variational.VariationalInference`
+    at construction time.  Once registered, ``pgm.parameters()`` covers both
+    the prior CPDs and the guides.
     """
 
     def __init__(
@@ -138,90 +136,6 @@ class BayesianNetwork(PyroModule):
         return out
 
     # ----------------------------------------------------------- guides
-    def setup_guides(
-        self,
-        latents: Union[List[str], Dict[str, List[str]]],
-        default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
-    ) -> Tuple[List[str], Dict[str, List[str]]]:
-        """Resolve ``latents`` into ``(latent_list, conditioning)``, validate
-        names, and build one amortised guide per latent.
-
-        Guides are stored as a ``nn.ModuleDict`` keyed by latent name on
-        ``self.guides`` so ``self.parameters()`` includes them. Calling this
-        method replaces any guides previously registered on the PGM.
-
-        Returns
-        -------
-        latent_list
-            Ordered list of latent variable names.
-        conditioning
-            Per-latent ordered list of conditioning variable names.
-        """
-        merged = dict(DEFAULT_GUIDES)
-        if default_guides is not None:
-            merged.update(default_guides)
-
-        self.guides = nn.ModuleDict()
-
-        all_var_names = set(self.name_to_variable.keys())
-
-        # Resolve latents → (latent_list, conditioning).
-        if isinstance(latents, list):
-            latent_list: List[str] = list(latents)
-            roots = [v.name for v in self.variables if self.factors[v.name].is_root]
-            if latent_list and not roots:
-                raise ValueError(
-                    "BayesianNetwork: no root variables found; cannot condition "
-                    "guides automatically. Pass `latents` as a dict to specify "
-                    "conditioning explicitly."
-                )
-            conditioning: Dict[str, List[str]] = {lat: list(roots) for lat in latent_list}
-        elif isinstance(latents, dict):
-            latent_list = list(latents.keys())
-            conditioning = {k: list(v) for k, v in latents.items()}
-        else:
-            raise TypeError(
-                "BayesianNetwork: `latents` must be a list or dict, "
-                f"got {type(latents).__name__}."
-            )
-
-        latent_set = set(latent_list)
-
-        unknown_latents = latent_set - all_var_names
-        if unknown_latents:
-            raise ValueError(
-                f"BayesianNetwork: unknown latent variable names "
-                f"{sorted(unknown_latents)}."
-            )
-
-        for latent_name, cond_names in conditioning.items():
-            for cname in cond_names:
-                if cname not in all_var_names:
-                    raise ValueError(
-                        f"BayesianNetwork: conditioning name {cname!r} for "
-                        f"guide of {latent_name!r} is not a variable of the PGM."
-                    )
-                if cname in latent_set:
-                    raise ValueError(
-                        f"BayesianNetwork: guide for {latent_name!r} cannot "
-                        f"condition on latent variable {cname!r}."
-                    )
-
-        for lat_name in latent_list:
-            v = self.name_to_variable[lat_name]
-            cls = merged.get(v.distribution)
-            if cls is None:
-                raise ValueError(
-                    f"BayesianNetwork: no default guide registered for "
-                    f"distribution {v.distribution!r}. Pass `default_guides=` "
-                    "with an entry for this family."
-                )
-            parent_dim = sum(
-                self.name_to_variable[n].size for n in conditioning[lat_name]
-            )
-            self.guides[lat_name] = cls(variable=v, parent_dim=parent_dim)
-
-        return latent_list, conditioning
 
     @property
     def has_guides(self) -> bool:

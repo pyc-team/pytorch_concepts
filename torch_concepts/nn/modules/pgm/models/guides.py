@@ -7,7 +7,7 @@ checkpoint round-trips the full model + guide.
 """
 from __future__ import annotations
 
-from typing import Dict, Type
+from typing import Dict, Optional, Type
 
 import pyro
 import pyro.distributions as dist
@@ -16,6 +16,8 @@ import torch.nn as nn
 from pyro.nn import PyroModule
 
 from .variable import Variable, param_dim
+from .cpd import _split_raw_params, _activate_raw_param
+from .samplers import build_relaxed_distribution
 
 
 def _default_mlp(parent_dim: int, out_dim: int) -> nn.Module:
@@ -124,3 +126,74 @@ DEFAULT_GUIDES: Dict[Type[dist.Distribution], Type[_BaseGuide]] = {
     dist.Normal: NormalGuide,
     dist.MultivariateNormal: MVNGuide,
 }
+
+
+class CustomGuide(PyroModule):
+    """Wraps a user-supplied ``nn.Module`` as an amortised variational guide.
+
+    The wrapped module plays the same role as the ``parametrization`` of a
+    ``ParametricCPD``: it maps the conditioning input ``x`` (the concatenated
+    observed values, shape ``(*batch, parent_dim)``) to a raw parameter tensor
+    of *any* shape.  The guide flattens the feature dimensions, splits the
+    result into the named parameters of ``variable.distribution``, applies the
+    appropriate bounding activations, builds the relaxed surrogate
+    distribution, and emits ``pyro.sample(variable.name, q)``.
+
+    For unconditional guides (``parent_dim == 0``) the module is called with
+    no arguments, exactly like a root ``ParametricCPD``.
+
+    Parameters
+    ----------
+    variable
+        The latent ``Variable`` this guide targets.
+    parent_dim
+        Total feature size of the conditioning input (sum of parent sizes).
+        ``0`` for an unconditional guide.
+    parametrization
+        An ``nn.Module`` whose ``forward`` signature is
+        ``forward(x: Tensor) -> Tensor`` for conditional guides or
+        ``forward() -> Tensor`` for unconditional ones.  The output may be
+        any shape; feature dimensions are flattened automatically before
+        the parameter split.
+    """
+
+    def __init__(
+        self,
+        variable: Variable,
+        parent_dim: int,
+        parametrization: nn.Module,
+    ):
+        super().__init__()
+        if not isinstance(parametrization, nn.Module):
+            raise TypeError(
+                f"ParametricGuide({variable.name!r}): `parametrization` must "
+                f"be an nn.Module, got {type(parametrization).__name__}."
+            )
+        self.variable = variable
+        self.parent_dim = parent_dim
+        self.parametrization = parametrization
+
+    def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
+        """Run the guide for one batch.
+
+        Parameters
+        ----------
+        x
+            Conditioning input, shape ``(*batch, parent_dim)`` or
+            ``(*batch, 0)`` for unconditional guides.
+        temperature
+            Relaxation temperature for discrete distributions.
+        """
+        if x.shape[-1] == 0:
+            # Unconditional: call module with no arguments (root-like).
+            raw = self.parametrization()
+            raw = raw.flatten()
+        else:
+            raw = self.parametrization(x)
+            # Flatten feature dims; keep all batch dims intact.
+            batch_ndim = x.dim() - 1
+            raw = raw.reshape(*raw.shape[:batch_ndim], -1)
+
+        params = _split_raw_params(self.variable, raw)
+        q = build_relaxed_distribution(self.variable, params, temperature)
+        return pyro.sample(self.variable.name, q)

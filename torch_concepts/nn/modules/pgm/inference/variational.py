@@ -19,14 +19,14 @@ Contract (different from the other engines!):
 from __future__ import annotations
 
 import sys
-from typing import Callable, Dict, List, Optional, Type, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import pyro.poutine as poutine
-import pyro.distributions as dist
 import torch
+import torch.nn as nn
 
 from ..models.bayesian_network import BayesianNetwork
-from ..models.guides import _BaseGuide
+from ..models.guides import DEFAULT_GUIDES, CustomGuide, _BaseGuide
 from .base import (
     BaseInference,
     make_temperature_schedule,
@@ -68,13 +68,40 @@ class VariationalInference(BaseInference):
         engine warns that variational inference may not behave as expected.
         Accepted forms:
 
-        - ``List[str]``: treat these variables as latent; every guide is
-          conditioned on all root variables of the PGM.
-        - ``Dict[str, List[str]]``: maps each latent variable name to the
-          ordered list of (non-latent) PGM variables its guide conditions on.
+        ``List[str]``
+            Variable names; each guide is conditioned on all root variables
+            of the PGM and the family default class is used.
 
-    default_guides
-        Optional override of the per-family guide class mapping.
+        ``Dict[str, dict]``
+            Maps each latent variable name to a per-variable spec dict with
+            the following **optional** keys:
+
+            ``"conditioning"`` (``List[str]``)
+                Variables to condition the guide on.  Defaults to all root
+                variables of the PGM.
+
+            ``"parametrization"`` (``nn.Module``)
+                Custom network module used as a
+                :class:`~torch_concepts.nn.modules.pgm.models.guides.CustomGuide`.
+                Mutually exclusive with ``"distribution"``.
+
+            ``"distribution"`` (subclass of ``_BaseGuide``)
+                Guide class to use for this variable.  Defaults to the entry
+                in :data:`~torch_concepts.nn.modules.pgm.models.guides.DEFAULT_GUIDES`
+                for the variable's distribution family.
+
+        Example::
+
+            engine = VariationalInference(
+                pgm,
+                latents={
+                    "z": {
+                        "conditioning": ["x"],
+                        "parametrization": nn.Linear(x_dim, z_param_dim),
+                    }
+                },
+            )
+
     n_samples, max_plate_nesting
         Reserved for future use (Monte-Carlo ELBO with multiple samples and
         nested plates respectively).
@@ -85,11 +112,12 @@ class VariationalInference(BaseInference):
 
     name = "VariationalInference"
 
+    _VALID_LATENT_SPEC_KEYS = frozenset({"conditioning", "distribution", "parametrization"})
+
     def __init__(
         self,
         pgm: BayesianNetwork,
-        latents: Optional[Union[List[str], Dict[str, List[str]]]] = None,
-        default_guides: Optional[Dict[Type[dist.Distribution], Type[_BaseGuide]]] = None,
+        latents: Optional[Union[List[str], Dict[str, dict]]] = None,
         n_samples: int = 1,
         max_plate_nesting: int = 1,
         initial_temperature: float = 1.0,
@@ -98,9 +126,8 @@ class VariationalInference(BaseInference):
     ):
         super().__init__(pgm)
 
-        self._latent_names, self._guide_conditioning = pgm.setup_guides(
-            latents=[] if latents is None else latents,
-            default_guides=default_guides,
+        self._latent_names, self._guide_conditioning = self._build_guides(
+            pgm, latents=[] if latents is None else latents
         )
 
         self.n_samples = int(n_samples)
@@ -139,6 +166,112 @@ class VariationalInference(BaseInference):
             "variables with tensor values, latent variables absent or set to None. "
             "`evidence` is still accepted and merged (`query` values take priority)."
         )
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def _build_guides(
+        cls,
+        pgm: BayesianNetwork,
+        latents: Union[List[str], Dict[str, dict]],
+    ) -> tuple:
+        """Parse ``latents``, build guide modules, register them on ``pgm``,
+        and return ``(latent_list, conditioning)``."""
+        all_var_names = set(pgm.name_to_variable.keys())
+        roots = [v.name for v in pgm.variables if pgm.factors[v.name].is_root]
+
+        if isinstance(latents, list):
+            latent_list: List[str] = list(latents)
+            specs: Dict[str, dict] = {name: {} for name in latent_list}
+        elif isinstance(latents, dict):
+            latent_list = list(latents.keys())
+            specs = {k: dict(v) for k, v in latents.items()}
+        else:
+            raise TypeError(
+                "VariationalInference: `latents` must be a list or dict, "
+                f"got {type(latents).__name__}."
+            )
+
+        latent_set = set(latent_list)
+
+        unknown_latents = latent_set - all_var_names
+        if unknown_latents:
+            raise ValueError(
+                f"VariationalInference: unknown latent variable names "
+                f"{sorted(unknown_latents)}."
+            )
+
+        guides: Dict[str, nn.Module] = {}
+        conditioning: Dict[str, List[str]] = {}
+
+        for lat_name in latent_list:
+            spec = specs[lat_name]
+
+            unknown_keys = set(spec.keys()) - cls._VALID_LATENT_SPEC_KEYS
+            if unknown_keys:
+                raise ValueError(
+                    f"VariationalInference: unknown spec keys {sorted(unknown_keys)} "
+                    f"for latent {lat_name!r}. "
+                    f"Valid keys: {sorted(cls._VALID_LATENT_SPEC_KEYS)}."
+                )
+
+            parametrization = spec.get("parametrization", None)
+            guide_cls = spec.get("distribution", None)
+
+            if parametrization is not None and guide_cls is not None:
+                raise ValueError(
+                    f"VariationalInference: latent {lat_name!r}: 'parametrization' "
+                    "and 'distribution' are mutually exclusive."
+                )
+
+            if parametrization is not None and not isinstance(parametrization, nn.Module):
+                raise TypeError(
+                    f"VariationalInference: 'parametrization' for {lat_name!r} must "
+                    f"be an nn.Module, got {type(parametrization).__name__}."
+                )
+
+            cond = spec.get("conditioning", None)
+            if cond is None:
+                if latent_list and not roots:
+                    raise ValueError(
+                        f"VariationalInference: no root variables found; specify "
+                        f"'conditioning' explicitly for {lat_name!r}."
+                    )
+                cond = list(roots)
+            for cname in cond:
+                if cname not in all_var_names:
+                    raise ValueError(
+                        f"VariationalInference: conditioning name {cname!r} for "
+                        f"guide of {lat_name!r} is not a variable of the PGM."
+                    )
+                if cname in latent_set:
+                    raise ValueError(
+                        f"VariationalInference: guide for {lat_name!r} cannot "
+                        f"condition on latent variable {cname!r}."
+                    )
+            conditioning[lat_name] = cond
+
+            v = pgm.name_to_variable[lat_name]
+            parent_dim = sum(pgm.name_to_variable[n].size for n in cond)
+
+            if parametrization is not None:
+                guides[lat_name] = CustomGuide(
+                    variable=v,
+                    parent_dim=parent_dim,
+                    parametrization=parametrization,
+                )
+            else:
+                if guide_cls is None:
+                    guide_cls = DEFAULT_GUIDES.get(v.distribution)
+                    if guide_cls is None:
+                        raise ValueError(
+                            f"VariationalInference: no default guide registered for "
+                            f"distribution {v.distribution!r}. Pass 'distribution' "
+                            "in the latent spec."
+                        )
+                guides[lat_name] = guide_cls(variable=v, parent_dim=parent_dim)
+
+        pgm.guides = nn.ModuleDict(guides)
+        return latent_list, conditioning
 
     # ------------------------------------------------------------------
     @property

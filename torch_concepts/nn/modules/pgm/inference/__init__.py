@@ -11,6 +11,7 @@ from ..models.guides import (
     DEFAULT_GUIDES,
     MVNGuide,
     NormalGuide,
+    CustomGuide,
     STBernoulliGuide,
     STOneHotGuide,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "AncestralInference",
     "VariationalInference",
     "DEFAULT_GUIDES",
+    "CustomGuide",
     "STBernoulliGuide",
     "STOneHotGuide",
     "NormalGuide",
