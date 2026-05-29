@@ -30,13 +30,10 @@ from torch_concepts.nn import ResidualCorrectionOp
 
 from ..steerling_predictor import MixFactorizedConceptExogenousToConcept
 from ..steerling_utils import (
-    load_steerling_backbone_weights,
+    load_steerling_weights,
+    _load_lm_head_weights,
     load_steerling_concept_names,
-    load_steerling_known_head_weights,
-    load_steerling_lm_head_weights,
-    load_steerling_unknown_head_weights,
-    prepare_generation_sequence,
-    print_concepts,
+    top_concepts,
 )
 
 logger = logging.getLogger(__name__)
@@ -302,7 +299,7 @@ class SteerlingLowLevelModel(nn.Module):
         pretrained = pretrained or []
 
         if "backbone" in pretrained:
-            backbone_sd = load_steerling_backbone_weights(model_id, device="cpu")
+            backbone_sd = load_steerling_weights(model_id, "transformer", device="cpu")
             # When the backbone uses weight sharing (the Steerling default),
             # the checkpoint stores only `tok_emb.weight`; the transformer's
             # `lm_head.weight` is the same tensor at runtime.  Treat that
@@ -333,7 +330,7 @@ class SteerlingLowLevelModel(nn.Module):
             logger.info("Loaded pretrained weights into backbone.")
 
         if "known_head" in pretrained:
-            known_sd = load_steerling_known_head_weights(model_id, device="cpu")
+            known_sd = load_steerling_weights(model_id, "known_head", device="cpu")
             self._load_state_dict(self.known_concept_head.head, known_sd, "known_head")
             self._discard_state_dict(known_sd)
             logger.info("Loaded pretrained weights into known concept head.")
@@ -342,7 +339,7 @@ class SteerlingLowLevelModel(nn.Module):
             if self.unknown_concept_head is None:
                 logger.info("Skipped unknown concept head weights because use_unknown=False.")
             else:
-                unknown_sd = load_steerling_unknown_head_weights(model_id, device="cpu")
+                unknown_sd = load_steerling_weights(model_id, "unknown_head", device="cpu")
                 self._load_state_dict(self.unknown_concept_head.head, unknown_sd, "unknown_head")
                 self._discard_state_dict(unknown_sd)
                 logger.info("Loaded pretrained weights into unknown concept head.")
@@ -358,7 +355,7 @@ class SteerlingLowLevelModel(nn.Module):
                     "Skipped LM head weight load (tied to tok_emb, loaded with backbone)."
                 )
             else:
-                lm_head_sd = load_steerling_lm_head_weights(model_id, device="cpu")
+                lm_head_sd = _load_lm_head_weights(model_id, device="cpu")
                 self._load_state_dict(self.lm_head, lm_head_sd, "lm_head")
                 self._discard_state_dict(lm_head_sd)
                 logger.info("Loaded pretrained weights into LM head.")
@@ -556,18 +553,29 @@ class SteerlingLowLevelModel(nn.Module):
     # Convenience methods
     # ------------------------------------------------------------------
 
-    def prepare_input(self, prompt: str, n_new_tokens: int):
-        """Prepare input tensors for generation with a text prompt.
+    def build_input(
+        self, prompt: str, n_new_tokens: int
+    ) -> tuple[torch.Tensor, torch.BoolTensor, torch.BoolTensor]:
+        """Build the ``[prompt | MASK × N]`` input tensor for generation.
 
-        Args:
-            prompt: Text prompt to condition on.
-            n_new_tokens: Number of new tokens to generate after the prompt.
         Returns:
-            input_ids: Token ids with prompt + mask tokens, shape ``(1, T)``.
-            prompt_mask: Boolean mask for prompt positions, shape ``(T,)``.
-            gen_mask: Boolean mask for generation positions, shape ``(T,)``.
+            input_ids: Shape ``(1, T)``.
+            prompt_mask: ``True`` for prompt positions, shape ``(T,)``.
+            gen_mask: ``True`` for generation positions, shape ``(T,)``.
         """
-        return prepare_generation_sequence(self.tokenizer, prompt, n_new_tokens)
+        tokenizer = self.tokenizer
+        prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_len = len(prompt_ids)
+        total_len = prompt_len + n_new_tokens
+
+        input_ids = torch.full((1, total_len), tokenizer.mask_token_id, dtype=torch.long)
+        input_ids[0, :prompt_len] = torch.tensor(prompt_ids, dtype=torch.long)
+
+        prompt_mask = torch.zeros(total_len, dtype=torch.bool)
+        prompt_mask[:prompt_len] = True
+        gen_mask = ~prompt_mask.clone()
+
+        return input_ids, prompt_mask, gen_mask
 
     def encode_concepts(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Return known-concept logits for the given token ids.
@@ -609,7 +617,7 @@ class SteerlingLowLevelModel(nn.Module):
         tokenizer = self.tokenizer
         mask_id = tokenizer.mask_token_id
 
-        input_ids, _, _ = self.prepare_input(prompt, n_new_tokens)
+        input_ids, _, _ = self.build_input(prompt, n_new_tokens)
         input_ids = input_ids.to(self.device)
 
         prompt_len = (input_ids[0] != mask_id).sum().item()
@@ -642,7 +650,7 @@ class SteerlingLowLevelModel(nn.Module):
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
                 if topk_concepts is not None:
-                    concepts = print_concepts(
+                    concepts = top_concepts(
                         out["known_concepts"][0, seq_idx],
                         topk=topk_concepts,
                     )

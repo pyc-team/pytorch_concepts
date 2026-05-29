@@ -1,68 +1,42 @@
 """
-Steerling hub utilities — download, cache and access pretrained components.
+Steerling utilities — Hub downloads, weight loading, and concept labels.
 
-This module handles HuggingFace Hub interaction for Steerling tokenizers,
-weights, and concept metadata. Config loading lives in
-``steerling_configs.py``.
+Public API:
+    ``load_steerling_weights``      — download checkpoint shards by key prefix.
+    ``get_steerling_tokenizer``     — return the Steerling AutoTokenizer.
+    ``load_steerling_concept_names``— ordered list of known-concept names.
+    ``top_concepts``                — map concept logits to a named DataFrame.
 
-Public helpers:
-
-* :func:`load_steerling_known_head_weights` – fetch the single shard
-  that contains the known-concept-head tensors and return a state dict.
-* :func:`load_steerling_backbone_weights` – fetch all shards for the
-  transformer backbone and return a state dict.
-* :func:`get_steerling_tokenizer` – return a ``SteerlingTokenizer``.
-* :func:`load_steerling_concepts` – download concept label CSV.
-* :func:`load_steerling_concept_names` – concept_idx → concept_name mapping.
+Config loading lives in ``steerling_configs.py``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict
 
+import pandas as pd
 import torch
 
-from ..utils import resolve_hf_token
-from .steerling_configs import DEFAULT_MODEL_ID, load_steerling_hub_config
+from .steerling_configs import DEFAULT_MODEL_ID
 
 logger = logging.getLogger(__name__)
-
-# Seed the huggingface_hub global session token lazily — on the first Hub
-# fetch — so importing this module is free of side effects.  This
-# suppresses "unauthenticated" warnings from any internal HF Hub calls
-# (e.g. within the steerling package) that do not go through our
-# resolve_hf_token() helpers.
-_hf_login_attempted = False
-
-
-def _ensure_hf_login() -> None:
-    """Seed the HF Hub global session token once per process, if available."""
-    global _hf_login_attempted
-    if _hf_login_attempted:
-        return
-    _hf_login_attempted = True
-    token = resolve_hf_token()
-    if token is None:
-        return
-    try:
-        from huggingface_hub import login
-        login(token=token, add_to_git_credential=False)
-    except Exception:
-        # huggingface_hub is optional; token is still passed per-call.
-        pass
 
 
 # ------------------------------------------------------------------
 # Tokenizer
 # ------------------------------------------------------------------
 
-def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
+def get_steerling_tokenizer(model_id: str = DEFAULT_MODEL_ID):
     """Return the Steerling tokenizer via ``AutoTokenizer``.
 
-    Uses ``trust_remote_code=True`` to pull the custom tokenizer class
-    from the HuggingFace Hub.
+    Args:
+        model_id: HuggingFace Hub model id or local path.
+
+    Returns:
+        Steerling tokenizer instance (custom class via ``trust_remote_code``).
     """
     try:
         from transformers import AutoTokenizer
@@ -71,12 +45,15 @@ def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
             "get_steerling_tokenizer requires `transformers`. "
             "Install with: pip install transformers"
         ) from exc
-    _ensure_hf_login()
     return AutoTokenizer.from_pretrained(
-        model_name_or_path,
+        model_id,
         trust_remote_code=True,
-        token=resolve_hf_token(),
     )
+
+
+# ------------------------------------------------------------------
+# Weights loading
+# ------------------------------------------------------------------
 
 # In-process cache for the safetensors weight-map index.
 # huggingface_hub already caches the file on disk; this avoids
@@ -84,117 +61,96 @@ def get_steerling_tokenizer(model_name_or_path: str = DEFAULT_MODEL_ID):
 _weight_map_cache: Dict[str, Dict[str, str]] = {}
 
 
-def _download_index(model_name_or_path: str) -> Dict[str, str]:
-    """Download ``model.safetensors.index.json`` and return its weight_map.
+def _download_weight_map(model_id: str) -> Dict[str, str]:
+    """Download ``model.safetensors.index.json`` and return its weight map.
 
-    The result is cached in memory so repeated calls within the same
-    process skip the JSON parse entirely.
+    Cached in-process so repeated calls within the same process skip the
+    JSON parse entirely (huggingface_hub should handle the disk cache).
     """
-    if model_name_or_path in _weight_map_cache:
-        return _weight_map_cache[model_name_or_path]
+    if model_id in _weight_map_cache:
+        return _weight_map_cache[model_id]
 
     from huggingface_hub import hf_hub_download
 
-    _ensure_hf_login()
     index_path = hf_hub_download(
-        model_name_or_path,
+        model_id,
         "model.safetensors.index.json",
-        token=resolve_hf_token(),
     )
     with open(index_path) as f:
         weight_map = json.load(f)["weight_map"]
 
-    _weight_map_cache[model_name_or_path] = weight_map
+    _weight_map_cache[model_id] = weight_map
     return weight_map
 
 
-def load_steerling_known_head_weights(
-    model_name_or_path: str = DEFAULT_MODEL_ID,
+def load_steerling_weights(
+    model_id: str,
+    prefix: str,
     device: str = "cpu",
 ) -> Dict[str, torch.Tensor]:
-    """Download only the known-head shard and return a state dict.
+    """Download the checkpoint shards for ``prefix`` and return a state dict.
 
-    Keys have the ``known_head.`` prefix stripped so they can be loaded
-    directly into a ``ConceptHead`` via ``load_state_dict``.
+    Only the shards that actually contain keys under ``prefix`` are fetched,
+    so a single concept head pulls one shard rather than the full checkpoint.
+    ``prefix`` is stripped from every returned key so the dict loads directly
+    into the matching module via ``load_state_dict``.
 
-    For Steerling-8B this downloads ~1 GB (shard 4/4) and extracts
-    ~553 MB of tensors.
+    Args:
+        model_id: HuggingFace Hub model id or local path.
+        prefix: Key prefix, e.g. ``"known_head"``, ``"unknown_head"``, or
+            ``"transformer"``. A trailing dot is added automatically.
+        device: PyTorch device string passed to safetensors.
+
+    Returns:
+        State dict with ``prefix`` stripped from every key.
     """
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
-    weight_map = _download_index(model_name_or_path)
+    prefix = prefix.rstrip(".") + "."
+    weight_map = _download_weight_map(model_id)
+    shards = sorted({v for k, v in weight_map.items() if k.startswith(prefix)})
 
-    # Find which shard(s) contain known_head tensors
-    shards = {
-        v for k, v in weight_map.items() if k.startswith("known_head.")
-    }
-
+    logger.info(
+        "Loading %r weights from %s (%d shard%s)...",
+        prefix, model_id, len(shards), "" if len(shards) == 1 else "s",
+    )
     state_dict: Dict[str, torch.Tensor] = {}
     for shard_file in shards:
-        shard_path = hf_hub_download(
-            model_name_or_path,
-            shard_file,
-            token=resolve_hf_token(),
-        )
+        logger.info("  Loading shard %s...", shard_file)
+        shard_path = hf_hub_download(model_id, shard_file)
         with safe_open(shard_path, framework="pt", device=device) as f:
             for key in f.keys():
-                if key.startswith("known_head."):
-                    state_dict[key.removeprefix("known_head.")] = f.get_tensor(key)
+                if key.startswith(prefix):
+                    state_dict[key.removeprefix(prefix)] = f.get_tensor(key)
 
-    logger.info("Loaded known-head weights from %s", model_name_or_path)
     return state_dict
 
 
-def load_steerling_unknown_head_weights(
-    model_name_or_path: str = DEFAULT_MODEL_ID,
+def _load_lm_head_weights(
+    model_id: str = DEFAULT_MODEL_ID,
     device: str = "cpu",
 ) -> Dict[str, torch.Tensor]:
-    """Download only the unknown-head shard and return a state dict.
+    """Download the LM-head / tied-token-embedding shard and return a state dict.
 
-    Keys have the ``unknown_head.`` prefix stripped so they can be loaded
-    directly into a ``ConceptHead`` via ``load_state_dict``.
+    Tries ``lm_head.weight``, ``transformer.lm_head.weight``, and
+    ``transformer.tok_emb.weight`` in order, covering both the explicit and
+    weight-tied checkpoint layouts.
+
+    Args:
+        model_id: HuggingFace Hub model id or local path.
+        device: PyTorch device string passed to safetensors.
+
+    Returns:
+        ``{"weight": tensor}`` ready for ``nn.Linear.load_state_dict``.
+
+    Raises:
+        KeyError: If none of the expected LM-head keys are found in the index.
     """
     from huggingface_hub import hf_hub_download
     from safetensors import safe_open
 
-    weight_map = _download_index(model_name_or_path)
-
-    shards = {
-        v for k, v in weight_map.items() if k.startswith("unknown_head.")
-    }
-
-    state_dict: Dict[str, torch.Tensor] = {}
-    for shard_file in shards:
-        shard_path = hf_hub_download(
-            model_name_or_path,
-            shard_file,
-            token=resolve_hf_token(),
-        )
-        with safe_open(shard_path, framework="pt", device=device) as f:
-            for key in f.keys():
-                if key.startswith("unknown_head."):
-                    state_dict[key.removeprefix("unknown_head.")] = f.get_tensor(key)
-
-    logger.info("Loaded unknown-head weights from %s", model_name_or_path)
-    return state_dict
-
-
-def load_steerling_lm_head_weights(
-    model_name_or_path: str = DEFAULT_MODEL_ID,
-    device: str = "cpu",
-) -> Dict[str, torch.Tensor]:
-    """Download the LM-head/tied-token-embedding shard and return a state dict.
-
-    Steerling checkpoints may either store an explicit ``lm_head.weight`` or
-    rely on the standard tied-weight layout where the output projection uses
-    ``transformer.tok_emb.weight``.  The returned dict is keyed as
-    ``{"weight": tensor}``, ready for ``nn.Linear.load_state_dict``.
-    """
-    from huggingface_hub import hf_hub_download
-    from safetensors import safe_open
-
-    weight_map = _download_index(model_name_or_path)
+    weight_map = _download_weight_map(model_id)
     weight_key = next(
         (
             key
@@ -215,62 +171,13 @@ def load_steerling_lm_head_weights(
         )
 
     shard_file = weight_map[weight_key]
-    shard_path = hf_hub_download(
-        model_name_or_path,
-        shard_file,
-        token=resolve_hf_token(),
-    )
+    shard_path = hf_hub_download(model_id, shard_file)
 
     with safe_open(shard_path, framework="pt", device=device) as f:
         weight = f.get_tensor(weight_key)
 
-    logger.info("Loaded lm_head weights from %s:%s", model_name_or_path, weight_key)
+    logger.info("Loaded lm_head weights from %s:%s", model_id, weight_key)
     return {"weight": weight}
-
-
-def load_steerling_backbone_weights(
-    model_name_or_path: str = DEFAULT_MODEL_ID,
-    device: str = "cpu",
-) -> Dict[str, torch.Tensor]:
-    """Download the transformer backbone weights and return a state dict.
-
-    Keys have the ``transformer.`` prefix stripped so they can be
-    loaded directly into a ``CausalDiffusionLM``.
-
-    .. warning::
-       For Steerling-8B this downloads the full ~16 GB checkpoint
-       (all shards are needed because transformer weights are spread
-       across shards 1–3).
-    """
-    from huggingface_hub import hf_hub_download
-    from safetensors import safe_open
-
-    weight_map = _download_index(model_name_or_path)
-
-    # Find shards that contain transformer.* keys
-    shards = {
-        v for k, v in weight_map.items() if k.startswith("transformer.")
-    }
-
-    state_dict: Dict[str, torch.Tensor] = {}
-    logger.info(
-        "Loading backbone weights from %s (%d shards)...",
-        model_name_or_path, len(shards),
-    )
-    for shard_file in sorted(shards):
-        logger.info("  Loading shard %s...", shard_file)
-        shard_path = hf_hub_download(
-            model_name_or_path,
-            shard_file,
-            token=resolve_hf_token(),
-        )
-        with safe_open(shard_path, framework="pt", device=device) as f:
-            for key in f.keys():
-                if key.startswith("transformer."):
-                    state_dict[key.removeprefix("transformer.")] = f.get_tensor(key)
-
-    logger.info("Backbone weights loaded from %s", model_name_or_path)
-    return state_dict
 
 
 # ------------------------------------------------------------------
@@ -282,33 +189,30 @@ KNOWN_CONCEPTS_URL = (
     "main/assets/concepts/known_concepts.csv"
 )
 
-_concept_labels_cache: Dict[str, "pandas.DataFrame"] = {}  # noqa: F821
+_concept_names_cache: Dict[str, list] = {}
 
 
-def load_steerling_concepts(
+def load_steerling_concept_names(
     url: str = KNOWN_CONCEPTS_URL,
-) -> "pandas.DataFrame":  # noqa: F821
-    """Download (and cache) the known-concept label mapping.
+) -> list:
+    """Return an ordered list of known-concept names.
 
-    The CSV is fetched from the ``guidelabs/steerling`` GitHub repo on
-    first call and cached in-process for subsequent calls.  The file is
-    also written to ``~/.cache/steerling/known_concepts.csv`` so it
-    persists across runs.
+    The list is ordered by ``concept_idx`` so that ``names[i]`` corresponds
+    to concept index ``i``, as expected by
+    :class:`~torch_concepts.distributions.ConceptVariable`.
 
-    Returns
-    -------
-    pandas.DataFrame
-        Columns: ``concept_idx``, ``concept_name``,
-        ``concept_description``, ``top_100_tokens``.
-        Indexed by ``concept_idx``.
+    Args:
+        url: URL of the known-concepts CSV. Defaults to the official
+            ``guidelabs/steerling`` GitHub asset.
+
+    Returns:
+        Ordered list of concept name strings, cached in-process.
+        Also written to ``~/.cache/steerling/known_concepts.csv`` on first
+        download so it persists across runs.
     """
-    import pandas as pd
+    if url in _concept_names_cache:
+        return _concept_names_cache[url]
 
-    if url in _concept_labels_cache:
-        return _concept_labels_cache[url]
-
-    # Local disk cache
-    from pathlib import Path
     cache_dir = Path.home() / ".cache" / "steerling"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "known_concepts.csv"
@@ -322,269 +226,67 @@ def load_steerling_concepts(
         df.to_csv(cache_path)
         logger.info("Cached concept labels to %s", cache_path)
 
-    _concept_labels_cache[url] = df
-    return df
+    names = list(df.sort_index()["concept_name"])
+    _concept_names_cache[url] = names
+    return names
 
 
-def load_steerling_concept_names(
-    url: str = KNOWN_CONCEPTS_URL,
-) -> list:
-    """Return an ordered list of concept names for all known concepts.
-
-    The list is ordered by ``concept_idx`` so that
-    ``names[i]`` corresponds to concept index ``i``.  This is the
-    format expected by :class:`~torch_concepts.distributions.ConceptVariable`.
-
-    Use :func:`load_steerling_concept_map` when you need index → name
-    random-access lookups instead.
-    """
-    df = load_steerling_concepts(url)
-    # sort by concept_idx (the DataFrame index) to guarantee order
-    return list(df.sort_index()["concept_name"])
-
-
-def load_steerling_concept_map(
-    url: str = KNOWN_CONCEPTS_URL,
-) -> Dict[int, str]:
-    """Return a ``{concept_idx: concept_name}`` dict for all known concepts.
-
-    Use this for index-based lookups (e.g. mapping top-k indices back to
-    names).  For ordered variable naming use
-    :func:`load_steerling_concept_names` instead.
-    """
-    df = load_steerling_concepts(url)
-    return dict(zip(df.index, df["concept_name"]))
-
-
-def prepare_generation_sequence(
-    tokenizer,
-    prompt: str,
-    n_new_tokens: int,
-) -> tuple[torch.Tensor, torch.BoolTensor, torch.BoolTensor]:
-    """Build the ``[prompt | MASK × N]`` input for causal-diffusion generation.
-
-    Parameters
-    ----------
-    tokenizer : SteerlingTokenizer
-        Tokenizer with ``mask_token_id``.
-    prompt : str
-        The text prompt.
-    n_new_tokens : int
-        Number of masked positions to append.
-
-    Returns
-    -------
-    input_ids : torch.Tensor
-        Shape ``(1, prompt_len + n_new_tokens)``.
-    prompt_mask : torch.BoolTensor
-        Shape ``(prompt_len + n_new_tokens,)``; ``True`` for prompt positions.
-    gen_mask : torch.BoolTensor
-        Shape ``(prompt_len + n_new_tokens,)``; ``True`` for generation positions.
-    """
-    prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
-    prompt_len = len(prompt_ids)
-    total_len = prompt_len + n_new_tokens
-
-    input_ids = torch.full((1, total_len), tokenizer.mask_token_id, dtype=torch.long)
-    input_ids[0, :prompt_len] = torch.tensor(prompt_ids, dtype=torch.long)
-
-    prompt_mask = torch.zeros(total_len, dtype=torch.bool)
-    prompt_mask[:prompt_len] = True
-    gen_mask = ~prompt_mask.clone()
-
-    return input_ids, prompt_mask, gen_mask
-
-
-@torch.no_grad()
-def prepare_steerling_evidence(
-    backbone,
-    prompt: str,
-    n_new_tokens: int = 0,
-) -> dict:
-    """Tokenize, optionally append MASK tokens, and compute hidden states.
-
-    Parameters
-    ----------
-    backbone : CausalDiffusionTextBackbone
-        Pretrained backbone (used for tokenizer and forward pass).
-    prompt : str
-        The text prompt.
-    n_new_tokens : int
-        Number of MASK tokens to append after the prompt for generation.
-        Use 0 for pure concept-querying (no generation).
-
-    Returns
-    -------
-    dict
-        ``{"input_ids": (1, T), "hidden": (1, T, D)}``
-        where ``T = prompt_len + n_new_tokens`` and ``D = n_embd``.
-        Tensors are float32.
-    """
-    tokenizer = backbone.tokenizer
-
-    if n_new_tokens > 0:
-        input_ids, _, _ = prepare_generation_sequence(
-            tokenizer, prompt, n_new_tokens)
-    else:
-        input_ids = tokenizer(prompt, return_tensors="pt")["input_ids"]
-
-    device = next(backbone.parameters()).device
-    input_ids = input_ids.to(device)
-    hidden = backbone(input_ids).float()
-
-    return {"input_ids": input_ids, "hidden": hidden}
-
-
-def active_concepts(
-    forward_output: dict,
-    *,
-    threshold: float | None = 0.5,
-    top_k: int | None = None,
-    positions: int | slice | None = None,
-    concept_names: list[str] | None = None,
-) -> "pandas.DataFrame":  # noqa: F821
-    """Extract active known concepts from a ``SteerlingLowLevelModel`` forward output.
-
-    Reads ``forward_output["known_concepts"]`` (raw logits) and returns the
-    concepts whose sigmoid score is above ``threshold`` and/or in the top
-    ``top_k`` per position.  This is a *post-processing* helper — it does
-    no extra forward passes.
-
-    Parameters
-    ----------
-    forward_output : dict
-        The dict returned by ``SteerlingLowLevelModel.forward(input_ids)``.
-        Must contain ``"known_concepts"`` with shape ``(B, T, C)`` or
-        ``(T, C)``.
-    threshold : float or None
-        Keep concepts with sigmoid probability ``>= threshold``.  Pass
-        ``None`` to skip the threshold filter (use ``top_k`` alone).
-    top_k : int or None
-        Keep only the top ``top_k`` concepts per position (by probability).
-        ``None`` keeps all that pass ``threshold``.  If both are set, the
-        thresholded set is further restricted to its top-``k``.
-    positions : int, slice, or None
-        Restrict to a specific position (e.g. ``-1`` for the last token) or
-        a slice.  ``None`` returns one row per position.
-    concept_names : list[str] or None
-        Optional pre-loaded list of concept names indexed by ``concept_idx``.
-        If omitted, ``load_steerling_concept_names`` is called.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Columns: ``batch``, ``position``, ``concept_idx``, ``concept_name``,
-        ``probability``, ``logit``.  Sorted by ``(batch, position,
-        -probability)``.
-    """
-    import pandas as pd
-
-    if threshold is None and top_k is None:
-        raise ValueError("Pass at least one of `threshold` or `top_k`.")
-
-    logits = forward_output["known_concepts"]
-    if logits is None:
-        raise ValueError("forward_output['known_concepts'] is None.")
-
-    if logits.dim() == 2:
-        logits = logits.unsqueeze(0)
-    elif logits.dim() != 3:
-        raise ValueError(
-            "Expected known_concepts with shape (T, C) or (B, T, C); "
-            f"got shape {tuple(logits.shape)}."
-        )
-
-    if positions is not None:
-        logits = logits[:, positions]
-        if logits.dim() == 2:
-            logits = logits.unsqueeze(1)
-
-    if concept_names is None:
-        concept_names = load_steerling_concept_names()
-
-    probs = torch.sigmoid(logits.float())
-
-    rows = []
-    B, T, _ = probs.shape
-    for b in range(B):
-        for t in range(T):
-            p = probs[b, t]
-            if threshold is not None:
-                mask = p >= threshold
-                idx = mask.nonzero(as_tuple=False).squeeze(-1)
-            else:
-                idx = torch.arange(p.numel(), device=p.device)
-            if idx.numel() == 0:
-                continue
-            sel_probs = p[idx]
-            sel_logits = logits[b, t][idx]
-            if top_k is not None and idx.numel() > top_k:
-                k = min(top_k, idx.numel())
-                topv, topi = torch.topk(sel_probs, k)
-                idx = idx[topi]
-                sel_probs = topv
-                sel_logits = sel_logits[topi]
-            order = torch.argsort(sel_probs, descending=True)
-            for i in order.tolist():
-                ci = int(idx[i].item())
-                rows.append({
-                    "batch": b,
-                    "position": t,
-                    "concept_idx": ci,
-                    "concept_name": (
-                        concept_names[ci]
-                        if 0 <= ci < len(concept_names)
-                        else f"<unknown:{ci}>"
-                    ),
-                    "probability": round(float(sel_probs[i].item()), 6),
-                    "logit": round(float(sel_logits[i].item()), 4),
-                })
-
-    return pd.DataFrame(
-        rows,
-        columns=["batch", "position", "concept_idx", "concept_name", "probability", "logit"],
-    )
-
-
-def print_concepts(
+def top_concepts(
     logits: torch.Tensor,
     topk: int = 10,
-) -> "pandas.DataFrame":  # noqa: F821
-    """Map concept logits to human-readable concept names.
+) -> pd.DataFrame:
+    """Map concept logits to the top-``k`` human-readable concept names.
 
-    Parameters
-    ----------
-    logits : torch.Tensor
-        Concept logits, shape ``(T, n_concepts)`` for a single
-        sequence or ``(n_concepts,)`` for a single position.
-    topk : int
-        Number of top concepts to return per token position.
+    A lightweight post-processing helper — no forward passes, just ranks the
+    logits and looks up names. Pass a single position
+    (e.g. ``out["known_concepts"][0, -1]``) or a whole sequence.
 
-    Returns
-    -------
-    pandas.DataFrame
-        Columns: ``position``, ``concept_idx``, ``concept_name``,
-        ``logit``.
+    Args:
+        logits: Concept logits, shape ``(n_concepts,)`` for a single position
+            or ``(T, n_concepts)`` for a sequence.
+        topk: Number of top concepts to return per position. Clamped to the
+            number of available concepts.
+
+    Returns:
+        ``pandas.DataFrame`` with one row per (position, concept) and columns
+        ``position``, ``concept_idx``, ``concept_name``, ``probability``
+        (sigmoid of the logit), and ``logit``. Rows are ordered by descending
+        logit within each position.
+
+    Raises:
+        ValueError: If ``logits`` is not 1-D or 2-D.
     """
-    import pandas as pd
-    from torch_concepts.steerling.steerling_utils import load_steerling_concepts
 
-    labels = load_steerling_concepts()
+    names = load_steerling_concept_names()
 
     if logits.dim() == 1:
         logits = logits.unsqueeze(0)
+    elif logits.dim() != 2:
+        raise ValueError(
+            "Expected logits with shape (n_concepts,) or (T, n_concepts); "
+            f"got shape {tuple(logits.shape)}."
+        )
+
+    k = min(topk, logits.shape[-1])
 
     rows = []
     for pos in range(logits.shape[0]):
-        tk = torch.topk(logits[pos], k=topk)
-        for idx, val in zip(tk.indices.tolist(), tk.values.tolist()):
+        values, indices = torch.topk(logits[pos].float(), k=k)
+        probs = torch.sigmoid(values)
+        for idx, logit, prob in zip(
+            indices.tolist(), values.tolist(), probs.tolist()
+        ):
             rows.append({
                 "position": pos,
                 "concept_idx": idx,
-                "concept_name": labels.loc[idx, "concept_name"]
-                if idx in labels.index
-                else f"<unknown:{idx}>",
-                "logit": round(val, 4),
+                "concept_name": (
+                    names[idx] if 0 <= idx < len(names) else f"<unknown:{idx}>"
+                ),
+                "probability": round(prob, 6),
+                "logit": round(logit, 4),
             })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows,
+        columns=["position", "concept_idx", "concept_name", "probability", "logit"],
+    )

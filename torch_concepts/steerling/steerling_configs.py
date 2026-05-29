@@ -12,7 +12,6 @@ from copy import deepcopy
 import json
 from typing import Any, Dict, Literal, Mapping, Tuple
 
-from ..utils import resolve_hf_token
 
 
 SteerlingConfigSource = Literal["pyc", "steerling", "hub"]
@@ -137,15 +136,7 @@ def load_steerling_hub_config(
     """
     from huggingface_hub import hf_hub_download
 
-    # Late import to avoid a circular dependency with ``steerling_utils``.
-    from .steerling_utils import _ensure_hf_login
-    _ensure_hf_login()
-
-    config_path = hf_hub_download(
-        model_name_or_path,
-        "config.json",
-        token=resolve_hf_token(),
-    )
+    config_path = hf_hub_download(model_name_or_path, "config.json")
     with open(config_path) as f:
         raw = json.load(f)
 

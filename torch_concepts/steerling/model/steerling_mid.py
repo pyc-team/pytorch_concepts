@@ -63,8 +63,7 @@ from torch_concepts.nn import (
 from ...steerling.model.steerling_low import SteerlingLowLevelModel
 from ..steerling_utils import (
     load_steerling_concept_names,
-    prepare_generation_sequence,
-    print_concepts,
+    top_concepts,
 )
 
 logger = logging.getLogger(__name__)
@@ -359,7 +358,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         tokenizer = self.tokenizer
         mask_id = tokenizer.mask_token_id
 
-        input_ids, _, _ = self.prepare_input(prompt, n_new_tokens)
+        input_ids, _, _ = self.build_input(prompt, n_new_tokens)
         input_ids = input_ids.to(self.device)
 
         prompt_len = (input_ids[0] != mask_id).sum().item()
@@ -390,7 +389,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
                 if topk_concepts is not None:
-                    concepts = print_concepts(
+                    concepts = top_concepts(
                         out[0, seq_idx, self.vocab_size:],
                         topk=topk_concepts,
                     )

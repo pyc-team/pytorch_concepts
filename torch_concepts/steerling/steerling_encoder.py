@@ -99,13 +99,10 @@ def _filter_concept_head_config(
 def _import_concept_head():
     try:
         import steerling.models.interpretable.concept_head as _ch
-        from steerling.models.interpretable.concept_head import (
-            ConceptHead,
-            ConceptHeadOutput,
-        )
+        from steerling.models.interpretable.concept_head import ConceptHead
         # Allow dense logits for all heads (including >50k unknown concepts).
         _ch.LARGE_CONCEPT_THRESHOLD = float("inf")
-        return ConceptHead, ConceptHeadOutput
+        return ConceptHead
     except ImportError as exc:
         raise ImportError(
             "SteerlingLatentToConcept requires the `steerling` package. "
@@ -176,7 +173,7 @@ class SteerlingLatentToConcept(BaseEncoder):
     ):
         super().__init__(in_latent=in_latent, out_concepts=out_concepts)
 
-        ConceptHead, _ = _import_concept_head()
+        ConceptHead = _import_concept_head()
 
         self.is_unknown = is_unknown
         if config is None:

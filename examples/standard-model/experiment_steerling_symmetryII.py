@@ -204,7 +204,7 @@ def main(TOPK: int):
     print(model)
 
     # ── 2. Prepare last-token hidden as the differentiation point ──────
-    input_ids, _, _ = model.prepare_input(prompt, n_new_tokens=n_new_tokens)
+    input_ids, _, _ = model.build_input(prompt, n_new_tokens=n_new_tokens)
     input_ids = input_ids.to(device)
     print(f"\nPrompt: {prompt!r}")
     print(f"Tokens: {tuple(input_ids.shape)}")

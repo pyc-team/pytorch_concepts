@@ -22,7 +22,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 import torch
 import pandas as pd
-from torch_concepts.steerling import SteerlingMidLevelModel, print_concepts
+from torch_concepts.steerling import SteerlingMidLevelModel, top_concepts
 
 
 def print_steerling_config(model):
@@ -83,7 +83,7 @@ prompt = "As an italian living abroad in the US, I particularly miss"
 n_new_tokens = 20
 
 # ── 2. Sanity check: single forward on the prompt only ────────────
-input_ids, _, _ = model.prepare_input(prompt, n_new_tokens=0)
+input_ids, _, _ = model.build_input(prompt, n_new_tokens=0)
 input_ids = input_ids.to(device)
 print(f"\nPrompt: {prompt!r}")
 print(f"Tokens: {input_ids.shape}")
@@ -106,7 +106,7 @@ print(f"Next-token scores:      {parts['new_token'].shape}")
 # Top-5 known concepts at the last token of the prompt
 pd.set_option("display.max_colwidth", 50)
 pd.set_option("display.width", 120)
-df = print_concepts(parts["known_concepts"][0, -1:], topk=5)   # last position only
+df = top_concepts(parts["known_concepts"][0, -1:], topk=5)   # last position only
 print("\nTop-5 known concepts at last prompt token:")
 print(df.to_string(index=False))
 
