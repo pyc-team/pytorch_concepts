@@ -475,7 +475,7 @@ def plot_metric_vs_topk(
             zorder=4,
             label=mark_label if mark_label is not None else fr"rank = {mark_rank}",
         )
-    ax.set_xlabel(r"concept bottleneck size")
+    ax.set_xlabel(r"Concept bottleneck size")
     ax.set_ylabel(r"$\sqrt{\mathrm{Symmetry\ II\ constraint}}$")
     if title:
         ax.set_title(title)
@@ -613,25 +613,25 @@ def main():
     if runs_unmasked:
         # Containment metric — asymmetric, monotonically non-increasing.
         # Masked-h_bar track should drop sharply at TOPK = 16.
-        out_png = os.path.join(
-            OUT_DIR, f"metric_vs_topk_containment_{FRACTION_ENERGY}.png"
+        out_path = os.path.join(
+            OUT_DIR, f"metric_vs_topk_containment_{FRACTION_ENERGY}.pdf"
         )
         plot_metric_vs_topk(
             [
                 (r"unmasked $\nabla_z \bar h$", runs_unmasked),
-                (r"masked $\nabla_z \bar h$  ($K{=}16$)", runs_masked),
+                (r"masked $\nabla_z \bar h$  (top-$k{=}16$)", runs_masked),
             ],
-            out_path=out_png,
+            out_path=out_path,
             method="energy", fraction=FRACTION_ENERGY,
             log_x=True,
             mark_rank=r_star,
-            mark_label=r"effective rank($\nabla_z \bar h$)",
+            mark_label=fr"{FRACTION_ENERGY * 100:g}%-energy effective rank($\nabla_z \bar h$)",
             mark_ranks=rank_marks,
             show_mark_ranks=False,
             mark_cmap="Reds",
             metric_fn=normalized_gradient_alignment_metric_containment,
         )
-        print(f"Saved containment-metric-vs-topk plot: {out_png}")
+        print(f"Saved containment-metric-vs-topk plot: {out_path}")
     else:
         print("Skipped containment-metric-vs-topk plot: no qualifying caches found.")
 
