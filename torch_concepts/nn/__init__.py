@@ -118,6 +118,8 @@ __all__ = [
     "Dense",
     "ResidualMLP",
     "MLP",
+    "SumOp",
+    "ResidualCorrectionOp",
 
     # Ops
     "SumOp",
