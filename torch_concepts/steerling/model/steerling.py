@@ -3,43 +3,8 @@ Steerling model — PGM-backed concept bottleneck LM (recommended entry point).
 
 :class:`SteerlingModel` is the high-level, test-time interface to Steerling.
 It builds on :class:`SteerlingLowLevelModel` but routes all computation through
-a :class:`~torch_concepts.nn.ProbabilisticModel` +
-:class:`~torch_concepts.nn.DeterministicInference` graph, so individual
-concepts can be queried and read out by name
-(:meth:`~SteerlingModel.concepts`).
-
-Internal PGM graph::
-
-                                      K ──┐
-                                          ▼
-    input  ──► k  (known concepts)    ──► k_hat ──────────────┐
-           ├──► u  (unknown concepts) ──► u_hat ──────────────┤
-           │                              ▲                   │
-           │                          U ──┘                   │
-           └────────────────────────────────────► epsilon ────► h_bar ──► new_token
-
-Data-flow::
-
-    input_ids        ──► backbone     ──► h          (B, T, D)        [evidence]
-    known_embeddings                  ──► K          (n_known,   D)   [evidence]
-    unknown_embeddings                ──► U          (n_unknown, D)   [evidence]
-    h                ──► k_cpd        ──► k          (B, T, n_known)
-    h                ──► u_cpd        ──► u          (B, T, n_unknown)
-    k, K             ──► k_hat_cpd    ──► k_hat      (B, T, D)
-    u, U             ──► u_hat_cpd    ──► u_hat      (B, T, D)
-    h, k_hat, u_hat  ──► epsilon_cpd  ──► eps        (B, T, D)
-    k_hat,u_hat,eps  ──► h_bar_cpd    ──► h_bar      (B, T, D)
-    h_bar            ──► token_cpd    ──► new_token  (B, T, vocab)
-
-Modules used:
-    - :class:`CausalDiffusionTextBackbone`
-    - :class:`SteerlingLatentToConcept`           (known + unknown)
-    - :class:`MixFactorizedConceptExogenousToConcept`
-    - :class:`ResidualCorrectionOp`
-    - :class:`SumOp`
-    - ``nn.Linear`` LM head
-    - :class:`ParametricCPD`, :class:`ProbabilisticModel`,
-      :class:`DeterministicInference`
+a :class:`~torch_concepts.nn.ProbabilisticModel`, so concepts, latents, and
+tokens can be queried by name.
 """
 
 from __future__ import annotations
@@ -75,9 +40,11 @@ logger = logging.getLogger(__name__)
 class SteerlingModel(SteerlingLowLevelModel):
     """PGM-backed Steerling concept-bottleneck language model.
 
-    Same interface as :class:`SteerlingLowLevelModel`, but all computation
-    is routed through a :class:`ProbabilisticModel` so individual variables
-    (concepts, latents, tokens) can be queried directly.
+    Same construction interface as :class:`SteerlingLowLevelModel`, but wraps
+    its modules in a :class:`ProbabilisticModel` so individual variables
+    (concepts, latents, tokens) can be queried by name. Unlike the low-level
+    model, :meth:`forward` returns a :class:`~torch_concepts.nn.ModelOutput`
+    and takes an optional ``query``.
 
     Internal PGM graph::
 
@@ -106,9 +73,6 @@ class SteerlingModel(SteerlingLowLevelModel):
 
         model = SteerlingModel().to("cuda")
         model.eval()
-
-        # Top active concepts for a prompt (text in, named DataFrame out)
-        model.concepts("As an Italian living abroad I miss", top_k=5)
 
         # End-to-end: tokens → concept bottleneck → next-token logits
         out = model(input_ids)

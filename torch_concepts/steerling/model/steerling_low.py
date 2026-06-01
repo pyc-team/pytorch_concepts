@@ -141,8 +141,12 @@ class SteerlingLowLevelModel(nn.Module):
             keys here (``topk_known``, ``unknown_topk``, ...) raises
             :class:`NotImplementedError` — top-k inference is not implemented
             yet.
-        Modules are constructed and loaded on CPU. Move the model afterward
-        with the standard PyTorch ``model.to(device)`` pattern.
+        dtype: dtype the modules are built in. ``None`` (default) resolves to
+            the config's ``torch_dtype``, then to ``bfloat16`` (Steerling ships
+            bf16 weights), so loading does not allocate a transient float32 copy.
+
+    Modules are constructed and loaded on CPU; move the model afterward with
+    the standard ``model.to(device)`` pattern.
 
     Example::
 

@@ -84,6 +84,20 @@ class TestDeviceResolution:
         assert isinstance(device, torch.device)
         assert device.type in ['cpu', 'cuda']
 
+    def test_auto_cpu_when_nothing_available(self, monkeypatch):
+        """No CUDA and no MPS -> CPU (covers the final else branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+        assert _resolve_device(None) == torch.device('cpu')
+
+    def test_mps_warns_and_falls_back_to_cpu(self, monkeypatch):
+        """MPS available -> warn and fall back to CPU (covers the MPS branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        with pytest.warns(UserWarning, match="MPS"):
+            device = _resolve_device(None)
+        assert device == torch.device('cpu')
+
 
 # =============================================================================
 # Test HuggingFace Detection

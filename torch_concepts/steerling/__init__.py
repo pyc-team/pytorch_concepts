@@ -1,9 +1,9 @@
 """
 Steerling integration for PyTorch Concepts.
 
-This package provides utilities for working with the Steerling family
-of interpretable language models, including backbone, encoder, decoder,
-and hub/config helpers.
+Utilities for the Steerling family of interpretable language models: the
+backbone, the concept encoder and mixer layers, the high- and low-level
+models, and hub/config helpers.
 """
 
 import os

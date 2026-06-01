@@ -801,5 +801,54 @@ class TestUtilsCoverage(unittest.TestCase):
         self.assertTrue(torch.allclose(result.metadata['cat_c']['activation'](x), torch.softmax(x, dim=-1)))
 
 
+class TestResolveHfToken(unittest.TestCase):
+    """Test suite for resolve_hf_token (env-var precedence + conceptarium fallback)."""
+
+    # Empty strings disable a var (os.environ.get(...) -> "" is falsy).
+    _EMPTY = {"HF_TOKEN": "", "HUGGINGFACE_HUB_TOKEN": "", "HUGGINGFACEHUB_TOKEN": ""}
+
+    def test_hf_token_wins(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HF_TOKEN": "tok1"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok1")
+
+    def test_huggingface_hub_token_second(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACE_HUB_TOKEN": "tok2"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok2")
+
+    def test_huggingfacehub_token_third(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACEHUB_TOKEN": "tok3"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok3")
+
+    def test_falls_back_to_conceptarium_env(self):
+        from unittest import mock
+        import conceptarium.env as cenv
+        from torch_concepts.utils import resolve_hf_token
+        # The three vars must be ABSENT (not empty) so setdefault can seed them.
+        with mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch.object(cenv, "HUGGINGFACEHUB_TOKEN", "cfg_tok"):
+            for key in self._EMPTY:
+                os.environ.pop(key, None)
+            self.assertEqual(resolve_hf_token(), "cfg_tok")
+            # Fallback also seeds the canonical env vars.
+            self.assertEqual(os.environ.get("HF_TOKEN"), "cfg_tok")
+
+    def test_returns_none_when_nothing_available(self):
+        from unittest import mock
+        import conceptarium.env as cenv
+        from torch_concepts.utils import resolve_hf_token
+        with mock.patch.dict(os.environ, self._EMPTY, clear=False), \
+             mock.patch.object(cenv, "HUGGINGFACEHUB_TOKEN", ""):
+            self.assertIsNone(resolve_hf_token())
+
+
 if __name__ == '__main__':
     unittest.main()

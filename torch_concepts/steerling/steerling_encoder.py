@@ -97,9 +97,10 @@ class SteerlingLatentToConcept(BaseEncoder):
     """PyC wrapper around Steerling's latent-to-concept head.
 
     The encoder accepts hidden states with shape ``(..., in_latent)`` and
-    returns raw dense concept logits with shape ``(..., out_concepts)``. Unlike
-    Steerling's sparse inference path, this wrapper disables top-k constructor
-    options so PyC can carry ordinary dense concept tensors into later layers.
+    returns raw dense concept logits with shape ``(..., out_concepts)``.
+    :meth:`forward` always scores densely from the head's projection/embedding
+    weights and never applies Steerling's top-k sparsification; the wrapper does
+    not itself sanitize top-k config keys (the owning model is responsible).
 
     If ``config`` is omitted, the Steerling-8B Hub concept config is used.
     ``ConceptConfig`` names that differ from ``ConceptHead`` names are mapped
