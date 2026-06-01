@@ -31,4 +31,8 @@ ignore:
   - "setup.py"
   - "**/__pycache__"
   - "**/*.pyc"
+  # Steerling integration depends on the optional `steerling` package and
+  # large Hub checkpoints; exclude it from coverage.
+  - "torch_concepts/steerling/"
+  - "**/steerling/**"
 
