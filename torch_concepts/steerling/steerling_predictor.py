@@ -22,8 +22,7 @@ class MixFactorizedConceptExogenousToConcept(BasePredictor):
     This layer is the PyC-compatible concept-embedding mixing step used after
     :class:`~torch_concepts.steerling.steerling_encoder.SteerlingLatentToConcept`.
     It deliberately accepts only tensors in ``forward(concepts, exogenous)`` so
-    it can be inserted into a PyC graph without passing dictionaries, custom
-    output objects, or hidden mutable state between layers.
+    it can be inserted into a PyC graph.
 
     The layer reconstructs a latent feature vector by contracting concept
     scores with concept embeddings. ``concepts`` are expected to already be

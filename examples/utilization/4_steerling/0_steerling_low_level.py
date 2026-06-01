@@ -102,19 +102,14 @@ def print_steerling_runtime_info(model):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the low-level model ────────────────────────────
-# Construct directly in bf16 to halve the CPU-RAM peak during weight load
-# (destination tensors are 16 GB instead of 32 GB; peak ≈ 16 + 16 = 32 GB
-# instead of 32 + 16 = 48 GB). Restore default dtype afterwards.
-_prev_default_dtype = torch.get_default_dtype()
-torch.set_default_dtype(torch.bfloat16)
-try:
-    model = SteerlingLowLevelModel(
-        use_unknown=True,
-        use_epsilon_correction=False
-    )
-finally:
-    torch.set_default_dtype(_prev_default_dtype)
-model.to(device=device, dtype=torch.bfloat16)
+# The model builds itself in its native bfloat16 (see the dtype= arg to
+# override), halving the CPU-RAM peak during weight load — no global
+# torch.set_default_dtype() needed here.
+model = SteerlingLowLevelModel(
+    use_unknown=True,
+    use_epsilon_correction=False
+)
+model.to(device=device)
 model.eval()
 print(model)
 print_steerling_config(model)

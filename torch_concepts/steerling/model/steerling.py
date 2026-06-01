@@ -1,11 +1,12 @@
 """
-Steerling mid-level model — PGM-backed concept bottleneck LM.
+Steerling model — PGM-backed concept bottleneck LM (recommended entry point).
 
-:class:`SteerlingMidLevelModel` exposes the same interface as
-:class:`SteerlingLowLevelModel` but routes all computation through a
-:class:`~torch_concepts.nn.ProbabilisticModel` + 
-:class:`~torch_concepts.nn.DeterministicInference` graph, enabling
-fine-grained concept queries and future interventions.
+:class:`SteerlingModel` is the high-level, test-time interface to Steerling.
+It builds on :class:`SteerlingLowLevelModel` but routes all computation through
+a :class:`~torch_concepts.nn.ProbabilisticModel` +
+:class:`~torch_concepts.nn.DeterministicInference` graph, so individual
+concepts can be queried and read out by name
+(:meth:`~SteerlingModel.concepts`).
 
 Internal PGM graph::
 
@@ -30,7 +31,7 @@ Data-flow::
     k_hat,u_hat,eps  ──► h_bar_cpd    ──► h_bar      (B, T, D)
     h_bar            ──► token_cpd    ──► new_token  (B, T, vocab)
 
-Mid-level modules used:
+Modules used:
     - :class:`CausalDiffusionTextBackbone`
     - :class:`SteerlingLatentToConcept`           (known + unknown)
     - :class:`MixFactorizedConceptExogenousToConcept`
@@ -52,9 +53,11 @@ from torch.distributions import RelaxedBernoulli, RelaxedOneHotCategorical
 
 from torch_concepts.distributions import Delta
 from torch_concepts import ConceptVariable, LatentVariable, ExogenousVariable
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     BaseInference,
     DeterministicInference,
+    ModelOutput,
     ParametricCPD,
     ProbabilisticModel,
     SumOp,
@@ -69,12 +72,12 @@ from ..steerling_utils import (
 logger = logging.getLogger(__name__)
 
 
-class SteerlingMidLevelModel(SteerlingLowLevelModel):
+class SteerlingModel(SteerlingLowLevelModel):
     """PGM-backed Steerling concept-bottleneck language model.
 
     Same interface as :class:`SteerlingLowLevelModel`, but all computation
     is routed through a :class:`ProbabilisticModel` so individual variables
-    (concepts, latents, tokens) can be queried or intervened upon directly.
+    (concepts, latents, tokens) can be queried directly.
 
     Internal PGM graph::
 
@@ -101,8 +104,11 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
     Example::
 
-        model = SteerlingMidLevelModel().to("cuda")
+        model = SteerlingModel().to("cuda")
         model.eval()
+
+        # Top active concepts for a prompt (text in, named DataFrame out)
+        model.concepts("As an Italian living abroad I miss", top_k=5)
 
         # End-to-end: tokens → concept bottleneck → next-token logits
         out = model(input_ids)
@@ -120,12 +126,48 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
     def __init__(
         self,
-        *args,
+        annotations: Optional[Annotations] = None,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
+        train_inference: Optional[BaseInference] = None,
+        graph=None,
+        lightning: bool = False,
+        *args,
         **kwargs,
     ):
+        # SteerlingModel mirrors the high-level ``BaseModel`` API but is a
+        # test-time model: it has no training engine and builds its concept
+        # annotations internally from the (pretrained) concept heads.
+        if lightning:
+            raise ValueError(
+                "SteerlingModel is a test-time model and does not support "
+                "Lightning training; pass lightning=False (the default)."
+            )
+        if train_inference is not None:
+            raise ValueError(
+                "SteerlingModel is a test-time model; a training inference "
+                "engine is not available. Leave train_inference=None — the "
+                "evaluation engine is used for all queries."
+            )
         super().__init__(*args, **kwargs)
+
+        # Concept annotations are derived from the concept heads, whose concept
+        # structure is fixed once those heads are pretrained. Refuse a
+        # caller-supplied annotations/graph in that case rather than silently
+        # ignoring it.
+        concept_pretrained = [
+            component
+            for component in ("known_head", "unknown_head")
+            if component in self.pretrained_components
+        ]
+        if (annotations is not None or graph is not None) and concept_pretrained:
+            raise ValueError(
+                "SteerlingModel builds its concept annotations internally from "
+                f"the pretrained concept heads ({concept_pretrained}); passing "
+                "`annotations` or `graph` would conflict with that baked-in "
+                "structure. Omit them, or build the concept heads from scratch "
+                "(drop them from pretrained_components)."
+            )
         # The low-level wrapper has resolved `use_unknown` from the merged
         # concept config (elevated kwarg + config_source).
         use_unknown = bool(self.concept_cfg.get("use_unknown", True))
@@ -135,13 +177,22 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         self.known_names   = load_steerling_concept_names() # list[str]
         if len(self.known_names) != self.n_known:
             raise ValueError(
-                "SteerlingMidLevelModel requires n_concepts to match the "
+                "SteerlingModel requires n_concepts to match the "
                 f"known-concept CSV ({len(self.known_names)}), got {self.n_known}."
             )
         if use_unknown:
             self.unknown_names = [f"unsup_{i}" for i in range(self.unknown_concept_head.out_concepts)]
         else:
             self.unknown_names = []
+
+        # ── High-level BaseModel API mirror ───────────────────────────────
+        # SteerlingModel is not a BaseModel subclass, but exposes the same
+        # surface: a fixed (None) graph, an identity latent encoder (the
+        # backbone hidden states feed the PGM directly), and concept
+        # annotations built internally from the concept heads.
+        self.graph = None
+        self.latent_encoder = nn.Identity()
+        self.concept_annotations = self._build_annotations()
 
         h = LatentVariable("input", size=self.latent_dim, distribution=Delta)
         k = ConceptVariable(
@@ -232,8 +283,20 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
             *([u_cpd, u_embs_cpd, u_hat_cpd] if use_unknown else []),
             epsilon_cpd, h_bar_cpd, new_token_cpd,
         ]
-        self.pgm = ProbabilisticModel(variables=variables, factors=factors)
-        self.inference = inference(self.pgm, **(inference_kwargs or {}))
+        # `self.model` mirrors the high-level BaseModel attribute — the
+        # ProbabilisticModel the inference engines wrap.
+        self.model = ProbabilisticModel(variables=variables, factors=factors)
+        # Test-time model: a single (evaluation) inference engine, no training
+        # engine.  `eval_inference` + the `inference` property mirror the
+        # high-level `BaseModel` contract (which selects train/eval by mode).
+        self.eval_inference = inference(self.model, **(inference_kwargs or {}))
+        self.train_inference = None
+
+        # The PGM wrapper modules (e.g. SumOp) are built after super().__init__
+        # returns, i.e. outside the bf16 construction context, so unify
+        # everything to the model dtype. Cheap: the (large) backbone is already
+        # bf16, so this only casts the small PGM parameters.
+        self.to(self.dtype)
 
     # ------------------------------------------------------------------
     # Core helpers
@@ -248,9 +311,59 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
             evidence["U"] = self.unknown_embeddings
         return evidence
 
+    def _build_annotations(self):
+        """Build concept annotations from the (pretrained) concept heads.
+
+        Mirrors the high-level :class:`BaseModel`, which receives an
+        :class:`~torch_concepts.annotations.Annotations` describing the concept
+        variables.  SteerlingModel's concepts are fixed — the known-concept CSV,
+        the ``unsup_i`` unknown concepts, and the categorical ``new_token`` — so
+        the annotation is constructed internally rather than supplied by a
+        datamodule.
+
+        ``{"type": "discrete"}`` + the cardinalities below resolve, via
+        :func:`~torch_concepts.utils.add_default_properties`, to exactly the
+        distributions the PGM uses: ``RelaxedBernoulli`` (sigmoid) for the
+        binary known/unknown concepts and ``RelaxedOneHotCategorical`` (softmax)
+        for ``new_token``.
+
+        Returns:
+            AxisAnnotation: axis-1 annotation with default distributions and
+            activations filled in.
+        """
+        from torch_concepts.annotations import AxisAnnotation
+        from torch_concepts.utils import add_default_properties
+
+        labels = list(self.known_names) + list(self.unknown_names) + ["new_token"]
+        cardinalities = (
+            [1] * self.n_known
+            + [1] * len(self.unknown_names)
+            + [self.vocab_size]
+        )
+        metadata = {name: {"type": "discrete"} for name in labels}
+        axis = AxisAnnotation(
+            labels=labels,
+            cardinalities=cardinalities,
+            metadata=metadata,
+        )
+        return add_default_properties(axis)
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+    @property
+    def inference(self):
+        """Active inference engine.
+
+        Mirrors :class:`~torch_concepts.nn.modules.high.base.model.BaseModel`,
+        which selects the engine by ``self.training``.  This is a test-time
+        model with no training engine, so the evaluation engine is always
+        returned.
+        """
+        if self.training and self.train_inference is not None:
+            return self.train_inference
+        return self.eval_inference
+
     @property
     def _split_query_specs(self):
         return [            
@@ -283,25 +396,46 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
     def forward(
         self,
         input_ids: torch.Tensor,
-        query: Optional[list[str]] = None
-    ):
+        query: Optional[list[str]] = None,
+        return_logits: bool = False,
+        return_probs: bool = True,
+        **inference_kwargs,
+    ) -> ModelOutput:
         """End-to-end forward through the PGM concept bottleneck.
+
+        Mirrors the high-level :class:`BaseModel` contract: returns a
+        :class:`~torch_concepts.nn.ModelOutput` whose ``logits``/``probs``/
+        ``joint`` fields are populated per the ``return_*`` flags. Note the
+        deliberate signature difference — ``input_ids`` is the required input
+        (a token sequence), and ``query`` is optional (defaults to the full
+        token-aligned query).
 
         Args:
             input_ids: Token ids, shape ``(B, T)``.
-            query: Optional variable names to query. By default all
-                token-aligned variables are queried.
+            query: Variable names to query. ``None`` queries all
+                token-aligned variables.
+            return_logits: Populate ``ModelOutput.logits``.
+            return_probs: Populate ``ModelOutput.probs`` (default).
+            **inference_kwargs: Forwarded to the inference engine's ``query``.
 
         Returns:
-            ``InferenceOutput`` from the configured PyC inference engine.
+            ModelOutput: ``.logits``/``.probs``/``.joint`` per the flags.
         """
-        evidence = self._evidence(input_ids)
-
         if query is None:
             query = self.default_query
 
-        out = self.inference.query(query, evidence=evidence)
-        return out
+        result = self.inference.query(
+            query,
+            evidence=self._evidence(input_ids),
+            return_logits=return_logits,
+            return_probs=return_probs,
+            **inference_kwargs,
+        )
+        return ModelOutput(
+            logits=result.logits,
+            probs=result.probs,
+            joint=result.joint,
+        )
 
     # ------------------------------------------------------------------
     # Convenience methods
@@ -321,7 +455,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
         expected = sum(size for _, size in self._split_query_specs)
         if out.shape[-1] != expected:
             raise ValueError(
-                "Expected output from the default full mid-level query with "
+                "Expected output from the default full query with "
                 f"last dimension {expected}, got {out.shape[-1]}."
             )
         pieces = {}
@@ -405,7 +539,7 @@ class SteerlingMidLevelModel(SteerlingLowLevelModel):
 
     def __repr__(self) -> str:
         return (
-            f"SteerlingMidLevelModel("
+            f"SteerlingModel("
             f"n_known={self.n_known}, "
             f"n_unknown={self.n_unknown}, "
             f"latent_dim={self.latent_dim}, "

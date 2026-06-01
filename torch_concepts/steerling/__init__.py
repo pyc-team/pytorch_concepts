@@ -37,12 +37,11 @@ from .steerling_configs import (
     PYTORCH_CONCEPTS_CONCEPT_DEFAULTS,
     PYTORCH_CONCEPTS_MODEL_DEFAULTS,
     load_steerling_hub_config,
-    normalize_steerling_components,
     resolve_steerling_configs,
 )
 from .steerling_backbone import CausalDiffusionTextBackbone
 from .model.steerling_low import SteerlingLowLevelModel
-from .model.steerling_mid import SteerlingMidLevelModel
+from .model.steerling import SteerlingModel
 from .steerling_encoder import SteerlingLatentToConcept
 from .steerling_predictor import MixFactorizedConceptExogenousToConcept
 
@@ -57,11 +56,10 @@ __all__ = [
     "top_concepts",
     "PYTORCH_CONCEPTS_CONCEPT_DEFAULTS",
     "PYTORCH_CONCEPTS_MODEL_DEFAULTS",
-    "normalize_steerling_components",
     "resolve_steerling_configs",
     # out-of-the-box model
+    "SteerlingModel",
     "SteerlingLowLevelModel",
-    "SteerlingMidLevelModel",
     # Backbone
     "CausalDiffusionTextBackbone",
     # Encoder

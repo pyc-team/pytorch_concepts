@@ -111,7 +111,7 @@ class CausalDiffusionTextBackbone(nn.Module):
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
 
         if config is None:
-            model_cfg_dict, _, _ = resolve_steerling_configs(
+            model_cfg_dict, _ = resolve_steerling_configs(
                 config_source=config_source,
                 model_id=model_id,
             )

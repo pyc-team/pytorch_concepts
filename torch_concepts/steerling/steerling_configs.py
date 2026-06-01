@@ -10,14 +10,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-from typing import Any, Dict, Literal, Mapping, Tuple
+from typing import Any, Literal, Mapping
 
 
 
 SteerlingConfigSource = Literal["pyc", "steerling", "hub"]
 DEFAULT_MODEL_ID = "guidelabs/steerling-8b"
-
-STEERLING_COMPONENTS = ("backbone", "known_head", "unknown_head", "lm_head")
 
 # TODO: at some point, consider moving these to hydra YAML
 
@@ -77,26 +75,14 @@ PYTORCH_CONCEPTS_CONCEPT_DEFAULTS: dict[str, Any] = {
     "inject_layer": 16,
     "inject_alpha": 1.0,
 }
-_CONCEPT_CONFIG_KEYS = set(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS) | {
-    "concept_block_size",
-}
-
-
-def normalize_steerling_components(
-    components: bool | str | list[str] | tuple[str, ...] | set[str] | None,
-) -> list[str]:
-    """Normalize component selectors used by ``pretrained`` and ``freeze``."""
-    if components is True:
-        return list(STEERLING_COMPONENTS)
-    if components is False or components is None:
-        return []
-    if isinstance(components, str):
-        if components in {"all", "steerling"}:
-            return list(STEERLING_COMPONENTS)
-        if components in {"none", ""}:
-            return []
-        return [components]
-    return list(components)
+# Concept keys to extract from a flat Hub config.json. We deliberately drop the
+# bare `block_size`: in the flat HF namespace it is the *model's* block size,
+# while the concept block size arrives under `concept_block_size` (which
+# `normalize_concept_config` maps back to `block_size`). Without this exclusion
+# the extraction would steal the model's `block_size` into the concept config.
+_CONCEPT_CONFIG_KEYS = (
+    set(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS) | {"concept_block_size"}
+) - {"block_size"}
 
 
 def config_to_dict(config: Any) -> dict[str, Any]:
@@ -128,7 +114,7 @@ def normalize_concept_config(config: Mapping[str, Any]) -> dict[str, Any]:
 
 def load_steerling_hub_config(
     model_name_or_path: str = DEFAULT_MODEL_ID,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Download ``config.json`` and return (model_config, concept_config).
 
     Both are plain dicts. The caller is responsible for extracting the fields
@@ -148,65 +134,46 @@ def load_steerling_hub_config(
     return raw, concept_cfg
 
 
-def _steerling_package_defaults() -> tuple[dict[str, Any], dict[str, Any]]:
-    try:
-        from steerling.configs.causal_diffusion import CausalDiffusionConfig
-        from steerling.configs.concept import ConceptConfig
-    except ImportError as exc:
-        raise ImportError(
-            "config_source='steerling' requires the `steerling` package. "
-            "Install it or choose config_source='pyc' or 'hub'."
-        ) from exc
-
-    return (
-        config_to_dict(CausalDiffusionConfig()),
-        config_to_dict(ConceptConfig()),
-    )
-
-
-def _source_defaults(
-    source: SteerlingConfigSource,
-    model_id: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
-    if source == "pyc":
-        return (
-            deepcopy(PYTORCH_CONCEPTS_MODEL_DEFAULTS),
-            deepcopy(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS),
-            "pyc",
-        )
-    if source == "steerling":
-        model_cfg, concept_cfg = _steerling_package_defaults()
-        return model_cfg, concept_cfg, "steerling"
-    if source == "hub":
-        assert model_id is not None, "model_id must be provided when config_source='hub'"
-        hub_model_cfg, hub_concept_cfg = load_steerling_hub_config(model_id)
-        # Merge under PyC defaults so any key the Hub config omits has a
-        # single, well-known fallback instead of being scattered across
-        # `dict.get(..., …)` call sites.
-        merged_model = deepcopy(PYTORCH_CONCEPTS_MODEL_DEFAULTS)
-        merged_model.update(hub_model_cfg)
-        merged_concept = deepcopy(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS)
-        merged_concept.update(hub_concept_cfg)
-        return merged_model, merged_concept, "hub"
-    raise ValueError(
-        "config_source must be one of 'pyc', 'steerling', or 'hub'"
-    )
-
-
 def resolve_steerling_configs(
     *,
     config_source: SteerlingConfigSource = "hub",
     model_id: str | None = None,
     model_config_overrides: Mapping[str, Any] | None = None,
     concept_config_overrides: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Resolve effective model/concept configs for Steerling wrappers.
 
-    Explicit override dictionaries always win over the selected preset.
+    Picks the base configs from ``config_source`` ("pyc" defaults, the
+    installed ``steerling`` package defaults, or the Hub ``config.json``),
+    then applies the explicit override dictionaries, which always win.
     To toggle the unknown concept head, pass
     ``concept_config_overrides={"use_unknown": False}``.
     """
-    model_cfg, concept_cfg, resolved_source = _source_defaults(config_source, model_id)
+    if config_source == "pyc":
+        model_cfg = deepcopy(PYTORCH_CONCEPTS_MODEL_DEFAULTS)
+        concept_cfg = deepcopy(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS)
+    elif config_source == "steerling":
+        try:
+            from steerling.configs.causal_diffusion import CausalDiffusionConfig
+            from steerling.configs.concept import ConceptConfig
+        except ImportError as exc:
+            raise ImportError(
+                "config_source='steerling' requires the `steerling` package. "
+                "Install it or choose config_source='pyc' or 'hub'."
+            ) from exc
+        model_cfg = config_to_dict(CausalDiffusionConfig())
+        concept_cfg = config_to_dict(ConceptConfig())
+    elif config_source == "hub":
+        assert model_id is not None, "model_id must be provided when config_source='hub'"
+        hub_model_cfg, hub_concept_cfg = load_steerling_hub_config(model_id)
+        # Merge under PyC defaults so any key the Hub config omits has a single,
+        # well-known fallback instead of being scattered across `dict.get` calls.
+        model_cfg = deepcopy(PYTORCH_CONCEPTS_MODEL_DEFAULTS)
+        model_cfg.update(hub_model_cfg)
+        concept_cfg = deepcopy(PYTORCH_CONCEPTS_CONCEPT_DEFAULTS)
+        concept_cfg.update(hub_concept_cfg)
+    else:
+        raise ValueError("config_source must be one of 'pyc', 'steerling', or 'hub'")
 
     if model_config_overrides:
         model_cfg.update(model_config_overrides)
@@ -214,4 +181,4 @@ def resolve_steerling_configs(
         concept_cfg.update(concept_config_overrides)
 
     concept_cfg = normalize_concept_config(concept_cfg)
-    return model_cfg, concept_cfg, resolved_source
+    return model_cfg, concept_cfg
