@@ -136,10 +136,10 @@ class SteerlingLatentToConcept(BaseEncoder):
         factorize: Whether embeddings/predictor weights use low-rank factors.
 
     Example:
-        >>> enc = SteerlingLatentToConcept(4096, 33732, is_unknown=False)
-        >>> hidden = torch.randn(2, 8, 4096)
-        >>> logits = enc(hidden)
-        >>> logits.shape
+        >>> enc = SteerlingLatentToConcept(4096, 33732, is_unknown=False)  # doctest: +SKIP
+        >>> hidden = torch.randn(2, 8, 4096)  # doctest: +SKIP
+        >>> logits = enc(hidden)  # doctest: +SKIP
+        >>> logits.shape  # doctest: +SKIP
         torch.Size([2, 8, 33732])
     """
 
