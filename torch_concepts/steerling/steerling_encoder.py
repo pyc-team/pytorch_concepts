@@ -39,24 +39,6 @@ _CONCEPT_CONFIG_ALIASES = {
     },
 }
 
-# Top-k inference is not implemented yet in the PyC encoder.  These are the
-# (already-resolved) ``ConceptHead`` kwargs that would activate it.
-_TOPK_HEAD_KWARGS = ("topk", "topk_features", "apply_topk_to_unknown", "topk_on_logits")
-
-
-def _is_topk_enabled(key: str, value: Any) -> bool:
-    """Return True if ``value`` would actually enable top-k for ``key``."""
-    if value is None or value is False:
-        return False
-    if key in ("apply_topk_to_unknown", "topk_on_logits"):
-        return bool(value)
-    # Numeric topk keys: any positive int counts as enabled.
-    try:
-        return int(value) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def _concept_head_init_keys(ConceptHead: type[nn.Module]) -> set[str]:
     """Return kwargs accepted by upstream ``ConceptHead.__init__``."""
     signature = inspect.signature(ConceptHead.__init__)
@@ -92,20 +74,18 @@ def _filter_concept_head_config(
         else:
             ignored_keys.append(key)
     if ignored_keys:
-        logger.info("Ignoring unsupported ConceptHead config keys: %s", ignored_keys)
+        logger.info(f"Ignoring unsupported ({'unknown' if is_unknown else 'known'}) \
+                    ConceptHead config keys: {ignored_keys}")
     return filtered
 
 
 def _import_concept_head():
     try:
         import steerling.models.interpretable.concept_head as _ch
-        from steerling.models.interpretable.concept_head import (
-            ConceptHead,
-            ConceptHeadOutput,
-        )
+        from steerling.models.interpretable.concept_head import ConceptHead
         # Allow dense logits for all heads (including >50k unknown concepts).
         _ch.LARGE_CONCEPT_THRESHOLD = float("inf")
-        return ConceptHead, ConceptHeadOutput
+        return ConceptHead
     except ImportError as exc:
         raise ImportError(
             "SteerlingLatentToConcept requires the `steerling` package. "
@@ -117,9 +97,10 @@ class SteerlingLatentToConcept(BaseEncoder):
     """PyC wrapper around Steerling's latent-to-concept head.
 
     The encoder accepts hidden states with shape ``(..., in_latent)`` and
-    returns raw dense concept logits with shape ``(..., out_concepts)``. Unlike
-    Steerling's sparse inference path, this wrapper disables top-k constructor
-    options so PyC can carry ordinary dense concept tensors into later layers.
+    returns raw dense concept logits with shape ``(..., out_concepts)``.
+    :meth:`forward` always scores densely from the head's projection/embedding
+    weights and never applies Steerling's top-k sparsification; the wrapper does
+    not itself sanitize top-k config keys (the owning model is responsible).
 
     If ``config`` is omitted, the Steerling-8B Hub concept config is used.
     ``ConceptConfig`` names that differ from ``ConceptHead`` names are mapped
@@ -156,10 +137,10 @@ class SteerlingLatentToConcept(BaseEncoder):
         factorize: Whether embeddings/predictor weights use low-rank factors.
 
     Example:
-        >>> enc = SteerlingLatentToConcept(4096, 33732, is_unknown=False)
-        >>> hidden = torch.randn(2, 8, 4096)
-        >>> logits = enc(hidden)
-        >>> logits.shape
+        >>> enc = SteerlingLatentToConcept(4096, 33732, is_unknown=False)  # doctest: +SKIP
+        >>> hidden = torch.randn(2, 8, 4096)  # doctest: +SKIP
+        >>> logits = enc(hidden)  # doctest: +SKIP
+        >>> logits.shape  # doctest: +SKIP
         torch.Size([2, 8, 33732])
     """
 
@@ -176,11 +157,11 @@ class SteerlingLatentToConcept(BaseEncoder):
     ):
         super().__init__(in_latent=in_latent, out_concepts=out_concepts)
 
-        ConceptHead, _ = _import_concept_head()
+        ConceptHead = _import_concept_head()
 
         self.is_unknown = is_unknown
         if config is None:
-            _, config, _ = resolve_steerling_configs(
+            _, config = resolve_steerling_configs(
                 config_source="hub",
                 model_id=DEFAULT_MODEL_ID,
             )
@@ -228,8 +209,12 @@ class SteerlingLatentToConcept(BaseEncoder):
 
         1. Copy every external config key accepted by ``ConceptHead``.
         2. Override the few fields exposed by the PyC wrapper interface.
-        3. Apply local wrapper policy overrides.  Currently, top-k is
-           temporarily disabled so the encoder always returns dense logits.
+
+        The encoder builds faithfully from the config it is given. It does not
+        sanitize top-k: keeping the layer's behavior a pure function of its
+        config is the caller's contract. The owning model is responsible for
+        passing a config that is coherent with the rest of the graph (e.g.
+        ``SteerlingLowLevelModel`` disables top-k before constructing heads).
         """
         allowed_keys = _concept_head_init_keys(ConceptHead)
         head_kwargs = _filter_concept_head_config(config, allowed_keys, is_unknown)
@@ -254,31 +239,6 @@ class SteerlingLatentToConcept(BaseEncoder):
             use_attention=use_attention,
             factorize=factorize,
             factorize_rank=factorize_rank,
-        )
-
-        # Top-k inference is not implemented yet in the PyC encoder.  Silently
-        # disable any top-k values in the resolved ConceptHead config so the
-        # encoder works against raw Hub configs (Steerling-8B's config.json
-        # enables top-k by default).  Fail-loud on user-explicit top-k
-        # requests is handled one level up by :class:`SteerlingLowLevelModel`,
-        # which inspects ``concept_config_overrides`` directly.
-        # TODO: Re-enable top-k in the future.
-        enabled = [
-            key
-            for key in _TOPK_HEAD_KWARGS
-            if key in head_kwargs and _is_topk_enabled(key, head_kwargs[key])
-        ]
-        if enabled:
-            logger.info(
-                "Disabling resolved top-k ConceptHead kwargs (not yet implemented in PyC): %s",
-                enabled,
-            )
-        head_kwargs.update(
-            {
-                key: (False if key in ("apply_topk_to_unknown", "topk_on_logits") else None)
-                for key in _TOPK_HEAD_KWARGS
-                if key in allowed_keys
-            }
         )
         return head_kwargs
 

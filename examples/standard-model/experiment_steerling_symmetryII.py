@@ -1,6 +1,6 @@
 """Symmetry-II Jacobian-computation pass for Steerling.
 
-Builds the mid-level model, optionally masks all but the top-k known
+Builds the Steerling model, optionally masks all but the top-k known
 concepts, and computes / caches the Jacobians needed by the symmetry-II
 analysis:
 
@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from torch.func import jacrev, jvp, vjp
 from tqdm.auto import tqdm
 
-from torch_concepts.steerling import SteerlingMidLevelModel
+from torch_concepts.steerling import SteerlingModel
 
 # Keep these in sync with analyze_steerling_symmetryII.py so the cache
 # filenames match.
@@ -193,7 +193,7 @@ def main(TOPK: int):
     _prev_default_dtype = torch.get_default_dtype()
     torch.set_default_dtype(torch.bfloat16)
     try:
-        model = SteerlingMidLevelModel(
+        model = SteerlingModel(
             use_unknown=USE_UNKNOWN,
             use_epsilon_correction=False
         )
@@ -204,7 +204,7 @@ def main(TOPK: int):
     print(model)
 
     # ── 2. Prepare last-token hidden as the differentiation point ──────
-    input_ids, _, _ = model.prepare_input(prompt, n_new_tokens=n_new_tokens)
+    input_ids, _, _ = model.build_input(prompt, n_new_tokens=n_new_tokens)
     input_ids = input_ids.to(device)
     print(f"\nPrompt: {prompt!r}")
     print(f"Tokens: {tuple(input_ids.shape)}")
@@ -245,11 +245,11 @@ def main(TOPK: int):
             device=device, dtype=evidence["input"].dtype
         )
         model.known_concept_head = masked_head
-        k_cpd = model.pgm.get_module_of_concept(model.known_names[0])
+        k_cpd = model.model.get_module_of_concept(model.known_names[0])
         k_cpd.parametrization = masked_head
 
         # sanity checks
-        print(f"Is the same module? {model.pgm.get_module_of_concept(model.known_names[0]) is k_cpd}")
+        print(f"Is the same module? {model.model.get_module_of_concept(model.known_names[0]) is k_cpd}")
         all_idx = torch.arange(len(model.known_names), device=device)
         non_topk_indices  = all_idx[~torch.isin(all_idx, topk_indices)]   # 1-D
         out = model.inference.query(model.known_names, evidence=evidence, return_logits=True).logits

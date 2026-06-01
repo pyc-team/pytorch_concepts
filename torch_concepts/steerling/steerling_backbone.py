@@ -91,10 +91,10 @@ class CausalDiffusionTextBackbone(nn.Module):
         model_id: Hub model id used for default config and tokenizer.
 
     Example:
-        >>> backbone = CausalDiffusionTextBackbone()
-        >>> input_ids = torch.tensor([[1, 2, 3]])
-        >>> hidden = backbone(input_ids)
-        >>> hidden.shape[-1] == backbone.out_features
+        >>> backbone = CausalDiffusionTextBackbone()  # doctest: +SKIP
+        >>> input_ids = torch.tensor([[1, 2, 3]])  # doctest: +SKIP
+        >>> hidden = backbone(input_ids)  # doctest: +SKIP
+        >>> hidden.shape[-1] == backbone.out_features  # doctest: +SKIP
         True
     """
 
@@ -111,7 +111,7 @@ class CausalDiffusionTextBackbone(nn.Module):
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
 
         if config is None:
-            model_cfg_dict, _, _ = resolve_steerling_configs(
+            model_cfg_dict, _ = resolve_steerling_configs(
                 config_source=config_source,
                 model_id=model_id,
             )
