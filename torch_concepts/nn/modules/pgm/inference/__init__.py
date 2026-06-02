@@ -4,6 +4,7 @@ from .forward import ForwardInference
 from .deterministic import DeterministicInference
 from .ancestral import AncestralInference
 from .variational import VariationalInference
+from .rejection import RejectionSampling
 
 # Re-exported for backwards compatibility; the guide classes themselves now
 # live in ``torch_concepts.nn.modules.pgm.models.guides``.
@@ -25,6 +26,7 @@ __all__ = [
     "DeterministicInference",
     "AncestralInference",
     "VariationalInference",
+    "RejectionSampling",
     "DEFAULT_GUIDES",
     "CustomGuide",
     "STBernoulliGuide",

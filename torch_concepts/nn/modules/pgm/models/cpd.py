@@ -70,7 +70,7 @@ def _activate_raw_param(
             return raw.squeeze(-1) if s == 1 else raw
         if param_name == "scale":
             raw_ = raw.squeeze(-1) if s == 1 else raw
-            return torch.nn.functional.softplus(raw_) + 1e-6
+            return torch.nn.functional.softplus(raw_) + 1e-4
     elif D is dist.MultivariateNormal:
         if param_name == "loc":
             return raw
@@ -82,7 +82,7 @@ def _activate_raw_param(
             tril[..., idx[0], idx[1]] = raw
             diag_idx = torch.arange(s)
             tril[..., diag_idx, diag_idx] = (
-                torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
+                torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-4
             )
             return tril
     elif D is dist.Delta:

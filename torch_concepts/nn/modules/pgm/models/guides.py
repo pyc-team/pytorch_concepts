@@ -82,7 +82,7 @@ class STOneHotGuide(_BaseGuide):
 class NormalGuide(_BaseGuide):
     """Amortised variational guide for ``Normal`` latents using a
     reparameterised ``Normal(loc, scale)`` distribution; same MLP architecture
-    as :class:`STBernoulliGuide`, with softplus on the scale."""
+    as :class:`STBernoulliGuide`, with Softplus on the scale."""
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         raw = self.net(x)
@@ -91,7 +91,7 @@ class NormalGuide(_BaseGuide):
         if s == 1:
             loc = loc.squeeze(-1)
             scale = scale.squeeze(-1)
-        scale = torch.nn.functional.softplus(scale) + 1e-6
+        scale = torch.nn.functional.softplus(scale) + 1e-4
         q = dist.Normal(loc=loc, scale=scale)
         if s > 1:
             q = q.to_event(1)
@@ -101,7 +101,7 @@ class NormalGuide(_BaseGuide):
 class MVNGuide(_BaseGuide):
     """Amortised variational guide for ``MultivariateNormal`` latents using a
     reparameterised ``MultivariateNormal(loc, scale_tril)`` distribution; same
-    MLP architecture as :class:`STBernoulliGuide`, with softplus on the
+    MLP architecture as :class:`STBernoulliGuide`, with Softplus on the
     diagonal of the lower-triangular Cholesky factor."""
 
     def forward(self, x: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
@@ -114,7 +114,7 @@ class MVNGuide(_BaseGuide):
         tril[..., idx[0], idx[1]] = tril_flat
         diag_idx = torch.arange(s)
         tril[..., diag_idx, diag_idx] = (
-            torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-6
+            torch.nn.functional.softplus(tril[..., diag_idx, diag_idx]) + 1e-4
         )
         q = dist.MultivariateNormal(loc=loc, scale_tril=tril)
         return pyro.sample(self.variable.name, q)

@@ -126,9 +126,18 @@ class VariationalInference(BaseInference):
     ):
         super().__init__(pgm)
 
+        # Detect PGM device *before* building guides (only CPD params exist at this point).
+        try:
+            _pgm_device = next(pgm.parameters()).device
+        except StopIteration:
+            _pgm_device = torch.device("cpu")
+
         self._latent_names, self._guide_conditioning = self._build_guides(
             pgm, latents=[] if latents is None else latents
         )
+
+        # Move the newly registered guides to the same device as the PGM.
+        pgm.guides.to(_pgm_device)
 
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)

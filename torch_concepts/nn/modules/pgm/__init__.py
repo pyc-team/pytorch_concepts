@@ -37,6 +37,7 @@ from .inference import (
     STBernoulliGuide,
     STOneHotGuide,
     VariationalInference,
+    RejectionSampling,
     dist_to_params,
     make_temperature_schedule,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "DeterministicInference",
     "AncestralInference",
     "VariationalInference",
+    "RejectionSampling",
     "DEFAULT_GUIDES",
     "CustomGuide",
     "STBernoulliGuide",

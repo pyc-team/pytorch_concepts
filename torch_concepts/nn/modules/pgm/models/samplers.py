@@ -27,9 +27,9 @@ from .variable import Variable
 
 
 # ---------------------------------------------------------------------------
-# Primary parameter name per family — used by ``propagated_value`` to pick
-# the canonical "deterministic" tensor (mean for Normal/MVN, probs for the
-# discrete families, v for Delta).
+# Primary parameter name per family — used by ``DeterministicInference`` 
+# to propagate the param of the distributions instead of sampling from it
+# (mean for Normal/MVN, probs for the discrete families, v for Delta).
 # ---------------------------------------------------------------------------
 _PRIMARY_PARAM: Dict[type, str] = {
     dist.Bernoulli: "probs",
