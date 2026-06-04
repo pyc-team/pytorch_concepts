@@ -16,6 +16,10 @@ import torch
 import torch.nn as nn
 import tempfile
 import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from torch.utils.data import Subset
 
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.data.datasets.toy import ToyDataset
@@ -298,8 +302,25 @@ class TestConceptDataModuleSetup:
             precompute_embs=False
         )
         dm.setup('fit', verbose=False)
-        
+
         assert dm.dataset.embs_precomputed is False
+
+    def test_setup_is_idempotent(self, toy_dataset):
+        """Test that calling setup twice yields the same split (splitter caches)."""
+        dm = ConceptDataModule(
+            dataset=toy_dataset, val_size=0.1, test_size=0.2, seed=0
+        )
+
+        dm.setup('fit', verbose=False)
+        sizes_1 = (dm.train_len, dm.val_len, dm.test_len)
+        train_idxs_1 = list(dm.splitter.train_idxs)
+
+        dm.setup('fit', verbose=False)
+        sizes_2 = (dm.train_len, dm.val_len, dm.test_len)
+        train_idxs_2 = list(dm.splitter.train_idxs)
+
+        assert sizes_1 == sizes_2
+        assert train_idxs_1 == train_idxs_2
 
 
 # =============================================================================
@@ -684,9 +705,172 @@ class TestConceptDataModuleAddSet:
     def test_add_set_invalid_split_type(self, toy_dataset):
         """Test _add_set with invalid split type."""
         dm = ConceptDataModule(dataset=toy_dataset)
-        
+
         with pytest.raises(AssertionError):
             dm._add_set('invalid', [0, 1, 2])
+
+    def test_add_set_with_dataset_instance(self, toy_dataset):
+        """Test _add_set stores a Dataset instance directly (no Subset wrap)."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+        subset = Subset(toy_dataset, [0, 1, 2, 3])
+
+        dm._add_set('train', subset)
+
+        # The exact Subset object should be stored as-is.
+        assert dm.trainset is subset
+        assert dm.train_len == 4
+
+    def test_add_set_with_tuple_indices(self, toy_dataset):
+        """Test _add_set accepts a tuple of indices."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+
+        dm._add_set('val', (0, 1, 2))
+
+        assert dm.valset is not None
+        assert dm.val_len == 3
+
+    def test_add_set_invalid_type_raises(self, toy_dataset):
+        """Test _add_set rejects a value that is neither Dataset, sequence, nor None."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+
+        with pytest.raises(AssertionError, match="not a valid type"):
+            dm._add_set('train', 42)
+
+
+# =============================================================================
+# Test ConceptDataModule DataLoader behavior (None splits, drop_last, pin_memory)
+# =============================================================================
+
+class TestConceptDataModuleDataLoaderBehavior:
+    """Test get_dataloader edge cases and DataLoader configuration."""
+
+    def test_get_dataloader_none_before_setup(self, toy_dataset):
+        """get_dataloader returns None for any split before setup()."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+
+        assert dm.get_dataloader('train') is None
+        assert dm.get_dataloader('val') is None
+        assert dm.get_dataloader('test') is None
+
+    def test_dataloader_wrappers_none_before_setup(self, toy_dataset):
+        """train/val/test_dataloader return None before setup()."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+
+        assert dm.train_dataloader() is None
+        assert dm.val_dataloader() is None
+        assert dm.test_dataloader() is None
+
+    def test_empty_split_dataloader_is_none(self, toy_dataset):
+        """An empty split (val_size=0) yields a None DataLoader."""
+        dm = ConceptDataModule(
+            dataset=toy_dataset, val_size=0.0, test_size=0.2
+        )
+        dm.setup('fit', verbose=False)
+
+        assert dm.valset is None
+        assert dm.val_dataloader() is None
+
+    def test_train_dataloader_drop_last(self, toy_dataset):
+        """Train loader drops the last partial batch; val/test do not."""
+        dm = ConceptDataModule(dataset=toy_dataset, batch_size=16)
+        dm.setup('fit', verbose=False)
+
+        assert dm.train_dataloader().drop_last is True
+        assert dm.val_dataloader().drop_last is False
+        assert dm.test_dataloader().drop_last is False
+
+    def test_pin_memory_only_for_train(self, toy_dataset):
+        """pin_memory is applied only to the train loader."""
+        dm = ConceptDataModule(
+            dataset=toy_dataset, batch_size=16, pin_memory=True
+        )
+        dm.setup('fit', verbose=False)
+
+        assert dm.train_dataloader().pin_memory is True
+        # Non-train splits pass pin_memory=None -> DataLoader stores False.
+        assert not dm.val_dataloader().pin_memory
+
+    def test_workers_propagated_to_dataloader(self, toy_dataset):
+        """The configured worker count reaches the DataLoader."""
+        dm = ConceptDataModule(dataset=toy_dataset, batch_size=16, workers=2)
+        dm.setup('fit', verbose=False)
+
+        assert dm.train_dataloader().num_workers == 2
+
+    def test_get_dataloader_val_test_explicit(self, toy_dataset):
+        """get_dataloader('val'|'test') returns loaders with the given batch size."""
+        dm = ConceptDataModule(dataset=toy_dataset, batch_size=16)
+        dm.setup('fit', verbose=False)
+
+        val_loader = dm.get_dataloader('val', batch_size=4)
+        test_loader = dm.get_dataloader('test', batch_size=4)
+
+        assert val_loader is not None and val_loader.batch_size == 4
+        assert test_loader is not None and test_loader.batch_size == 4
+
+
+# =============================================================================
+# Test ConceptDataModule embedding precompute / caching
+# =============================================================================
+
+class TestConceptDataModuleEmbeddingCache:
+    """Test _maybe_precompute_backbone_embeddings compute/cache/load branches.
+
+    A fake backbone (only needs a ``filename``) plus a stubbed
+    ``_compute_embeddings`` exercise the caching logic without a real model.
+    """
+
+    @staticmethod
+    def _make_dm(tmp_path):
+        ds = ToyDataset('xor', n_gen=20, seed=0, root=str(tmp_path))
+        dm = ConceptDataModule(dataset=ds, val_size=0.1, test_size=0.2)
+        # Inject a minimal fake backbone and enable precomputation.
+        dm._backbone = SimpleNamespace(filename='bb.pt')
+        dm.precompute_embs = True
+        return dm, ds
+
+    def test_precompute_computes_and_caches(self, tmp_path):
+        dm, ds = self._make_dm(tmp_path)
+        embs = torch.randn(len(ds), 8)
+        dm._compute_embeddings = MagicMock(return_value=embs)
+
+        dm.setup('fit', verbose=False)
+
+        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+        assert os.path.exists(cache_path)              # cached to disk
+        dm._compute_embeddings.assert_called_once()
+        assert torch.equal(dm.dataset.input_data, embs)
+        assert dm.dataset.embs_precomputed is True
+
+    def test_precompute_loads_from_cache(self, tmp_path):
+        dm, ds = self._make_dm(tmp_path)
+        cached = torch.randn(len(ds), 8)
+        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+        os.makedirs(ds.root_dir, exist_ok=True)
+        torch.save(cached, cache_path)
+
+        dm._compute_embeddings = MagicMock()  # must NOT be called
+
+        dm.setup('fit', verbose=False)
+
+        dm._compute_embeddings.assert_not_called()
+        assert torch.equal(dm.dataset.input_data, cached)
+        assert dm.dataset.embs_precomputed is True
+
+    def test_force_recompute_ignores_cache(self, tmp_path):
+        dm, ds = self._make_dm(tmp_path)
+        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+        os.makedirs(ds.root_dir, exist_ok=True)
+        torch.save(torch.randn(len(ds), 8), cache_path)  # stale cache present
+
+        dm.force_recompute = True
+        fresh = torch.randn(len(ds), 8)
+        dm._compute_embeddings = MagicMock(return_value=fresh)
+
+        dm.setup('fit', verbose=False)
+
+        dm._compute_embeddings.assert_called_once()
+        assert torch.equal(dm.dataset.input_data, fresh)
 
 
 if __name__ == '__main__':
