@@ -180,7 +180,8 @@ class ToyDataset(ConceptDataset):
         Root directory to store/load the dataset files. If None, defaults to
         './data/toy_datasets/{dataset_name}'. Default: None
     seed : int, optional
-        Random seed for reproducible data generation. Default: 42
+        Random seed for reproducible data *generation* (also determines the
+        on-disk cache filename). Default: 42
     n_gen : int, optional
         Number of samples to generate. Default: 10000
     concept_subset : list of str, optional
@@ -468,7 +469,8 @@ class CompletenessDataset(ConceptDataset):
         Root directory to store/load the dataset files. If None, defaults to
         './data/completeness_datasets/{name}'. Default: None
     seed : int, optional
-        Random seed for reproducible data generation. Default: 42
+        Random seed for reproducible data *generation* (also determines the
+        on-disk cache filename). Default: 42
     n_gen : int, optional
         Number of samples to generate. Default: 10000
     p : int, optional

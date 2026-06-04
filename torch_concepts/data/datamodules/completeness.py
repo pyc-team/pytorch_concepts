@@ -9,12 +9,13 @@ from ...typing import BackboneType
 class CompletenessDataModule(ConceptDataModule):
     """
     """
-    
+
     def __init__(
         self,
         name: str, # name of the bnlearn DAG
         root: str,
-        seed: int = 42, # seed for data generation
+        seed: int = 42,
+        generation_seed: int = 42,
         p: int = 2,  # dimensionality of each view
         n_views: int = 10,  # number of views
         n_concepts: int = 2,  # number of concepts
@@ -35,7 +36,7 @@ class CompletenessDataModule(ConceptDataModule):
         dataset = CompletenessDataset(
             name=name,
             root=root,
-            seed=seed,
+            seed=generation_seed,
             p=p,
             n_views=n_views,
             n_concepts=n_concepts,
@@ -53,5 +54,6 @@ class CompletenessDataModule(ConceptDataModule):
             backbone=backbone,
             precompute_embs=precompute_embs,
             force_recompute=force_recompute,
-            workers=workers
+            workers=workers,
+            seed=seed
         )

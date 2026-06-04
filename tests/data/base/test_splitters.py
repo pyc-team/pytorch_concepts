@@ -115,22 +115,19 @@ class TestRandomSplitterExtended:
         assert len(splitter.test_idxs) == 0
 
     def test_random_splitter_reproducible(self):
-        """Test RandomSplitter reproducibility."""
+        """Test RandomSplitter reproducibility via its ``seed`` argument."""
         from torch_concepts.data.splitters.random import RandomSplitter
         from torch_concepts.data.datasets.toy import ToyDataset
 
-        # Set numpy seed for reproducibility
-        np.random.seed(42)
-        splitter1 = RandomSplitter(val_size=0.2, test_size=0.1)
+        splitter1 = RandomSplitter(val_size=0.2, test_size=0.1, seed=42)
         dataset1 = ToyDataset("xor", n_gen=100)
         splitter1.fit(dataset1)
         train1 = splitter1.train_idxs
         val1 = splitter1.val_idxs
         test1 = splitter1.test_idxs
 
-        # Reset seed and do it again
-        np.random.seed(42)
-        splitter2 = RandomSplitter(val_size=0.2, test_size=0.1)
+        # Same seed -> same split
+        splitter2 = RandomSplitter(val_size=0.2, test_size=0.1, seed=42)
         dataset2 = ToyDataset("xor", n_gen=100)
         splitter2.fit(dataset2)
         train2 = splitter2.train_idxs
@@ -140,3 +137,71 @@ class TestRandomSplitterExtended:
         assert np.array_equal(train1, train2)
         assert np.array_equal(val1, val2)
         assert np.array_equal(test1, test2)
+
+
+class _LenDataset:
+    """Minimal dataset stand-in exposing only ``__len__`` for the splitter."""
+
+    def __init__(self, n):
+        self.n = n
+
+    def __len__(self):
+        return self.n
+
+
+class TestRandomSplitterSeed:
+    """Tests for RandomSplitter's dedicated ``seed`` argument."""
+
+    def test_seeded_split_is_reproducible(self):
+        from torch_concepts.data.splitters.random import RandomSplitter
+
+        s1 = RandomSplitter(val_size=0.2, test_size=0.1, seed=7)
+        s1.fit(_LenDataset(100))
+        s2 = RandomSplitter(val_size=0.2, test_size=0.1, seed=7)
+        s2.fit(_LenDataset(100))
+
+        assert s1.train_idxs == s2.train_idxs
+        assert s1.val_idxs == s2.val_idxs
+        assert s1.test_idxs == s2.test_idxs
+
+    def test_seeded_split_independent_of_global_numpy_state(self):
+        """A seeded split must not depend on whatever consumed numpy's
+        global RNG beforehand (e.g. data generation)."""
+        from torch_concepts.data.splitters.random import RandomSplitter
+
+        np.random.seed(1)
+        np.random.rand(123)  # perturb global state
+        s1 = RandomSplitter(seed=7)
+        s1.fit(_LenDataset(100))
+
+        np.random.seed(2)
+        np.random.rand(7)  # different global state
+        s2 = RandomSplitter(seed=7)
+        s2.fit(_LenDataset(100))
+
+        assert s1.test_idxs == s2.test_idxs
+
+    def test_different_seed_gives_different_split(self):
+        from torch_concepts.data.splitters.random import RandomSplitter
+
+        s1 = RandomSplitter(seed=7)
+        s1.fit(_LenDataset(100))
+        s2 = RandomSplitter(seed=8)
+        s2.fit(_LenDataset(100))
+
+        assert s1.test_idxs != s2.test_idxs
+
+    def test_unseeded_split_ignores_global_numpy_and_is_nondeterministic(self):
+        """Without a seed the split uses fresh entropy: it does NOT read the
+        global numpy seed, and two unseeded splits differ."""
+        from torch_concepts.data.splitters.random import RandomSplitter
+
+        np.random.seed(42)
+        s1 = RandomSplitter()
+        s1.fit(_LenDataset(1000))
+        np.random.seed(42)  # same global seed must NOT make the split repeat
+        s2 = RandomSplitter()
+        s2.fit(_LenDataset(1000))
+
+        assert s1.seed is None
+        assert s1.test_idxs != s2.test_idxs

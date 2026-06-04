@@ -96,6 +96,9 @@ class ConceptDataModule(LightningDataModule):
     pin_memory : bool, optional
         If True, the data loader will copy Tensors into pinned memory
         before returning them. Useful for GPU training. Default is False.
+    seed : int or None, optional
+        Seed controlling the train/val/test **split** only, passed to the
+        splitter. If None, the split is non-deterministic. Default is None.
 
     Attributes
     ----------
@@ -170,7 +173,8 @@ class ConceptDataModule(LightningDataModule):
         scalers: Optional[Mapping] = None,
         splitter: Optional[object] = None,
         workers: int = 0,
-        pin_memory: bool = False
+        pin_memory: bool = False,
+        seed: Optional[int] = None
     ):
         super(ConceptDataModule, self).__init__()
         self.dataset = dataset
@@ -194,15 +198,23 @@ class ConceptDataModule(LightningDataModule):
         else:
             self.scalers = {}
             
+        # split seed: controls the train/val/test partition
+        self.seed = seed
+
         # set splitter
         self.trainset = self.valset = self.testset = None
-        if splitter is not None:
-            self.splitter = splitter
-        else:
+        if splitter is None:
             self.splitter = RandomSplitter(
                 val_size=val_size,
-                test_size=test_size
+                test_size=test_size,
+                seed=seed
             )
+        else:
+            # propagate the split seed to seed-aware splitters that weren't
+            # given one explicitly (e.g. a default RandomSplitter() instance).
+            if getattr(splitter, "seed", "__unset__") is None:
+                splitter.seed = seed
+            self.splitter = splitter
 
     def __len__(self) -> int:
         """Return the total number of samples in the dataset.
