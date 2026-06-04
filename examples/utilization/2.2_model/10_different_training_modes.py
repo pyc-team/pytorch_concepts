@@ -86,10 +86,11 @@ def main():
     n_samples = 10000
     batch_size = 2048
     dataset = ToyDataset(dataset='xor', seed=seed, n_gen=n_samples)
-    datamodule = ConceptDataModule(dataset=dataset, 
+    datamodule = ConceptDataModule(dataset=dataset,
                                    batch_size=batch_size,
                                    val_size=0.1,
-                                   test_size=0.2)
+                                   test_size=0.2,
+                                   seed=seed)
     datamodule.setup()
     annotations = dataset.annotations
     concept_names = annotations.get_axis_annotation(1).labels
