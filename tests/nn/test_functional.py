@@ -205,20 +205,23 @@ class TestMinimizeConstr(unittest.TestCase):
 class TestDefaultConceptNames(unittest.TestCase):
     """Test default concept name generation."""
 
-    def test_default_concept_names_single_dim(self):
-        """Test with single dimension."""
-        names = _default_concept_names([5])
-        self.assertEqual(names[1], ['concept_1_0', 'concept_1_1', 'concept_1_2', 'concept_1_3', 'concept_1_4'])
+    def test_default_concept_names_single(self):
+        """A single concept yields one axis with one name."""
+        names = _default_concept_names(1)
+        self.assertEqual(names, {1: ['concept_1_0']})
 
-    def test_default_concept_names_multi_dim(self):
-        """Test with multiple dimensions."""
-        names = _default_concept_names([3, 4])
-        self.assertEqual(len(names[1]), 3)
-        self.assertEqual(len(names[2]), 4)
+    def test_default_concept_names_multi(self):
+        """n concepts yield keys 1..n, each with n names."""
+        names = _default_concept_names(3)
+        self.assertEqual(set(names.keys()), {1, 2, 3})
+        for dim in (1, 2, 3):
+            self.assertEqual(len(names[dim]), 3)
+        self.assertEqual(names[1], ['concept_1_0', 'concept_1_1', 'concept_1_2'])
+        self.assertEqual(names[2], ['concept_2_0', 'concept_2_1', 'concept_2_2'])
 
-    def test_default_concept_names_empty(self):
-        """Test with empty shape."""
-        names = _default_concept_names([])
+    def test_default_concept_names_zero(self):
+        """Zero concepts yield an empty mapping."""
+        names = _default_concept_names(0)
         self.assertEqual(names, {})
 
 
