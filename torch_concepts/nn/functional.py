@@ -7,7 +7,7 @@ exogenous mixture, and evaluation metrics for concept-based models.
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
-from typing import Callable, List, Union, Dict
+from typing import Callable, List, Optional, Union, Dict
 from torch.nn import Linear
 import warnings
 import numbers
@@ -24,7 +24,7 @@ _bounds_keys = {"lb", "ub", "keep_feasible"}
 from .modules.low.semantic import CMRSemantic
 
 
-def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
+def _default_concept_names(n_concepts: int) -> Dict[int, List[str]]:
     """
     Generate default concept names for a given shape.
 
@@ -35,9 +35,9 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
         Dict mapping dimension index to list of concept names.
     """
     concept_names = {}
-    for dim in range(len(shape)):
+    for dim in range(n_concepts):
         concept_names[dim+1] = [
-            f"concept_{dim+1}_{i}" for i in range(shape[dim])
+            f"concept_{dim+1}_{i}" for i in range(n_concepts)
         ]
     return concept_names
 
@@ -644,6 +644,211 @@ def intervention_score(
             sum(intervention_effectiveness) / len(intervention_groups)
         )
     return intervention_effectiveness
+
+
+def _concept_group_ids(
+    cardinalities: List[int],
+    num_cols: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Map each weight column to its concept index given per-concept cardinalities.
+
+    A scalar (binary/continuous) concept has cardinality 1 and occupies a single
+    column; a categorical concept of cardinality ``m`` occupies ``m`` consecutive
+    columns. Returns a ``(num_cols,)`` long tensor of concept ids in ``[0, G)``
+    where ``G == len(cardinalities)``.
+    """
+    cards = [int(c) for c in cardinalities]
+    if any(c < 1 for c in cards):
+        raise ValueError(
+            f"cardinalities must be positive integers, got {cardinalities}"
+        )
+    total = sum(cards)
+    if total != num_cols:
+        raise ValueError(
+            f"cardinalities sum to {total} but weight has {num_cols} columns"
+        )
+    return torch.repeat_interleave(
+        torch.arange(len(cards), device=device),
+        torch.as_tensor(cards, device=device),
+    )
+
+
+def number_of_effective_concepts(
+    weight: torch.Tensor,
+    threshold: float = 0.0,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Effective Concepts (NEC) of a linear layer.
+
+    NEC measures the average number of concepts each class relies on for its
+    prediction, serving as both a **sparsity** and an **information-leakage
+    control** metric: a smaller NEC constrains how much unintended information
+    the bottleneck can encode in the downstream prediction.
+
+    Formally, for a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`
+    with :math:`C` classes and :math:`k` concepts:
+
+    .. math::
+        \\text{NEC}(W_F) = \\frac{1}{C} \\sum_{i=1}^{C} \\sum_{j=1}^{k}
+        \\mathbf{1}[(W_F)_{ij} \\neq 0]
+
+    Main reference: `"VLG-CBM: Training Concept Bottleneck Models with
+    Vision-Language Guidance" <https://arxiv.org/abs/2408.01432>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities`` so each concept is counted once: a class is
+    deemed to rely on a concept if **any** of that concept's columns is nonzero.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        threshold (float): Absolute weight magnitude below which a weight is
+            treated as zero.  Use ``0.0`` (default) for weights that have
+            been pruned to exact zero (e.g. via elastic-net / GLM-SAGA).
+            Set a small positive value (e.g. ``1e-6``) when using standard
+            L1 regularisation without hard pruning.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.get_axis_cardinalities(concept_axis)``.
+
+    Returns:
+        float: Average number of concepts each class relies on.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 0.0, -0.5],
+        ...                   [0.0, 0.3,  0.0]])
+        >>> number_of_effective_concepts(W)  # (2 + 1) / 2
+        1.5
+        >>> # columns 1-2 form one categorical concept: class 0 uses both
+        >>> # concepts (2), class 1 uses only the categorical one (1) -> mean 1.5
+        >>> number_of_effective_concepts(W, cardinalities=[1, 2])
+        1.5
+    """
+    mask = (weight.abs() > threshold).float()  # (C, k)
+    if cardinalities is None:
+        return mask.sum(dim=1).mean().item()
+
+    group_ids = _concept_group_ids(cardinalities, mask.size(1), mask.device)
+    num_concepts = len(cardinalities)
+    grouped = torch.zeros(
+        mask.size(0), num_concepts, device=mask.device, dtype=mask.dtype
+    ).index_add(1, group_ids, mask)
+    return (grouped > 0).float().sum(dim=1).mean().item()
+
+
+def number_of_contributing_concepts(
+    weight: torch.Tensor,
+    concept_activations: torch.Tensor,
+    coverage: float = 0.95,
+    predicted_class_only: bool = False,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Contributing Concepts (NCC) of a concept layer.
+
+    NCC is a **decision-level** sparsity (and information-leakage control)
+    metric that generalises :func:`number_of_effective_concepts` (NEC).
+    Whereas NEC counts nonzero *weights* per class, NCC counts how many
+    concepts are actually needed to *explain* each decision, by ranking
+    concepts by their **contribution** — the magnitude of the concept logit
+    times its class weight — and counting how many top contributors are
+    required to cover a fraction :math:`\\tau` of the total contribution.
+
+    For a concept logit vector :math:`g(a^{(i)}) \\in \\mathbb{R}^{k}` for
+    image :math:`i` and a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`,
+    the absolute contribution of concept :math:`j` to class :math:`r` is
+
+    .. math::
+        u^{(i)}_{j,r} = \\left| [g(a^{(i)})]_{j} \\, (W_F)_{r,j} \\right|.
+
+    Letting :math:`u^{(i)}_{(s),r}` denote the :math:`s`-th largest absolute
+    contribution for class :math:`r`, NCC at coverage level
+    :math:`\\tau \\in [0, 1]` is
+
+    .. math::
+        \\text{NCC}_\\tau = \\frac{1}{|D|\\,C} \\sum_{i=1}^{|D|}
+        \\sum_{r=1}^{C} \\min \\Big\\{ \\kappa \\in \\{0, \\dots, k\\} :
+        \\sum_{s=1}^{\\kappa} u^{(i)}_{(s),r} \\geq \\tau
+        \\sum_{j=1}^{k} u^{(i)}_{j,r} \\Big\\}.
+
+    At :math:`\\tau = 1` NCC reduces to NEC. Lower NCC means more concise,
+    less leakage-prone explanations.
+
+    Main reference: `"Learning Concept Bottleneck Models from Mechanistic
+    Explanations" (M-CBM, ICLR 2026)
+    <https://openreview.net/forum?id=gdEWoxhb70>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities``; the absolute contributions of a concept's
+    columns are **summed** into a single per-concept contribution before ranking.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        concept_activations (torch.Tensor): Concept logits / activations of
+            shape ``(N, k)`` for N samples (the inputs to the final layer).
+        coverage (float): Fraction :math:`\\tau \\in [0, 1]` of the per-class
+            absolute contribution that the top concepts must cover.
+            Default: ``0.95``.
+        predicted_class_only (bool): If True, average only over each sample's
+            predicted class (``argmax`` of the logits) instead of over all C
+            classes. Default: ``False``.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.get_axis_cardinalities(concept_axis)``.
+
+    Returns:
+        float: Average number of concepts needed to explain a fraction
+        ``coverage`` of each decision.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 1.0, 0.0],
+        ...                   [0.0, 0.0, 2.0]])
+        >>> a = torch.tensor([[1.0, 1.0, 1.0]])
+        >>> number_of_contributing_concepts(W, a, coverage=1.0)  # == NEC
+        1.5
+    """
+    # Absolute contributions u: (N, C, k) = |activation * weight|.
+    contrib = (concept_activations.unsqueeze(1) * weight.unsqueeze(0)).abs()
+    if cardinalities is not None:
+        # Sum each categorical concept's column contributions into one concept.
+        group_ids = _concept_group_ids(
+            cardinalities, contrib.size(-1), contrib.device
+        )
+        num_concepts = len(cardinalities)
+        contrib = torch.zeros(
+            contrib.size(0), contrib.size(1), num_concepts,
+            device=contrib.device, dtype=contrib.dtype,
+        ).index_add(2, group_ids, contrib)
+    # Sort contributions per (sample, class) in descending order.
+    sorted_contrib, _ = torch.sort(contrib, dim=-1, descending=True)
+    cumsum = sorted_contrib.cumsum(dim=-1)  # (N, C, k)
+    # Use the cumulative total (same accumulation order) so that tau=1 is exact.
+    total = cumsum[..., -1:]  # (N, C, 1)
+    target = coverage * total
+    # Smallest kappa whose top-kappa cumulative sum reaches the target.
+    kappa = (cumsum < target).sum(dim=-1) + 1  # (N, C)
+    # Degenerate decisions (zero total contribution) need no concepts.
+    kappa = torch.where(
+        total.squeeze(-1) <= 0, torch.zeros_like(kappa), kappa
+    )
+
+    if predicted_class_only:
+        logits = concept_activations @ weight.t()  # (N, C)
+        pred = logits.argmax(dim=1, keepdim=True)  # (N, 1)
+        kappa = kappa.gather(1, pred)  # (N, 1)
+
+    return kappa.float().mean().item()
 
 
 def cace_score(y_pred_c0, y_pred_c1):
