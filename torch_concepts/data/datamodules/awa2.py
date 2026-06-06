@@ -99,4 +99,5 @@ class AWA2DataModule(ConceptDataModule):
             force_recompute=force_recompute,
             workers=workers,
             splitter=splitter,
+            seed=seed,
         )

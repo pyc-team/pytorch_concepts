@@ -31,6 +31,6 @@ trainer:
   save_last: false # whether to save last checkpoint locally
   save_weights_only: true
 
-seed: 42
+seed: 42  # train/run seed
 notes: null
 debug: false

@@ -24,7 +24,8 @@ class ToyDAGDataModule(ConceptDataModule):
         cardinalities: Dictionary mapping variable names to their cardinality.
         dag: List of edges representing the DAG structure as (parent, child) tuples.
         conditional_probs: Dictionary mapping variables to their conditional probability tables.
-        seed: Random seed for data generation and splitting.
+        seed: Random seed for the train/val/test split.
+        generation_seed: Random seed for data generation.
         root: Root directory to store/load the dataset.
         val_size: Validation set size (fraction or absolute count).
         test_size: Test set size (fraction or absolute count).
@@ -48,6 +49,7 @@ class ToyDAGDataModule(ConceptDataModule):
         dag: List[Tuple[str, str]],
         conditional_probs: Optional[Dict[Union[Tuple[str, str], Tuple[str]], Union[np.ndarray, list]]] = None,
         seed: int = 42,
+        generation_seed: int = 42,
         root: str = None,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
@@ -71,7 +73,7 @@ class ToyDAGDataModule(ConceptDataModule):
             dag=dag,
             conditional_probs=conditional_probs,
             root=root,
-            seed=seed,
+            seed=generation_seed,
             n_gen=n_gen,
             target_variable=target_variable,
             latent_variables=latent_variables,
@@ -90,4 +92,5 @@ class ToyDAGDataModule(ConceptDataModule):
             precompute_embs=precompute_embs,
             force_recompute=force_recompute,
             workers=workers,
+            seed=seed,
         )

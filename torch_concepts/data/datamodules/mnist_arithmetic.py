@@ -30,7 +30,9 @@ class MNISTArithmeticDataModule(ConceptDataModule):
     img_size : int, optional
         Output image size (square). Default: 224
     seed : int, optional
-        Random seed for reproducibility. Default: 42
+        Random seed for the train/val/test split. Default: 42
+    generation_seed : int, optional
+        Random seed for data generation. Default: 42
     splitter : Splitter, optional
         Splitting strategy. Default: NativeSplitter() (uses the native
         train/val/test mapping built from MNIST splits).
@@ -67,6 +69,7 @@ class MNISTArithmeticDataModule(ConceptDataModule):
         val_size: float = 0.1,
         img_size: int = 224,
         seed: int = 42,
+        generation_seed: int = 42,
         splitter: Splitter = NativeSplitter(),
         batch_size: int = 512,
         backbone: BackboneType = None,
@@ -82,7 +85,7 @@ class MNISTArithmeticDataModule(ConceptDataModule):
             num_test_samples=num_test_samples,
             val_size=val_size,
             img_size=img_size,
-            seed=seed,
+            seed=generation_seed,
             label_descriptions=label_descriptions,
         )
 
@@ -96,4 +99,5 @@ class MNISTArithmeticDataModule(ConceptDataModule):
             force_recompute=force_recompute,
             workers=workers,
             splitter=splitter,
+            seed=seed,
         )

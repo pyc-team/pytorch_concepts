@@ -32,6 +32,7 @@ from .modules.low.predictors.call import CallableConceptToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
+from .modules.low.ops import SumOp, ResidualCorrectionOp
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
@@ -99,6 +100,7 @@ __all__ = [
     
     # Exogenous encoder classes
     "LinearLatentToExogenous",
+    "SelectorLatentToExogenous",
 
     # Encoder classes
     "LinearLatentToConcept",
@@ -116,8 +118,12 @@ __all__ = [
     "Dense",
     "ResidualMLP",
     "MLP",
+    "SumOp",
+    "ResidualCorrectionOp",
 
-    "SelectorLatentToExogenous",
+    # Ops
+    "SumOp",
+    "ResidualCorrectionOp",
 
     # COSMO
     "WANDAGraphLearner",

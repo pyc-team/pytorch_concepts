@@ -13,7 +13,8 @@ class BnLearnDataModule(ConceptDataModule):
     with support for concept-based learning.
     
     Args:
-        seed: Random seed for data generation and splitting.
+        seed: Random seed for the train/val/test split.
+        generation_seed: Random seed for data generation.
         val_size: Validation set size (fraction or absolute count).
         test_size: Test set size (fraction or absolute count).
         batch_size: Batch size for dataloaders.
@@ -27,9 +28,10 @@ class BnLearnDataModule(ConceptDataModule):
     
     def __init__(
         self,
-        seed: int, # seed for data generation
+        seed: int,
         name: str, # name of the bnlearn DAG
         root: str = None,
+        generation_seed: int = 42,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
@@ -46,7 +48,7 @@ class BnLearnDataModule(ConceptDataModule):
         dataset = BnLearnDataset(
             name=name,
             root=root,
-            seed=seed,
+            seed=generation_seed,
             n_gen=n_gen,
             concept_subset=concept_subset,
             label_descriptions=label_descriptions,
@@ -61,5 +63,6 @@ class BnLearnDataModule(ConceptDataModule):
             backbone=backbone,
             precompute_embs=precompute_embs,
             force_recompute=force_recompute,
-            workers=workers
+            workers=workers,
+            seed=seed
         )

@@ -23,7 +23,9 @@ class PendulumDataModule(ConceptDataModule):
     n_phi : int, optional
         Number of phi angle steps for generation. Default: 1000
     seed : int, optional
-        Random seed for reproducibility. Default: 42
+        Random seed for the train/val/test split. Default: 42
+    generation_seed : int, optional
+        Random seed for data generation. Default: 42
     splitter : Splitter, optional
         Splitting strategy for train/val/test partitioning.
         Default: RandomSplitter()
@@ -68,6 +70,7 @@ class PendulumDataModule(ConceptDataModule):
         n_theta: int = 100,
         n_phi: int = 1000,
         seed: int = 42,
+        generation_seed: int = 42,
         splitter: Splitter = RandomSplitter(),
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
@@ -84,7 +87,7 @@ class PendulumDataModule(ConceptDataModule):
             root=root,
             n_theta=n_theta,
             n_phi=n_phi,
-            seed=seed,
+            seed=generation_seed,
             concept_subset=concept_subset,
             label_descriptions=label_descriptions,
         )
@@ -99,4 +102,5 @@ class PendulumDataModule(ConceptDataModule):
             force_recompute=force_recompute,
             workers=workers,
             splitter=splitter,
+            seed=seed,
         )

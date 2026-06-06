@@ -17,6 +17,8 @@ from torch_concepts.nn.functional import (
     soft_select,
     completeness_score,
     intervention_score,
+    number_of_effective_concepts,
+    number_of_contributing_concepts,
     cace_score,
     residual_concept_causal_effect,
     edge_type,
@@ -203,20 +205,23 @@ class TestMinimizeConstr(unittest.TestCase):
 class TestDefaultConceptNames(unittest.TestCase):
     """Test default concept name generation."""
 
-    def test_default_concept_names_single_dim(self):
-        """Test with single dimension."""
-        names = _default_concept_names([5])
-        self.assertEqual(names[1], ['concept_1_0', 'concept_1_1', 'concept_1_2', 'concept_1_3', 'concept_1_4'])
+    def test_default_concept_names_single(self):
+        """A single concept yields one axis with one name."""
+        names = _default_concept_names(1)
+        self.assertEqual(names, {1: ['concept_1_0']})
 
-    def test_default_concept_names_multi_dim(self):
-        """Test with multiple dimensions."""
-        names = _default_concept_names([3, 4])
-        self.assertEqual(len(names[1]), 3)
-        self.assertEqual(len(names[2]), 4)
+    def test_default_concept_names_multi(self):
+        """n concepts yield keys 1..n, each with n names."""
+        names = _default_concept_names(3)
+        self.assertEqual(set(names.keys()), {1, 2, 3})
+        for dim in (1, 2, 3):
+            self.assertEqual(len(names[dim]), 3)
+        self.assertEqual(names[1], ['concept_1_0', 'concept_1_1', 'concept_1_2'])
+        self.assertEqual(names[2], ['concept_2_0', 'concept_2_1', 'concept_2_2'])
 
-    def test_default_concept_names_empty(self):
-        """Test with empty shape."""
-        names = _default_concept_names([])
+    def test_default_concept_names_zero(self):
+        """Zero concepts yield an empty mapping."""
+        names = _default_concept_names(0)
         self.assertEqual(names, {})
 
 
@@ -634,6 +639,232 @@ class TestInterventionScore(unittest.TestCase):
         )
         self.assertIsInstance(scores, list)
         self.assertEqual(len(scores), 2)
+
+
+class TestNumberOfEffectiveConcepts(unittest.TestCase):
+    """Test the Number of Effective Concepts (NEC) metric."""
+
+    def test_basic_average_per_class(self):
+        """NEC is the average number of nonzero weights per class."""
+        W = torch.tensor([[1.0, 0.0, -0.5],
+                          [0.0, 0.3, 0.0]])
+        self.assertAlmostEqual(number_of_effective_concepts(W), 1.5)
+
+    def test_dense_matrix_equals_num_concepts(self):
+        """A fully dense matrix uses every concept for every class."""
+        W = torch.randn(4, 10).abs() + 1.0  # all nonzero
+        self.assertAlmostEqual(number_of_effective_concepts(W), 10.0)
+
+    def test_all_zero_matrix(self):
+        """An all-zero classifier uses no concepts."""
+        W = torch.zeros(3, 6)
+        self.assertEqual(number_of_effective_concepts(W), 0.0)
+
+    def test_single_concept_per_class(self):
+        """One nonzero per class -> NEC == 1."""
+        W = torch.tensor([[2.0, 0.0, 0.0],
+                          [0.0, 0.0, -1.0]])
+        self.assertAlmostEqual(number_of_effective_concepts(W), 1.0)
+
+    def test_threshold_treats_small_weights_as_zero(self):
+        """Weights with magnitude <= threshold are ignored."""
+        W = torch.tensor([[1.0, 1e-3, 0.5],
+                          [1e-4, 0.0, 2.0]])
+        # threshold 0.0 -> class0: 3, class1: 2 -> 2.5
+        self.assertAlmostEqual(number_of_effective_concepts(W), 2.5)
+        # threshold 1e-2 -> class0: 2 (1e-3 dropped), class1: 1 -> 1.5
+        self.assertAlmostEqual(
+            number_of_effective_concepts(W, threshold=1e-2), 1.5
+        )
+
+    def test_negative_weights_count(self):
+        """Sign does not matter; only nonzero magnitude does."""
+        W = torch.tensor([[-1.0, -2.0],
+                          [-0.5, 0.0]])
+        self.assertAlmostEqual(number_of_effective_concepts(W), 1.5)
+
+    def test_returns_python_float(self):
+        """Return type is a plain float, not a tensor."""
+        out = number_of_effective_concepts(torch.randn(2, 3))
+        self.assertIsInstance(out, float)
+
+    # --- cardinalities (categorical concepts) ---
+
+    def test_cardinalities_categorical_grouping(self):
+        """Columns of one categorical concept count as a single concept."""
+        W = torch.tensor([[1.0, 0.0, -0.5],
+                          [0.0, 0.3, 0.0]])
+        # cols 1-2 form one categorical concept:
+        # class 0 uses concept0 (col0) + categorical (col2) = 2
+        # class 1 uses only categorical (col1) = 1 -> mean 1.5
+        self.assertAlmostEqual(
+            number_of_effective_concepts(W, cardinalities=[1, 2]), 1.5
+        )
+
+    def test_all_ones_cardinalities_equals_default(self):
+        """cardinalities=[1,...,1] reproduces the column-wise default."""
+        W = torch.randn(5, 7) * (torch.rand(5, 7) > 0.5)
+        self.assertAlmostEqual(
+            number_of_effective_concepts(W, cardinalities=[1] * 7),
+            number_of_effective_concepts(W),
+        )
+
+    def test_cardinalities_any_column_marks_concept_used(self):
+        """A categorical concept is 'used' if ANY of its columns is nonzero."""
+        # concept 0 = cols 0-2 (only col 1 nonzero), concept 1 = col 3
+        W = torch.tensor([[0.0, 5.0, 0.0, 0.0]])
+        self.assertAlmostEqual(
+            number_of_effective_concepts(W, cardinalities=[3, 1]), 1.0
+        )
+
+    def test_cardinalities_wrong_sum_raises(self):
+        """cardinalities must sum to the number of columns."""
+        W = torch.randn(2, 5)
+        with self.assertRaises(ValueError):
+            number_of_effective_concepts(W, cardinalities=[2, 2])
+
+    def test_cardinalities_nonpositive_raises(self):
+        """Cardinalities must be positive integers."""
+        W = torch.randn(2, 4)
+        with self.assertRaises(ValueError):
+            number_of_effective_concepts(W, cardinalities=[0, 4])
+
+
+class TestNumberOfContributingConcepts(unittest.TestCase):
+    """Test the Number of Contributing Concepts (NCC) metric."""
+
+    def test_docstring_example_tau_one(self):
+        """At tau=1 the docstring example returns NEC (1.5)."""
+        W = torch.tensor([[1.0, 1.0, 0.0],
+                          [0.0, 0.0, 2.0]])
+        a = torch.tensor([[1.0, 1.0, 1.0]])
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=1.0), 1.5
+        )
+
+    def test_reduces_to_nec_at_full_coverage(self):
+        """tau=1 with nonzero activations equals NEC (Proposition H.1)."""
+        torch.manual_seed(0)
+        W = torch.randn(5, 12) * (torch.rand(5, 12) > 0.4)
+        a = torch.randn(40, 12).abs() + 0.5  # strictly nonzero logits
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=1.0),
+            number_of_effective_concepts(W),
+            places=4,
+        )
+
+    def test_monotonic_in_coverage(self):
+        """Higher coverage requires at least as many concepts."""
+        torch.manual_seed(1)
+        W = torch.randn(4, 10) * (torch.rand(4, 10) > 0.3)
+        a = torch.randn(30, 10).abs() + 0.5
+        vals = [
+            number_of_contributing_concepts(W, a, coverage=t)
+            for t in (0.5, 0.8, 0.95, 1.0)
+        ]
+        for lo, hi in zip(vals, vals[1:]):
+            self.assertLessEqual(lo, hi + 1e-6)
+
+    def test_single_dominant_concept(self):
+        """One concept carrying the contribution -> ~1 at high coverage."""
+        W = torch.tensor([[10.0, 0.1, 0.1]])
+        a = torch.tensor([[1.0, 1.0, 1.0]])
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=0.9), 1.0
+        )
+
+    def test_zero_weights_give_zero(self):
+        """No contribution anywhere -> 0 concepts needed."""
+        W = torch.zeros(3, 4)
+        a = torch.randn(7, 4)
+        self.assertEqual(
+            number_of_contributing_concepts(W, a, coverage=0.95), 0.0
+        )
+
+    def test_zero_activations_give_zero(self):
+        """Zero activations -> zero contribution -> 0 concepts needed."""
+        W = torch.randn(3, 4)
+        a = torch.zeros(5, 4)
+        self.assertEqual(
+            number_of_contributing_concepts(W, a, coverage=0.95), 0.0
+        )
+
+    def test_predicted_class_only_runs_and_bounded(self):
+        """predicted_class_only averages over argmax class; stays in [0, k]."""
+        torch.manual_seed(2)
+        W = torch.randn(4, 8) * (torch.rand(4, 8) > 0.3)
+        a = torch.randn(20, 8).abs() + 0.5
+        out = number_of_contributing_concepts(
+            W, a, coverage=0.95, predicted_class_only=True
+        )
+        self.assertGreaterEqual(out, 0.0)
+        self.assertLessEqual(out, 8.0)
+
+    def test_returns_python_float(self):
+        """Return type is a plain float."""
+        out = number_of_contributing_concepts(
+            torch.randn(2, 3), torch.randn(4, 3)
+        )
+        self.assertIsInstance(out, float)
+
+    def test_two_equal_concepts_need_both_at_full_coverage(self):
+        """Two equal contributors each cover 50% -> need both for tau>0.5."""
+        W = torch.tensor([[1.0, 1.0]])
+        a = torch.tensor([[1.0, 1.0]])
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=0.95), 2.0
+        )
+        # half the coverage is reached by a single concept
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=0.5), 1.0
+        )
+
+    # --- cardinalities (categorical concepts) ---
+
+    def test_all_ones_cardinalities_equals_default(self):
+        """cardinalities=[1,...,1] reproduces the column-wise default."""
+        torch.manual_seed(3)
+        W = torch.randn(4, 6) * (torch.rand(4, 6) > 0.4)
+        a = torch.randn(15, 6).abs() + 0.5
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=0.9,
+                                            cardinalities=[1] * 6),
+            number_of_contributing_concepts(W, a, coverage=0.9),
+            places=6,
+        )
+
+    def test_cardinalities_reduce_to_nec_at_full_coverage(self):
+        """Grouped NCC at tau=1 equals grouped NEC (generalization holds)."""
+        torch.manual_seed(4)
+        cards = [1, 1, 3, 2, 1, 1, 3]  # sums to 12
+        W = torch.randn(4, 12) * (torch.rand(4, 12) > 0.4)
+        a = torch.randn(50, 12).abs() + 0.5
+        self.assertAlmostEqual(
+            number_of_contributing_concepts(W, a, coverage=1.0,
+                                            cardinalities=cards),
+            number_of_effective_concepts(W, cardinalities=cards),
+            places=4,
+        )
+
+    def test_grouping_does_not_increase_count(self):
+        """Summing categorical columns can only lower the concept count."""
+        torch.manual_seed(5)
+        cards = [1, 1, 3, 2, 1, 1, 3]
+        W = torch.randn(4, 12) * (torch.rand(4, 12) > 0.4)
+        a = torch.randn(50, 12).abs() + 0.5
+        grouped = number_of_contributing_concepts(
+            W, a, coverage=0.95, cardinalities=cards
+        )
+        ungrouped = number_of_contributing_concepts(W, a, coverage=0.95)
+        self.assertLessEqual(grouped, ungrouped + 1e-6)
+        self.assertLessEqual(grouped, len(cards))
+
+    def test_cardinalities_wrong_sum_raises(self):
+        """cardinalities must sum to the number of columns."""
+        W = torch.randn(2, 5)
+        a = torch.randn(3, 5)
+        with self.assertRaises(ValueError):
+            number_of_contributing_concepts(W, a, cardinalities=[2, 2])
 
 
 class TestCACEScore(unittest.TestCase):

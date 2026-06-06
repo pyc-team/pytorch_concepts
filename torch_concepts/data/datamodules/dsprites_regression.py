@@ -23,7 +23,9 @@ class DSpritesRegressionDataModule(ConceptDataModule):
         Mapping from shape name to sympy formula string. Default: None (uses
         built-in defaults).
     seed : int, optional
-        Random seed. Default: 42
+        Random seed for the train/val/test split. Default: 42
+    generation_seed : int, optional
+        Random seed for data generation. Default: 42
     splitter : Splitter, optional
         Splitting strategy. Default: RandomSplitter()
     val_size : int or float, optional
@@ -51,6 +53,7 @@ class DSpritesRegressionDataModule(ConceptDataModule):
         root: str = None,
         formulas: Optional[Dict[str, str]] = None,
         seed: int = 42,
+        generation_seed: int = 42,
         splitter: Splitter = RandomSplitter(),
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
@@ -66,7 +69,7 @@ class DSpritesRegressionDataModule(ConceptDataModule):
         dataset = DSpritesRegressionDataset(
             root=root,
             formulas=formulas,
-            seed=seed,
+            seed=generation_seed,
             concept_subset=concept_subset,
             label_descriptions=label_descriptions,
         )
@@ -81,4 +84,5 @@ class DSpritesRegressionDataModule(ConceptDataModule):
             force_recompute=force_recompute,
             workers=workers,
             splitter=splitter,
+            seed=seed,
         )

@@ -42,8 +42,16 @@ DATA_ROOT = CACHE
 
 # HuggingFace Hub token for accessing private models/datasets
 # Set this if you need to download from private HF repositories
-HUGGINGFACEHUB_TOKEN = ''   
+HUGGINGFACEHUB_TOKEN = ""
+# HUGGINGFACEHUB_TOKEN = (
+#     env.get("HF_TOKEN")
+#     or env.get("HUGGINGFACE_HUB_TOKEN")
+#     or env.get("HUGGINGFACEHUB_TOKEN", "")
+# )
+if HUGGINGFACEHUB_TOKEN:
+    env.setdefault("HF_TOKEN", HUGGINGFACEHUB_TOKEN)
+    env.setdefault("HUGGINGFACE_HUB_TOKEN", HUGGINGFACEHUB_TOKEN)
 
 # OpenAI API key for GPT models
 # Set this if you're using OpenAI models for concept generation or evaluation
-OPENAI_API_KEY = ''
+OPENAI_API_KEY = env.get("OPENAI_API_KEY", "")

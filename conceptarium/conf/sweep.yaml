@@ -9,6 +9,8 @@ hydra:
     # standard grid search
     params:
       seed: 42
+      dataset.seed: 0
+      datset.generation_seed: 0
       dataset: dag_asia, dag_sachs, dag_insurance
       model: cbm, cem, c2bm
       model.train_inference._target_:
