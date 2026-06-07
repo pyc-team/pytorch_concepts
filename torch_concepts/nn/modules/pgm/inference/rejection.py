@@ -35,6 +35,7 @@ import torch
 
 from ..models.bayesian_network import BayesianNetwork
 from .base import BaseInference
+from .ancestral import AncestralInference
 from .forward import ForwardInference
 from .outputs import InferenceOutput
 
@@ -87,7 +88,7 @@ class RejectionSampling(BaseInference):
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
         self.warn_low_acceptance = float(warn_low_acceptance)
-        self._sampler = ForwardInference(pgm, mode="ancestral", p_int=0.0)
+        self._sampler = AncestralInference(pgm, p_int=0.0)
 
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:

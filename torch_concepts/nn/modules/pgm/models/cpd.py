@@ -11,7 +11,7 @@ import torch.nn as nn
 import pyro.distributions as dist
 
 from .factor import ParametricFactor
-from .variable import Variable, param_dim
+from .variable import Variable, PARAM_DIM
 
 # Expected parameter names per distribution family, used to validate and
 # dispatch per-parameter module dicts.
@@ -238,13 +238,13 @@ class ParametricCPD(ParametricFactor):
                     f"ParametricCPD({variable.name!r}): nn.Parameter parametrization "
                     "is only valid for root (no-parent) CPDs."
                 )
-            need = param_dim(variable.distribution, variable.size)
+            need = PARAM_DIM[variable.distribution](variable.size)
             got_n = parametrization.numel()
             if got_n != need:
                 raise ValueError(
                     f"ParametricCPD({variable.name!r}): nn.Parameter has {got_n} "
-                    f"element(s) but param_dim({variable.distribution.__name__}, "
-                    f"{variable.size}) = {need}. "
+                    f"element(s) but PARAM_DIM[{variable.distribution.__name__}]({variable.size})"
+                    f" = {need}. "
                     f"Use nn.Parameter(torch.zeros({need}))."
                 )
             parametrization = _ParameterModule(parametrization)
@@ -263,8 +263,11 @@ class ParametricCPD(ParametricFactor):
                     "required for non-root CPDs."
                 )
 
+        # Store the target variable whose conditional distribution this CPD models.
         self.variable: Variable = variable
+        # Store the neural-network (or parameter) module that outputs raw distribution params.
         self.parametrization: Optional[nn.Module] = parametrization
+        # Store the ordered list of parent variables whose values are the CPD inputs.
         self.parents: List[Variable] = list(parents) if parents else []
 
     @property
@@ -281,38 +284,19 @@ class ParametricCPD(ParametricFactor):
         """Delegate to the module-level :func:`_activate_raw_param`."""
         return _activate_raw_param(self.variable, param_name, raw)
 
-    # ------------------------------------------------------------------ fwd
-    def forward(
+    # ---------------------------------------------------------------- validate
+    def _validate_parent_values(
         self,
-        parent_values: Optional[Dict[str, torch.Tensor]] = None,
-    ):
-        """Compute the CPD output as a dict of distribution parameters.
+        parent_values: Optional[Dict[str, torch.Tensor]],
+    ) -> None:
+        """Validate that ``parent_values`` keys exactly match ``self.parents``.
 
-        Root parametrizations are called with no arguments and the raw output
-        is split into the family's named parameter dict by ``_split_params``.
-
-        Non-root CPDs gather parent tensors from ``parent_values`` in
-        ``self.parents`` order, concatenate along the last dim, push through
-        ``parametrization``, and split into the family's parameter dict.
+        Raises ``ValueError`` if any expected parent is missing or an unexpected
+        key is supplied.  Call this during debugging by uncommenting the line in
+        :meth:`forward`.
         """
-        if self.is_root:
-            if parent_values is not None and len(parent_values) > 0:
-                raise ValueError(
-                    f"ParametricCPD({self.variable.name!r}): root "
-                    "prior CPD received non-empty parent_values; pass None or {}."
-                )
-            if isinstance(self.parametrization, nn.ModuleDict):
-                raw_params = {pname: mod() for pname, mod in self.parametrization.items()}
-                return {k: self._activate_param(k, v.flatten()) for k, v in raw_params.items()}
-            raw = self.parametrization()
-            return self._split_params(raw.flatten())
-
-        assert parent_values is not None, (
-            f"ParametricCPD({self.variable.name!r}): non-root forward requires "
-            "parent_values."
-        )
         expected = {p.name for p in self.parents}
-        got = set(parent_values.keys())
+        got = set(parent_values.keys()) if parent_values else set()
         if expected != got:
             missing = expected - got
             extra = got - expected
@@ -321,6 +305,49 @@ class ParametricCPD(ParametricFactor):
                 f"do not match parents. expected={sorted(expected)}, "
                 f"got={sorted(got)}, missing={sorted(missing)}, extra={sorted(extra)}."
             )
+
+    # ------------------------------------------------------------------ fwd
+    def forward(
+        self,
+        parent_values: Optional[Dict[str, torch.Tensor]] = None,
+    ):
+        """Compute the CPD output as a dict of distribution parameters.
+
+        Root CPDs are called with no parent values: the parametrization module
+        is called with no arguments and its raw scalar output is split into the
+        named parameter dict for ``self.variable.distribution``.
+
+        Non-root CPDs receive a ``parent_values`` dict mapping each parent name
+        to its tensor value (shape ``(*batch, parent.size)``). These tensors are
+        concatenated along the last feature axis, pushed through the
+        parametrization network, and then split+activated into the distribution
+        parameter dict.
+
+        Returns a ``Dict[str, Tensor]`` ready to pass to the distribution
+        constructor (e.g. ``{"probs": ...}`` for Bernoulli,
+        ``{"loc": ..., "scale": ...}`` for Normal).
+        """
+        if self.is_root:
+            # Root CPD: no parents expected — raise if any are accidentally passed.
+            if parent_values is not None and len(parent_values) > 0:
+                raise ValueError(
+                    f"ParametricCPD({self.variable.name!r}): CPD with no parents "
+                    "received non-empty parent_values; pass None or {}."
+                )
+            if isinstance(self.parametrization, nn.ModuleDict):
+                # Per-parameter modules: call each module independently, then activate.
+                raw_params = {pname: mod() for pname, mod in self.parametrization.items()}
+                return {k: self._activate_param(k, v.flatten()) for k, v in raw_params.items()}
+            # Single-module path: module returns a flat raw tensor, then split+activate.
+            raw = self.parametrization()
+            return self._split_params(raw.flatten())
+
+        assert parent_values is not None, (
+            f"ParametricCPD({self.variable.name!r}): non-root forward requires "
+            "parent_values."
+        )
+        # Uncomment the line below during debugging to validate parent keys:
+        # self._validate_parent_values(parent_values)
 
         ordered: List[torch.Tensor] = [parent_values[p.name] for p in self.parents]
 

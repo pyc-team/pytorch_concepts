@@ -1,4 +1,4 @@
-"""Shared distribution / sampler dispatch.
+"""Shared distribution / sampler dispatch utilities.
 
 Centralises the per-family logic used by both ``BayesianNetwork.forward``
 (Pyro stochastic function) and ``ForwardInference`` (non-Pyro forward pass).
@@ -27,7 +27,7 @@ from .variable import Variable
 
 
 # ---------------------------------------------------------------------------
-# Primary parameter name per family — used by ``DeterministicInference`` 
+# Primary parameter name per family — used by ``DeterministicInference``
 # to propagate the param of the distributions instead of sampling from it
 # (mean for Normal/MVN, probs for the discrete families, v for Delta).
 # ---------------------------------------------------------------------------

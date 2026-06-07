@@ -1,44 +1,29 @@
 from .variable import (
     ConceptVariable,
-    EndogenousVariable,
     OpaqueVariable,
     Variable,
-    param_dim,
+    PARAM_DIM,
 )
 from .factor import ParametricFactor
 from .cpd import ParametricCPD
-from .guides import (
-    DEFAULT_GUIDES,
-    MVNGuide,
-    NormalGuide,
-    CustomGuide,
-    STBernoulliGuide,
-    STOneHotGuide,
-)
-from .samplers import (
+from .utils import (
     build_distribution,
     build_relaxed_distribution,
     propagated_value,
     sample_from,
 )
-from .bayesian_network import BayesianNetwork, ProbabilisticModel
+from .probabilistic_model import ProbabilisticModel
+from .bayesian_network import BayesianNetwork
 
 __all__ = [
     "Variable",
     "ConceptVariable",
     "OpaqueVariable",
-    "EndogenousVariable",
-    "param_dim",
+    "PARAM_DIM",
     "ParametricFactor",
     "ParametricCPD",
     "BayesianNetwork",
     "ProbabilisticModel",
-    "DEFAULT_GUIDES",
-    "CustomGuide",
-    "STBernoulliGuide",
-    "STOneHotGuide",
-    "NormalGuide",
-    "MVNGuide",
     "build_distribution",
     "build_relaxed_distribution",
     "propagated_value",

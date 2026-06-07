@@ -189,6 +189,3 @@ class BaseInference(PyroModule):
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
         return self.query(query=query, evidence=evidence)
-
-
-InferenceEngine = BaseInference

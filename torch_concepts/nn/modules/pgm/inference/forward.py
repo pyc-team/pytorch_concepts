@@ -10,7 +10,7 @@ Two modes:
   (straight-through relaxations for the discrete families).
 
 Reparameterised samplers live in
-:mod:`torch_concepts.nn.modules.pgm.models.samplers` so the model and this
+:mod:`torch_concepts.nn.modules.pgm.models.utils` so the model and this
 engine stay in lockstep.
 """
 from __future__ import annotations
@@ -20,14 +20,26 @@ from typing import Callable, Dict, List, Optional, Union
 import torch
 
 from ..models.bayesian_network import BayesianNetwork
-from ..models.samplers import propagated_value, sample_from
+from ..models.utils import propagated_value, sample_from
 from ..models.variable import Variable
 from .base import BaseInference, make_temperature_schedule
 from .outputs import InferenceOutput
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
-    """Cast and reshape ground-truth tensor to match the dtype and shape of ref."""
+    """Cast and reshape ground-truth tensor to match the dtype and shape of ref.
+
+    Step-by-step:
+    1. Cast ``gt`` to ``ref``\'s dtype so arithmetic ops don\'t raise type errors
+       (e.g. LongTensor label vs FloatTensor network output).
+    2. If shapes already match after the cast, return immediately.
+    3. Handle the common "extra trailing 1" mismatches that arise when some
+       code paths squeeze scalars and others don\'t:
+       - ``gt`` has one more dim than ``ref`` and its last dim is 1 → squeeze it off.
+       - ``gt`` has one fewer dim than ``ref`` and ``ref``\'s last dim is 1 → unsqueeze.
+    4. Finally, broadcast ``gt`` to exactly ``ref``\'s shape so downstream ops
+       (e.g. per-element masking) can use ``gt`` in place of ``ref``.
+    """
     aligned = gt.to(ref.dtype) if gt.dtype != ref.dtype else gt
     if aligned.shape != ref.shape:
         if aligned.dim() == ref.dim() + 1 and aligned.shape[-1] == 1:
@@ -50,7 +62,18 @@ def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> to
 
 
 class ForwardInference(BaseInference):
-    name = "ForwardInference"
+    """Abstract base class for non-Pyro forward-pass inference engines.
+
+    Concrete subclasses (:class:`DeterministicInference`,
+    :class:`AncestralInference`) implement the :meth:`_propagate` method to
+    decide whether each variable is resolved deterministically (MAP estimate)
+    or by ancestral sampling.  All shared logic (topological traversal, teacher
+    forcing, temperature schedule) lives here.
+
+    .. note::
+        Do not instantiate this class directly; use
+        :class:`DeterministicInference` or :class:`AncestralInference`.
+    """
 
     def __init__(
         self,

@@ -9,14 +9,13 @@ import torch.nn as nn
 
 import pyro
 import pyro.distributions as dist
-from pyro.nn import PyroModule
 
 from .cpd import ParametricCPD
-from .samplers import build_distribution, build_relaxed_distribution
+from .probabilistic_model import ProbabilisticModel
+from .utils import build_distribution, build_relaxed_distribution
 from .variable import Variable
 
-
-class BayesianNetwork(PyroModule):
+class BayesianNetwork(ProbabilisticModel):
     """Directed factor graph wiring a list of ``Variable``s to a list of
     ``ParametricCPD``s.
 
@@ -143,54 +142,42 @@ class BayesianNetwork(PyroModule):
         return len(self.guides) > 0
 
     # ----------------------------------------------------------- guide forward
-    def _guide_input(
-        self,
-        data: Dict[str, torch.Tensor],
-        latent_name: str,
-        conditioning: Dict[str, List[str]],
-    ) -> torch.Tensor:
-        """Concatenate the conditioning tensors for ``latent_name``. Returns a
-        ``(B, sum_sizes)`` tensor, or ``(B, 0)`` for an unconditional guide."""
-        names = conditioning[latent_name]
-        if not names:
-            B = next(iter(data.values())).shape[0] if data else 1
-            device = next(iter(data.values())).device if data else torch.device("cpu")
-            return torch.zeros(B, 0, device=device)
-        parts = []
-        for n in names:
-            if n not in data:
-                raise ValueError(
-                    f"BayesianNetwork.guide: conditioning variable {n!r} for "
-                    f"guide of {latent_name!r} is missing from data."
-                )
-            t = data[n]
-            if t.dim() == 1:
-                t = t.unsqueeze(-1)
-            parts.append(t.float())
-        return torch.cat(parts, dim=-1)
-
     def guide(
         self,
         data: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
         latent_names: List[str],
-        conditioning: Dict[str, List[str]],
     ) -> None:
         """Pyro stochastic function for the variational posterior.
 
-        For each name in ``latent_names``, fetches its conditioning input from
-        ``data`` (using ``conditioning``) and runs the registered guide module,
-        emitting the corresponding ``pyro.sample`` site.
+        For each name in ``latent_names``, retrieves the corresponding guide
+        ``ParametricCPD`` from ``self.guides``, gathers the required parent
+        values from ``data`` (using the CPD’s own ``parents`` list), calls the
+        CPD to obtain raw distribution parameters, builds the reparameterised
+        surrogate distribution, and emits the ``pyro.sample`` site.
 
-        The latent contract (``latent_names``, ``conditioning``) is owned by
-        the inference engine and passed in at call time; the PGM only stores
-        the guide modules themselves.
+        The latent contract (``latent_names``) is owned by the inference engine
+        and passed in at call time; the PGM only stores the guide CPDs.
         """
         B = next(iter(data.values())).shape[0] if data else 1
         with pyro.plate("batch", B, dim=-1):
             for name in latent_names:
-                x = self._guide_input(data, name, conditioning)
-                self.guides[name](x, temperature)
+                cpd: ParametricCPD = self.guides[name]
+                if cpd.is_root:
+                    # Unconditional guide: no parent inputs.
+                    params = cpd(parent_values={})
+                    params = {
+                        k: v.unsqueeze(0).expand(B, *v.shape)
+                        for k, v in params.items()
+                    }
+                else:
+                    # Conditional guide: gather parent values from the data dict.
+                    parent_values: Dict[str, torch.Tensor] = {
+                        p.name: data[p.name] for p in cpd.parents
+                    }
+                    params = cpd(parent_values=parent_values)
+                q = build_relaxed_distribution(cpd.variable, params, temperature)
+                pyro.sample(name, q)
         return None
 
     # ----------------------------------------------------------- forward
@@ -280,7 +267,3 @@ class BayesianNetwork(PyroModule):
                 value = pyro.sample(name, d, obs=obs)
                 cache[name] = value
         return cache
-
-
-# Backwards-compatible alias.
-ProbabilisticModel = BayesianNetwork
