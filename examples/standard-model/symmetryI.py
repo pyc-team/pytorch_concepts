@@ -21,8 +21,8 @@ plt.rcParams.update({
     "font.size": 14,                # Base font size for all text
     "axes.titlesize": 18,           # Specifically for the title
     "axes.labelsize": 16,           # Specifically for X and Y labels
-    "xtick.labelsize": 11,          # Size for the tick numbers
-    # "ytick.labelsize": 12,
+    # "xtick.labelsize": 11,          # Size for the tick numbers
+    # "ytick.labelsize": 11,
     "legend.fontsize": 14,          # Size for the legend text
     # ---------------------------
     # 'text.color': 'white',
@@ -112,7 +112,7 @@ def main():
     criterion_list = [F.l1_loss, order_loss, "No loss"]
     lr = 1e-3
 
-    model_names = ["MLP", "MLP+L", "MLP+A"]
+    model_names = ["DNN", "DNN+L", "DNN+A"]
     mae_scores = {"mlp": [], "constrained_mlp": [], "architectural_mlp": []}
     rank_scores = {"mlp": [], "constrained_mlp": [], "architectural_mlp": []}
     for fold in range(folds):
@@ -157,9 +157,11 @@ def main():
             plt.figure(figsize=(5, 5))
             plt.scatter(x.numpy(), y.numpy(), color='blue')
             plt.plot(x_domain.numpy(), y_pred.numpy(), color='red')
-            plt.title(f"{model_name}")
-            plt.xlabel(r'$z$')
-            plt.ylabel(r'$c$')
+            plt.title(f"{model_name}", fontsize=25)
+            plt.xlabel(r'$z$', fontsize=25)
+            plt.ylabel(r'$c$', fontsize=25)
+            plt.xticks(fontsize=20)
+            plt.yticks(fontsize=20)
             plt.tight_layout()
             plt.savefig(f"symmetryI/{model_id}_{fold}.png")
             plt.savefig(f"symmetryI/{model_id}_{fold}.pdf")
@@ -173,9 +175,11 @@ def main():
             plt.figure(figsize=(5, 5))
             plt.scatter(torch.arange(0, len(sorted_indices)).numpy(), y_sorted.numpy(), color='blue')
             plt.plot(torch.arange(0, len(sorted_indices)), y_pred_sorted.numpy(), color='red')
-            plt.title(f"{model_name}")
-            plt.xlabel(r'sorted data indices')
-            plt.ylabel(r'$c$')
+            plt.title(f"{model_name}", fontsize=25)
+            plt.xlabel(r'sorted data indices', fontsize=25)
+            plt.ylabel(r'$c$', fontsize=25)
+            plt.xticks(fontsize=20)
+            plt.yticks(fontsize=20)
             plt.tight_layout()
             plt.savefig(f"symmetryI/sorted_{model_id}_{fold}.png")
             plt.savefig(f"symmetryI/sorted_{model_id}_{fold}.pdf")
@@ -183,7 +187,7 @@ def main():
 
     # create single dataframe with all results
     results = []
-    model_id_to_name = {"mlp": "MLP", "constrained_mlp": "MLP+L", "architectural_mlp": "MLP+A"}
+    model_id_to_name = {"mlp": "DNN", "constrained_mlp": "DNN+L", "architectural_mlp": "DNN+A"}
     for model_id in mae_scores.keys():
         for mae, rank, fold in zip(mae_scores[model_id], rank_scores[model_id], range(folds)):
             results.append({"model": model_id_to_name[model_id], "mae": mae, "rank_score": rank, "fold": fold})
@@ -197,18 +201,21 @@ def main():
                         var_name='metric', value_name='value')
 
     plt.figure(figsize=(3, 3))
-    sns.barplot(data=df_melted_mae, x='model', y='value', errorbar=('ci', 95), capsize=.1)
+    sns.barplot(data=df_melted_mae, x='model', y='value', errorbar=('ci', 95), capsize=.1, hue='model', palette='Set2')
     plt.ylabel(r'MAE')
     plt.xlabel(r'Model')
+    plt.xticks(fontsize=11)
     plt.tight_layout()
     plt.savefig(f"symmetryI/mae.png")
     plt.savefig(f"symmetryI/mae.pdf")
     plt.show()
 
+    df_melted_rank['constraintI'] = 1-df_melted_rank['value']
     plt.figure(figsize=(3, 3))
-    sns.barplot(data=df_melted_rank, x='model', y='value', errorbar=('ci', 95), capsize=.1)
-    plt.ylabel('Rank Score')
+    sns.barplot(data=df_melted_rank, x='model', y='constraintI', errorbar=('ci', 95), capsize=.1, hue='model', palette='Set2')
+    plt.ylabel('Constraint I')
     plt.xlabel('Model')
+    plt.xticks(fontsize=11)
     plt.tight_layout()
     plt.savefig(f"symmetryI/rank.png")
     plt.savefig(f"symmetryI/rank.pdf")
