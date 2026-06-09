@@ -8,9 +8,7 @@ This module provides neural network components for building concept-based archit
 from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer,
-    BaseEncoder,
-    BasePredictor,
+    BaseConceptLayer
 )
 from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
 
@@ -19,20 +17,17 @@ from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
-from .modules.low.encoders.exogenous import LinearLatentToExogenous
-from .modules.low.encoders.stochastic import StochasticLatentToConcept
-from .modules.low.encoders.selector import SelectorLatentToExogenous
+from .modules.low.encoders.linear import LinearEmbeddingToConcept
 
 # Predictors
-from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept, MixSumConceptExogenousToConcept
-from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
+from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
+from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
-from .modules.low.ops import SumOp, ResidualCorrectionOp
+from .modules.low.sequential import ConceptSequential
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
@@ -52,8 +47,6 @@ from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
-
-
 
 # Models (mid-level)
 from .modules.mid.models.factor import ParametricFactor
@@ -87,8 +80,6 @@ from .modules.low.policy.random import RandomPolicy
 __all__ = [
     # Base classes
     "BaseConceptLayer",
-    "BaseEncoder",
-    "BasePredictor",
     "BaseGraphLearner",
     "BaseModel",
     "BaseInference",
@@ -97,33 +88,19 @@ __all__ = [
 
     # LazyConstructor
     "LazyConstructor",
-    
-    # Exogenous encoder classes
-    "LinearLatentToExogenous",
-    "SelectorLatentToExogenous",
 
     # Encoder classes
-    "LinearLatentToConcept",
-    "LinearExogenousToConcept",
-    "StochasticLatentToConcept",
+    "LinearEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
-    "MixConceptExogegnousToConcept",
-    "MixSumConceptExogenousToConcept",
-    "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
 
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
-    "SumOp",
-    "ResidualCorrectionOp",
-
-    # Ops
-    "SumOp",
-    "ResidualCorrectionOp",
+    "ConceptSequential",
 
     # COSMO
     "WANDAGraphLearner",
