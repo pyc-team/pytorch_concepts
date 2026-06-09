@@ -4,9 +4,8 @@ from sklearn.metrics import accuracy_score
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
-    LinearLatentToExogenous,
-    LinearLatentToConcept,
-    HyperlinearConceptExogenousToConcept,
+    LinearEmbeddingToConcept,
+    HyperlinearConceptEmbeddingToConcept,
 )
 
 
@@ -37,19 +36,18 @@ def main():
         torch.nn.Linear(latent_dims, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    concept_encoder = LinearLatentToConcept(
-        in_latent=latent_dims,
+    concept_encoder = LinearEmbeddingToConcept(
+        in_embeddings=latent_dims,
         out_concepts=n_concepts
     )
-    exog_encoder = LinearLatentToExogenous(
-        in_latent=latent_dims,
-        out_concepts=n_tasks,
-        out_exogenous=exog_dims
+    exog_encoder = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, exog_dims*n_tasks),
+        torch.nn.Unflatten(dim=1, unflattened_size=(n_tasks, exog_dims)),
     )
-    task_predictor = HyperlinearConceptExogenousToConcept(
+    task_predictor = HyperlinearConceptEmbeddingToConcept(
         in_concepts=n_concepts,
-        in_exogenous=exog_dims,
-        hidden_size=latent_dims
+        in_embeddings=exog_dims,
+        out_concepts=n_tasks,
     )
     model = torch.nn.Sequential(encoder, exog_encoder, concept_encoder, task_predictor)
 
@@ -61,9 +59,9 @@ def main():
 
         # generate concept and task predictions
         latent = encoder(x_train)
-        c_pred = concept_encoder(latent=latent)
-        exog = exog_encoder(latent=latent)
-        y_pred = task_predictor(concepts=c_pred, exogenous=exog)
+        c_pred = concept_encoder(embeddings=latent)
+        exog = exog_encoder(latent)
+        y_pred = task_predictor(concepts=c_pred, embeddings=exog)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -76,7 +74,8 @@ def main():
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | "
+                  f"Concept Acc: {concept_accuracy:.2f}")
 
     return
 

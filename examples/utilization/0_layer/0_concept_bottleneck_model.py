@@ -24,7 +24,7 @@ from torch.nn import ModuleDict
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import LinearLatentToConcept, LinearConceptToConcept
+from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention
 
 
@@ -54,7 +54,7 @@ def main():
     )
 
     # PyC layers
-    c_encoder = LinearLatentToConcept(in_latent=latent_dims, out_concepts=concept_dims)
+    c_encoder = LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=concept_dims)
     y_predictor = LinearConceptToConcept(in_concepts=concept_dims, out_concepts=task_dims)
 
     # these are equivalent to the following torch layers
@@ -75,7 +75,7 @@ def main():
 
         # generate concept and task predictions
         latent = model["latent_encoder"](x_train)
-        c_pred = model["concept_encoder"](latent=latent)
+        c_pred = model["concept_encoder"](embeddings=latent)
         y_pred = model["task_predictor"](concepts=c_pred)
 
         # compute loss
@@ -100,7 +100,7 @@ def main():
         quantiles=1
     ) as new_encoder:
         latent = model["latent_encoder"](x_train)
-        c_pred = new_encoder(latent=latent)
+        c_pred = new_encoder(embeddings=latent)
         y_pred = model["task_predictor"](concepts=c_pred)
         cy_pred = torch.cat([c_pred, y_pred], dim=1)
         print('intervened output: \n', cy_pred[:5])
