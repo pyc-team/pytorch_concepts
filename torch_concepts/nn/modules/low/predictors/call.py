@@ -1,10 +1,10 @@
 import torch
 
-from ..base.layer import BasePredictor
+from ..base.layer import BaseConceptLayer
 from typing import Callable
 
 
-class CallableConceptToConcept(BasePredictor):
+class CallableConceptToConcept(BaseConceptLayer):
     """
     A predictor that applies a custom callable function to concept representations.
 
