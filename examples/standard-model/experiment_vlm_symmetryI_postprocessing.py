@@ -163,13 +163,13 @@ def create_pairwise_heatmap(entity_name: str, predictions: dict, image_files: li
             continue  # Skip if image not in sorted list
 
     # Mask lower triangular matrix (including diagonal)
-    mask = np.tril(np.ones_like(matrix, dtype=bool))
+    mask = np.eye(matrix.shape[0], dtype=bool)
     matrix_masked = np.ma.masked_where(mask, matrix)
 
     # Create figure with larger size
     fig, ax = plt.subplots(figsize=(4, 4))
 
-    plt.title(rf'{entity_name}', fontsize=16)
+    plt.title(rf'{entity_name.capitalize()}', fontsize=25)
 
     # Create custom colormap: red for negative (A < B), green for positive (A > B)
     from matplotlib.colors import LinearSegmentedColormap
@@ -194,7 +194,7 @@ def create_pairwise_heatmap(entity_name: str, predictions: dict, image_files: li
     for i in range(n):
         for j in range(n):
             # Only annotate upper triangular matrix
-            if j > i:  # Upper triangle only
+            if i != j:  # All cells except diagonal
                 value = matrix[i, j]
                 if value != 0:  # Only annotate non-zero cells
                     if value > 0:  # A wins (row > column)

@@ -80,7 +80,7 @@ def run_vlm_batch(model_name, local_path, mode="standard"):
 
     model.eval()
     images = {name: Image.open(os.path.join(image_folder, name)).convert("RGB") for name in image_files}
-    pairs = list(itertools.combinations(image_files, 2))
+    pairs = list(itertools.permutations(image_files, 2))
     print(f"Running {len(pairs)} pairwise comparisons...")
 
     if mode == "prototype" and model_name == "moondream2":
@@ -180,8 +180,8 @@ def run_vlm_batch(model_name, local_path, mode="standard"):
 # Run models
 all_data = []
 all_data.extend(run_vlm_batch("moondream2", "./models/moondream2", mode="prototype"))
-# all_data.extend(run_vlm_batch("moondream2", "./models/moondream2"))
-# all_data.extend(run_vlm_batch("qwen", "./models/qwen2-vl"))
+all_data.extend(run_vlm_batch("moondream2", "./models/moondream2"))
+all_data.extend(run_vlm_batch("qwen", "./models/qwen2-vl"))
 
 # Save to CSV
 with open(output_file, "w", newline="") as f:
