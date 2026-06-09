@@ -1,25 +1,22 @@
 """
-Comprehensive tests for torch_concepts.nn.modules.low.encoders
-
-Tests all encoder modules (linear, exogenous, selector, stochastic).
+Tests for StochasticEmbeddingToConcept (formerly StochasticLatentToConcept).
 """
 import unittest
 import torch
-import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.stochastic import StochasticLatentToConcept
+from torch_concepts.nn.modules.low.encoders.stochastic import StochasticEmbeddingToConcept
 
 
-class TestStochasticLatentToConcept(unittest.TestCase):
-    """Test StochasticLatentToConcept."""
+class TestStochasticEmbeddingToConcept(unittest.TestCase):
+    """Test StochasticEmbeddingToConcept."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = StochasticLatentToConcept(
-            in_latent=128,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=128,
             out_concepts=5,
             num_monte_carlo=100
         )
-        self.assertEqual(encoder.in_latent, 128)
+        self.assertEqual(encoder.in_embeddings, 128)
         self.assertEqual(encoder.out_concepts, 5)
         self.assertEqual(encoder.num_monte_carlo, 100)
         self.assertIsNotNone(encoder.mu)
@@ -27,8 +24,8 @@ class TestStochasticLatentToConcept(unittest.TestCase):
 
     def test_forward_with_reduce(self):
         """Test forward pass with reduce=True."""
-        encoder = StochasticLatentToConcept(
-            in_latent=64,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=64,
             out_concepts=5,
             num_monte_carlo=50
         )
@@ -38,8 +35,8 @@ class TestStochasticLatentToConcept(unittest.TestCase):
 
     def test_forward_without_reduce(self):
         """Test forward pass with reduce=False."""
-        encoder = StochasticLatentToConcept(
-            in_latent=32,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=32,
             out_concepts=3,
             num_monte_carlo=20
         )
@@ -49,21 +46,20 @@ class TestStochasticLatentToConcept(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through stochastic encoder."""
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=4,
             num_monte_carlo=10
         )
         embeddings = torch.randn(2, 16, requires_grad=True)
         output = encoder(embeddings, reduce=True)
-        loss = output.sum()
-        loss.backward()
+        output.sum().backward()
         self.assertIsNotNone(embeddings.grad)
 
     def test_predict_sigma(self):
         """Test internal _predict_sigma method."""
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=3,
             num_monte_carlo=10
         )
@@ -78,36 +74,34 @@ class TestStochasticLatentToConcept(unittest.TestCase):
 
     def test_positive_diagonal_covariance(self):
         """Test that diagonal of covariance is positive."""
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=3,
             num_monte_carlo=10
         )
         embeddings = torch.randn(2, 16)
         sigma = encoder._predict_sigma(embeddings)
-        # Check diagonal is positive
         for i in range(2):
             for j in range(3):
                 self.assertGreater(sigma[i, j, j].item(), 0.0)
 
     def test_monte_carlo_samples_variability(self):
         """Test that MC samples show variability."""
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=2,
             num_monte_carlo=100
         )
         embeddings = torch.randn(1, 16)
         output = encoder(embeddings, reduce=False)
-        # Check that samples vary
         std = output.std(dim=2)
         self.assertTrue(torch.any(std > 0.01))
 
     def test_different_monte_carlo_sizes(self):
         """Test various MC sample sizes."""
         for mc_size in [10, 50, 200]:
-            encoder = StochasticLatentToConcept(
-                in_latent=16,
+            encoder = StochasticEmbeddingToConcept(
+                in_embeddings=16,
                 out_concepts=3,
                 num_monte_carlo=mc_size
             )
@@ -118,27 +112,21 @@ class TestStochasticLatentToConcept(unittest.TestCase):
     def test_mean_consistency(self):
         """Test that mean of samples approximates mu."""
         torch.manual_seed(42)
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=2,
             num_monte_carlo=1000
         )
         embeddings = torch.randn(1, 16)
-
-        # Get mean directly from mu
         mu = encoder.mu(embeddings)
-
-        # Get mean from MC samples
         samples = encoder(embeddings, reduce=False)
         mc_mean = samples.mean(dim=2)
-
-        # Should be close for large num_monte_carlo
         self.assertTrue(torch.allclose(mu, mc_mean, atol=0.3))
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        encoder = StochasticLatentToConcept(
-            in_latent=32,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=32,
             out_concepts=4,
             num_monte_carlo=20
         )
@@ -151,12 +139,11 @@ class TestStochasticLatentToConcept(unittest.TestCase):
 
     def test_sigma_weight_initialization(self):
         """Test that sigma weights are scaled down at init."""
-        encoder = StochasticLatentToConcept(
-            in_latent=16,
+        encoder = StochasticEmbeddingToConcept(
+            in_embeddings=16,
             out_concepts=3,
             num_monte_carlo=10
         )
-        # Check that weights are small (scaled by 0.01)
         sigma_weight_norm = encoder.sigma.weight.data.norm().item()
         self.assertLess(sigma_weight_norm, 1.0)
 

@@ -19,19 +19,18 @@ from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
-from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
-from .modules.low.encoders.exogenous import LinearLatentToExogenous
-from .modules.low.encoders.stochastic import StochasticLatentToConcept
-from .modules.low.encoders.selector import SelectorLatentToExogenous
+from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.stochastic import StochasticEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import MixConceptExogegnousToConcept, MixSumConceptExogenousToConcept
-from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
+from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, MixSumConceptEmbeddingToConcept
+from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP
+from .modules.low.dense_layers import LinearEmbeddingEncoder, SelectorEmbeddingEncoder
 from .modules.low.ops import SumOp, ResidualCorrectionOp
 
 # Graph learner
@@ -47,11 +46,11 @@ from .modules.metrics import ConceptMetrics, compute_cace
 # Output containers
 from .modules.outputs import ModelOutput, InferenceOutput
 
-# Models (high-level)
-from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
-from .modules.high.models.cbm import ConceptBottleneckModel
-from .modules.high.models.cem import ConceptEmbeddingModel
-from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+# # Models (high-level)
+# from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+# from .modules.high.models.cbm import ConceptBottleneckModel
+# from .modules.high.models.cem import ConceptEmbeddingModel
+# from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 
 
@@ -97,29 +96,36 @@ __all__ = [
 
     # LazyConstructor
     "LazyConstructor",
-    
-    # Exogenous encoder classes
-    "LinearLatentToExogenous",
-    "SelectorLatentToExogenous",
 
     # Encoder classes
-    "LinearLatentToConcept",
-    "LinearExogenousToConcept",
-    "StochasticLatentToConcept",
+    "LinearEmbeddingToConcept",
+    "StochasticEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
+    "MixConceptEmbeddingToConcept",
+    "MixSumConceptEmbeddingToConcept",
+    "HyperlinearConceptEmbeddingToConcept",
+    "CallableConceptToConcept",
+
+    # Embedding encoders
+    "LinearEmbeddingToEmbedding",
+    "SelectorEmbeddingToEmbedding",
+
+    # Deprecated aliases (kept until consumers migrate)
+    "LinearLatentToConcept",
+    "LinearExogenousToConcept",
+    "StochasticLatentToConcept",
     "MixConceptExogegnousToConcept",
     "MixSumConceptExogenousToConcept",
     "HyperlinearConceptExogenousToConcept",
-    "CallableConceptToConcept",
-
+    
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
-    "SumOp",
-    "ResidualCorrectionOp",
+    "LinearEmbeddingEncoder",
+    "SelectorEmbeddingEncoder",
 
     # Ops
     "SumOp",

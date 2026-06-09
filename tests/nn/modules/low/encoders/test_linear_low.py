@@ -1,31 +1,29 @@
 """
-Comprehensive tests for torch_concepts.nn.modules.low.encoders
-
-Tests all encoder modules (linear, exogenous, selector, stochastic).
+Tests for LinearLatentToConcept (alias) and LinearEmbeddingToConcept.
 """
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
+from torch_concepts.nn.modules.low.encoders.linear import LinearLatentToConcept, LinearEmbeddingToConcept
 
 
 class TestLinearLatentToConcept(unittest.TestCase):
-    """Test LinearLatentToConcept."""
+    """Test LinearLatentToConcept (alias for LinearEmbeddingToConcept)."""
 
     def test_initialization(self):
         """Test encoder initialization."""
         encoder = LinearLatentToConcept(
-            in_latent=128,
+            in_embeddings=128,
             out_concepts=10
         )
-        self.assertEqual(encoder.in_latent, 128)
+        self.assertEqual(encoder.in_embeddings, 128)
         self.assertEqual(encoder.out_concepts, 10)
         self.assertIsInstance(encoder.encoder, nn.Linear)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
         encoder = LinearLatentToConcept(
-            in_latent=128,
+            in_embeddings=128,
             out_concepts=10
         )
         embeddings = torch.randn(4, 128)
@@ -35,19 +33,18 @@ class TestLinearLatentToConcept(unittest.TestCase):
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
         encoder = LinearLatentToConcept(
-            in_latent=64,
+            in_embeddings=64,
             out_concepts=5
         )
         embeddings = torch.randn(2, 64, requires_grad=True)
         output = encoder(embeddings)
-        loss = output.sum()
-        loss.backward()
+        output.sum().backward()
         self.assertIsNotNone(embeddings.grad)
 
     def test_batch_processing(self):
         """Test different batch sizes."""
         encoder = LinearLatentToConcept(
-            in_latent=32,
+            in_embeddings=32,
             out_concepts=5
         )
         for batch_size in [1, 4, 8]:
@@ -58,7 +55,7 @@ class TestLinearLatentToConcept(unittest.TestCase):
     def test_with_bias_false(self):
         """Test encoder without bias."""
         encoder = LinearLatentToConcept(
-            in_latent=32,
+            in_embeddings=32,
             out_concepts=5,
             bias=False
         )
@@ -67,45 +64,37 @@ class TestLinearLatentToConcept(unittest.TestCase):
         self.assertEqual(output.shape, (2, 5))
 
 
-class TestLinearExogenousToConcept(unittest.TestCase):
-    """Test LinearExogenousToConcept."""
+class TestLinearEmbeddingToConcept(unittest.TestCase):
+    """Test LinearEmbeddingToConcept with canonical parameter names."""
 
     def test_initialization(self):
-        """Test encoder initialization."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=16,
-        )
-        self.assertEqual(encoder.in_exogenous, 16)
+        """Test encoder stores correct attributes."""
+        encoder = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        self.assertEqual(encoder.in_embeddings, 16)
+        self.assertEqual(encoder.out_concepts, 5)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=8,
-        )
-        # Input shape: (batch, concepts, in_latent * n_exogenous_per_concept)
-        exog = torch.randn(4, 5, 8)
-        output = encoder(exog)
-        self.assertEqual(output.shape, (4, 5))
-
-    def test_single_exogenous_per_concept(self):
-        """Test with single exogenous per concept."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=10,
-        )
-        exog = torch.randn(3, 4, 10)
-        output = encoder(exog)
-        self.assertEqual(output.shape, (3, 4))
+        encoder = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        x = torch.randn(4, 8)
+        self.assertEqual(encoder(x).shape, (4, 3))
 
     def test_gradient_flow(self):
         """Test gradient flow."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=8,
-        )
-        exog = torch.randn(2, 3, 8, requires_grad=True)
-        output = encoder(exog)
-        loss = output.sum()
-        loss.backward()
-        self.assertIsNotNone(exog.grad)
+        encoder = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        x = torch.randn(2, 8, requires_grad=True)
+        encoder(x).sum().backward()
+        self.assertIsNotNone(x.grad)
+
+    def test_single_concept(self):
+        """Test with a single output concept."""
+        encoder = LinearEmbeddingToConcept(in_embeddings=10, out_concepts=1)
+        x = torch.randn(3, 10)
+        self.assertEqual(encoder(x).shape, (3, 1))
+
+    def test_is_alias_for_latent(self):
+        """LinearLatentToConcept must be the same class."""
+        self.assertIs(LinearLatentToConcept, LinearEmbeddingToConcept)
 
 
 if __name__ == '__main__':

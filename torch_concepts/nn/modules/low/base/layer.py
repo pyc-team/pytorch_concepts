@@ -20,15 +20,13 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     Attributes:
         in_concepts (int): Number of input concept features.
-        in_latent (int): Number of input latent features.
-        in_exogenous (int): Number of exogenous input features.
+        in_embeddings (int): Number of input embedding features.
         out_concepts (int): Number of output concept features.
 
     Args:
         out_concepts: Number of output concept features.
         in_concepts: Number of input concept features (optional).
-        in_latent: Number of input latent features (optional).
-        in_exogenous: Number of exogenous input features (optional).
+        in_embeddings: Number of input embedding features (optional).
 
     Example:
         >>> import torch
@@ -61,15 +59,13 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self,
         out_concepts: int,
         in_concepts: int = None,
-        in_latent: int = None,
-        in_exogenous: int = None,
+        in_embeddings: int = None,
         *args,
         **kwargs,
     ):
         super().__init__()
         self.in_concepts = in_concepts
-        self.in_latent = in_latent
-        self.in_exogenous = in_exogenous
+        self.in_embeddings = in_embeddings
         self.out_concepts = out_concepts
 
     def forward(
@@ -95,13 +91,11 @@ class BaseEncoder(BaseConceptLayer):
     """
     Abstract base class for concept encoder layers.
 
-    Encoders transform input features (latent or exogenous variables)
-    into concept representations.
+    Encoders transform input embeddings into concept representations.
 
     Args:
         out_concepts: Number of output concept features.
-        in_latent: Number of input latent features (optional).
-        in_exogenous: Number of exogenous input features (optional).
+        in_embeddings: Number of input embedding features (optional).
 
     Example:
         >>> import torch
@@ -109,24 +103,24 @@ class BaseEncoder(BaseConceptLayer):
         >>>
         >>> # Create a custom encoder
         >>> class MyEncoder(BaseEncoder):
-        ...     def __init__(self, out_concepts, in_latent):
+        ...     def __init__(self, out_concepts, in_embeddings):
         ...         super().__init__(
         ...             out_concepts=out_concepts,
-        ...             in_latent=in_latent
+        ...             in_embeddings=in_embeddings
         ...         )
         ...         self.net = torch.nn.Sequential(
-        ...             torch.nn.Linear(in_latent, 128),
+        ...             torch.nn.Linear(in_embeddings, 128),
         ...             torch.nn.ReLU(),
         ...             torch.nn.Linear(128, out_concepts)
         ...         )
         ...
-        ...     def forward(self, latent):
-        ...         return self.net(latent)
+        ...     def forward(self, embeddings):
+        ...         return self.net(embeddings)
         >>>
         >>> # Example usage
-        >>> encoder = MyEncoder(out_concepts=10, in_latent=784)
+        >>> encoder = MyEncoder(out_concepts=10, in_embeddings=784)
         >>>
-        >>> # Generate random image latent (e.g., flattened MNIST)
+        >>> # Generate random input embeddings (e.g., flattened MNIST)
         >>> x = torch.randn(4, 784)  # batch_size=4, pixels=784
         >>>
         >>> # Encode to concepts
@@ -136,12 +130,10 @@ class BaseEncoder(BaseConceptLayer):
 
     def __init__(self,
                  out_concepts: int,
-                 in_latent: int = None,
-                 in_exogenous: int = None):
+                 in_embeddings: int = None):
         super().__init__(
             in_concepts=None,
-            in_latent=in_latent,
-            in_exogenous=in_exogenous,
+            in_embeddings=in_embeddings,
             out_concepts=out_concepts
         )
 
@@ -150,14 +142,13 @@ class BasePredictor(BaseConceptLayer):
     """
     Abstract base class for concept predictor layers.
 
-    Predictors take concept representations (plus latent or exogenous
-    variables) and predict other concept representations.
+    Predictors take concept representations (plus optional embeddings)
+    and predict other concept representations.
 
     Args:
         out_concepts: Number of output concept features.
         in_concepts: Number of input concept features.
-        in_latent: Number of input latent features (optional).
-        in_exogenous: Number of exogenous input features (optional).
+        in_embeddings: Number of input embedding features (optional).
 
     Example:
         >>> import torch
@@ -189,13 +180,11 @@ class BasePredictor(BaseConceptLayer):
     def __init__(self,
                  out_concepts: int,
                  in_concepts: int,
-                 in_latent: int = None,
-                 in_exogenous: int = None,
+                 in_embeddings: int = None,
                  **kwargs):
         super().__init__(
             in_concepts=in_concepts,
-            in_latent=in_latent,
-            in_exogenous=in_exogenous,
+            in_embeddings=in_embeddings,
             out_concepts=out_concepts,
         )
 

@@ -115,8 +115,7 @@ class LazyConstructor(torch.nn.Module):
         >>> module = lazy_constructor.build(
         ...     out_concepts=3,
         ...     in_concepts=5,
-        ...     in_latent=None,
-        ...     in_exogenous=None
+        ...     in_embeddings=None,
         ... )
         >>>
         >>> # Use the module
@@ -150,9 +149,8 @@ class LazyConstructor(torch.nn.Module):
 
     def build(self,
               out_concepts: int,
-              in_concepts: Optional[int],
-              in_latent: Optional[int],
-              in_exogenous: Optional[int],
+              in_concepts: Optional[int] = None,
+              in_embeddings: Optional[int] = None,
               **kwargs
               ) -> torch.nn.Module:
         """
@@ -164,8 +162,7 @@ class LazyConstructor(torch.nn.Module):
         Args:
             out_concepts: Number of output concepts.
             in_concepts: Number of input concepts (optional).
-            in_latent: Number of input latent features (optional).
-            in_exogenous: Number of exogenous input features (optional).
+            in_embeddings: Number of input embedding features (optional).
             **kwargs: Additional keyword arguments for the module.
 
         Returns:
@@ -183,8 +180,7 @@ class LazyConstructor(torch.nn.Module):
             >>> module = lazy_constructor.build(
             ...     out_concepts=3,
             ...     in_concepts=5,
-            ...     in_latent=None,
-            ...     in_exogenous=None
+            ...     in_embeddings=None,
             ... )
             >>> print(type(module).__name__)
             LinearConceptToConcept
@@ -198,12 +194,11 @@ class LazyConstructor(torch.nn.Module):
             *self._module_args,
             **{
                 # torch_concepts naming
-                "in_latent": in_latent,
+                "in_embeddings": in_embeddings,
                 "in_concepts": in_concepts,
-                "in_exogenous": in_exogenous,
                 "out_concepts": out_concepts,
                 # PyTorch standard naming (e.g., for nn.Linear compatibility)
-                "in_features": in_latent,
+                "in_features": in_embeddings,
                 "out_features": out_concepts,
                 **self._module_kwargs,  # user-provided extras
                 **kwargs,  # additional kwargs if provided
@@ -241,8 +236,7 @@ class LazyConstructor(torch.nn.Module):
             >>> lazy_constructor.build(
             ...     out_concepts=3,
             ...     in_concepts=5,
-            ...     in_latent=None,
-            ...     in_exogenous=None
+            ...     in_embeddings=None,
             ... )
             >>>
             >>> # Forward pass

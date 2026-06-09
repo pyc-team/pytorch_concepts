@@ -617,9 +617,9 @@ def intervention(
         >>>
         >>> # Create a simple model
         >>> class SimplePGM(torch.nn.Module):
-        ...     def __init__(self, in_latent, out_concepts):
+        ...     def __init__(self, in_embeddings, out_concepts):
         ...         super().__init__()
-        ...         self.encoder = torch.nn.Linear(in_latent, 3)
+        ...         self.encoder = torch.nn.Linear(in_embeddings, 3)
         ...         self.predictor = torch.nn.Linear(3, out_concepts)
         ...     def forward(self, x):
         ...         c = torch.sigmoid(self.encoder(x))

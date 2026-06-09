@@ -10,12 +10,13 @@ import torch.nn.functional as F
 from ..base.layer import BaseEncoder
 from torch.distributions import MultivariateNormal
 
-
-class StochasticLatentToConcept(BaseEncoder):
+# TODO: substitute this layer with dedicated layers that parametrize the mean
+# and covariance separately. To be used in the mid-level PGM.
+class StochasticEmbeddingToConcept(BaseEncoder):
     """
     Stochastic encoder that predicts concept distributions with uncertainty.
 
-    Encodes input latent into concept distributions by predicting both mean
+    Encodes input embeddings into concept distributions by predicting both mean
     and covariance matrices. Uses Monte Carlo sampling from the predicted
     multivariate normal distribution to generate concept representations.
 
@@ -25,29 +26,30 @@ class StochasticLatentToConcept(BaseEncoder):
         sigma (nn.Linear): Network for predicting covariance lower triangle.
 
     Args:
-        in_latent: Number of input latent features.
+        in_embeddings: Number of input embedding features.
         out_concepts: Number of output concepts.
         num_monte_carlo: Number of Monte Carlo samples for uncertainty (default: 200).
+        eps: Small constant to ensure positive definiteness of covariance (default: 1e-6).
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import StochasticLatentToConcept
+        >>> from torch_concepts.nn import StochasticEmbeddingToConcept
         >>>
         >>> # Create stochastic encoder
-        >>> encoder = StochasticLatentToConcept(
-        ...     in_latent=128,
+        >>> encoder = StochasticEmbeddingToConcept(
+        ...     in_embeddings=128,
         ...     out_concepts=5,
         ...     num_monte_carlo=100
         ... )
         >>>
         >>> # Forward pass with mean reduction
-        >>> latent = torch.randn(4, 128)
-        >>> concepts = encoder(latent, reduce=True)
+        >>> embeddings = torch.randn(4, 128)
+        >>> concepts = encoder(embeddings, reduce=True)
         >>> print(concepts.shape)
         torch.Size([4, 5])
         >>>
         >>> # Forward pass keeping all MC samples
-        >>> concept_samples = encoder(latent, reduce=False)
+        >>> concept_samples = encoder(embeddings, reduce=False)
         >>> print(concept_samples.shape)
         torch.Size([4, 5, 100])
 
@@ -58,7 +60,7 @@ class StochasticLatentToConcept(BaseEncoder):
 
     def __init__(
         self,
-        in_latent: int,
+        in_embeddings: int,
         out_concepts: int,
         num_monte_carlo: int = 200,
         eps: float = 1e-6,
@@ -67,36 +69,37 @@ class StochasticLatentToConcept(BaseEncoder):
         Initialize the stochastic encoder.
 
         Args:
-            in_latent: Number of input latent features.
+            in_embeddings: Number of input embedding features.
             out_concepts: Number of output concepts.
             num_monte_carlo: Number of Monte Carlo samples (default: 200).
+            eps: Small constant to ensure positive definiteness of covariance (default: 1e-6).
         """
         super().__init__(
-            in_latent=in_latent,
+            in_embeddings=in_embeddings,
             out_concepts=out_concepts,
         )
         self.num_monte_carlo = num_monte_carlo
+        self.eps = eps
         self.mu = torch.nn.Sequential(
             torch.nn.Linear(
-                in_latent,
+                in_embeddings,
                 out_concepts,
             ),
             torch.nn.Unflatten(-1, (out_concepts,)),
         )
         self.sigma = torch.nn.Linear(
-            in_latent,
+            in_embeddings,
             int(out_concepts * (out_concepts + 1) / 2),
         )
         # Prevent exploding precision matrix at initialization
         self.sigma.weight.data *= (0.01)
-        self.eps = eps
 
     def _predict_sigma(self, x):
         """
         Predict lower triangular covariance matrix.
 
         Args:
-            x: Input latent embedding.
+            x: Input embedding.
 
         Returns:
             torch.Tensor: Lower triangular covariance matrix.
@@ -112,7 +115,7 @@ class StochasticLatentToConcept(BaseEncoder):
         return c_triang_cov
 
     def forward(self,
-        latent: torch.Tensor,
+        embeddings: torch.Tensor,
         reduce: bool = True,
     ) -> torch.Tensor:
         """
@@ -122,7 +125,7 @@ class StochasticLatentToConcept(BaseEncoder):
         from it using the reparameterization trick.
 
         Args:
-            latent: Input latent of shape (batch_size, in_latent).
+            embeddings: Input embeddings of shape (batch_size, in_embeddings).
             reduce: If True, return mean over MC samples; if False, return all samples
                    (default: True).
 
@@ -130,8 +133,8 @@ class StochasticLatentToConcept(BaseEncoder):
             torch.Tensor: Concept representations of shape (batch_size, out_concepts) if reduce=True,
                          or (batch_size, out_concepts, num_monte_carlo) if reduce=False.
         """
-        c_mu = self.mu(latent)
-        c_triang_cov = self._predict_sigma(latent)
+        c_mu = self.mu(embeddings)
+        c_triang_cov = self._predict_sigma(embeddings)
         # Sample from predicted normal distribution
         c_dist = MultivariateNormal(c_mu, scale_tril=c_triang_cov)
         c_mcmc_logit = c_dist.rsample([self.num_monte_carlo]).movedim(0, -1)  # [batch_size,num_concepts,mcmc_size]

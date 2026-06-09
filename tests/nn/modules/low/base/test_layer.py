@@ -21,7 +21,6 @@ class TestBaseConceptLayer(unittest.TestCase):
 
     def test_initialization(self):
         """Test initialization with various feature dimensions."""
-        # Create a concrete subclass
         class ConcreteLayer(BaseConceptLayer):
             def forward(self, x):
                 return x
@@ -29,14 +28,12 @@ class TestBaseConceptLayer(unittest.TestCase):
         layer = ConcreteLayer(
             out_concepts=5,
             in_concepts=10,
-            in_latent=8,
-            in_exogenous=2
+            in_embeddings=8,
         )
 
         self.assertEqual(layer.out_concepts, 5)
         self.assertEqual(layer.in_concepts, 10)
-        self.assertEqual(layer.in_latent, 8)
-        self.assertEqual(layer.in_exogenous, 2)
+        self.assertEqual(layer.in_embeddings, 8)
 
     def test_initialization_minimal(self):
         """Test initialization with only required arguments."""
@@ -48,8 +45,7 @@ class TestBaseConceptLayer(unittest.TestCase):
 
         self.assertEqual(layer.out_concepts, 5)
         self.assertIsNone(layer.in_concepts)
-        self.assertIsNone(layer.in_latent)
-        self.assertIsNone(layer.in_exogenous)
+        self.assertIsNone(layer.in_embeddings)
 
     def test_abstract_forward(self):
         """Test that forward must be implemented."""
@@ -91,12 +87,12 @@ class TestBaseEncoder(unittest.TestCase):
 
         encoder = ConcreteEncoder(
             out_concepts=10,
-            in_latent=784
+            in_embeddings=784,
         )
 
         self.assertEqual(encoder.out_concepts, 10)
-        self.assertEqual(encoder.in_latent, 784)
-        self.assertIsNone(encoder.in_concepts)  # Encoders don't use endogenous
+        self.assertEqual(encoder.in_embeddings, 784)
+        self.assertIsNone(encoder.in_concepts)
 
     def test_no_endogenous_input(self):
         """Test that encoders don't accept endogenous."""
@@ -104,10 +100,7 @@ class TestBaseEncoder(unittest.TestCase):
             def forward(self, x):
                 return x
 
-        encoder = ConcreteEncoder(
-            out_concepts=10,
-            in_latent=784
-        )
+        encoder = ConcreteEncoder(out_concepts=10, in_embeddings=784)
 
         # in_concepts should always be None for encoders
         self.assertIsNone(encoder.in_concepts)
@@ -115,51 +108,46 @@ class TestBaseEncoder(unittest.TestCase):
     def test_encoder_implementation(self):
         """Test concrete encoder implementation."""
         class MyEncoder(BaseEncoder):
-            def __init__(self, out_concepts, in_latent):
+            def __init__(self, out_concepts, in_embeddings):
                 super().__init__(
                     out_concepts=out_concepts,
-                    in_latent=in_latent
+                    in_embeddings=in_embeddings,
                 )
                 self.net = nn.Sequential(
-                    nn.Linear(in_latent, 128),
+                    nn.Linear(in_embeddings, 128),
                     nn.ReLU(),
                     nn.Linear(128, out_concepts)
                 )
 
-            def forward(self, latent):
-                return self.net(latent)
+            def forward(self, embeddings):
+                return self.net(embeddings)
 
-        encoder = MyEncoder(out_concepts=10, in_latent=784)
+        encoder = MyEncoder(out_concepts=10, in_embeddings=784)
         x = torch.randn(4, 784)
         concepts = encoder(x)
 
         self.assertEqual(concepts.shape, (4, 10))
 
-    def test_with_exogenous_features(self):
-        """Test encoder with exogenous features."""
-        class EncoderWithExogenous(BaseEncoder):
-            def __init__(self, out_concepts, in_latent, in_exogenous):
+    def test_with_combined_features(self):
+        """Test encoder that combines concept and embedding inputs."""
+        class CombinedEncoder(BaseEncoder):
+            def __init__(self, out_concepts, in_embeddings, in_concepts):
                 super().__init__(
                     out_concepts=out_concepts,
-                    in_latent=in_latent,
-                    in_exogenous=in_exogenous
+                    in_embeddings=in_embeddings,
                 )
-                total_features = in_latent + in_exogenous
+                self.in_concepts = in_concepts
+                total_features = in_embeddings + in_concepts
                 self.net = nn.Linear(total_features, out_concepts)
 
-            def forward(self, latent, exogenous):
-                combined = torch.cat([latent, exogenous], dim=-1)
+            def forward(self, embeddings, concepts):
+                combined = torch.cat([embeddings, concepts], dim=-1)
                 return self.net(combined)
 
-        encoder = EncoderWithExogenous(
-            out_concepts=5,
-            in_latent=10,
-            in_exogenous=3
-        )
-
-        embedding = torch.randn(2, 10)
-        exogenous = torch.randn(2, 3)
-        output = encoder(embedding, exogenous)
+        encoder = CombinedEncoder(out_concepts=5, in_embeddings=10, in_concepts=3)
+        embeddings = torch.randn(2, 10)
+        concepts = torch.randn(2, 3)
+        output = encoder(embeddings, concepts)
 
         self.assertEqual(output.shape, (2, 5))
 

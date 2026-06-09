@@ -1,21 +1,21 @@
 import torch
 
 from ..base.layer import BasePredictor
-
+from ..dense_layers import MLP
 from ....functional import prune_linear_layer
 
 
-class HyperlinearConceptExogenousToConcept(BasePredictor):
+class HyperlinearConceptEmbeddingToConcept(BasePredictor):
     """
     Hypernetwork-based linear predictor for concept-based models.
 
-    This predictor uses a (nonlinear) hypernetwork to generate per-sample weights 
-    from exogenous features, which are then used in a linear layer. 
+    This predictor uses a (nonlinear) hypernetwork to generate per-sample weights
+    from embeddings. These weights are then used in a linear layer to predict concept representations.
     It also supports stochastic biases with learnable mean and standard deviation.
 
     Attributes:
         in_concepts (int): Number of input concept representations.
-        in_exogenous (int): Number of exogenous features.
+        in_embeddings (int): Number of embedding features.
         hidden_size (int): Hidden size of the hypernetwork.
         out_concepts (int): Number of output concept representations.
         use_bias (bool): Whether to use stochastic bias.
@@ -23,43 +23,32 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
 
     Args:
         in_concepts: Number of input concept representations.
-        in_exogenous: Number of exogenous input features.
+        in_embeddings: Number of embedding input features.
         hidden_size: Hidden dimension of hypernetwork.
         activation: Activation function for hypernetwork output (default: identity).
-        use_bias: Whether to add stochastic bias (default: True).
+        use_bias: Whether to add stochastic bias (default: False).
         init_bias_mean: Initial mean for bias distribution (default: 0.0).
         init_bias_std: Initial std for bias distribution (default: 0.01).
         min_std: Minimum std to ensure stability (default: 1e-6).
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import HyperlinearConceptExogenousToConcept
+        >>> from torch_concepts.nn import HyperlinearConceptEmbeddingToConcept
         >>>
         >>> # Create hypernetwork predictor
-        >>> predictor = HyperlinearConceptExogenousToConcept(
-        ...     in_concepts=10,      # 10 concepts satates
-        ...     in_exogenous=128,    # 128-dim exogenous features
+        >>> predictor = HyperlinearConceptEmbeddingToConcept(
+        ...     in_concepts=10,      # 10 concept states
+        ...     in_embeddings=128,   # 128-dim embedding features
         ...     hidden_size=64,   # Hidden dim of hypernet
-        ...     use_bias=True
+        ...     use_bias=False
         ... )
         >>>
         >>> # Generate random inputs
         >>> concepts = torch.randn(4, 10)   # batch_size=4, n_concepts=10
-        >>> exogenous = torch.randn(4, 3, 128)        # batch_size=4, n_tasks=3, exogenous_dim=128
+        >>> embeddings = torch.randn(4, 3, 128)        # batch_size=4, n_tasks=3, embedding_dim=128
         >>>
         >>> # Forward pass
-        >>> output = predictor(concepts=concepts, exogenous=exogenous)
-        >>> print(output.shape)  # torch.Size([4, 3])
-        >>>
-        >>> # Example without bias
-        >>> predictor_no_bias = HyperlinearConceptExogenousToConcept(
-        ...     in_concepts=10,
-        ...     in_exogenous=128,
-        ...     hidden_size=64,
-        ...     use_bias=False
-        ... )
-        >>>
-        >>> output = predictor_no_bias(concepts=concepts, exogenous=exogenous)
+        >>> output = predictor(concepts=concepts, embeddings=embeddings)
         >>> print(output.shape)  # torch.Size([4, 3])
 
     References:
@@ -68,8 +57,9 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
     def __init__(
         self,
         in_concepts: int,
-        in_exogenous: int,
-        hidden_size: int,
+        in_embeddings: int,
+        hidden_size: int = 32,
+        activation='relu',
         use_bias : bool = True,
         init_bias_mean: float = 0.0,
         init_bias_std: float = 0.01,
@@ -78,8 +68,8 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
     ):
         super().__init__(
             in_concepts=in_concepts,
-            in_exogenous=in_exogenous,
-            out_concepts=-1, # determined by the number of exogenous variables
+            in_embeddings=in_embeddings,
+            out_concepts=-1, # determined by the number of embeddings
         )
         self.hidden_size = hidden_size
         self.use_bias = use_bias
@@ -87,13 +77,11 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
         self.init_bias_mean = init_bias_mean
         self.init_bias_std = init_bias_std
 
-        self.hypernet = torch.nn.Sequential(
-            torch.nn.Linear(in_exogenous, hidden_size),
-            torch.nn.LeakyReLU(),
-            torch.nn.Linear(
-                hidden_size,
-                in_concepts
-            ),
+        self.hypernet = MLP(
+            input_size=in_embeddings,
+            hidden_size=hidden_size,
+            output_size=in_concepts,
+            activation=activation,
         )
 
         # Learnable distribution params for the stochastic bias (scalar, broadcasts to (B, Y))
@@ -115,21 +103,21 @@ class HyperlinearConceptExogenousToConcept(BasePredictor):
     def forward(
             self,
             concepts: torch.Tensor,
-            exogenous: torch.Tensor
+            embeddings: torch.Tensor
     ) -> torch.Tensor:
         """
         Forward pass through hypernetwork predictor.
 
         Args:
             concepts: Concept representations of shape (batch_size, in_concepts).
-            exogenous: Exogenous features of shape (batch_size, out_concepts, in_exogenous).
+            embeddings: Embedding features of shape (batch_size, out_concepts, in_embeddings).
 
         Returns:
             torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
-        weights = self.hypernet(exogenous)
+        weights = self.hypernet(embeddings)
 
-        out_concepts = torch.einsum('bc,byc->by', concepts, weights)
+        out_concepts = torch.einsum('bc,bnc->bn', concepts, weights)
 
         if self.use_bias:
             # Reparameterized sampling so mean/std are learnable

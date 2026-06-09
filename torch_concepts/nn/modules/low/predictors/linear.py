@@ -52,6 +52,7 @@ class LinearConceptToConcept(BasePredictor):
         self,
         in_concepts: int,
         out_concepts: int,
+        *args,
         **kwargs,
     ):
         """
@@ -65,12 +66,11 @@ class LinearConceptToConcept(BasePredictor):
             in_concepts=in_concepts,
             out_concepts=out_concepts,
         )
-        self.predictor = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_concepts,
-                out_concepts
-            ),
-            torch.nn.Unflatten(-1, (out_concepts,)),
+        self.predictor = torch.nn.Linear(
+            in_concepts,
+            out_concepts,
+            *args,
+            **kwargs,
         )
 
     def forward(
@@ -81,10 +81,10 @@ class LinearConceptToConcept(BasePredictor):
         Forward pass through the predictor.
 
         Args:
-            concepts: Input concepts of shape (batch_size, in_concepts).
+            concepts: Input concepts of shape (..., in_concepts).
 
         Returns:
-            torch.Tensor: Predicted concept probabilities of shape (batch_size, out_concepts).
+            torch.Tensor: Predicted concept probabilities of shape (..., out_concepts).
         """
         return self.predictor(concepts)
         
@@ -116,4 +116,4 @@ class LinearConceptToConcept(BasePredictor):
             torch.Size([2, 5])
         """
         self.in_concepts = sum(mask.int())
-        self.predictor[0] = prune_linear_layer(self.predictor[0], mask, dim=0)
+        self.predictor = prune_linear_layer(self.predictor, mask, dim=0)

@@ -1,85 +1,68 @@
 """
-Comprehensive tests for torch_concepts.nn.modules.low.encoders
-
-Tests all encoder modules (linear, exogenous, selector, stochastic).
+Tests for LinearEmbeddingEncoder (formerly LinearLatentToExogenous).
 """
 import unittest
 import torch
-import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.exogenous import LinearLatentToExogenous
+from torch_concepts.nn.modules.low.dense_layers import LinearEmbeddingEncoder
 
 
-class TestLinearLatentToExogenous(unittest.TestCase):
-    """Test LinearLatentToExogenous."""
+class TestLinearEmbeddingEncoder(unittest.TestCase):
+    """Test LinearEmbeddingEncoder."""
 
     def test_initialization(self):
         """Test encoder initialization."""
-        encoder = LinearLatentToExogenous(
-            in_latent=128,
-            out_concepts=10,
-            out_exogenous=16
+        encoder = LinearEmbeddingEncoder(
+            in_features=128,
+            n_embeddings=10,
+            out_features=16,
         )
-        self.assertEqual(encoder.in_latent, 128)
-        self.assertEqual(encoder.out_concepts, 10)
-        self.assertEqual(encoder.out_exogenous, 16)
+        self.assertEqual(encoder.out_shape, (10, 16))
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        encoder = LinearLatentToExogenous(
-            in_latent=64,
-            out_concepts=5,
-            out_exogenous=8
+        encoder = LinearEmbeddingEncoder(
+            in_features=64,
+            n_embeddings=5,
+            out_features=8,
         )
-        embeddings = torch.randn(4, 64)
-        output = encoder(embeddings)
+        x = torch.randn(4, 64)
+        output = encoder(x)
         self.assertEqual(output.shape, (4, 5, 8))
 
     def test_gradient_flow(self):
         """Test gradient flow through encoder."""
-        encoder = LinearLatentToExogenous(
-            in_latent=32,
-            out_concepts=3,
-            out_exogenous=4
+        encoder = LinearEmbeddingEncoder(
+            in_features=32,
+            n_embeddings=3,
+            out_features=4,
         )
-        embeddings = torch.randn(2, 32, requires_grad=True)
-        output = encoder(embeddings)
-        loss = output.sum()
-        loss.backward()
-        self.assertIsNotNone(embeddings.grad)
+        x = torch.randn(2, 32, requires_grad=True)
+        output = encoder(x)
+        output.sum().backward()
+        self.assertIsNotNone(x.grad)
 
     def test_different_embedding_sizes(self):
-        """Test various embedding sizes."""
+        """Test various out_features values."""
         for emb_size in [4, 8, 16, 32]:
-            encoder = LinearLatentToExogenous(
-                in_latent=64,
-                out_concepts=5,
-                out_exogenous=emb_size
+            encoder = LinearEmbeddingEncoder(
+                in_features=64,
+                n_embeddings=5,
+                out_features=emb_size,
             )
-            embeddings = torch.randn(2, 64)
-            output = encoder(embeddings)
+            x = torch.randn(2, 64)
+            output = encoder(x)
             self.assertEqual(output.shape, (2, 5, emb_size))
 
-    def test_encoder_output_dimension(self):
-        """Test output dimension calculation."""
-        encoder = LinearLatentToExogenous(
-            in_latent=128,
-            out_concepts=10,
-            out_exogenous=16
-        )
-        self.assertEqual(encoder.out_concepts, 10)
-        self.assertEqual(encoder.out_encoder_dim, 10 * 16)
+    def test_single_embedding(self):
+        """Test default n_embeddings=1."""
+        encoder = LinearEmbeddingEncoder(in_features=32, out_features=8)
+        x = torch.randn(3, 32)
+        self.assertEqual(encoder(x).shape, (3, 1, 8))
 
-    def test_leaky_relu_activation(self):
-        """Test that LeakyReLU is applied."""
-        encoder = LinearLatentToExogenous(
-            in_latent=32,
-            out_concepts=3,
-            out_exogenous=4
-        )
-        embeddings = torch.randn(2, 32)
-        output = encoder(embeddings)
-        # Output should have passed through LeakyReLU
-        self.assertIsNotNone(output)
+    def test_out_shape_attribute(self):
+        """out_shape should be (n_embeddings, out_features)."""
+        encoder = LinearEmbeddingEncoder(in_features=128, n_embeddings=10, out_features=16)
+        self.assertEqual(encoder.out_shape, (10, 16))
 
 
 if __name__ == '__main__':

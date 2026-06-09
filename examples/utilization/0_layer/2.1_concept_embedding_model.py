@@ -10,8 +10,7 @@ from torch.nn import ModuleDict
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import MixConceptExogegnousToConcept, LinearLatentToExogenous, \
-    LinearExogenousToConcept
+from torch_concepts.nn import LinearEmbeddingToConcept, MixConceptEmbeddingToConcept, MLP
 
 
 def main():
@@ -19,7 +18,7 @@ def main():
     n_epochs = 500
     n_samples = 1000
     concept_reg = 0.5
-    exogenous_size = 7
+    embedding_size = 7
     
     seed_everything(42)
 
@@ -36,34 +35,32 @@ def main():
     n_concepts = c_train.shape[1]
     n_tasks = y_train.shape[1]
 
-    # Build model using low-level layers
-    latent_encoder = torch.nn.Sequential(
-        torch.nn.Linear(n_features, latent_dims),
-        torch.nn.LeakyReLU(),
-    )
-    # Exogenous encoder: latent -> per-concept exogenous
-    exog_encoder = LinearLatentToExogenous(
-        in_latent=latent_dims,
-        out_concepts=n_concepts,
-        out_exogenous=exogenous_size
-    )
-    # Concept encoder: exogenous -> concepts
-    c_encoder = LinearExogenousToConcept(
-        in_exogenous=exogenous_size,
-    )
-    # Predictor: concepts + exogenous -> tasks
-    y_predictor = MixConceptExogegnousToConcept(
-        in_concepts=n_concepts,
-        in_exogenous=exogenous_size,
-        out_concepts=n_tasks,
-        cardinalities=[1, 1]
-    )
-    model = ModuleDict(
-        {"latent_encoder": latent_encoder,
-         "exog_encoder": exog_encoder,
-         "concept_encoder": c_encoder,
-         "task_predictor": y_predictor}
-    )
+    model = ModuleDict({
+        # input encoding: (batch, n_features) -> (batch, latent_dims)
+        "encoder": MLP(
+            input_size=n_features,
+            hidden_size=latent_dims,
+            n_layers=1,
+            activation='leaky_relu',
+        ),
+        # embedding encoder: (batch, latent_dims) -> (batch, n_concepts, embedding_size)
+        "emb_encoder": torch.nn.Sequential(
+            torch.nn.Linear(latent_dims, n_concepts * embedding_size),
+            torch.nn.Unflatten(unflattened_size=(n_concepts, embedding_size), dim=1),
+        ),
+        # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts)
+        "concept_encoder": torch.nn.Sequential(
+            LinearEmbeddingToConcept(in_embeddings=embedding_size, out_concepts=1),
+            torch.nn.Flatten(),
+        ),
+        # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
+        "task_predictor": MixConceptEmbeddingToConcept(
+            in_concepts=n_concepts,
+            in_embeddings=embedding_size,
+            out_concepts=n_tasks,
+            cardinalities=[1, 1],
+        ),
+    })
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -73,10 +70,10 @@ def main():
         optimizer.zero_grad()
 
         # Generate concept and task predictions
-        emb = latent_encoder(x_train)
-        exog = exog_encoder(latent=emb)
-        c_pred = c_encoder(exogenous=exog)
-        y_pred = y_predictor(concepts=c_pred, exogenous=exog)
+        latent = model["encoder"](x_train)                          # (batch, latent_dims)
+        embeddings = model["emb_encoder"](latent)                  # (batch, n_concepts, embedding_size)
+        c_pred = model["concept_encoder"](embeddings)               # (batch, n_concepts)
+        y_pred = model["task_predictor"](concepts=c_pred, embeddings=embeddings)  # (batch, n_tasks)
 
         # Compute loss
         concept_loss = loss_fn(c_pred, c_train)

@@ -141,7 +141,7 @@ class ParametricCPD(nn.Module):
     _MAX_DISCRETE_BITS = 20  # cap on total discrete parent bits for table construction
 
     def __repr__(self):
-        parents = [p.name if isinstance(p, Variable) else p for p in self.parents]
+        parents = [p.concept if isinstance(p, Variable) else p for p in self.parents]
         shared = f", shared={self.shared}" if self.shared else ""
         return f"{self.__class__.__name__}(concepts={self.concepts!r}, parametrization={self.parametrization.__class__.__name__}, parents={parents}{shared})"
     
