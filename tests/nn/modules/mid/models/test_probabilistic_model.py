@@ -10,77 +10,11 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts.nn.modules.mid.models.variable import Variable
-from torch_concepts.nn.modules.mid.models.factor import ParametricFactor
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.mid.models.probabilistic_model import (
     ProbabilisticModel,
 )
-
-
-# ===========================================================================
-# Tests for ParametricFactor (base, scope-aware, no parents)
-# ===========================================================================
-
-class TestParametricFactor(unittest.TestCase):
-    """Test ParametricFactor base class."""
-
-    def test_single_concept(self):
-        """Test ParametricFactor with single concept string."""
-        module = nn.Linear(5, 1)
-        factor = ParametricFactor(concepts='c1', parametrization=module)
-        self.assertEqual(factor.concept, 'c1')
-        self.assertEqual(factor.concepts, ['c1'])
-        self.assertIs(factor.parametrization, module)
-        self.assertIsNone(factor.variable)
-
-    def test_multi_concept_scope(self):
-        """Test ParametricFactor with list of concepts creates a single factor with full scope."""
-        module = nn.Linear(5, 2)
-        factor = ParametricFactor(concepts=['c1', 'c2'], parametrization=module)
-        self.assertIsInstance(factor, ParametricFactor)
-        self.assertEqual(factor.concepts, ['c1', 'c2'])
-        self.assertEqual(factor.concept, 'c1')
-        self.assertIs(factor.parametrization, module)
-
-    def test_forward_pass(self):
-        """Test forward pass through ParametricFactor."""
-        module = nn.Linear(3, 1)
-        factor = ParametricFactor(concepts='c1', parametrization=module)
-        x = torch.randn(2, 3)
-        out = factor(input=x)
-        self.assertEqual(out.shape, (2, 1))
-
-    def test_forward_pass_multi_concept(self):
-        """Test forward pass through ParametricFactor with multi-concept scope."""
-        module = nn.Linear(3, 2)
-        factor = ParametricFactor(concepts=['c1', 'c2'], parametrization=module)
-        x = torch.randn(2, 3)
-        out = factor(input=x)
-        self.assertEqual(out.shape, (2, 2))
-
-    def test_no_parents_attribute(self):
-        """Test that ParametricFactor does NOT have a parents list."""
-        module = nn.Linear(5, 1)
-        factor = ParametricFactor(concepts='c1', parametrization=module)
-        # ParametricFactor should not have parents (that's ParametricCPD's job)
-        self.assertFalse(hasattr(factor, 'parents') and factor.parents)
-
-    def test_repr_single_concept(self):
-        """Test repr string for single-concept factor."""
-        module = nn.Linear(5, 1)
-        factor = ParametricFactor(concepts='c1', parametrization=module)
-        self.assertIn('c1', repr(factor))
-        self.assertIn('Linear', repr(factor))
-
-    def test_repr_multi_concept(self):
-        """Test repr string for multi-concept factor shows full scope."""
-        module = nn.Linear(5, 2)
-        factor = ParametricFactor(concepts=['c1', 'c2'], parametrization=module)
-        r = repr(factor)
-        self.assertIn('c1', r)
-        self.assertIn('c2', r)
-        self.assertIn('Linear', r)
 
 
 # ===========================================================================
@@ -93,8 +27,8 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_initialization_with_factors_kwarg(self):
         """Test initialization using 'factors' keyword."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(len(model.variables), 1)
         self.assertEqual(len(model.factors), 1)
 
@@ -117,20 +51,11 @@ class TestProbabilisticModel(unittest.TestCase):
         with self.assertRaises(TypeError):
             ProbabilisticModel(variables=[])
 
-    def test_mixed_factor_types_raises_type_error(self):
-        """Test that mixing ParametricCPD and ParametricFactor raises TypeError."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        factor = ParametricFactor(concepts='B', parametrization=nn.Linear(10, 1))
-        with self.assertRaises(TypeError):
-            ProbabilisticModel(variables=[var_a, var_b], factors=[cpd, factor])
-
     def test_add_single_variable(self):
         """Test adding a single variable."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(len(model.variables), 1)
 
     def test_add_multiple_variables(self):
@@ -155,18 +80,18 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_get_module_of_concept(self):
         """Test get_module_of_concept method."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
 
         module = model.get_module_of_concept('A')
         self.assertIsNotNone(module)
-        self.assertEqual(module.concept, 'A')
+        self.assertEqual(module.concepts, 'A')
 
     def test_get_module_of_nonexistent_concept(self):
         """Test get_module_of_concept with non-existent concept."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
 
         module = model.get_module_of_concept('B')
         self.assertIsNone(module)
@@ -183,8 +108,8 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_variable_linkage(self):
         """Test that factors are linked to their corresponding variables."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
 
         retrieved = model.get_module_of_concept('A')
         self.assertIs(retrieved.variable, var)
@@ -192,8 +117,8 @@ class TestProbabilisticModel(unittest.TestCase):
     def test_factors_registered_as_modules(self):
         """Test that factors are properly registered as nn.Module submodules."""
         var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
+        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+        model = ProbabilisticModel(variables=[var], factors=[cpd])
         params = list(model.parameters())
         self.assertGreater(len(params), 0)
 
@@ -203,13 +128,13 @@ class TestProbabilisticModel(unittest.TestCase):
         var_bern = Variable(concepts='binary', distribution=Bernoulli, size=1)
         var_cat = Variable(concepts='multi', distribution=OneHotCategorical, size=3)
 
-        f_delta = ParametricFactor(concepts='emb', parametrization=nn.Identity())
-        f_bern = ParametricFactor(concepts='binary', parametrization=nn.Linear(10, 1))
-        f_cat = ParametricFactor(concepts='multi', parametrization=nn.Linear(10, 3))
+        cpd_delta = ParametricCPD(concepts='emb', parametrization=nn.Identity())
+        cpd_bern = ParametricCPD(concepts='binary', parametrization=nn.Linear(10, 1))
+        cpd_cat = ParametricCPD(concepts='multi', parametrization=nn.Linear(10, 3))
 
         model = ProbabilisticModel(
             variables=[var_delta, var_bern, var_cat],
-            factors=[f_delta, f_bern, f_cat]
+            factors=[cpd_delta, cpd_bern, cpd_cat]
         )
         self.assertEqual(len(model.variables), 3)
         self.assertEqual(len(model.factors), 3)
@@ -303,49 +228,6 @@ class TestProbabilisticModelDirected(unittest.TestCase):
         model = ProbabilisticModel(variables=[var], factors=[cpd])
         self.assertEqual(model.get_variable_parents('Z'), [])
 
-    def test_build_cpts_no_parents_delta(self):
-        """Test build_cpts for Delta variable with no parents."""
-        var = Variable(concepts='x', distribution=Delta, size=1)
-        module = nn.Linear(in_features=2, out_features=1)
-        cpd = ParametricCPD(concepts='x', parametrization=module)
-
-        model = ProbabilisticModel(variables=[var], factors=[cpd])
-        cpts = model.build_cpts()
-
-        self.assertIn('x', cpts)
-        self.assertIsInstance(cpts['x'], torch.Tensor)
-        self.assertGreaterEqual(cpts['x'].shape[-1], 1)
-
-    def test_build_potentials_no_parents_delta(self):
-        """Test build_potentials for Delta variable with no parents."""
-        var = Variable(concepts='x', distribution=Delta, size=1)
-        module = nn.Linear(in_features=2, out_features=1)
-        cpd = ParametricCPD(concepts='x', parametrization=module)
-
-        model = ProbabilisticModel(variables=[var], factors=[cpd])
-        pots = model.build_potentials()
-
-        self.assertIn('x', pots)
-        self.assertIsInstance(pots['x'], torch.Tensor)
-
-    def test_build_cpts_with_parent_bernoulli(self):
-        """Test build_cpts with parent-child Bernoulli structure."""
-        parent = Variable(concepts='p', distribution=Bernoulli, size=1)
-        child = Variable(concepts='c', distribution=Bernoulli, size=1)
-
-        parent_cpd = ParametricCPD(concepts='p', parametrization=nn.Linear(1, 1))
-        child_cpd = ParametricCPD(concepts='c', parametrization=nn.Linear(1, 1), parents=['p'])
-
-        model = ProbabilisticModel(
-            variables=[parent, child],
-            factors=[parent_cpd, child_cpd]
-        )
-
-        cpts = model.build_cpts()
-        self.assertIn('c', cpts)
-        cpt_c = cpts['c']
-        self.assertGreaterEqual(cpt_c.shape[1], 1)
-
     def test_get_by_distribution(self):
         """Test that get_by_distribution works on ProbabilisticModel."""
         parent = Variable(concepts='p', distribution=Bernoulli, size=1)
@@ -428,45 +310,6 @@ class TestVariableParametricCPDIntegration(unittest.TestCase):
 
 class TestProbabilisticModelCoverageGaps(unittest.TestCase):
     """Tests targeting uncovered lines in probabilistic_model.py."""
-
-    # --- Line 70: mixed factor types TypeError ---
-
-    def test_mixed_factor_types_raises(self):
-        """Mixing ParametricCPD and ParametricFactor factors raises TypeError."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        factor = ParametricFactor(concepts='B', parametrization=nn.Linear(10, 1))
-        with self.assertRaises(TypeError):
-            ProbabilisticModel(variables=[var_a, var_b], factors=[cpd, factor])
-
-    # --- Lines 98-105: undirected _initialize_model with shared factor ---
-
-    def test_undirected_shared_factor(self):
-        """Undirected model with a shared ParametricFactor registers correctly."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        shared_factor = ParametricFactor(
-            concepts=['A', 'B'], parametrization=nn.Linear(10, 2))
-        # Mark as shared manually (ParametricFactor doesn't set it by default)
-        shared_factor.shared = True
-        model = ProbabilisticModel(
-            variables=[var_a, var_b], factors=[shared_factor])
-        # Primary concept registered in factors
-        self.assertIn('A', model.factors)
-        # Secondary concept mapped via _shared_cpd_map
-        self.assertIn('B', model._shared_cpd_map)
-        self.assertEqual(model._shared_cpd_map['B'], 'A')
-        # get_module_of_concept redirects secondary to primary
-        self.assertIs(model.get_module_of_concept('B'),
-                      model.get_module_of_concept('A'))
-
-    def test_undirected_nonshared_factor_linked_to_variable(self):
-        """Undirected non-shared factor is linked to its variable."""
-        var = Variable(concepts='A', distribution=Bernoulli, size=1)
-        factor = ParametricFactor(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], factors=[factor])
-        self.assertIs(model.factors['A'].variable, var)
 
     # --- Lines 128-133: directed shared CPD branch ---
 
@@ -561,30 +404,6 @@ class TestProbabilisticModelCoverageGaps(unittest.TestCase):
         self.assertIsInstance(temp_cpd, ParametricCPD)
         self.assertIs(temp_cpd.variable, var)
         self.assertIs(temp_cpd.parametrization, plain_module)
-
-    # --- build_cpts / build_potentials reject shared CPDs ---
-
-    def test_build_cpts_rejects_shared_cpds(self):
-        """build_cpts raises NotImplementedError for models with shared CPDs."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        shared_cpd = ParametricCPD(
-            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
-        model = ProbabilisticModel(
-            variables=[var_a, var_b], factors=[shared_cpd])
-        with self.assertRaises(NotImplementedError):
-            model.build_cpts()
-
-    def test_build_potentials_rejects_shared_cpds(self):
-        """build_potentials raises NotImplementedError for models with shared CPDs."""
-        var_a = Variable(concepts='A', distribution=Bernoulli, size=1)
-        var_b = Variable(concepts='B', distribution=Bernoulli, size=1)
-        shared_cpd = ParametricCPD(
-            concepts=['A', 'B'], parametrization=nn.Linear(10, 2), shared=True)
-        model = ProbabilisticModel(
-            variables=[var_a, var_b], factors=[shared_cpd])
-        with self.assertRaises(NotImplementedError):
-            model.build_potentials()
 
 
 if __name__ == '__main__':

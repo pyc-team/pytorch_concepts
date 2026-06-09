@@ -26,6 +26,7 @@ torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete impl
 
 from abc import ABC, abstractmethod
 from typing import List, Any, Optional, Mapping, Dict
+import functools
 import torch
 import torch.nn as nn
 
@@ -323,6 +324,47 @@ class BaseModel(nn.Module, ABC):
         if self.training and self.train_inference is not None:
             return self.train_inference
         return self.eval_inference
+
+    @staticmethod
+    def _resolve_train_inference(inference, train_inference):
+        """Validate and resolve the train_inference class.
+
+        If ``train_inference`` is ``None`` it falls back to ``inference``.
+        If it is explicitly set to a *different* class, a ``ValueError`` is
+        raised because mixing inference engines for training and evaluation
+        is not supported.
+
+        Parameters
+        ----------
+        inference : type
+            The evaluation inference class.
+        train_inference : type or None
+            The training inference class, or ``None`` to fall back to
+            ``inference``.
+
+        Returns
+        -------
+        type
+            Resolved training inference class (always ``inference`` or the
+            same class as ``inference``).
+
+        Raises
+        ------
+        ValueError
+            If ``train_inference`` is explicitly set to a different class than
+            ``inference``.
+        """
+        
+        def _unwrap(fn):
+            return fn.func if isinstance(fn, functools.partial) else fn
+
+        if train_inference is not None and _unwrap(train_inference) is not _unwrap(inference):
+            raise ValueError(
+                f"train_inference ({_unwrap(train_inference).__name__}) must be the same "
+                f"class as inference ({_unwrap(inference).__name__}). Different inference "
+                "engines for training and evaluation are not yet supported."
+            )
+        return train_inference if train_inference is not None else inference
 
     def _finalize(self):
         if not hasattr(self, 'model') or self.model is None:

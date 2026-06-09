@@ -105,7 +105,7 @@ class ForwardInference(BaseInference, ABC):
         probabilistic_model: ProbabilisticModel, 
         graph_learner: BaseGraphLearner = None, 
         detach: bool = False,
-        lazy: bool = False,
+        lazy: bool = True,
         p: float = 0.0,
         *args, 
         **kwargs
@@ -166,7 +166,7 @@ class ForwardInference(BaseInference, ABC):
 
         Subclass contracts:
 
-        * ``DeterministicInference`` — Bernoulli → sigmoid, Categorical → softmax
+        * ``DeterministicInference`` — apply activation function before propagation
         * ``AncestralSamplingInference`` — sample from the distribution
 
         Args:
@@ -783,7 +783,8 @@ class ForwardInference(BaseInference, ABC):
                         idx = index_map[name]
                         gt_value = self.ground_truth_to_evidence(
                             value=ground_truth[:, idx:idx+1],
-                            cardinality=variable.size,
+                            size=variable.size,
+                            type=variable.type
                         )
                         if self.p >= 1.0:
                             propagation[name] = gt_value
@@ -1006,4 +1007,3 @@ class ForwardInference(BaseInference, ABC):
         self._unrolled_query_vars = set(v.concept for v in new_variables)
 
         return ProbabilisticModel(new_variables, new_parametric_cpds)
-

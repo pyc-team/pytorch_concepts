@@ -80,14 +80,13 @@ class MixConceptExogegnousToConcept(BasePredictor):
             out_concepts=out_concepts,
         )
         if cardinalities is None:
-            # assume all binary
-            self.cardinalities = [1] * in_concepts
+            raise ValueError("Cardinalities must be provided for MixConceptExogegnousToConcept.")
         else:
             self.cardinalities = cardinalities
             assert sum(self.cardinalities) == in_concepts
 
         # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
-        self.cardinalities_expanded = torch.tensor(cardinalities)
+        self.cardinalities_expanded = torch.tensor(self.cardinalities)
         cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
         start_positions = cumsum - self.cardinalities_expanded
         self.mask_cardinality_1 = start_positions[self.cardinalities_expanded == 1]
@@ -106,6 +105,31 @@ class MixConceptExogegnousToConcept(BasePredictor):
             torch.nn.Unflatten(-1, (out_concepts,)),
         )
 
+    def _mix(
+        self,
+        concepts: torch.Tensor,
+        exogenous: torch.Tensor,
+    ) -> torch.Tensor:
+        """Preprocess inputs and compute per-group mixed embeddings.
+
+        Handles the Bernoulli→Categorical expansion for cardinality-1 concepts
+        and returns ``c_mix`` of shape ``(batch, n_groups, exogenous_dim)``.
+        Subclasses can call this and only vary the final aggregation step.
+        """
+        if len(self.mask_cardinality_1) > 0:
+            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
+            concepts_split = torch.cat([
+                concepts[:, self.mask_cardinality_1[:, None]],
+                1 - concepts[:, self.mask_cardinality_1[:, None]],
+            ], dim=-1)
+            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
+            concepts  = replace_expand_cols(concepts,  self.mask_cardinality_1, concepts_split)
+        return grouped_concept_exogenous_mixture(
+            exogenous,
+            concepts,
+            groups=list(self.cardinalities_expanded),
+        )
+    
     def forward(
         self,
         concepts: torch.Tensor,
@@ -122,18 +146,45 @@ class MixConceptExogegnousToConcept(BasePredictor):
             torch.Tensor: Output concepts of shape (batch_size, out_concepts).
         """
         # For concepts with cardinality 1, split the Bernoulli probability into a categorical distribution
-        if len(self.mask_cardinality_1) > 0:
-            exogenous_split = self.bernoulli_to_categorical_exogenous_splitter(exogenous[:, self.mask_cardinality_1])
-            concepts_split = torch.cat([
-                concepts[:, self.mask_cardinality_1[:, None]],
-                1-concepts[:, self.mask_cardinality_1[:, None]],
-            ], dim=-1)
-            exogenous = replace_expand_cols(exogenous, self.mask_cardinality_1, exogenous_split)
-            concepts = replace_expand_cols(concepts, self.mask_cardinality_1, concepts_split)
+        c_mix = self._mix(concepts, exogenous)  # (batch, n_groups, exogenous_dim)
+        c_mix = c_mix.flatten(start_dim=1)      # (batch, n_groups * exogenous_dim)
+        return self.predictor(c_mix)
 
-        c_mix = grouped_concept_exogenous_mixture(
-            exogenous,
-            concepts,
-            groups=list(self.cardinalities_expanded),
+
+
+class MixSumConceptExogenousToConcept(MixConceptExogegnousToConcept):
+    """Like :class:`MixConceptExogegnousToConcept` but aggregates group
+    embeddings by **summing** across groups instead of flattening.
+
+    The predictor therefore maps ``(batch, exogenous_dim)`` → ``(batch, out_concepts)``
+    rather than ``(batch, n_groups × exogenous_dim)`` → ``(batch, out_concepts)``,
+    which makes it group-count invariant and more parameter-efficient.
+    """
+
+    def __init__(
+        self, 
+        in_concepts: int, 
+        in_exogenous: int, 
+        out_concepts: int, 
+        cardinalities: list[int] | None = None,
+        bias: bool = True,
+        **kwargs
+    ):
+        if cardinalities is None:
+            cardinalities = [1] * in_concepts
+        super().__init__(
+            in_concepts=in_concepts,
+            in_exogenous=in_exogenous,
+            out_concepts=out_concepts,
+            cardinalities=cardinalities,
+            **kwargs,
         )
-        return self.predictor(c_mix.flatten(start_dim=1))
+        self.predictor = torch.nn.Sequential(
+            torch.nn.Linear(in_exogenous, out_concepts, bias=bias),
+            torch.nn.Unflatten(-1, (out_concepts,)),
+        )
+
+    def forward(self, concepts: torch.Tensor, exogenous: torch.Tensor) -> torch.Tensor:
+        c_mix = self._mix(concepts, exogenous)  # same as CEM-layer (batch, n_groups, exogenous_dim)
+        c_mix = c_mix.sum(dim=1)                # (batch, exogenous_dim)
+        return self.predictor(c_mix)

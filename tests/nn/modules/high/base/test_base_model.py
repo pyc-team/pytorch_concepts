@@ -117,8 +117,7 @@ class TestBaseModelInitialization:
         assert model.concept_annotations.has_metadata('distribution')
         assert model.concept_annotations.has_metadata('activation')
         meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == Bernoulli
-        assert model.latent_size == 10  # No encoder, uses input_size
+        assert meta['c1']['distribution'] == RelaxedBernoulli
     
     def test_init_with_variable_distributions_dict(
         self, annotations_without_distributions
@@ -138,6 +137,7 @@ class TestBaseModelInitialization:
         assert model.concept_annotations.has_metadata('distribution')
         meta = model.concept_annotations.metadata
         assert meta['c1']['distribution'] == RelaxedBernoulli
+        assert model.latent_size == 10  # No encoder, uses input_size
         assert meta['c2']['distribution'] == RelaxedBernoulli
         assert meta['task']['distribution'] == Bernoulli
     
@@ -189,9 +189,9 @@ class TestBaseModelInitialization:
         assert model.concept_annotations.has_metadata('distribution')
         assert model.concept_annotations.has_metadata('activation')
         meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == Bernoulli
-        assert meta['c2']['distribution'] == Bernoulli
-        assert meta['task']['distribution'] == Bernoulli
+        assert meta['c1']['distribution'] == RelaxedBernoulli
+        assert meta['c2']['distribution'] == RelaxedBernoulli
+        assert meta['task']['distribution'] == RelaxedBernoulli
     
     def test_init_with_latent_encoder_class(self, annotations_with_distributions):
         """Test initialization with latent encoder class and kwargs."""

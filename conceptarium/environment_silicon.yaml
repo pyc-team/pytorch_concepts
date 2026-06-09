@@ -1,4 +1,4 @@
-name: conceptarium
+name: pyc
 channels:
   - pytorch
   - conda-forge
