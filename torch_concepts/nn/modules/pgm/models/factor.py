@@ -74,7 +74,7 @@ class ParametricFactor(nn.Module, ABC):
 
     def __init__(
         self,
-        parametrization: nn.ModuleDict,
+        parametrization: Dict[str, nn.Module],
         aggregate: Optional[
             Union[
                 Callable,
@@ -83,7 +83,8 @@ class ParametricFactor(nn.Module, ABC):
         ] = None,
     ):
         super().__init__()
-        self.parametrization = parametrization
+
+        parametrization = self._initialize_parametrization(parametrization)
 
         # Cache each module's forward parameter names once at construction time.
         self._module_signatures: Dict[str, Set[str]] = {
@@ -113,6 +114,30 @@ class ParametricFactor(nn.Module, ABC):
                 "ParametricFactor: `aggregate` must be None, a callable, or a "
                 f"dict mapping parameter names to callables, got {type(aggregate).__name__}."
             )
+        self.parametrization = parametrization
+
+    def _initialize_parametrization(
+        self,
+        parametrization: Dict[str, nn.Module],
+    ) -> nn.ModuleDict:
+        """Normalise ``parametrization`` into an ``nn.ModuleDict``.
+
+        Accepts a plain dict (or an existing ``nn.ModuleDict``) mapping each
+        parameter name to a ready ``nn.Module``. Concrete subclasses resolve any
+        :class:`LazyConstructor` entries before calling ``super().__init__`` —
+        the input/output sizes a lazy layer needs come from the factor's
+        variables, which only the subclass knows (see
+        :meth:`ParametricCPD._instantiate_lazy`). As a safeguard, an
+        already-built ``LazyConstructor`` is unwrapped to its concrete module.
+        """
+        from ...low.lazy import LazyConstructor
+
+        modules: Dict[str, nn.Module] = {}
+        for pname, module in parametrization.items():
+            if isinstance(module, LazyConstructor) and module.module is not None:
+                module = module.module
+            modules[pname] = module
+        return nn.ModuleDict(modules)
 
     # For entries not covered by the user, pick _pyc_aggregate or
     # _standard_aggregate based on the cached module signature.

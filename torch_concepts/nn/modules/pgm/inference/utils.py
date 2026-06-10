@@ -42,17 +42,27 @@ def make_temperature_schedule(
     )
 
 
+def reshape_value_to_event(
+    variable: Variable, value: torch.Tensor
+) -> torch.Tensor:
+    """Reshape a variable's *realization* from flat ``(batch, size)`` to
+    ``(batch, *variable.shape)``.
+    """
+    return value.reshape(value.shape[0], *variable.shape)
+
+
 def build_distribution(
     variable: Variable, params: Dict[str, torch.Tensor]
 ) -> dist.Distribution:
     """Build the exact distribution declared by ``variable``.
 
-    Univariate-event families (Bernoulli, Normal) are always wrapped in
-    ``Independent`` over ``len(variable.shape)`` trailing dims, so the
-    resulting distribution has ``batch_shape == (*outer_batch,)`` and
-    ``event_shape == variable.shape``. This keeps the shape contract
-    consistent regardless of ``variable.size`` and is required for Pyro
-    plates to line up correctly.
+    Parameters arrive flat as ``(*batch, size)`` (the CPD's untouched output), so
+    univariate-event families (Bernoulli, Normal) are wrapped in ``Independent``
+    over the single trailing ``size`` axis, giving ``batch_shape == (*batch,)``
+    and ``event_shape == (size,)``. This keeps the batch dim intact (required for
+    Pyro plates to line up) regardless of the variable's declared ``shape``; the
+    variable's event shape is restored on the *realization* by
+    :func:`reshape_value_to_event`, not on the distribution parameters.
     """
     D = variable.distribution
     _univariate = (dist.Bernoulli, dist.Normal)
@@ -65,7 +75,7 @@ def build_distribution(
         return D(**params, **variable.dist_kwargs)
     if issubclass(D, _univariate):
         d = D(**params, **variable.dist_kwargs)
-        return dist.Independent(d, len(variable.shape))
+        return dist.Independent(d, 1)
     return D(**params, **variable.dist_kwargs)
 
 

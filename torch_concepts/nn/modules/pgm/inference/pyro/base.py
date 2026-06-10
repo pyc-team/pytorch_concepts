@@ -27,7 +27,7 @@ import torch.distributions as td
 from ...models.bayesian_network import BayesianNetwork
 from ...models.variable import Delta
 from ..base import BaseInference
-from ..utils import build_distribution
+from ..utils import build_distribution, reshape_value_to_event
 from .utils import dist_to_params, trace_to_params
 
 
@@ -64,24 +64,26 @@ class PyroBaseInference(BaseInference):
         Uses Pyro's own straight-through estimators (which register correctly
         with Pyro's effect-handler stack) for the discrete families.
         """
+        # Parameters are flat (*batch, size); the single size axis is reinterpreted
+        # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
+        # (*batch,) and the ``pyro.plate("batch", ...)`` dim lines up. The
+        # variable's declared shape is restored on the sampled realization.
         D = variable.distribution
         if issubclass(D, td.Bernoulli):
             d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
-            return d.to_event(len(variable.shape))
+            return d.to_event(1)
         if issubclass(D, td.OneHotCategorical):
             d = pyro_dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, **params)
             return d
-            return d
         if issubclass(D, td.Normal):
             d = pyro_dist.Normal(**params)
-            return d.to_event(len(variable.shape))
+            return d.to_event(1)
         if issubclass(D, td.MultivariateNormal):
             return pyro_dist.MultivariateNormal(**params)
         if D.__name__ == "Delta":
             # Map ``value`` (our Delta convention) to ``v`` (Pyro Delta convention).
             v = params["value"]
-            event_dim = len(variable.shape)
-            return pyro_dist.Delta(v, event_dim=event_dim)
+            return pyro_dist.Delta(v, event_dim=1)
         # Fallback for any other family: try the exact torch distribution.
         return build_distribution(variable, params)
 
@@ -149,12 +151,19 @@ class PyroBaseInference(BaseInference):
                         params = cpd(parent_values=parent_values, **layer_kwargs.get(var.name, {}))
 
                     obs = data.get(var.name, None)
+                    if obs is not None:
+                        # The distribution's event is the flat size axis, so match
+                        # the observation to it: (*batch, *shape) -> (*batch, size).
+                        obs = obs.reshape(obs.shape[0], var.size)
                     d = (
                         build_distribution(var, params)
                         if obs is not None
                         else self._pyro_relaxed_distribution(var, params, temperature)
                     )
-                    cache[var.name] = pyro.sample(var.name, d, obs=obs)
+                    sample = pyro.sample(var.name, d, obs=obs)
+                    # Cache the realization in the variable's event shape; downstream
+                    # CPD aggregation re-flattens it as needed.
+                    cache[var.name] = reshape_value_to_event(var, sample)
 
         return cache
 

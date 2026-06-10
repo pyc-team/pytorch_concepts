@@ -25,7 +25,7 @@ class TorchDeterministicInference(TorchForwardInference):
     def __init__(
             self, 
             pgm: BayesianNetwork, 
-            p_int: float = 1.0, 
+            p_int: float = 0., 
     ):
         super().__init__(
             pgm, 

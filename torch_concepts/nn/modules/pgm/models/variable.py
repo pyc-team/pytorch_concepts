@@ -18,19 +18,24 @@ from .....distributions.delta import Delta
 
 
 # ---------------------------------------------------------------------------
-# Parameter-dimension lookup table.
+# Per-parameter dimension lookup table.
 #
-# Maps each supported distribution class to a callable (size: int) -> int that
-# returns the total number of scalar network outputs required to parameterise
-# that distribution for a variable of the given size.
+# Maps each supported distribution class to a dict over its distribution
+# parameters, each name pointing to a callable (size: int) -> int giving the
+# number of scalar network outputs required to produce *that* parameter for a
+# variable of the given event size. Most parameters need one scalar per event
+# element; the exceptions (e.g. MultivariateNormal's lower-triangular
+# ``scale_tril``) are encoded here. Families that accept either ``probs`` or
+# ``logits`` list both, since a CPD may be parameterised with whichever it uses.
 # ---------------------------------------------------------------------------
-PARAM_DIM: Dict[Type[dist.Distribution], Callable[[int], int]] = {
-    Delta:                   lambda size: size,
-    dist.Bernoulli:          lambda size: size,
-    dist.Categorical:        lambda size: size,
-    dist.OneHotCategorical:  lambda size: size,
-    dist.Normal:             lambda size: 2 * size,
-    dist.MultivariateNormal: lambda size: size + size * (size + 1) // 2,
+PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
+    Delta:                   {"value": lambda size: size},
+    dist.Bernoulli:          {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Categorical:        {"probs": lambda size: size, "logits": lambda size: size},
+    dist.OneHotCategorical:  {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Normal:             {"loc": lambda size: size, "scale": lambda size: size},
+    dist.MultivariateNormal: {"loc": lambda size: size,
+                              "scale_tril": lambda size: size * (size + 1) // 2},
 }
 
 
@@ -162,6 +167,33 @@ class Variable(ABC):
     def size(self) -> int:
         """Total number of scalar elements: ``math.prod(self.shape)``."""
         return math.prod(self._shape)
+
+    @property
+    def param_sizes(self) -> Dict[str, int]:
+        """Per-parameter output sizes for this variable's distribution.
+
+        Maps each distribution-parameter name (e.g. ``"loc"``/``"scale"`` for
+        ``Normal``, ``"probs"``/``"logits"`` for ``Bernoulli``) to the true
+        number of scalar network outputs needed to produce it. Most equal
+        :attr:`size` (one scalar per event element); the exceptions are encoded
+        in :data:`PARAM_DIM` — e.g. ``MultivariateNormal``'s ``scale_tril``
+        needs ``size * (size + 1) // 2`` lower-triangular Cholesky entries.
+
+        Raises
+        ------
+        ValueError
+            If the distribution family has no :data:`PARAM_DIM` entry.
+        """
+        if self.distribution not in PARAM_DIM:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): distribution "
+                f"{self.distribution.__name__} has no PARAM_DIM entry; cannot "
+                "resolve per-parameter sizes."
+            )
+        return {
+            param: fn(self.size)
+            for param, fn in PARAM_DIM[self.distribution].items()
+        }
 
     def __repr__(self) -> str:
         s = (

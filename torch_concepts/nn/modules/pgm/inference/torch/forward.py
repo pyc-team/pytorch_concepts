@@ -18,7 +18,7 @@ import torch
 
 from ...models.bayesian_network import BayesianNetwork
 from ...models.variable import Variable
-from ..utils import make_temperature_schedule
+from ..utils import make_temperature_schedule, reshape_value_to_event
 from ..outputs import InferenceOutput
 from .utils import propagated_value, sample_from
 from .base import TorchBaseInference
@@ -206,5 +206,10 @@ class TorchForwardInference(TorchBaseInference):
         temperature: torch.Tensor,
     ) -> torch.Tensor:
         if self.mode == "deterministic":
-            return propagated_value(variable.distribution, params)
-        return sample_from(variable, params, temperature)
+            value = propagated_value(variable.distribution, params)
+        else:
+            value = sample_from(variable, params, temperature)
+        # Reshape the realization to the variable's event shape. Samples are then
+        # returned and cached (as parent values for downstream CPDs) as
+        # (batch, *shape); the flat parameter dict is left as the CPD produced it.
+        return reshape_value_to_event(variable, value)

@@ -73,8 +73,11 @@ def build_relaxed_distribution(
     D = variable.distribution
     if issubclass(D, dist.Bernoulli):
         # Pass whichever key the user provided (probs or logits) directly.
+        # Params are flat (*batch, size); reinterpret the single size axis as
+        # the event so batch_shape stays (*batch,). The variable's declared
+        # shape is restored on the sampled realization, not here.
         d = _StraightThroughBernoulli(temperature=temperature, **params)
-        return dist.Independent(d, len(variable.shape))
+        return dist.Independent(d, 1)
     if issubclass(D, dist.OneHotCategorical):
         return _StraightThroughOneHotCategorical(temperature=temperature, **params)
     if issubclass(D, dist.Categorical):
@@ -100,13 +103,12 @@ def propagated_value(
         return params["value"]
     for base_cls, param_name in _PRIMARY_PARAM.items():
         if issubclass(distribution, base_cls):
+            # primary path, the user provided the primary parameter (e.g. "probs" for Bernoulli)
             if param_name in params:
                 return params[param_name]
-            # logits path: convert to probs for consistency
+            # fallback path, the user provided "logits" instead of the primary parameter (e.g. "logits" for Bernoulli)
             if "logits" in params:
-                if issubclass(distribution, dist.Bernoulli):
-                    return torch.sigmoid(params["logits"])
-                return torch.softmax(params["logits"], dim=-1)  # Categorical / OHC
+                return params["logits"]
     raise ValueError(f"Unsupported distribution {distribution!r}")
 
 

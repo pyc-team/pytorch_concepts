@@ -159,20 +159,74 @@ class ParametricCPD(ParametricFactor):
                     f"ParametricCPD({variable.name!r}): parametrization[{pname!r}] must be an "
                     f"nn.Module, got {type(mod).__name__}."
                 )
-        parametrization = nn.ModuleDict(parametrization)
-        if parents is not None:
-            for p in parents:
-                if not isinstance(p, Variable):
-                    raise TypeError(
-                        f"ParametricCPD({variable.name!r}): every parent "
-                        f"must be a Variable, got {type(p).__name__}."
-                    )
+        parents = list(parents) if parents else []
+        for p in parents:
+            if not isinstance(p, Variable):
+                raise TypeError(
+                    f"ParametricCPD({variable.name!r}): every parent "
+                    f"must be a Variable, got {type(p).__name__}."
+                )
+
+        # Instantiate any LazyConstructor entries now that the parent (input)
+        # and target (output) variable sizes are known.
+        parametrization = self._instantiate_lazy(parametrization, variable, parents)
 
         super().__init__(parametrization=parametrization, aggregate=aggregate)
         # Store the target (child) variable.
         self.variable: Variable = variable
         # Store the ordered list of parent variables whose values are the CPD inputs.
-        self.parents: List[Variable] = list(parents) if parents else []
+        self.parents: List[Variable] = parents
+
+    @staticmethod
+    def _instantiate_lazy(
+        parametrization: Dict[str, nn.Module],
+        variable: Variable,
+        parents: List[Variable],
+    ) -> Dict[str, nn.Module]:
+        """Build any unbuilt :class:`LazyConstructor` entries into concrete modules.
+
+        Returns ``parametrization`` unchanged when there is nothing to build —
+        the common, eagerly-constructed case skips all the work below.
+
+        A :class:`LazyConstructor` defers module creation until the input/output
+        sizes are known; those sizes come from this CPD's variables:
+
+        * ``in_concepts``   — summed size of the ``"concept"`` parents;
+        * ``in_embeddings`` — summed size of the ``"embedding"`` parents;
+        * ``out_concepts``  — the *per-parameter* output size for the parameter
+          this module produces (``variable.param_sizes[param]``), so e.g. a
+          ``MultivariateNormal``'s ``scale_tril`` module is sized to its
+          ``size * (size + 1) // 2`` Cholesky entries, not just ``size``.
+
+        Input parents carry a multi-dimensional ``shape`` (a ``torch.Size``), but
+        the default aggregators flatten every event into a single feature axis
+        before a module sees it, so the relevant scalar is ``Variable.size``
+        (``== math.prod(shape)``).
+        """
+        from ...low.lazy import LazyConstructor
+
+        # Fast path: every module is already a concrete layer — nothing to build.
+        if not any(
+            isinstance(m, LazyConstructor) and m.module is None
+            for m in parametrization.values()
+        ):
+            return parametrization
+
+        in_concepts = sum(p.size for p in parents if p.variable_type == "concept")
+        in_embeddings = sum(p.size for p in parents if p.variable_type == "embedding")
+        out_sizes = variable.param_sizes
+
+        resolved: Dict[str, nn.Module] = {}
+        for pname, module in parametrization.items():
+            if isinstance(module, LazyConstructor) and module.module is None:
+                # build() instantiates the layer and returns the concrete module.
+                module = module.build(
+                    out_concepts=out_sizes.get(pname, variable.size),
+                    in_concepts=in_concepts or None,
+                    in_embeddings=in_embeddings or None,
+                )
+            resolved[pname] = module
+        return resolved
 
     @property
     def is_root(self) -> bool:
