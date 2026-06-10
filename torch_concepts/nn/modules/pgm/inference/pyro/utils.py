@@ -22,23 +22,40 @@ from ..outputs import ParamDict
 # Canonical parameter names emitted in InferenceOutput.params /
 # InferenceOutput.guide_params, keyed by distribution family.
 #
-# We key on ``torch.distributions`` classes (not pyro's), because the Pyro
-# subclasses inherit from them — so ``isinstance(d, td.Normal)`` matches both
-# a plain ``torch`` distribution and a ``pyro`` one. ``build_distribution``
-# returns plain ``torch.distributions`` instances; the relaxed STE classes
-# only exist in Pyro and are added as explicit extra entries below.
-#
-# Delta is deliberately omitted: it is deterministic and carries no
-# learnable params worth surfacing through ``InferenceOutput.params``.
+# Discrete families are handled separately by ``_discrete_prob_key`` because
+# they accept either ``probs`` or ``logits`` and we want to preserve whichever
+# key was actually used at construction time.
 _PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
-    td.Bernoulli: ("probs",),
-    td.Categorical: ("probs",),
-    td.OneHotCategorical: ("probs",),
     td.Normal: ("loc", "scale"),
     td.MultivariateNormal: ("loc", "scale_tril"),
-    pyro_dist.RelaxedBernoulliStraightThrough: ("probs", "temperature"),
-    pyro_dist.RelaxedOneHotCategoricalStraightThrough: ("probs", "temperature"),
 }
+
+# Families whose primary parameter is either ``probs`` or ``logits``.
+_DISCRETE_FAMILIES: Tuple[type, ...] = (
+    td.Bernoulli, td.Categorical, td.OneHotCategorical,
+)
+
+# Relaxed surrogates that also carry a ``temperature`` parameter.
+_RELAXED_DISCRETE_FAMILIES: Tuple[type, ...] = (
+    pyro_dist.RelaxedBernoulliStraightThrough,
+    pyro_dist.RelaxedOneHotCategoricalStraightThrough,
+)
+
+
+def _discrete_prob_key(d) -> str:
+    """Return ``'probs'`` or ``'logits'`` reflecting how *d* was constructed.
+
+    Checks ``_param`` to determine the original parametrization of plain
+    discrete distributions (``td.Bernoulli``, ``td.Categorical``,
+    ``td.OneHotCategorical``). Works because ``torch.distributions`` stores
+    the directly-passed tensor in ``_param``.
+    """
+    source = d if hasattr(d, "_param") else getattr(d, "base_dist", d)
+    param = getattr(source, "_param", None)
+    if param is None:
+        return "probs"  # safe fallback
+    probs_attr = getattr(source, "probs", None)
+    return "probs" if (probs_attr is not None and param is probs_attr) else "logits"
 
 
 def _peel(d: pyro_dist.Distribution) -> pyro_dist.Distribution:
@@ -70,10 +87,35 @@ def _peel(d: pyro_dist.Distribution) -> pyro_dist.Distribution:
 
 def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
     """Return the canonical named-parameter dict of a Pyro distribution
-    (e.g. ``{'probs': ...}`` or ``{'loc': ..., 'scale': ...}``), peeling
-    ``Independent`` / masked / expanded wrappers first.
+    (e.g. ``{'probs': ...}`` or ``{'logits': ...}`` or ``{'loc': ..., 'scale': ...}``),
+    peeling ``Independent`` / masked / expanded wrappers first.
+
+    For **plain discrete** families (observed sites, created by
+    ``build_distribution``) the returned key (``'probs'`` or ``'logits'``)
+    reflects whichever parametrization was used at construction time.
+
+    For **relaxed discrete** families (latent/guide sites, created by
+    ``_pyro_relaxed_distribution``) the key is always ``'probs'`` because
+    Pyro's ``LogitRelaxedBernoulli`` always stores logits internally and
+    Pyro reconstructs distribution objects during tracing (losing any
+    construction-time tag). Callers that need the user's original key should
+    post-process using the CPD's ``parametrization.keys()``; see
+    :meth:`PyroVariationalInference._align_param_keys`.
     """
     base = _peel(d)
+
+    # Relaxed discrete (STE): always extract probs; temperature too.
+    # The internal representation is always logits (LogitRelaxedBernoulli),
+    # but .probs is available as a property (sigmoid of stored logits).
+    if isinstance(base, _RELAXED_DISCRETE_FAMILIES):
+        return {"probs": base.probs, "temperature": base.temperature}
+
+    # Plain discrete: probs or logits, detected via _param.
+    if isinstance(base, _DISCRETE_FAMILIES):
+        key = _discrete_prob_key(base)
+        return {key: getattr(base, key)}
+
+    # All other families: fixed param names.
     names: Optional[Tuple[str, ...]] = None
     for k, v in _PARAM_NAMES.items():
         if isinstance(base, k):
@@ -81,10 +123,7 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
             break
     if names is None:
         return {}
-    out: ParamDict = {}
-    for n in names:
-        out[n] = getattr(base, n)
-    return out
+    return {n: getattr(base, n) for n in names}
 
 
 def trace_to_params(trace) -> Dict[str, ParamDict]:

@@ -69,9 +69,9 @@ class PyroBaseInference(BaseInference):
             d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
             return d.to_event(len(variable.shape))
         if issubclass(D, td.OneHotCategorical):
-            return pyro_dist.RelaxedOneHotCategoricalStraightThrough(
-                temperature=temperature, **params
-            )
+            d = pyro_dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, **params)
+            return d
+            return d
         if issubclass(D, td.Normal):
             d = pyro_dist.Normal(**params)
             return d.to_event(len(variable.shape))
@@ -124,35 +124,36 @@ class PyroBaseInference(BaseInference):
         cache: Dict[str, torch.Tensor] = {}
 
         with pyro.plate("batch", B, dim=-1):
-            for var in pgm.sorted_variables:
-                cpd = pgm.name_to_factor(var.name)
+            for level in pgm.levels:
+                for var in level:
+                    cpd = pgm.name_to_factor(var.name)
 
-                if cpd.is_root:
-                    params = cpd(parent_values={})
-                    params = {
-                        k: v.unsqueeze(0).expand(B, *v.shape) for k, v in params.items()
-                    }
-                else:
-                    parent_values: Dict[str, torch.Tensor] = {}
-                    for p in cpd.parents:
-                        if p.name in cache:
-                            parent_values[p.name] = cache[p.name]
-                        elif p.name in data:
-                            parent_values[p.name] = data[p.name]
-                        else:
-                            raise ValueError(
-                                f"model_fn: parent {p.name!r} of {var.name!r} is "
-                                "neither cached nor in data."
-                            )
-                    params = cpd(parent_values=parent_values)
+                    if cpd.is_root:
+                        params = cpd(parent_values={})
+                        params = {
+                            k: v.unsqueeze(0).expand(B, *v.shape) for k, v in params.items()
+                        }
+                    else:
+                        parent_values: Dict[str, torch.Tensor] = {}
+                        for p in cpd.parents:
+                            if p.name in cache:
+                                parent_values[p.name] = cache[p.name]
+                            elif p.name in data:
+                                parent_values[p.name] = data[p.name]
+                            else:
+                                raise ValueError(
+                                    f"model_fn: parent {p.name!r} of {var.name!r} is "
+                                    "neither cached nor in data."
+                                )
+                        params = cpd(parent_values=parent_values)
 
-                obs = data.get(var.name, None)
-                d = (
-                    build_distribution(var, params)
-                    if obs is not None
-                    else self._pyro_relaxed_distribution(var, params, temperature)
-                )
-                cache[var.name] = pyro.sample(var.name, d, obs=obs)
+                    obs = data.get(var.name, None)
+                    d = (
+                        build_distribution(var, params)
+                        if obs is not None
+                        else self._pyro_relaxed_distribution(var, params, temperature)
+                    )
+                    cache[var.name] = pyro.sample(var.name, d, obs=obs)
 
         return cache
 

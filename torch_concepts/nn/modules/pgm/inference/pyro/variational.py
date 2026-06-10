@@ -204,6 +204,39 @@ class PyroVariationalInference(PyroBaseInference):
                 data[name] = val
         return data
 
+    def _align_param_keys(
+        self,
+        params: Dict[str, Dict[str, torch.Tensor]],
+        use_guides: bool = False,
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """Relabel ``'probs'`` ↔ ``'logits'`` to match each CPD's original key.
+
+        ``dist_to_params`` always extracts ``probs`` from relaxed discrete
+        distributions (since Pyro's internal representation is logits and
+        Pyro reconstructs distribution objects during tracing). This method
+        converts the extracted key back to what the user originally wrote in
+        their ``parametrization`` dict, so ``guide_params['Y']`` contains
+        ``'logits'`` when the guide CPD was built with ``{'logits': ...}``.
+        """
+        aligned = {}
+        for name, pdict in params.items():
+            cpd = (self.pgm.guides[name] if use_guides and name in self.pgm.guides
+                   else self.pgm.name_to_factor(name) if not use_guides else None)
+            if cpd is None:
+                aligned[name] = pdict
+                continue
+            cpd_keys = set(cpd.parametrization.keys())
+            pdict = dict(pdict)  # shallow copy — don't mutate caller's dict
+            if "logits" in cpd_keys and "probs" in pdict and "logits" not in pdict:
+                probs = pdict.pop("probs")
+                pdict["logits"] = torch.log(probs.clamp(min=1e-8)) - torch.log(
+                    (1.0 - probs).clamp(min=1e-8)
+                )
+            elif "probs" in cpd_keys and "logits" in pdict and "probs" not in pdict:
+                pdict["probs"] = torch.sigmoid(pdict.pop("logits"))
+            aligned[name] = pdict
+        return aligned
+
     # ------------------------------------------------------------------
     def query(
         self,
@@ -251,13 +284,15 @@ class PyroVariationalInference(PyroBaseInference):
             model_fn = lambda: self.model_fn(data, temperature, latent_names)
             replayed = poutine.replay(model_fn, trace=guide_tr)
             model_tr = poutine.trace(replayed).get_trace()
-            guide_params = trace_to_params(guide_tr)
+            guide_params = self._align_param_keys(
+                trace_to_params(guide_tr), use_guides=True
+            )
         else:
             model_fn = lambda: self.model_fn(data, temperature, latent_names)
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
         return InferenceOutput(
-            params=trace_to_params(model_tr),
+            params=self._align_param_keys(trace_to_params(model_tr), use_guides=False),
             guide_params=guide_params,
         )
