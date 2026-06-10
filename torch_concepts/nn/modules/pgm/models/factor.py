@@ -12,21 +12,33 @@ import torch.nn as nn
 from .variable import Variable
 
 
-def _default_aggregate(parent_values: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """Default parent-value aggregation: flatten each parent's event dims, concatenate.
+# Known PyC parameter-name combinations
+_PYC_PARAM_SETS = [
+    {'concepts'},
+    {'embeddings'},
+    {'concepts', 'embeddings'},
+]
 
-    Each value in ``parent_values`` has shape ``(*batch, *event_shape)``.  All
-    event dimensions (dim ≥ 1) are flattened to produce shape
-    ``(*batch, sum_of_flat_event_sizes)``.
-    """
+
+def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Aggregate parent values by flattening each and concatenating."""
     flat = []
-    for v in parent_values.values():
+    for v in inputs.values():
         v = v.float() if not v.is_floating_point() else v
         # Ensure at least 2 dims: (batch, event).
         while v.dim() < 2:
             v = v.unsqueeze(-1)
         flat.append(v.flatten(start_dim=1))
     return torch.cat(flat, dim=-1)
+
+def _default_aggregate(input: Dict[Variable, torch.Tensor]) -> torch.Tensor:
+    """Default parent-value aggregation: flatten each parent's event dims, concatenate.
+
+    Each value in ``parent_values`` has shape ``(*batch, *event_shape)``.  All
+    event dimensions (dim ≥ 1) are flattened to produce shape
+    ``(*batch, sum_of_flat_event_sizes)``.
+    """
+    return _cat_parents(input)
 
 
 class ParametricFactor(nn.Module, ABC):
