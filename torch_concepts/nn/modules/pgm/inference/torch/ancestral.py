@@ -1,13 +1,13 @@
-"""AncestralInference — forward inference that samples ancestrally."""
+"""TorchAncestralInference — forward inference that samples ancestrally."""
 from __future__ import annotations
 
 from typing import Callable, Union
 
-from ..models.bayesian_network import BayesianNetwork
-from .forward import ForwardInference
+from ...models.bayesian_network import BayesianNetwork
+from .forward import TorchForwardInference
 
 
-class AncestralInference(ForwardInference):
+class TorchAncestralInference(TorchForwardInference):
     """Forward inference engine that draws samples ancestrally.
 
     Discrete variables are sampled via the straight-through (ST) estimator so
@@ -32,7 +32,7 @@ class AncestralInference(ForwardInference):
         Decay rate passed to the built-in annealing schedules.
     """
 
-    name = "AncestralInference"
+    name = "TorchAncestralInference"
 
     def __init__(
         self,

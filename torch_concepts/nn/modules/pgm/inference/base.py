@@ -1,138 +1,46 @@
-"""Shared scaffolding for inference engines."""
+"""Backend-agnostic scaffolding for inference engines."""
 from __future__ import annotations
 
 import inspect
-import math
 import warnings
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
-import pyro.distributions as dist
-import pyro.poutine as poutine
 import torch
-from pyro.nn import PyroModule
+import torch.nn as nn
 
-from ..models.bayesian_network import BayesianNetwork
-from .outputs import InferenceOutput, ParamDict
-
-
-# Canonical parameter names emitted in InferenceOutput.params /
-# InferenceOutput.guide_params, keyed by distribution family.
-_PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
-    dist.Bernoulli: ("probs",),
-    dist.Categorical: ("probs",),
-    dist.OneHotCategorical: ("probs",),
-    dist.Normal: ("loc", "scale"),
-    dist.MultivariateNormal: ("loc", "scale_tril"),
-    dist.Delta: ("v",),
-    dist.RelaxedBernoulliStraightThrough: ("probs", "temperature"),
-    dist.RelaxedOneHotCategoricalStraightThrough: ("probs", "temperature"),
-}
+from ..models.probabilistic_model import ProbabilisticModel
+from .outputs import InferenceOutput
 
 
-def _peel(d: dist.Distribution) -> dist.Distribution:
-    """Strip Independent/Masked/Expanded wrappers.
-    Pyro wraps distributions in the following way:
-        - Independent(base, reinterpreted_batch_ndims): declares batch dimension as independent events.
-        - MaskedDistribution(base, mask): masks out some batch dims (e.g., to avoid log prob computation)
-        - ExpandedDistribution(base, batch_shape): adds batch dim.
-    """
-    while True:
-        if isinstance(d, dist.Independent):
-            d = d.base_dist
-            continue
-        base = getattr(d, "base_dist", None)
-        if base is not None and type(d).__name__ in (
-            "MaskedDistribution",
-            "ExpandedDistribution",
-        ):
-            d = base
-            continue
-        return d
+class BaseInference(nn.Module):
+    """Abstract base class for all inference engines.
 
+    The engine *wraps* a :class:`ProbabilisticModel` by holding a reference
+    to it (``self.pgm = pgm``). 
 
-def dist_to_params(d: dist.Distribution) -> ParamDict:
-    """Return the canonical named-parameter dict of a distribution
-    (e.g. ``{'probs': ...}`` or ``{'loc': ..., 'scale': ...}``), peeling
-    ``Independent`` / masked / expanded wrappers first."""
-    base = _peel(d)
-    names: Optional[Tuple[str, ...]] = None
-    for k, v in _PARAM_NAMES.items():
-        if isinstance(base, k):
-            names = v
-            break
-    if names is None:
-        return {}
-    out: ParamDict = {}
-    for n in names:
-        out[n] = getattr(base, n)
-    return out
-
-
-def trace_to_params(trace: poutine.Trace) -> Dict[str, ParamDict]:
-    """Use the Pyro trace to collect ``dist_to_params`` for every stochastic
-    (non-deterministic) sample site, keyed by site name."""
-    out: Dict[str, ParamDict] = {}
-    for name, node in trace.nodes.items():
-        if node["type"] != "sample":
-            continue
-        if node.get("infer", {}).get("_deterministic", False):
-            continue
-        pd_ = dist_to_params(node["fn"])
-        if pd_:
-            out[name] = pd_
-    return out
-
-
-def make_temperature_schedule(
-    initial_temperature: float,
-    annealing: Union[str, Callable[[int], float]],
-    annealing_rate: float,
-) -> Callable[[int], float]:
-    """Build a ``step -> temperature`` schedule.
-
-    ``annealing`` may be ``'constant'``, ``'exponential'`` (decays as
-    ``T0 * exp(-rate * step)``), ``'linear'`` (decays as
-    ``max(eps, T0 - rate * step)``), or a user-supplied callable.
-    """
-    if callable(annealing):
-        return annealing
-    if annealing == "constant":
-        return lambda step: float(initial_temperature)
-    if annealing == "exponential":
-        return lambda step: float(initial_temperature) * math.exp(-annealing_rate * step)
-    if annealing == "linear":
-        return lambda step: max(
-            1e-6, float(initial_temperature) - annealing_rate * step
-        )
-    raise ValueError(
-        f"Unknown annealing schedule {annealing!r}. Use "
-        "'constant', 'exponential', 'linear', or pass a callable."
-    )
-
-
-# -----------------------------------------------------------------------------
-class BaseInference(PyroModule):
-    """Base class for all inference engines.
+    Backend-specific subclasses (e.g., ``PyroBaseInference`` or ``TorchBaseInference``)
+    layer engine-specific machinery on top.
 
     ``query`` and ``evidence`` are attribute-style containers keyed by PGM
-    variable name. ``__call__`` delegates to ``query``.
+    variable name. ``__call__`` delegates to :meth:`query`.
     """
-
+    
     name: str = "BaseInference"
 
-    def __init__(self, pgm: BayesianNetwork):
+    def __init__(self, pgm: ProbabilisticModel):
         super().__init__()
+        # NOTE: nn.Module.__setattr__ auto-registers ``pgm`` as a submodule, so
+        # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
 
         roots_needing_input: List[str] = [
             v.name
             for v in pgm.variables
-            if pgm.factors[v.name].is_root
-            and len(
-                inspect.signature(
-                    pgm.factors[v.name].parametrization.forward
-                ).parameters
-            ) > 0
+            if pgm.name_to_factor(v.name).is_root
+            and any(
+                len(inspect.signature(mod.forward).parameters) > 0
+                for mod in pgm.name_to_factor(v.name).parametrization.values()
+            )
         ]
         if roots_needing_input:
             warnings.warn(
@@ -150,7 +58,13 @@ class BaseInference(PyroModule):
         query: Dict[str, Optional[torch.Tensor]],
         evidence: Dict[str, torch.Tensor],
     ) -> None:
-        all_names = set(self.pgm.name_to_variable.keys())
+        """Check that:
+         - query and evidence keys are valid variable names,
+         - all values are tensors, and
+         - batch sizes match.
+        """
+
+        all_names = {v.name for v in self.pgm.variables}
         unknown_q = set(query.keys()) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")
@@ -179,6 +93,7 @@ class BaseInference(PyroModule):
     def _normalize_query(
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
     ) -> Dict[str, Optional[torch.Tensor]]:
+        """Normalize query input to a dict mapping variable names to optional tensors."""
         if isinstance(query, list):
             return {name: None for name in query}
         return query

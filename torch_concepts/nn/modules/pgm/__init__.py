@@ -1,20 +1,14 @@
 """
 Mid-level API for torch_concepts (PGM-based CBMs).
 
-This package implements the architecture described in
-``outputs/library_summaries/mid_level_api.md``. The legacy mid-level lives at
-``torch_concepts.nn.modules.mid`` and is kept for backwards compatibility.
-
 .. warning::
     Experimental APIs subject to change without a deprecation period.
 """
-import pyro as _pyro
-_pyro.settings.set(module_local_params=True)
-
 from .models import (
     BayesianNetwork,
     ConceptVariable,
-    OpaqueVariable,
+    Delta,
+    EmbeddingVariable,
     ParametricCPD,
     ParametricFactor,
     ProbabilisticModel,
@@ -22,35 +16,46 @@ from .models import (
     PARAM_DIM,
 )
 from .inference import (
-    AncestralInference,
     BaseInference,
-    DeterministicInference,
-    ForwardInference,
     InferenceOutput,
     ParamDict,
-    VariationalInference,
-    RejectionSampling,
+    PyroBaseInference,
+    PyroVariationalInference,
+    TorchAncestralInference,
+    TorchBaseInference,
+    TorchDeterministicInference,
+    TorchForwardInference,
+    TorchRejectionSampling,
     dist_to_params,
     make_temperature_schedule,
 )
 
 __all__ = [
+    # models
     "Variable",
     "ConceptVariable",
-    "OpaqueVariable",
+    "EmbeddingVariable",
+    "Delta",
     "PARAM_DIM",
     "ParametricFactor",
     "ParametricCPD",
     "BayesianNetwork",
     "ProbabilisticModel",
+    # inference output
     "InferenceOutput",
     "ParamDict",
+    # inference base
     "BaseInference",
-    "ForwardInference",
-    "DeterministicInference",
-    "AncestralInference",
-    "VariationalInference",
-    "RejectionSampling",
+    # pure-torch backend
+    "TorchBaseInference",
+    "TorchForwardInference",
+    "TorchDeterministicInference",
+    "TorchAncestralInference",
+    "TorchRejectionSampling",
+    # pyro backend
+    "PyroBaseInference",
+    "PyroVariationalInference",
+    # helpers
     "dist_to_params",
     "make_temperature_schedule",
 ]

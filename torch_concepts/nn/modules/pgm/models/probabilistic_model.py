@@ -1,31 +1,54 @@
-"""Abstract base class for probabilistic graphical models."""
+"""
+Abstract base class for probabilistic graphical models.
+"""
+
 from __future__ import annotations
 
-from abc import ABCMeta, abstractmethod
-from typing import Dict, Optional
+from abc import ABC, abstractmethod
+from typing import Dict, List
 
-import torch
-from pyro.nn import PyroModule
-from pyro.nn.module import _PyroModuleMeta
+import torch.nn as nn
 
-
-class _ProbabilisticModelMeta(_PyroModuleMeta, ABCMeta):
-    """Combined metaclass that satisfies both PyroModule and ABCMeta constraints."""
+from .variable import Variable
 
 
-class ProbabilisticModel(PyroModule, metaclass=_ProbabilisticModelMeta):
+class ProbabilisticModel(nn.Module, ABC):
     """Abstract base class for probabilistic graphical models.
 
-    All concrete PGM implementations (e.g. :class:`BayesianNetwork`) must
-    inherit from this class and implement :meth:`forward`.
+    Provides the minimal shared contract for all PGM implementations.
+    Subclasses are responsible for defining the graph structure 
+    and must implement :meth:`forward`.
+
+    Parameters
+    ----------
+    variables : list of Variable
+        All random variables in the model.  Names must be unique.
     """
 
+    def __init__(self, variables: List[Variable]) -> None:
+        super().__init__()
+
+        self.variables = list(variables)
+        self._name_to_variable: Dict[str, Variable] = {
+            v.name: v for v in self.variables
+        }
+        if len(self._name_to_variable) != len(self.variables):
+            raise ValueError("Duplicate variable names in `variables`.")
+
+        # Guide modules are stored here so pgm.parameters() includes them.
+        # The latent/conditioning contract lives on the inference engine.
+        self.guides: nn.ModuleDict = nn.ModuleDict()
+
+    def name_to_variable(self, name: str) -> Variable:
+        """Mapping from variable name to Variable instance."""
+        return self._name_to_variable[name]
+    
     @abstractmethod
-    def forward(
-        self,
-        data: Dict[str, torch.Tensor],
-        batch_size: Optional[int] = None,
-        temperature: Optional[torch.Tensor] = None,
-    ):
-        """Run the PGM as a Pyro stochastic function. Subclasses must implement this."""
-        ...
+    def name_to_factor(self, name: str) -> nn.Module:
+        """Return the factor module associated with the variable name."""
+        return NotImplementedError
+
+    @property
+    def has_guides(self) -> bool:
+        """Whether any guide modules have been registered on this PGM."""
+        return len(self.guides) > 0

@@ -1,29 +1,27 @@
-"""ForwardInference — non-Pyro forward pass through a :class:`BayesianNetwork`.
+"""TorchForwardInference — pytorch forward pass through a :class:`BayesianNetwork`.
 
 Two modes:
 
-- ``"deterministic"``: every variable is propagated by its canonical
+- ``"deterministic"``: every variable is propagated by its "canonical"
   parameter (``loc`` for Normal/MVN, ``probs`` for Bernoulli/OneHotCat,
-  ``v`` for Delta).
+  ``value`` for Delta).
 - ``"ancestral"``: every variable is sampled with the same reparameterised
-  distributions used by ``BayesianNetwork.forward`` for unobserved sites
+  distributions used by :class:`BayesianNetwork.forward` for unobserved sites
   (straight-through relaxations for the discrete families).
-
-Reparameterised samplers live in
-:mod:`torch_concepts.nn.modules.pgm.models.utils` so the model and this
-engine stay in lockstep.
 """
+
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 
-from ..models.bayesian_network import BayesianNetwork
-from ..models.utils import propagated_value, sample_from
-from ..models.variable import Variable
-from .base import BaseInference, make_temperature_schedule
-from .outputs import InferenceOutput
+from ...models.bayesian_network import BayesianNetwork
+from ...models.variable import Variable
+from ..utils import make_temperature_schedule
+from ..outputs import InferenceOutput
+from .utils import propagated_value, sample_from
+from .base import TorchBaseInference
 
 
 def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
@@ -61,19 +59,17 @@ def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> to
     return mask * aligned + (1.0 - mask) * nn_value
 
 
-class ForwardInference(BaseInference):
-    """Abstract base class for non-Pyro forward-pass inference engines.
+class TorchForwardInference(TorchBaseInference):
+    """Abstract base class for torch based, forward-pass inference engines.
 
-    Concrete subclasses (:class:`DeterministicInference`,
-    :class:`AncestralInference`) implement the :meth:`_propagate` method to
+    Concrete subclasses (:class:`TorchDeterministicInference`,
+    :class:`TorchAncestralInference`) implement the :meth:`_propagate` method to
     decide whether each variable is resolved deterministically (MAP estimate)
     or by ancestral sampling.  All shared logic (topological traversal, teacher
     forcing, temperature schedule) lives here.
-
-    .. note::
-        Do not instantiate this class directly; use
-        :class:`DeterministicInference` or :class:`AncestralInference`.
     """
+
+    name = "TorchForwardInference"
 
     def __init__(
         self,
@@ -86,15 +82,13 @@ class ForwardInference(BaseInference):
     ):
         super().__init__(pgm)
         if mode not in {"deterministic", "ancestral"}:
-            raise ValueError(f"mode must be 'deterministic' or 'ancestral', got {mode!r}.")
+            raise ValueError(f"mode must be either 'deterministic' or 'ancestral', got {mode!r}.")
         if not 0.0 <= float(p_int) <= 1.0:
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
         self.mode = mode
         self.p_int = float(p_int)
         self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
         self._step = 0
-        # Cached temperature: a buffer so it travels with .to(device) and is
-        # mutated in place by ``step`` rather than re-allocated each call.
         self.register_buffer(
             "_temperature",
             torch.tensor(float(self._schedule(self._step))),
@@ -108,6 +102,69 @@ class ForwardInference(BaseInference):
         if self.mode == "ancestral":
             self._step += 1
             self._temperature.fill_(float(self._schedule(self._step)))
+
+    # ------------------------------------------------------------------
+    # Per-variable and per-level prediction
+    # ------------------------------------------------------------------
+
+    def predict_variable(
+        self,
+        variable: Variable,
+        cache: Dict[str, torch.Tensor],
+        batch_size: int,
+        temperature: torch.Tensor,
+        evidence: Dict[str, torch.Tensor],
+        query: Dict[str, Optional[torch.Tensor]],
+        query_names: set,
+        evidence_names: set,
+    ) -> Tuple[str, Dict[str, torch.Tensor], torch.Tensor]:
+        """Evaluate the CPD of a single variable and apply evidence / teacher forcing.
+
+        Returns ``(name, params, propagated_value)``.
+        """
+        name = variable.name
+        cpd = self.pgm.name_to_factor(name)
+        if cpd.is_root:
+            params = cpd(parent_values={})
+            params = {
+                key: value.unsqueeze(0).expand(batch_size, *value.shape)
+                for key, value in params.items()
+            }
+        else:
+            parent_values = {p.name: cache[p.name] for p in cpd.parents}
+            params = cpd(parent_values=parent_values)
+        value = self._propagate(variable, params, temperature)
+        if name in evidence_names:
+            propagated = _align_gt(evidence[name], value)
+        elif name in query_names and query[name] is not None:
+            propagated = _teacher_force(value, query[name], self.p_int)
+        else:
+            propagated = value
+        return name, params, propagated
+
+    def predict_level(
+        self,
+        level: List[Variable],
+        cache: Dict[str, torch.Tensor],
+        batch_size: int,
+        temperature: torch.Tensor,
+        evidence: Dict[str, torch.Tensor],
+        query: Dict[str, Optional[torch.Tensor]],
+        query_names: set,
+        evidence_names: set,
+    ) -> List[Tuple[str, Dict[str, torch.Tensor], torch.Tensor]]:
+        """Evaluate all CPDs in a topological level sequentially.
+
+        Returns a list of ``(name, params, propagated_value)`` tuples, one per
+        variable in ``level``.
+        """
+        return [
+            self.predict_variable(
+                var, cache, batch_size, temperature,
+                evidence, query, query_names, evidence_names,
+            )
+            for var in level
+        ]
 
     def query(
         self,
@@ -123,33 +180,19 @@ class ForwardInference(BaseInference):
         query_names = set(query.keys())
         evidence_names = set(evidence.keys())
         temperature = self.temperature
+        sampled = self.mode == "ancestral"
 
-        for variable in self.pgm.sorted_variables:
-            name = variable.name
-            cpd = self.pgm.factors[name]
-
-            if cpd.is_root:
-                params = cpd(parent_values={})
-                params = {key: value.unsqueeze(0).expand(batch_size, *value.shape) for key, value in params.items()}
-                value = self._propagate(variable, params, temperature)
-            else:
-                parent_values = {parent.name: cache[parent.name] for parent in cpd.parents}
-                params = cpd(parent_values=parent_values)
-                value = self._propagate(variable, params, temperature)
-
-            sampled = self.mode == "ancestral"
-            if name in evidence_names:
-                propagated = _align_gt(evidence[name], value)
-            elif name in query_names and query[name] is not None:
-                propagated = _teacher_force(value, query[name], self.p_int)
-            else:
-                propagated = value
-
-            cache[name] = propagated
-            if name in query_names:
-                out.params[name] = params
-            if sampled and name not in evidence_names:
-                out.samples[name] = propagated
+        for level in self.pgm.levels:
+            results = self.predict_level(
+                level, cache, batch_size, temperature,
+                evidence, query, query_names, evidence_names,
+            )
+            for name, params, propagated in results:
+                cache[name] = propagated
+                if name in query_names:
+                    out.params[name] = params
+                if sampled and name not in evidence_names:
+                    out.samples[name] = propagated
 
         return out
 

@@ -23,14 +23,14 @@ class InferenceOutput:
 
     Attributes
     ----------
-    params : dict[str, dict[str, Tensor]]
+    params : dict[str, ParamDict]
         Per-variable named parameter tensors of the model-side distribution
         (e.g. ``{'c': {'probs': ...}}``). 
-    guide_params : dict[str, dict[str, Tensor]]
+    guide_params : dict[str, ParamDict]
         Per-latent named parameter tensors of the variational guide.
-    samples : dict[str, Tensor]
+    samples : dict[str, torch.Tensor]
         Per-variable sampled values.
-    probabilities : Tensor or None
+    probabilities : torch.Tensor or None
         Joint conditional probabilities for a fully realised query batch.
     """
 

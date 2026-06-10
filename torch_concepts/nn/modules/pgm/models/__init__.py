@@ -1,31 +1,24 @@
 from .variable import (
     ConceptVariable,
-    OpaqueVariable,
+    EmbeddingVariable,
     Variable,
+    Delta,
     PARAM_DIM,
 )
-from .factor import ParametricFactor
+from .factor import ParametricFactor, _default_aggregate
 from .cpd import ParametricCPD
-from .utils import (
-    build_distribution,
-    build_relaxed_distribution,
-    propagated_value,
-    sample_from,
-)
 from .probabilistic_model import ProbabilisticModel
 from .bayesian_network import BayesianNetwork
 
 __all__ = [
     "Variable",
     "ConceptVariable",
-    "OpaqueVariable",
+    "EmbeddingVariable",
+    "Delta",
     "PARAM_DIM",
     "ParametricFactor",
+    "_default_aggregate",
     "ParametricCPD",
     "BayesianNetwork",
     "ProbabilisticModel",
-    "build_distribution",
-    "build_relaxed_distribution",
-    "propagated_value",
-    "sample_from",
 ]
