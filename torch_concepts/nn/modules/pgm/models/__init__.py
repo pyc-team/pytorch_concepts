@@ -5,7 +5,7 @@ from .variable import (
     Delta,
     PARAM_DIM,
 )
-from .factor import ParametricFactor, _default_aggregate
+from .factor import ParametricFactor
 from .cpd import ParametricCPD
 from .probabilistic_model import ProbabilisticModel
 from .bayesian_network import BayesianNetwork
@@ -17,7 +17,6 @@ __all__ = [
     "Delta",
     "PARAM_DIM",
     "ParametricFactor",
-    "_default_aggregate",
     "ParametricCPD",
     "BayesianNetwork",
     "ProbabilisticModel",

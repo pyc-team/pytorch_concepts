@@ -4,8 +4,9 @@ Abstract class for PGM factors.
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, List
+from typing import Callable, Dict, Optional, List, Set, Union
 
 import torch
 import torch.nn as nn
@@ -31,14 +32,19 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
         flat.append(v.flatten(start_dim=1))
     return torch.cat(flat, dim=-1)
 
-def _default_aggregate(input: Dict[Variable, torch.Tensor]) -> torch.Tensor:
-    """Default parent-value aggregation: flatten each parent's event dims, concatenate.
 
-    Each value in ``parent_values`` has shape ``(*batch, *event_shape)``.  All
-    event dimensions (dim ≥ 1) are flattened to produce shape
-    ``(*batch, sum_of_flat_event_sizes)``.
-    """
-    return _cat_parents(input)
+def _module_input_names(mod: nn.Module) -> Set[str]:
+    """Return the explicit keyword/positional parameter names of ``mod.forward``."""
+    sig = inspect.signature(mod.forward)
+    return {
+        name
+        for name, p in sig.parameters.items()
+        if name != "self"
+        and p.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
 
 
 class ParametricFactor(nn.Module, ABC):
@@ -51,21 +57,111 @@ class ParametricFactor(nn.Module, ABC):
 
     - ``self.parametrization`` — an ``nn.ModuleDict`` mapping parameter names
       to ``nn.Module`` instances.
-    - ``self.aggregate`` — a callable that collapses a
-      ``Dict[str, Tensor]`` of parent values into a single input tensor.
-      Defaults to :func:`_default_aggregate` (flatten + concatenate).
+    - ``self._module_signatures`` — cached ``forward`` param-name sets, one per
+      module in ``parametrization`` (computed once at construction time).
+    - ``self._aggregators`` — per-parameter aggregation callables, resolved at
+      construction time. Standard modules get :meth:`_standard_aggregate`;
+      PyC modules get :meth:`_pyc_aggregate`; user-supplied callables override.
+
+    ``aggregate`` accepts:
+
+    - ``None`` — auto-select :meth:`_standard_aggregate` or :meth:`_pyc_aggregate`
+      per module based on its ``forward`` signature.
+    - A single ``Callable`` — use it for every parameter module.
+    - A ``Dict[str, Callable]`` — use the keyed callable for the matching
+      parameter module; auto-select the default for any missing key.
     """
 
     def __init__(
         self,
         parametrization: nn.ModuleDict,
-        aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
+        aggregate: Optional[
+            Union[
+                Callable,
+                Dict[str, Callable],
+            ]
+        ] = None,
     ):
         super().__init__()
         self.parametrization = parametrization
-        self.aggregate: Callable[[Dict[str, torch.Tensor]], torch.Tensor] = (
-            aggregate if aggregate is not None else _default_aggregate
+
+        # Cache each module's forward parameter names once at construction time.
+        self._module_signatures: Dict[str, Set[str]] = {
+            pname: _module_input_names(mod)
+            for pname, mod in parametrization.items()
+        }
+
+        if aggregate is None:
+            self._aggregators: Dict[str, Callable] = {
+                pname: self._select_default(pname) for pname in parametrization
+            }
+        elif callable(aggregate):
+            self._aggregators = {pname: aggregate for pname in parametrization}
+        elif isinstance(aggregate, dict):
+            bad = [k for k, v in aggregate.items() if not callable(v)]
+            if bad:
+                raise TypeError(
+                    f"ParametricFactor: aggregate dict contains non-callable "
+                    f"values for keys {bad}."
+                )
+            self._aggregators = {
+                pname: aggregate.get(pname, self._select_default(pname))
+                for pname in parametrization
+            }
+        else:
+            raise TypeError(
+                "ParametricFactor: `aggregate` must be None, a callable, or a "
+                f"dict mapping parameter names to callables, got {type(aggregate).__name__}."
+            )
+
+    # For entries not covered by the user, pick _pyc_aggregate or
+    # _standard_aggregate based on the cached module signature.
+    def _select_default(self, pname: str) -> Callable:
+        return (
+            self._pyc_aggregate
+            if self._module_signatures[pname] in _PYC_PARAM_SETS
+            else self._standard_aggregate
         )
+
+    def _standard_aggregate(
+        self,
+        inputs: Dict[Variable, torch.Tensor],
+    ) -> torch.Tensor:
+        """Default aggregation for standard torch modules.
+
+        Flattens each parent value and concatenates them into a single tensor.
+        """
+        return _cat_parents(inputs)
+
+    def _pyc_aggregate(
+        self,
+        inputs: Dict[Variable, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Default aggregation for PyC-style modules.
+
+        Splits parent values by variable type (``'embedding'`` vs ``'concept'``),
+        concatenates each group separately, and returns a dict with keys
+        ``'embeddings'`` and/or ``'concepts'`` matching the module's ``forward``
+        signature.
+        """
+        embeddings: Dict[str, torch.Tensor] = {}
+        concepts: Dict[str, torch.Tensor] = {}
+        for p in self.parents:
+            if p.variable_type == "embedding":
+                embeddings[p.name] = inputs[p]
+            elif p.variable_type == "concept":
+                concepts[p.name] = inputs[p]
+            else:
+                raise ValueError(
+                    f"ParametricCPD({self.variable.name!r}): parent "
+                    f"{p.name!r} has invalid type {p.variable_type!r}, "
+                    "expected 'embedding' or 'concept'."
+                )
+        return {
+            k: _cat_parents(v)
+            for k, v in (("embeddings", embeddings), ("concepts", concepts))
+            if v
+        }
 
     @abstractmethod
     def forward(

@@ -242,6 +242,7 @@ class PyroVariationalInference(PyroBaseInference):
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]], None] = None,
         evidence: Dict[str, torch.Tensor] = None,
+        layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         """Run variational inference and return model and guide parameters."""
         if query is None:
@@ -279,16 +280,16 @@ class PyroVariationalInference(PyroBaseInference):
         latent_names = self._latent_names
 
         if self.pgm.has_guides:
-            guide_fn = lambda: self.guide_fn(data, temperature, latent_names)
+            guide_fn = lambda: self.guide_fn(data, temperature, latent_names, layer_kwargs)
             guide_tr = poutine.trace(guide_fn).get_trace()
-            model_fn = lambda: self.model_fn(data, temperature, latent_names)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs)
             replayed = poutine.replay(model_fn, trace=guide_tr)
             model_tr = poutine.trace(replayed).get_trace()
             guide_params = self._align_param_keys(
                 trace_to_params(guide_tr), use_guides=True
             )
         else:
-            model_fn = lambda: self.model_fn(data, temperature, latent_names)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs)
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 

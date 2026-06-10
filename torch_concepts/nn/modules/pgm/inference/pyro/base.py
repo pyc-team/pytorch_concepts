@@ -94,6 +94,7 @@ class PyroBaseInference(BaseInference):
         temperature: torch.Tensor,
         latent_names: List[str],
         batch_size: Optional[int] = None,
+        layer_kwargs: Dict[str, Dict] = {},
     ) -> Dict[str, torch.Tensor]:
         """Pyro stochastic function for the generative model.
 
@@ -145,7 +146,7 @@ class PyroBaseInference(BaseInference):
                                     f"model_fn: parent {p.name!r} of {var.name!r} is "
                                     "neither cached nor in data."
                                 )
-                        params = cpd(parent_values=parent_values)
+                        params = cpd(parent_values=parent_values, **layer_kwargs.get(var.name, {}))
 
                     obs = data.get(var.name, None)
                     d = (
@@ -162,6 +163,7 @@ class PyroBaseInference(BaseInference):
         data: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
         latent_names: List[str],
+        layer_kwargs: Dict[str, Dict] = {},
     ) -> None:
         """Pyro stochastic function for the variational posterior.
 
@@ -187,7 +189,7 @@ class PyroBaseInference(BaseInference):
                     }
                 else:
                     parent_values = {p.name: data[p.name] for p in cpd.parents}
-                    params = cpd(parent_values=parent_values)
+                    params = cpd(parent_values=parent_values, **layer_kwargs.get(name, {}))
 
                 q = self._pyro_relaxed_distribution(cpd.variable, params, temperature)
                 pyro.sample(name, q)

@@ -5,15 +5,14 @@ ParametricCPD — Conditional distribution parameterised by a neural network.
 from __future__ import annotations
 
 import copy
-import inspect
-from typing import Callable, Dict, List, Optional, Set, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
 
 import torch.distributions as dist
 
-from .factor import ParametricFactor, _PYC_PARAM_SETS
+from .factor import ParametricFactor
 from .variable import Variable, Delta
 
 
@@ -170,8 +169,6 @@ class ParametricCPD(ParametricFactor):
                     )
 
         super().__init__(parametrization=parametrization, aggregate=aggregate)
-
-        self.signature = self._get_allowed_params
         # Store the target (child) variable.
         self.variable: Variable = variable
         # Store the ordered list of parent variables whose values are the CPD inputs.
@@ -180,31 +177,11 @@ class ParametricCPD(ParametricFactor):
     @property
     def is_root(self) -> bool:
         return len(self.parents) == 0
-
-    @property
-    def _get_allowed_params(self) -> Set[str]:
-        """
-        Extract the set of allowed parameter names from a CPD's forward signature.
-
-        Args:
-            parametric_cpd: The CPD module to inspect.
-
-        Returns:
-            Set of parameter names (excluding 'self').
-        """
-        sig = inspect.signature(self.parametrization.forward)
-        return {
-            name for name, p in sig.parameters.items()
-            if name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-        }
     
     def forward(
         self,
         parent_values: Optional[Dict[str, torch.Tensor]] = None,
-        **cpd_kwargs,
+        **layer_kwargs,
     ):
         """Compute the distribution parameters by processing the parent values through the 
         nn.Module(s).
@@ -230,35 +207,16 @@ class ParametricCPD(ParametricFactor):
             # Root CPD: no parents expected.
             return {pname: mod() for pname, mod in self.parametrization.items()}
 
-        parent_dict = {p: parent_values[p.name] for p in self.parents}
-        aggr = self.aggregate(parent_dict)
+        # Compose the Variable → Tensor dict for the parents (ordered by parent list).
+        parent_variable_values = {p: parent_values[p.name] for p in self.parents}
 
-
-        if self.signature in _PYC_PARAM_SETS:
-            # PyC layer: separate concepts and embeddings inputs
-            embeddings = {}
-            concepts = {}
-            for p in self.parents:
-                if p.variable_type == 'embedding':
-                    embeddings[p.name] = parent_values[p.name]
-                elif p.variable_type == 'concept':
-                    concepts[p.name] = parent_values[p.name]
-                else:
-                    raise ValueError(
-                        f"ParametricCPD({self.variable.name!r}): parent variable {p.name!r} has invalid "
-                        f"type {p.variable_type!r}, expected 'embedding' or 'concept'."
-                    )
-            
-            # Call the aggregate function to combine the parent values into a single input tensor.
-            aggr_embs = self.aggregate(embeddings)
-            aggr_concepts = self.aggregate(concepts)
-            cpd_kwargs.update({'embeddings': aggr_embs, 'concepts': aggr_concepts})
-        
-        else:
-            # Standard torch module: concatenate everything into a single tensor
-            aggr_input = self.aggregate(parent_values)
-            # Feed into the first positional parameter
-            first_param = next(iter(self.signature))
-            cpd_kwargs[first_param] = aggr_input
-
-        return {pname: mod(**cpd_kwargs) for pname, mod in self.parametrization.items()}
+        # Each parameter module uses its own pre-resolved aggregation function.
+        result = {}
+        for pname, mod in self.parametrization.items():
+            cat = self._aggregators[pname](parent_variable_values)
+            if isinstance(cat, dict):
+                layer_kwargs.update(cat)
+                result[pname] = mod(**layer_kwargs)
+            else:
+                result[pname] = mod(cat, **layer_kwargs)
+        return result

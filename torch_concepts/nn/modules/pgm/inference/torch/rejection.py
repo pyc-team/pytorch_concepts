@@ -114,6 +114,7 @@ class TorchRejectionSampling(TorchBaseInference):
     def _draw_joint(
         self,
         root_evidence: Dict[str, torch.Tensor],
+        layer_kwargs: Dict[str, Dict],
     ) -> Dict[str, torch.Tensor]:
         """Draw ``n_samples`` joint samples conditioned on root evidence.
 
@@ -136,6 +137,7 @@ class TorchRejectionSampling(TorchBaseInference):
             fwd = self._sampler.query(
                 query=dummy_query,
                 evidence=batched_root_evidence,
+                layer_kwargs=layer_kwargs
             )
 
         # TorchForwardInference stores evidence variables in out.samples only
@@ -162,6 +164,7 @@ class TorchRejectionSampling(TorchBaseInference):
         self,
         query: Dict[str, torch.Tensor],
         evidence: Dict[str, torch.Tensor] = None,
+        layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         """Run rejection sampling to estimate P(Q=q_b | E=e_b) for a batch."""
         if evidence is None:
@@ -186,7 +189,7 @@ class TorchRejectionSampling(TorchBaseInference):
             nonroot_evidence_b = {name: evidence[name][b] for name in nonroot_evidence_names}
             query_b            = {name: v[b] for name, v in query.items()}
 
-            stacked_samples = self._draw_joint(root_evidence_b)
+            stacked_samples = self._draw_joint(root_evidence_b, layer_kwargs)
 
             e_mask  = self._build_mask(stacked_samples, nonroot_evidence_b)
             qe_mask = e_mask & self._build_mask(stacked_samples, query_b)

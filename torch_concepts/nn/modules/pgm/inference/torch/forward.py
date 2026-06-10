@@ -117,6 +117,7 @@ class TorchForwardInference(TorchBaseInference):
         query: Dict[str, Optional[torch.Tensor]],
         query_names: set,
         evidence_names: set,
+        layer_kwargs: Dict,
     ) -> Tuple[str, Dict[str, torch.Tensor], torch.Tensor]:
         """Evaluate the CPD of a single variable and apply evidence / teacher forcing.
 
@@ -132,7 +133,7 @@ class TorchForwardInference(TorchBaseInference):
             }
         else:
             parent_values = {p.name: cache[p.name] for p in cpd.parents}
-            params = cpd(parent_values=parent_values)
+            params = cpd(parent_values=parent_values, **layer_kwargs)
         value = self._propagate(variable, params, temperature)
         if name in evidence_names:
             propagated = _align_gt(evidence[name], value)
@@ -152,6 +153,7 @@ class TorchForwardInference(TorchBaseInference):
         query: Dict[str, Optional[torch.Tensor]],
         query_names: set,
         evidence_names: set,
+        layer_kwargs: Dict[str, Dict],
     ) -> List[Tuple[str, Dict[str, torch.Tensor], torch.Tensor]]:
         """Evaluate all CPDs in a topological level sequentially.
 
@@ -161,7 +163,7 @@ class TorchForwardInference(TorchBaseInference):
         return [
             self.predict_variable(
                 var, cache, batch_size, temperature,
-                evidence, query, query_names, evidence_names,
+                evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {})
             )
             for var in level
         ]
@@ -170,6 +172,7 @@ class TorchForwardInference(TorchBaseInference):
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
+        layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
@@ -185,7 +188,7 @@ class TorchForwardInference(TorchBaseInference):
         for level in self.pgm.levels:
             results = self.predict_level(
                 level, cache, batch_size, temperature,
-                evidence, query, query_names, evidence_names,
+                evidence, query, query_names, evidence_names, layer_kwargs
             )
             for name, params, propagated in results:
                 cache[name] = propagated
