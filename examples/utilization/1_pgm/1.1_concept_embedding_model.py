@@ -36,19 +36,11 @@ def main():
     concepts = ConceptVariable(['c1', 'c2'], distribution=Bernoulli)
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
-    def embs_aggregate(inputs):  # inputs: {Variable: Tensor}
-        # MixConceptEmbeddingToConcept wants concepts (batch, n_concepts) and
-        # embeddings (batch, n_concepts, emb_size). Each emb* parent is
-        # (batch, 1, emb_size) and each concept parent is (batch, 1), so stack
-        # embeddings along the concept axis (dim=1) and concepts along dim=-1.
-        embeddings = [t for var, t in inputs.items() if var.variable_type == 'embedding']
-        concepts = [t for var, t in inputs.items() if var.variable_type == 'concept']
-        out = {}
-        if concepts:
-            out['concepts'] = torch.cat(concepts, dim=-1)
-        if embeddings:
-            out['embeddings'] = torch.cat(embeddings, dim=1)
-        return out
+    def embs_aggregate(concepts, embeddings):  
+        return {
+            'concepts': torch.cat(list(concepts.values()), dim=-1), 
+            'embeddings': torch.cat(list(embeddings.values()), dim=1)
+        }
 
     layers = {
         # input encoding: (batch, n_features) -> (batch, latent_dims)
@@ -73,9 +65,6 @@ def main():
         # Sequential (not torch.nn.Sequential) so the first layer can take both
         # concepts and embeddings; the result is threaded through the Sigmoid.
 
-        # FIXME: we need to simplify how the user specifies new aggregates
-        # This custom aggregate can be avoided if we change the 
-        # Mix layer to (batch, embedding_size, n_concepts)
         "aggr_embeddings": embs_aggregate,
 
         "task_predictor": pyc.nn.Sequential(

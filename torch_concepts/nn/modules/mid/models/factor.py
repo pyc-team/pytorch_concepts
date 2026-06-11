@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, List, Set, Union
+from typing import Callable, Dict, Optional, List, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -76,6 +76,14 @@ class ParametricFactor(nn.Module, ABC):
     - A single ``Callable`` — use it for every parameter module.
     - A ``Dict[str, Callable]`` — use the keyed callable for the matching
       parameter module; auto-select the default for any missing key.
+
+    A user-supplied aggregate is called with a signature that matches the
+    parameter module's kind: for a **PyC** module it receives the parent values
+    already split by type — ``agg(concepts, embeddings)``, each a
+    ``Dict[Variable, Tensor]`` — and must return the ``{'concepts': ...,
+    'embeddings': ...}`` dict the module expects; for a **standard** module it
+    receives the single ``agg(inputs)`` dict and returns one concatenated
+    tensor. See :meth:`_resolve_aggregator`.
     """
 
     def __init__(
@@ -98,12 +106,13 @@ class ParametricFactor(nn.Module, ABC):
             for pname, mod in parametrization.items()
         }
 
+        # Normalise the user input to one entry per parameter (``None`` = use
+        # the auto-selected default), then adapt each to the uniform
+        # ``inputs -> result`` call site used by the CPD's forward.
         if aggregate is None:
-            self._aggregators: Dict[str, Callable] = {
-                pname: self._select_default(pname) for pname in parametrization
-            }
+            per_param: Dict[str, Optional[Callable]] = {pname: None for pname in parametrization}
         elif callable(aggregate):
-            self._aggregators = {pname: aggregate for pname in parametrization}
+            per_param = {pname: aggregate for pname in parametrization}
         elif isinstance(aggregate, dict):
             bad = [k for k, v in aggregate.items() if not callable(v)]
             if bad:
@@ -111,15 +120,15 @@ class ParametricFactor(nn.Module, ABC):
                     f"ParametricFactor: aggregate dict contains non-callable "
                     f"values for keys {bad}."
                 )
-            self._aggregators = {
-                pname: aggregate.get(pname, self._select_default(pname))
-                for pname in parametrization
-            }
+            per_param = {pname: aggregate.get(pname) for pname in parametrization}
         else:
             raise TypeError(
                 "ParametricFactor: `aggregate` must be None, a callable, or a "
                 f"dict mapping parameter names to callables, got {type(aggregate).__name__}."
             )
+        self._aggregators: Dict[str, Callable] = {
+            pname: self._resolve_aggregator(pname, agg) for pname, agg in per_param.items()
+        }
         self.parametrization = parametrization
 
     def _initialize_parametrization(
@@ -145,14 +154,40 @@ class ParametricFactor(nn.Module, ABC):
             modules[pname] = module
         return nn.ModuleDict(modules)
 
+    def _is_pyc(self, pname: str) -> bool:
+        """Whether the parameter module follows the PyC ``concepts``/``embeddings``
+        calling convention (vs. a standard single-tensor module)."""
+        return self._module_signatures[pname] in _PYC_PARAM_SETS
+
     # For entries not covered by the user, pick _pyc_aggregate or
     # _standard_aggregate based on the cached module signature.
     def _select_default(self, pname: str) -> Callable:
-        return (
-            self._pyc_aggregate
-            if self._module_signatures[pname] in _PYC_PARAM_SETS
-            else self._standard_aggregate
-        )
+        return self._pyc_aggregate if self._is_pyc(pname) else self._standard_aggregate
+
+    def _resolve_aggregator(
+        self,
+        pname: str,
+        user_aggregate: Optional[Callable],
+    ) -> Callable:
+        """Adapt an aggregate to the uniform ``inputs -> result`` call site.
+
+        ``None`` selects the auto-chosen default (:meth:`_select_default`). A
+        user-supplied aggregate is dispatched by the parameter module's kind:
+
+        - **PyC** module — called as ``agg(concepts, embeddings)`` over the
+          type-split parent dicts (each ``Dict[Variable, Tensor]``); it returns
+          the ``{'concepts': ..., 'embeddings': ...}`` dict the module expects.
+        - **standard** module — called as ``agg(inputs)`` over the single
+          parent dict; it returns one concatenated tensor.
+        """
+        if user_aggregate is None:
+            return self._select_default(pname)
+        if self._is_pyc(pname):
+            def aggregator(inputs, _agg=user_aggregate):
+                concepts, embeddings = self._split_by_type(inputs)
+                return _agg(concepts, embeddings)
+            return aggregator
+        return user_aggregate
 
     def _standard_aggregate(
         self,
@@ -165,35 +200,47 @@ class ParametricFactor(nn.Module, ABC):
         """
         return _cat_parents(inputs)
 
-    def _pyc_aggregate(
+    def _split_by_type(
         self,
         inputs: Dict[Variable, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
-        """Default aggregation for PyC-style modules.
-
-        Splits parent values by variable type (``'embedding'`` vs ``'concept'``),
-        concatenates each group separately, and returns a dict with keys
-        ``'embeddings'`` and/or ``'concepts'`` matching the module's ``forward``
-        signature.
-        """
-        embeddings: Dict[str, torch.Tensor] = {}
-        concepts: Dict[str, torch.Tensor] = {}
+    ) -> Tuple[Dict[Variable, torch.Tensor], Dict[Variable, torch.Tensor]]:
+        """Partition parent values into ``(concepts, embeddings)`` dicts by
+        variable type, preserving parent order."""
+        concepts: Dict[Variable, torch.Tensor] = {}
+        embeddings: Dict[Variable, torch.Tensor] = {}
         for p in self.parents:
-            if p.variable_type == "embedding":
-                embeddings[p.name] = inputs[p]
-            elif p.variable_type == "concept":
-                concepts[p.name] = inputs[p]
+            if p not in inputs:
+                continue
+            if p.variable_type == "concept":
+                concepts[p] = inputs[p]
+            elif p.variable_type == "embedding":
+                embeddings[p] = inputs[p]
             else:
                 raise ValueError(
                     f"ParametricCPD({self.variable.name!r}): parent "
                     f"{p.name!r} has invalid type {p.variable_type!r}, "
                     "expected 'embedding' or 'concept'."
                 )
-        return {
-            k: _cat_parents(v)
-            for k, v in (("embeddings", embeddings), ("concepts", concepts))
-            if v
-        }
+        return concepts, embeddings
+
+    def _pyc_aggregate(
+        self,
+        inputs: Dict[Variable, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Default aggregation for PyC-style modules.
+
+        Splits parent values by type (:meth:`_split_by_type`) and concatenates
+        each group along the last dim (see :func:`_cat_parents`), returning a
+        dict with keys ``'concepts'`` and/or ``'embeddings'`` matching the
+        module's ``forward`` signature.
+        """
+        concepts, embeddings = self._split_by_type(inputs)
+        out: Dict[str, torch.Tensor] = {}
+        if concepts:
+            out["concepts"] = _cat_parents(concepts)
+        if embeddings:
+            out["embeddings"] = _cat_parents(embeddings)
+        return out
 
     @abstractmethod
     def forward(
