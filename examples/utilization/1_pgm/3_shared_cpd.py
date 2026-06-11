@@ -1,26 +1,33 @@
-"""
-Shared CPD example: verify that shared=True produces the same inference
-result as individual (shared=False) CPDs when weights are identical.
+"""Shared CPD via a vector-valued concept variable.
+
+With the mid-level API a single CPD can emit *all* of a group's concepts at
+once: declare one :class:`ConceptVariable` with a vector event ``shape=(K,)``
+and give it one encoder ``8 -> K``. That is the idiomatic "shared CPD" — no
+special ``shared=`` flag needed.
+
+This example checks that the shared (vector) formulation is equivalent to the
+"individual" one — ``K`` scalar concept variables, each with its own ``8 -> 1``
+encoder whose weights are the matching row of the shared encoder — by asserting
+both PGMs produce identical concept and task outputs.
 
 Architecture::
 
     input (D=8)
-      └──► [c0, c1, c2, c3, c4]   (5 Bernoulli concepts)
-              └──► task            (Categorical, 3 classes)
+      └──► concepts  (K=5 Bernoulli)
+              └──► task   (OneHotCategorical, 3 classes)
 """
 
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical
 
-from torch_concepts import seed_everything
-from torch_concepts import ConceptVariable, LatentVariable
+from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
-    ProbabilisticModel,
+    BayesianNetwork,
     DeterministicInference,
-    LinearLatentToConcept,
+    LinearEmbeddingToConcept,
     LinearConceptToConcept,
 )
 
@@ -31,103 +38,83 @@ concept_names = [f"c{i}" for i in range(n_concepts)]
 
 
 def build_pgm_shared(encoder, task_head):
-    """Build a PGM using a single shared CPD for all concepts."""
-    input_var = LatentVariable("input", distribution=Delta, size=latent_dim)
-    concept_vars = ConceptVariable(concept_names, distribution=Bernoulli)
+    """Shared CPD: ONE vector-valued concept variable, one encoder for all K."""
+    input_var = EmbeddingVariable("input", distribution=Delta, size=latent_dim)
+    concepts_var = ConceptVariable("concepts", distribution=Bernoulli, shape=(n_concepts,))
     task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
 
-    cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-    cpd_concepts = ParametricCPD(
-        concept_names,
-        parametrization=encoder,
-        parents=["input"],
-        shared=True,
-        shared_name='shared'
-    )
-    cpd_task = ParametricCPD(
-        "task",
-        parametrization=task_head,
-        parents=concept_names,
-    )
-
-    return ProbabilisticModel(
-        variables=[input_var] + concept_vars + [task_var],
-        factors=[cpd_input, cpd_concepts, cpd_task],
+    return BayesianNetwork(
+        variables=[input_var, concepts_var, task_var],
+        factors=[
+            ParametricCPD(input_var, parametrization={"value": nn.Identity()}, parents=[]),
+            ParametricCPD(concepts_var, parametrization={"logits": encoder}, parents=[input_var]),
+            ParametricCPD(task_var, parametrization={"logits": task_head}, parents=[concepts_var]),
+        ],
     )
 
 
-def build_pgm_single(encoder, task_head):
-    """Build an equivalent PGM with one CPD per concept (shared=False).
+def build_pgm_individual(encoder, task_head):
+    """Individual CPDs: one scalar concept variable per concept.
 
-    Each concept gets its own LinearLatentToConcept(8,1) with weights copied
-    from the corresponding row of the shared encoder.
+    Each concept gets its own ``LinearEmbeddingToConcept(8, 1)`` with weights
+    copied from the matching row of the shared encoder, so it is numerically
+    equivalent to the shared formulation.
     """
-    input_var = LatentVariable("input", distribution=Delta, size=latent_dim)
+    input_var = EmbeddingVariable("input", distribution=Delta, size=latent_dim)
     concept_vars = ConceptVariable(concept_names, distribution=Bernoulli)
     task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
 
-    cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-
-    concept_cpds = []
-    for i, name in enumerate(concept_names):
-        single_enc = LinearLatentToConcept(in_latent=latent_dim, out_concepts=1)
-        # Copy the i-th row of weights/bias from the shared encoder.
+    factors = [ParametricCPD(input_var, parametrization={"value": nn.Identity()}, parents=[])]
+    for i, concept_var in enumerate(concept_vars):
+        single_enc = LinearEmbeddingToConcept(in_embeddings=latent_dim, out_concepts=1)
         with torch.no_grad():
             single_enc.encoder.weight.copy_(encoder.encoder.weight[i : i + 1])
             single_enc.encoder.bias.copy_(encoder.encoder.bias[i : i + 1])
-        concept_cpds.append(
-            ParametricCPD(name, parametrization=single_enc, parents=["input"])
+        factors.append(
+            ParametricCPD(concept_var, parametrization={"logits": single_enc}, parents=[input_var])
         )
-
-    cpd_task = ParametricCPD(
-        "task",
-        parametrization=task_head,
-        parents=concept_names,
+    factors.append(
+        ParametricCPD(task_var, parametrization={"logits": task_head}, parents=[*concept_vars])
     )
 
-    return ProbabilisticModel(
-        variables=[input_var] + concept_vars + [task_var],
-        factors=[cpd_input] + concept_cpds + [cpd_task],
+    return BayesianNetwork(
+        variables=[input_var, *concept_vars, task_var],
+        factors=factors,
     )
 
 
 def main():
     seed_everything(42)
 
-    # Shared encoder and task head — same weights for both PGMs.
-    encoder = LinearLatentToConcept(in_latent=latent_dim, out_concepts=n_concepts)
+    # Shared encoder (8 -> 5) and task head (5 -> 3) — same weights for both PGMs.
+    encoder = LinearEmbeddingToConcept(in_embeddings=latent_dim, out_concepts=n_concepts)
     task_head = LinearConceptToConcept(in_concepts=n_concepts, out_concepts=n_classes)
 
-    pgm_single = build_pgm_single(encoder, task_head)
     pgm_shared = build_pgm_shared(encoder, task_head)
+    pgm_individual = build_pgm_individual(encoder, task_head)
 
-    inf_single = DeterministicInference(pgm_single)
     inf_shared = DeterministicInference(pgm_shared)
+    inf_individual = DeterministicInference(pgm_individual)
 
-    print(f"Single CPD map: {pgm_single._shared_cpd_map}")
-    print(f"Shared CPD map: {pgm_shared._shared_cpd_map}")
-
-    # ── Forward pass ─────────────────────────────────────────────────
     x = torch.randn(4, latent_dim)
+    out_shared = inf_shared.query(["concepts", "task"], evidence={"input": x})
+    out_individual = inf_individual.query(concept_names + ["task"], evidence={"input": x})
 
-    result_single = inf_single.query(
-        concept_names + ["task"],
-        evidence={"input": x},
-        debug=True,
+    # Shared emits all concepts in one (B, K) tensor; individual emits K (B, 1)
+    # tensors — stack them to compare.
+    concepts_shared = out_shared.params["concepts"]["logits"]
+    concepts_individual = torch.cat(
+        [out_individual.params[name]["logits"] for name in concept_names], dim=-1
     )
-    result_shared = inf_shared.query(
-        concept_names + ["task"],
-        evidence={"input": x},
-        debug=True,
-    )
+    task_shared = out_shared.params["task"]["logits"]
+    task_individual = out_individual.params["task"]["logits"]
 
-    print(f"\nSingle result:\n{result_single}")
-    print(f"\nShared result:\n{result_shared}")
+    print(f"concepts — shared {tuple(concepts_shared.shape)} vs individual {tuple(concepts_individual.shape)}")
+    print(f"task     — shared {tuple(task_shared.shape)} vs individual {tuple(task_individual.shape)}")
 
-    assert torch.allclose(result_single.probs, result_shared.probs, atol=1e-6), (
-        f"Mismatch!\nSingle:\n{result_single}\nShared:\n{result_shared}"
-    )
-    print("\nShared CPD output matches single CPD output.")
+    assert torch.allclose(concepts_shared, concepts_individual, atol=1e-6), "concept outputs differ"
+    assert torch.allclose(task_shared, task_individual, atol=1e-6), "task outputs differ"
+    print("\nShared (vector-variable) CPD matches the individual per-concept CPDs.")
 
 
 if __name__ == "__main__":
