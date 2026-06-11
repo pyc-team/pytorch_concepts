@@ -168,6 +168,7 @@ class ConceptDataModule(LightningDataModule):
         test_size: float = 0.2,
         batch_size: int = 64,
         backbone: BackboneType = None,
+        backbone_input_type: Literal["image", "text"] = "image",
         precompute_embs: bool = False,
         force_recompute: bool = False,
         scalers: Optional[Mapping] = None,
@@ -183,7 +184,11 @@ class ConceptDataModule(LightningDataModule):
         self.dataset.embs_precomputed = False
 
         # Wrap backbone in Backbone class if provided
-        self._backbone = Backbone(backbone) if backbone is not None else None
+        self.backbone_input_type = backbone_input_type
+        self._backbone = (
+            Backbone(backbone, input_type=backbone_input_type)
+            if backbone is not None else None
+        )
         self.precompute_embs = precompute_embs
         self.force_recompute = force_recompute
 
@@ -436,7 +441,13 @@ class ConceptDataModule(LightningDataModule):
         embeddings are loaded directly without recomputation.
         """
         if verbose:
-            logger.info(f"Input shape: {tuple(self.dataset[0]['inputs']['x'].shape)}")
+            sample_input = self.dataset[0]["inputs"]["x"]
+            input_shape = getattr(sample_input, "shape", None)
+            if input_shape is None:
+                input_shape = type(sample_input).__name__
+            else:
+                input_shape = tuple(input_shape)
+            logger.info(f"Input shape: {input_shape}")
         
         # If not precomputing, just mark dataset and return
         if not self.precompute_embs:
@@ -451,7 +462,11 @@ class ConceptDataModule(LightningDataModule):
         
         # If device is explicitly provided, override backbone's device
         if device is not None:
-            self._backbone = Backbone(self.backbone.name, device=device)
+            self._backbone = Backbone(
+                self.backbone.name,
+                device=device,
+                input_type=self.backbone.input_type,
+            )
         
         cache_path = os.path.join(self.dataset.root_dir, self.backbone.filename)
         
@@ -499,10 +514,10 @@ class ConceptDataModule(LightningDataModule):
             logger.info(f"Device: {self.backbone.device}")
         
         def collate_fn(batch):
-            images = [sample['inputs']['x'] for sample in batch]
-            if not self.backbone.is_huggingface and isinstance(images[0], torch.Tensor):
-                return torch.stack(images)
-            return images
+            inputs = [sample['inputs']['x'] for sample in batch]
+            if not self.backbone.is_huggingface and isinstance(inputs[0], torch.Tensor):
+                return torch.stack(inputs)
+            return inputs
         
         dataloader = DataLoader(
             self.dataset,
