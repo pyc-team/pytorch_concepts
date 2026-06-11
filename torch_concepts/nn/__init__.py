@@ -68,7 +68,7 @@ from .modules.mid.inference import (
 )
 
 # Base intervention
-from .modules.low.intervention.intervention import intervene, intervention
+from .modules.low.intervention.intervention import intervention, BaseInterventionModule, InterventionModule
 
 # Intervention strategies
 from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
@@ -80,6 +80,7 @@ from .modules.low.intervention.strategy.positive_weights import PositiveWeightsI
 from .modules.low.intervention.policy.uniform import UniformPolicy
 from .modules.low.intervention.policy.uncertainty import UncertaintyInterventionPolicy
 from .modules.low.intervention.policy.random import RandomPolicy
+from .modules.low.intervention.policy.gradient import GradientPolicy
 
 
 __all__ = [
@@ -91,6 +92,7 @@ __all__ = [
     "BaseModuleInterventionStrategy",
     "BaseInterventionPolicy",
     "BaseConstructor",
+    "BaseInterventionModule",
 
     # LazyConstructor
     "LazyConstructor",
@@ -150,10 +152,10 @@ __all__ = [
     "DistributionIntervention",
     "PositiveWeightsIntervention",
     "intervention",
-    "intervene",
 
     # Intervention policies
     "UniformPolicy",
     "UncertaintyInterventionPolicy",
     "RandomPolicy",
+    "GradientPolicy",
 ]
