@@ -4,8 +4,11 @@ Example: Interventions with Low-Level API
 This example demonstrates how to use intervention strategies with
 the low-level concept encoder and predictor layers.
 """
+from typing import Dict
+
 import torch
 from sklearn.metrics import accuracy_score
+from torch import nn
 from torch.nn import ModuleDict
 
 import torch_concepts as pyc
@@ -16,11 +19,13 @@ from torch_concepts.nn import (
     LinearEmbeddingToConcept,
     UniformPolicy,
     GroundTruthIntervention,
-    intervene,
     intervention,
     PositiveWeightsIntervention,
     DistributionIntervention,
     DoIntervention,
+    GradientPolicy,
+    InterventionModule,
+    BaseInterventionModule,
 )
 
 
@@ -146,88 +151,76 @@ def main():
         print(c_pred_intervened[:5])
 
 
+    # Example of using a custom build_context function to combine gradients from both the task predictor and
+    # a random head on the concept encoder.
+    c_pred = model["concept_encoder"](embeddings=embedding)  # pre-compute c_pred
+    y_pred = model["task_predictor"](concepts=c_pred)  # pre-compute y_pred
+    random_head = torch.nn.Linear(concept_dims, task_dims)
 
+    def build_context_combined(original_module_predictions, original_module, original_module_inputs, 
+                               extra_tensors, extra_modules):
+        original_module_predictions = original_module(embeddings=original_module_inputs["embeddings"])
+        
+        pred = original_module_predictions.detach().requires_grad_(True)
+        grads_random = torch.autograd.grad(extra_modules["random_head"](pred).sum(), pred)[0]
 
+        grads_task = torch.autograd.grad(
+            extra_tensors["y_pred"].sum(), extra_tensors["c_pred"], retain_graph=True
+        )[0]
 
+        concept_grads = (grads_random.detach().abs() + grads_task.detach().abs()) / 2.0
+        return {"concept_grads": concept_grads}
 
+    int_module_combined = InterventionModule(
+        original_module=model["concept_encoder"],
+        intervention_strategy=GroundTruthIntervention(ground_truth=c_train),
+        intervention_policy=GradientPolicy(),
+        build_context=build_context_combined,
+        extra_modules={"random_head": random_head},
+        quantile=0.5,
+    )
+    c_pred_combined = int_module_combined(
+        embeddings=embedding,
+        extra_tensors={"c_pred": c_pred, "y_pred": y_pred},
+    )
+    print("\nConcept predictions with combined gradient intervention (first 5):")
+    print(c_pred_combined[:5])
 
+    # Example subclassing BaseInterventionModule to implement the same custom build_context function as above.
+    class CombinedGradientInterventionModule(BaseInterventionModule):
+        def build_context(
+                self,
+                original_module_inputs: Dict[str, torch.Tensor],
+                original_module: nn.Module,
+                original_module_predictions: torch.Tensor,
+                extra_tensors: Dict[str, torch.Tensor] = None,
+                extra_modules: Dict[str, nn.Module] = None,
+        ) -> Dict[str, torch.Tensor]:
+            original_module_predictions = original_module(embeddings=original_module_inputs["embeddings"])
 
+            pred = original_module_predictions.detach().requires_grad_(True)
+            grads_random = torch.autograd.grad(extra_modules["random_head"](pred).sum(), pred)[0]
 
+            grads_task = torch.autograd.grad(
+                extra_tensors["y_pred"].sum(), extra_tensors["c_pred"], retain_graph=True
+            )[0]
 
-    # ===================== Intervention Context Manager Examples =====================
+            concept_grads = (grads_random.detach().abs() + grads_task.detach().abs()) / 2.0
+            return {"concept_grads": concept_grads}
 
-    #
-    # with intervention(
-    #     policies=int_policy_c,
-    #     strategies=int_strategy_c,
-    #     target_concepts=[0, 1]
-    # ) as new_c_encoder:
-    #     emb = model["latent_encoder"](x_train)
-    #     c_pred = new_c_encoder(latent=emb)
-    #     y_pred = model["y_predictor"](concepts=c_pred)
-    #     print("\nConcept predictions (first 5):")
-    #     print(c_pred[:5])
-    #     print("\nGround truth (first 5):")
-    #     print(torch.logit(c_train, eps=1e-6)[:5])
-    #
-    # # Example 2: Uniform Policy + Do Intervention (set concepts to constant)
-    # print("\n" + "="*60)
-    # print("Uniform Policy + Do Intervention (set to -10):")
-    # print("="*60)
-    #
-    # int_policy_c = UniformPolicy(out_concepts=n_concepts)
-    # int_strategy_c = DoIntervention(model=model["c_encoder"], constants=-10)
-    #
-    # with intervention(
-    #     policies=int_policy_c,
-    #     strategies=int_strategy_c,
-    #     target_concepts=[1],
-    # ) as new_c_encoder:
-    #     emb = model["latent_encoder"](x_train)
-    #     c_pred = new_c_encoder(latent=emb)
-    #     y_pred = model["y_predictor"](concepts=c_pred)
-    #     print("\nConcept predictions (first 5, columns 0-1):")
-    #     print(c_pred[:5, :2])
-    #
-    # # Example 3: Random Policy + Do Intervention (selective intervention)
-    # print("\n" + "="*60)
-    # print("Random Policy + Do Intervention (50% quantile):")
-    # print("="*60)
-    #
-    # int_policy_c = RandomPolicy(out_concepts=n_concepts)
-    # int_strategy_c = DoIntervention(model=model["c_encoder"], constants=-10)
-    #
-    # with intervention(
-    #     policies=int_policy_c,
-    #     strategies=int_strategy_c,
-    #     target_concepts=[0, 1],
-    #     quantiles=0.5
-    # ) as new_c_encoder:
-    #     emb = model["latent_encoder"](x_train)
-    #     c_pred = new_c_encoder(latent=emb)
-    #     y_pred = model["y_predictor"](concepts=c_pred)
-    #     print("\nConcept predictions (first 5, columns 0-1):")
-    #     print(c_pred[:5, :2])
-    #
-    # # Example 4: Distribution Intervention (sample from distribution)
-    # print("\n" + "="*60)
-    # print("Random Policy + Distribution Intervention (Normal(50, 1)):")
-    # print("="*60)
-    #
-    # int_strategy_c = DistributionIntervention(model=model["c_encoder"],
-    #                                           dist=torch.distributions.Normal(loc=50, scale=1))
-    #
-    # with intervention(
-    #     policies=int_policy_c,
-    #     strategies=int_strategy_c,
-    #     target_concepts=[1, 3],
-    #     quantiles=.5
-    # ) as new_c_encoder:
-    #     emb = model["latent_encoder"](x_train)
-    #     c_pred = new_c_encoder(latent=emb)
-    #     y_pred = model["y_predictor"](concepts=c_pred)
-    #     print("\nConcept predictions (first 5):")
-    #     print(c_pred[:5])
+    int_module_combined_subclass = CombinedGradientInterventionModule(
+        original_module=model["concept_encoder"],
+        intervention_strategy=GroundTruthIntervention(ground_truth=c_train),
+        intervention_policy=GradientPolicy(),
+        extra_modules={"random_head": random_head},
+        quantile=0.5,
+    )
+    c_pred_combined_subclass = int_module_combined_subclass(
+        embeddings=embedding,
+        extra_tensors={"c_pred": c_pred, "y_pred": y_pred},
+    )
+    print("\nConcept predictions with combined gradient intervention (using subclass) (first 5):")
+    print(c_pred_combined_subclass[:5])
 
     return
 
