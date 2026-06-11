@@ -12,10 +12,9 @@ from torch_concepts.nn.modules.low.base.layer import (
     BaseEncoder,
     BasePredictor,
 )
-from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
+from torch_concepts.nn.modules.low.base.inference import BaseIntervention
 
 # LazyConstructor
-from .modules.mid.base.model import BaseConstructor
 from .modules.low.lazy import LazyConstructor
 
 # Encoders
@@ -58,16 +57,19 @@ from .modules.outputs import ModelOutput, InferenceOutput
 from .modules.mid.models.factor import ParametricFactor
 from .modules.mid.models.cpd import ParametricCPD
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
-from .modules.mid.constructors.bipartite import BipartiteModel
-from .modules.mid.constructors.graph import GraphModel
+from .modules.mid.models.bayesian_network import BayesianNetwork
+from .modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
-from .modules.mid.inference import (
-    ForwardInference,
-    DeterministicInference,
-    AncestralSamplingInference,
-    IndependentInference,
-)
+from .modules.mid.inference.base import BaseInference
+from .modules.mid.inference.torch.base import TorchBaseInference
+from .modules.mid.inference.torch.forward import ForwardInference
+from .modules.mid.inference.torch.deterministic import DeterministicInference
+from .modules.mid.inference.torch.ancestral import AncestralInference
+from .modules.mid.inference.torch.rejection import RejectionSampling
+from .modules.mid.inference.torch.independent import IndependentInference
+from .modules.mid.inference.pyro.base import PyroBaseInference
+from .modules.mid.inference.pyro.variational import VariationalInference
 
 # Interventions (low-level)
 from .modules.low.inference.intervention import (
@@ -90,9 +92,7 @@ __all__ = [
     "BasePredictor",
     "BaseGraphLearner",
     "BaseModel",
-    "BaseInference",
     "BaseIntervention",
-    "BaseConstructor",
 
     # LazyConstructor
     "LazyConstructor",
@@ -156,16 +156,24 @@ __all__ = [
     "ConceptEmbeddingModel",
 
     # Models (mid-level)
+    "ParametricFactor",
     "ParametricCPD",
     "ProbabilisticModel",
-    "BipartiteModel",
-    "GraphModel",
+    "BayesianNetwork",
+    "Variable",
+    "ConceptVariable",
+    "EmbeddingVariable",
 
-    # Inference
+    # Inference (mid-level)
+    "BaseInference",
+    "TorchBaseInference",
     "ForwardInference",
     "DeterministicInference",
-    "AncestralSamplingInference",
+    "AncestralInference",
+    "RejectionSampling",
     "IndependentInference",
+    "PyroBaseInference",
+    "VariationalInference",
 
     # Interventions
     "RewiringIntervention",

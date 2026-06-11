@@ -1,4 +1,4 @@
-"""TorchForwardInference — pytorch forward pass through a :class:`BayesianNetwork`.
+"""ForwardInference — pytorch forward pass through a :class:`BayesianNetwork`.
 
 Two modes:
 
@@ -59,17 +59,17 @@ def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> to
     return mask * aligned + (1.0 - mask) * nn_value
 
 
-class TorchForwardInference(TorchBaseInference):
+class ForwardInference(TorchBaseInference):
     """Abstract base class for torch based, forward-pass inference engines.
 
-    Concrete subclasses (:class:`TorchDeterministicInference`,
-    :class:`TorchAncestralInference`) implement the :meth:`_propagate` method to
+    Concrete subclasses (:class:`DeterministicInference`,
+    :class:`AncestralInference`) implement the :meth:`_propagate` method to
     decide whether each variable is resolved deterministically (MAP estimate)
     or by ancestral sampling.  All shared logic (topological traversal, teacher
     forcing, temperature schedule) lives here.
     """
 
-    name = "TorchForwardInference"
+    name = "ForwardInference"
 
     def __init__(
         self,

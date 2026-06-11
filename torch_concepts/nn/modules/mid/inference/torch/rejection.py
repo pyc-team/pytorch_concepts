@@ -1,9 +1,9 @@
-"""TorchRejectionSampling — approximate conditional inference via rejection sampling.
+"""RejectionSampling — approximate conditional inference via rejection sampling.
 
 Algorithm
 ---------
 1. Draw ``n_samples`` joint samples from the PGM by calling
-   :class:`TorchAncestralInference` (ancestral mode) with every variable
+   :class:`AncestralInference` (ancestral mode) with every variable
    declared as a query and no evidence.
 2. For each row b in the batch:
    a. Build an **evidence mask**: samples where every E variable equals e_b.
@@ -36,7 +36,7 @@ import torch.distributions as dist
 
 from ...models.bayesian_network import BayesianNetwork
 from ..outputs import InferenceOutput
-from .ancestral import TorchAncestralInference
+from .ancestral import AncestralInference
 from .base import TorchBaseInference
 
 
@@ -58,10 +58,10 @@ def _match(sampled: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
     return eq
 
 
-class TorchRejectionSampling(TorchBaseInference):
+class RejectionSampling(TorchBaseInference):
     """Approximate conditional inference via pure rejection sampling.
 
-    Internally delegates joint sampling to :class:`TorchAncestralInference`
+    Internally delegates joint sampling to :class:`AncestralInference`
     so the topological ordering logic is not duplicated.
 
     Parameters
@@ -74,7 +74,7 @@ class TorchRejectionSampling(TorchBaseInference):
         Warn when the acceptance rate drops below this fraction (default 1 %).
     """
 
-    name = "TorchRejectionSampling"
+    name = "RejectionSampling"
     _DISCRETE = _DISCRETE
 
     def __init__(
@@ -88,7 +88,7 @@ class TorchRejectionSampling(TorchBaseInference):
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
         self.warn_low_acceptance = float(warn_low_acceptance)
-        self._sampler = TorchAncestralInference(pgm, p_int=0.0)
+        self._sampler = AncestralInference(pgm, p_int=0.0)
 
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
@@ -140,7 +140,7 @@ class TorchRejectionSampling(TorchBaseInference):
                 layer_kwargs=layer_kwargs
             )
 
-        # TorchForwardInference stores evidence variables in out.samples only
+        # ForwardInference stores evidence variables in out.samples only
         # when sampled (mode=ancestral and not in evidence_names). Reconstruct
         # the full dict so root-clamped variables are also present for masking.
         samples = dict(fwd.samples)

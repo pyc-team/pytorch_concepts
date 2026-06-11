@@ -100,7 +100,7 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
     Pyro reconstructs distribution objects during tracing (losing any
     construction-time tag). Callers that need the user's original key should
     post-process using the CPD's ``parametrization.keys()``; see
-    :meth:`PyroVariationalInference._align_param_keys`.
+    :meth:`VariationalInference._align_param_keys`.
     """
     base = _peel(d)
 

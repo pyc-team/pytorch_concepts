@@ -5,11 +5,11 @@ import torch.nn as nn
 import pyro
 import pyro.distributions as dist
 
-from torch_concepts.nn.modules.pgm import (
+from torch_concepts.nn import (
     ConceptVariable, EmbeddingVariable, 
     ParametricCPD,
-    TorchDeterministicInference, TorchAncestralInference, 
-    PyroVariationalInference, TorchRejectionSampling, BayesianNetwork
+    DeterministicInference, AncestralInference, 
+    VariationalInference, RejectionSampling, BayesianNetwork
 )
 
 warnings.simplefilter("always")
@@ -74,7 +74,7 @@ root_cpd
 print(next(iter(root_cpd.parametrization.parameters())))
 
 # We can make quries without providing constant evidence to the root
-inf = TorchDeterministicInference(BayesianNetwork(
+inf = DeterministicInference(BayesianNetwork(
     variables=[root], 
     factors=[root_cpd])
 )
@@ -90,7 +90,7 @@ root_cpd = ParametricCPD(
         },
     parents=[]
 )
-inf = TorchDeterministicInference(BayesianNetwork(variables=[root], factors=[root_cpd]))
+inf = DeterministicInference(BayesianNetwork(variables=[root], factors=[root_cpd]))
 
 # It will raise error since it tries to call the nn.Linear module 
 # without providing the required input.
@@ -178,7 +178,7 @@ print("Deterministic Inference with all concepts observed")
 print("This corresponds to the sequential training of the CBM's paper.")
 print()
 pgm = make_pgm()
-det = TorchDeterministicInference(pgm, p_int=1.0)
+det = DeterministicInference(pgm, p_int=1.0)
 optim = torch.optim.Adam(pgm.parameters(), lr=1e-3)
 loss_fn = F.binary_cross_entropy
 
@@ -204,7 +204,7 @@ for step in range(EPOCHS):
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchDeterministicInference(pgm, p_int=0.0)
+det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
@@ -222,7 +222,7 @@ print("Deterministic Inference with only the x observed (concepts predicted)")
 print("This corresponds to the joint training of the CBM's paper.")
 print()
 pgm = make_pgm()
-det = TorchDeterministicInference(pgm, p_int=0.0)
+det = DeterministicInference(pgm, p_int=0.0)
 optim = torch.optim.Adam(pgm.parameters(), lr=1e-3)
 loss_fn = F.binary_cross_entropy
 
@@ -245,7 +245,7 @@ for step in range(EPOCHS):
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchDeterministicInference(pgm, p_int=0.0)
+det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
@@ -264,7 +264,7 @@ print("Deterministic Inference with only the x + randomly sampled concepts obser
 print("This corresponds to the training performed in the CEM's paper.")
 print()
 pgm = make_pgm()
-det = TorchDeterministicInference(pgm, p_int=0.5)
+det = DeterministicInference(pgm, p_int=0.5)
 optim = torch.optim.Adam(pgm.parameters(), lr=1e-3)
 loss_fn = F.binary_cross_entropy
 
@@ -287,7 +287,7 @@ for step in range(EPOCHS):
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchDeterministicInference(pgm, p_int=0.0)
+det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
@@ -309,7 +309,7 @@ print("Ancestral Inference with only the x + randomly sampled concepts observed 
 print("This corresponds to the training performed in the CEM's paper.")
 print()
 pgm = make_pgm()
-det = TorchAncestralInference(pgm, p_int=0.5)
+det = AncestralInference(pgm, p_int=0.5)
 optim = torch.optim.Adam(pgm.parameters(), lr=1e-3)
 loss_fn = F.binary_cross_entropy
 
@@ -332,7 +332,7 @@ for step in range(EPOCHS):
 print()
 print("Ancestral inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchAncestralInference(pgm, p_int=0.0)
+det_test = AncestralInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 c1_pred = out.samples['c1']
@@ -378,7 +378,7 @@ c2_guide = ParametricCPD(
     parents=[pgm.name_to_variable('x')]
 )
 
-vi = PyroVariationalInference(
+vi = VariationalInference(
     pgm, 
     latents={
         'c1': c1_guide,
@@ -424,7 +424,7 @@ for step in range(EPOCHS):
 print()
 print("Ancestral inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchAncestralInference(pgm, p_int=0.0)
+det_test = AncestralInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 c1_pred = out.samples['c1']
@@ -453,7 +453,7 @@ print("Ancestral Inference with all concepts observed")
 print("This corresponds to the sequential training of the CBM's paper.")
 print()
 pgm = make_pgm()
-det = TorchAncestralInference(pgm, p_int=1.0)
+det = AncestralInference(pgm, p_int=1.0)
 optim = torch.optim.Adam(pgm.parameters(), lr=1e-3)
 loss_fn = F.binary_cross_entropy
 
@@ -476,7 +476,7 @@ for step in range(EPOCHS):
 print()
 print("Ancestral inference at test-time (only input x provided as evidence)")
 test_batch = make_batch(B=512)
-det_test = TorchAncestralInference(pgm, p_int=0.0)
+det_test = AncestralInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
 c1_pred = out.samples['c1']
@@ -500,7 +500,7 @@ print("=" * 100)
 print("Rejection Sampling Inference with only the x observed (concepts predicted)")
 print()
 
-rejection = TorchRejectionSampling(
+rejection = RejectionSampling(
     pgm, # the probabilistic model
     n_samples=1000 # the number of samples to produce for the estimation of the posterior distribution
 )

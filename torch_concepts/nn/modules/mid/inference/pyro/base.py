@@ -36,7 +36,7 @@ class PyroBaseInference(BaseInference):
     """Base class for inference engines backed by Pyro.
 
     Bundles the model/guide stochastic functions and the Pyro-side parameter
-    harvesters. Subclasses (e.g. :class:`PyroVariationalInference`) supply
+    harvesters. Subclasses (e.g. :class:`VariationalInference`) supply
     their own ``query`` method that orchestrates effect handlers.
     """
 

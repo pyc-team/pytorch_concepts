@@ -33,7 +33,7 @@ def _yellow_notice(msg: str) -> None:
     print(f"{_YELLOW_START}{msg}{_YELLOW_END}", file=sys.stderr, flush=True)
 
 
-class PyroVariationalInference(PyroBaseInference):
+class VariationalInference(PyroBaseInference):
     """Variational inference engine.
 
     Uses Pyro's effect handlers to trace the generative model and the
@@ -48,16 +48,16 @@ class PyroVariationalInference(PyroBaseInference):
     latents : dict, optional
         Declaration of latent (unobservable) variables and their guide CPDs.
         Maps each latent variable name to a user-provided
-        :class:`~torch_concepts.nn.modules.pgm.models.cpd.ParametricCPD` that
+        :class:`~torch_concepts.nn.modules.mid.models.cpd.ParametricCPD` that
         acts as the variational guide for that variable. If omitted or empty,
         no guides are registered and the engine warns that variational
         inference may not behave as expected.
     initial_temperature, annealing, annealing_rate
         Temperature schedule for the relaxed-discrete sites; see
-        :func:`~torch_concepts.nn.modules.pgm.inference.base.make_temperature_schedule`.
+        :func:`~torch_concepts.nn.modules.mid.inference.base.make_temperature_schedule`.
     """
 
-    name = "PyroVariationalInference"
+    name = "VariationalInference"
 
     def __init__(
         self,

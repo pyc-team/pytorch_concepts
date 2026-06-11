@@ -1,551 +1,249 @@
 """
-Variable representation for concept-based Probabilistic Models.
-
-This module defines the Variable class, which represents random variables in
-concept-based models. Variables can have different probability distributions
-and support hierarchical concept structures.
+This script defines the abstract base class ``Variable``
+and its concrete subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
+which represent random variables in a Probabilistic Graphical Model.
 """
+
+from __future__ import annotations
+
 import copy
-import torch
+import math
+from abc import ABC, abstractmethod
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 from functools import partial
 
-# PyTorch distributions
-from torch.distributions import Distribution, Normal, MultivariateNormal, \
-    Bernoulli, RelaxedBernoulli, Categorical, OneHotCategorical, RelaxedOneHotCategorical
-from .....distributions import Delta
+import torch
+import torch.distributions as dist
 
-from typing import List, Dict, Any, Union, Optional, Type, Callable
+from .....distributions.delta import Delta
 
 
-# List of supported distribution types for Variables.
-_SUPPORTED_DISTRIBUTIONS: list = [
-    Bernoulli,
-    RelaxedBernoulli,
-    OneHotCategorical,
-    RelaxedOneHotCategorical,
-    Normal,
-    MultivariateNormal,
-    Delta
-]
-
-# Default size for distributions that have a natural scalar default.
-_DEFAULT_SIZES: Dict[Type[Distribution], int] = {
-    Bernoulli: 1,
-    RelaxedBernoulli: 1,
-    Normal: 1
+# ---------------------------------------------------------------------------
+# Per-parameter dimension lookup table.
+#
+# Maps each supported distribution class to a dict over its distribution
+# parameters, each name pointing to a callable (size: int) -> int giving the
+# number of scalar network outputs required to produce *that* parameter for a
+# variable of the given event size. Most parameters need one scalar per event
+# element; the exceptions (e.g. MultivariateNormal's lower-triangular
+# ``scale_tril``) are encoded here. Families that accept either ``probs`` or
+# ``logits`` list both, since a CPD may be parameterised with whichever it uses.
+# ---------------------------------------------------------------------------
+PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
+    Delta:                   {"value": lambda size: size},
+    dist.Bernoulli:          {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Categorical:        {"probs": lambda size: size, "logits": lambda size: size},
+    dist.OneHotCategorical:  {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Normal:             {"loc": lambda size: size, "scale": lambda size: size},
+    dist.MultivariateNormal: {"loc": lambda size: size,
+                              "scale_tril": lambda size: size * (size + 1) // 2},
 }
 
-# Default distributions per concept type group (binary / categorical / continuous).
-_DEFAULT_DISTRIBUTIONS: Dict[str, Type[Distribution]] = {
-    'binary': RelaxedBernoulli,
-    'categorical': RelaxedOneHotCategorical,
-    'continuous': Normal
+_DEFAULT_DISTRIBUTIONS = {
+    'binary': dist.RelaxedBernoulli,
+    'categorical': dist.RelaxedOneHotCategorical,
+    'continuous': dist.Normal,
 }
-
-# Default dist_kwargs for distributions that require constructor arguments.
-_DEFAULT_DIST_KWARGS: Dict[Type[Distribution], Dict[str, Any]] = {
-    RelaxedBernoulli: {'temperature': 0.5},
-    RelaxedOneHotCategorical: {'temperature': 0.5},
+_DEFAULT_DIST_KWARGS = {
+    dist.RelaxedBernoulli: {'temperature': 0.5},
+    dist.RelaxedOneHotCategorical: {'temperature': 0.5},
 }
-
-# Default logits → probabilities activations per distribution type.
-_DEFAULT_ACTIVATIONS: Dict[Type[Distribution], Callable[[torch.Tensor], torch.Tensor]] = {
-    Bernoulli: torch.sigmoid,
-    RelaxedBernoulli: torch.sigmoid,
-    OneHotCategorical: partial(torch.softmax, dim=-1),
-    RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
-    Normal: lambda x: x,
-    MultivariateNormal: lambda x: x,
+_DEFAULT_ACTIVATIONS = {
+    dist.Bernoulli: torch.sigmoid,
+    dist.RelaxedBernoulli: torch.sigmoid,
+    dist.OneHotCategorical: partial(torch.softmax, dim=-1),
+    dist.RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
+    dist.Normal: lambda x: x,
+    dist.MultivariateNormal: lambda x: x,
     Delta: lambda x: x,
 }
 
-_DEFAULT_TYPES: Dict[Type[Distribution], str] = {
-    Bernoulli: 'binary',
-    RelaxedBernoulli: 'binary',
-    OneHotCategorical: 'categorical',
-    RelaxedOneHotCategorical: 'categorical',
-    Normal: 'continuous',
-    MultivariateNormal: 'continuous',
-    Delta: 'delta'
-}
 
-# Number of raw parameters needed to parameterise each supported distribution
-# given a variable of a certain *size* (event dimension).
-_PARAM_DIMS: Dict[Type[Distribution], Dict[str, Callable[[int], int]]] = {
-    Bernoulli: {'probs': lambda size: size},                        # one prob per dimension
-    RelaxedBernoulli: {'probs': lambda size: size},                 # one prob per dimension
-    OneHotCategorical: {'probs': lambda size: size},                # one prob per class
-    RelaxedOneHotCategorical: {'probs': lambda size: size},         # one prob per class
-    Normal: {'loc': lambda size: size,                       # mean
-             'scale': lambda size: size},                    # log-std
-    MultivariateNormal: {'loc': lambda size: size,                           # mean 
-                         'scale_tril': lambda size: size * (size + 1) // 2}, # lower-triangular Cholesky
-    Delta: {'value': lambda size: size}
-}
-
-
-def param_dim(
-    distribution: Type[Distribution], 
-    size: int = 1,
-    return_sum: bool = True) -> int:
-    """Return the number of raw parameters required to parameterise *distribution*.
-
-    Args:
-        distribution: A supported distribution class (must be in
-            :data:`_SUPPORTED_DISTRIBUTIONS`).
-        size: The event dimension of the variable (e.g. ``1`` for
-            Bernoulli, ``k`` for ``OneHotCategorical`` with *k* classes,
-            ``d`` for a ``d``-dimensional ``Normal`` or
-            ``MultivariateNormal``).
-
-    Returns:
-        int: Total number of scalar parameters.
-
-    Raises:
-        ValueError: If *distribution* is not in :data:`_SUPPORTED_DISTRIBUTIONS`.
+def _broadcast(value, n: int, name: str):
+    """Return a list of length ``n``: broadcast scalar or check list length.
+    
+    This is used to construct multiple independent variables with a single constructor call.
     """
-    if distribution not in _SUPPORTED_DISTRIBUTIONS:
-        raise ValueError(
-            f"Distribution '{distribution.__name__}' is not supported. "
-            f"Supported distributions are: {[d.__name__ for d in _SUPPORTED_DISTRIBUTIONS]}."
-        )
-    if return_sum:
-        return sum(v(size) for v in _PARAM_DIMS[distribution].values()) 
-    else:        
-        return {k: v(size) for k, v in _PARAM_DIMS[distribution].items()}
+    if isinstance(value, list):
+        if len(value) != n:
+            raise ValueError(
+                f"{name}: expected a single value or a list of length {n}, "
+                f"got list of length {len(value)}."
+            )
+        return list(value)
+    return [value] * n
 
 
-class Variable:
-    """
-    Represents a random variable in a concept-based Probabilistic Model.
+class Variable(ABC):
+    """Abstract random variable.
 
-    A Variable encapsulates one or more concepts along with their associated
-    probability distribution and metadata. It supports multiple distribution
-    types including Delta (deterministic), Bernoulli, Categorical, and Normal
-    distributions.
+    Holds the node name (``name``), its distribution family (``distribution``),
+    its event ``shape``, and any extra distribution kwargs.  ``size`` is a
+    read-only property equal to ``math.prod(shape)``.
 
-    The Variable class implements a special __new__ method that allows creating
-    multiple Variable instances when initialized with multiple concepts, or a
-    single instance for a single concept.
+    Passing a list of names to the constructor returns a list of independent
+    ``Variable`` instances (one per name); ``distribution``, ``shape``, and
+    ``dist_kwargs`` may then be a single value (broadcast) or a per-name list.
 
-    Attributes:
-        concept (str): The concept name represented by this variable.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Size/cardinality of the variable (e.g., number of classes for Categorical).
-        dist_kwargs (Dict[str, Any]): Keyword arguments passed to the distribution constructor
-            (e.g., ``{'temperature': 0.5}`` for relaxed distributions).
-        metadata (Dict[str, Any]): Additional metadata associated with the variable.
-
-    Properties:
-        out_features (int): Number of output features this variable produces.
-
-    Example:
-        >>> import torch
-        >>> from torch.distributions import Bernoulli, Categorical, Normal
-        >>> from torch_concepts import Variable
-        >>> from torch_concepts.distributions import Delta
-        >>>
-        >>> # Create a binary concept variable
-        >>> var_binary = Variable(
-        ...     concepts='has_wheels',
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> print(var_binary.concept)  # 'has_wheels'
-        >>> print(var_binary.out_features)  # 1
-        >>>
-        >>> # Create a categorical variable with 3 color classes
-        >>> var_color = Variable(
-        ...     concepts=['color'],
-        ...     distribution=OneHotCategorical,
-        ...     size=3  # red, green, blue
-        ... )
-        >>> print(var_color.out_features)  # 3
-        >>>
-        >>> # Create multiple variables at once
-        >>> vars_list = Variable(
-        ...     concepts=['A', 'B', 'C'],
-        ...     distribution=Delta,
-        ...     size=1
-        ... )
-        >>> print(len(vars_list))  # 3
-        >>> print(vars_list[0].concept)  # 'A'
-        >>> print(vars_list[1].concept)  # 'B'
+    Concrete subclasses must implement :attr:`variable_type`.
     """
 
-    def __new__(cls, concepts: Union[str, List[str]],
-                distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                size: Union[int, List[int], None] = None, metadata: Optional[Dict[str, Any]] = None,
-                dist_kwargs: Optional[Dict[str, Any]] = None,
-                activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
+    @property
+    @abstractmethod
+    def variable_type(self) -> str:
+        """Short string tag identifying the variable kind.
+
+        Defined by each concrete subclass; not set on the abstract base.
         """
-        Create new Variable instance(s).
 
-        If concepts is a string, returns a single Variable instance.
-        If concepts is a list, returns a list of Variable instances (one per concept).
-
-        Args:
-            concepts: Single concept name (str) or list of concept names.
-            distribution: Distribution type or list of distribution types.
-            size: Size parameter(s) for the distribution.
-            metadata: Optional metadata dictionary.
-            dist_kwargs: Optional keyword arguments for the distribution
-                constructor (e.g., ``{'temperature': 0.5}``). Shared
-                across all variables when concepts is a list.
-
-        Returns:
-            Variable: Single instance if concepts is str.
-            List[Variable]: List of instances if concepts is list.
-
-        Raises:
-            ValueError: If concepts is str but distribution or size is a list.
-            ValueError: If list lengths don't match when concepts is a list.
-        """
-        if isinstance(concepts, str):
-            # Single concept: other fields must NOT be lists
-            if isinstance(distribution, list):
-                raise ValueError(
-                    "When 'concepts' is a string, 'distribution' must be a single value, not a list.")
-            if isinstance(size, list):
-                raise ValueError(
-                    "When 'concepts' is a string, 'size' must be a single value, not a list.")
-            return object.__new__(cls)
-
-        # concepts is a list -> return list of Variables
-        n_concepts = len(concepts)
-
-        # Standardize distribution: single value -> list of N values
-        if distribution is None:
-            distribution_list = [Delta] * n_concepts
-        elif not isinstance(distribution, list):
-            distribution_list = [distribution] * n_concepts
-        else:
-            distribution_list = distribution
-
-        # Standardize size: single value -> list of N values
-        if not isinstance(size, list):
-            size_list = [size] * n_concepts
-        else:
-            size_list = size
-
-        # Validation checks for list lengths
-        if len(distribution_list) != n_concepts or len(size_list) != n_concepts:
-            raise ValueError(
-                f"If concepts is a list of length {n_concepts}, distribution and size must either be "
-                f"single values or lists of length {n_concepts}.")
-
-        # Create and return a list of individual Variable instances
-        new_vars = []
-        for i in range(n_concepts):
-            # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
-            instance = object.__new__(cls)
-            instance.__init__(
-                concepts=concepts[i],  # Pass as string to create single Variable
-                distribution=distribution_list[i],
-                size=size_list[i],
-                metadata=copy.deepcopy(metadata) if metadata else None,
-                dist_kwargs=copy.deepcopy(dist_kwargs) if dist_kwargs else None,
-                activation=activation,
+    def __new__(
+        cls,
+        names: Union[str, List[str]],
+        distribution=None,
+        shape: Union[int, Tuple, "torch.Size", List] = None,
+        dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
+        size: Optional[Union[int, List[int]]] = None,
+    ):
+        if isinstance(names, str):
+            return super().__new__(cls)
+        if not isinstance(names, list) or not all(
+            isinstance(n, str) for n in names
+        ):
+            raise TypeError(
+                "`names` must be a string or a list of strings, "
+                f"got {type(names).__name__}."
             )
-            new_vars.append(instance)
-        return new_vars
-
-    def __init__(self, concepts: Union[str, List[str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int], None] = None,
-                 metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None,
-                 activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
-        """
-        Initialize a Variable instance.
-
-        Args:
-            concepts: Single concept name (stored as string).
-            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
-            size: Size parameter for the distribution.
-            metadata: Optional metadata dictionary.
-            dist_kwargs: Optional keyword arguments for the distribution
-                constructor (e.g., ``{'temperature': 0.5}`` for relaxed
-                distributions).
-            activation: Optional callable that maps logits to probabilities.
-                If ``None``, a default is chosen based on *distribution*
-                (e.g. sigmoid for Bernoulli, softmax for Categorical,
-                identity for Delta).  Pass a custom callable to override.
-
-        Raises:
-            ValueError: If Categorical variable doesn't have size > 1.
-            ValueError: If Bernoulli variable doesn't have size=1.
-        """
-        # Original validation logic
-        if distribution is None:
-            distribution = Delta
-
-        if distribution is Categorical:
-            raise ValueError(
-                "Categorical.sample() returns a class index, not a one-hot vector, "
-                "which is incompatible with Variable. "
-                "Use OneHotCategorical (or RelaxedOneHotCategorical) instead."
+        n = len(names)
+        dists = _broadcast(distribution, n, "distribution")
+        shapes = _broadcast(shape, n, "shape")
+        sizes = _broadcast(size, n, "size")
+        kwargs_list = _broadcast(dist_kwargs, n, "dist_kwargs")
+        return [
+            cls(
+                name,
+                distribution=dists[i],
+                shape=shapes[i],
+                size=sizes[i],
+                dist_kwargs=copy.deepcopy(kwargs_list[i]),
             )
-        
-        if distribution not in _SUPPORTED_DISTRIBUTIONS:
-            raise ValueError(
-                f"Distribution '{distribution.__name__}' is not supported. "
-                f"Supported distributions are: {[d.__name__ for d in _SUPPORTED_DISTRIBUTIONS]}."
-            )
+            for i, name in enumerate(names)
+        ]
 
-        if size is None:
-            if distribution in _DEFAULT_SIZES:
-                size = _DEFAULT_SIZES[distribution]
-            else:
+    def __init__(
+        self,
+        names: Union[str, List[str]],
+        distribution=None,
+        shape: Union[int, Tuple, "torch.Size"] = None,
+        dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
+        size: Optional[Union[int, List[int]]] = None,
+    ):
+        if not isinstance(names, str):
+            return
+        if shape is not None and size is not None:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
+                "exclusive — provide one or the other, not both."
+            )
+        if size is not None:
+            if not isinstance(size, int) or size <= 0:
                 raise ValueError(
-                    f"'size' must be provided for distribution '{distribution.__name__}'."
+                    f"{type(self).__name__}({names!r}): `size` must be a positive int, "
+                    f"got {size!r}."
                 )
-
-        if distribution in [Bernoulli, RelaxedBernoulli, Normal] and size != 1:
-            raise ValueError("Bernoulli, RelaxedBernoulli, and Normal distributions must have size=1.")
-
-        self.concept = concepts
-        self.distribution = distribution
-        self.size = size
-        self.dist_kwargs = dist_kwargs if dist_kwargs is not None else {}
-        self.metadata = metadata if metadata is not None else {}
-        self.type = _DEFAULT_TYPES[distribution]
-        if activation is not None:
-            self.activation = activation
+            shape = torch.Size([size])
+        elif shape is None:
+            shape = torch.Size([1])  # default
+        elif isinstance(shape, int):
+            shape = torch.Size([shape])
         else:
-            # Use default activation based on distribution type
-            self.activation = _DEFAULT_ACTIVATIONS[distribution]
+            shape = torch.Size(shape)
+        if len(shape) == 0:
+            raise ValueError("shape must be non-empty.")
+        if any(s <= 0 for s in shape):
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): all shape dimensions must be "
+                f"positive, got {tuple(shape)}."
+            )
+        self.name: str = names
+        if distribution is None:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): `distribution` is required. "
+                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
+                "or dist.Delta)."
+            )
+        self.distribution = distribution
+        self._shape: torch.Size = shape
+        self.dist_kwargs: dict = dict(dist_kwargs) if dist_kwargs else {}
+        self.metadata: dict = {
+            "variable_type": self.variable_type,
+        }
 
     @property
-    def out_features(self) -> int:
-        """
-        Number of output features for this variable.
-
-        Returns:
-            int: Number of output features.
-        """
-        return param_dim(self.distribution, self.size, return_sum=True)
+    def shape(self) -> torch.Size:
+        """Event shape as a :class:`torch.Size`, e.g. ``torch.Size([4])`` or ``torch.Size([3, 4])``."""
+        return self._shape
 
     @property
-    def param_dim(self) -> int:
-        """
-        Number of output features for this variable.
+    def size(self) -> int:
+        """Total number of scalar elements: ``math.prod(self.shape)``."""
+        return math.prod(self._shape)
 
-        Returns:
-            int: Number of output features.
-        """
-        return param_dim(self.distribution, self.size, return_sum=False)
+    @property
+    def param_sizes(self) -> Dict[str, int]:
+        """Per-parameter output sizes for this variable's distribution.
 
-    def __repr__(self):
-        """
-        Return string representation of the Variable.
+        Maps each distribution-parameter name (e.g. ``"loc"``/``"scale"`` for
+        ``Normal``, ``"probs"``/``"logits"`` for ``Bernoulli``) to the true
+        number of scalar network outputs needed to produce it. Most equal
+        :attr:`size` (one scalar per event element); the exceptions are encoded
+        in :data:`PARAM_DIM` — e.g. ``MultivariateNormal``'s ``scale_tril``
+        needs ``size * (size + 1) // 2`` lower-triangular Cholesky entries.
 
-        Returns:
-            str: String representation including concepts, distribution, size, and metadata.
+        Raises
+        ------
+        ValueError
+            If the distribution family has no :data:`PARAM_DIM` entry.
         """
-        meta_str = f"metadata={self.metadata}" if self.metadata else ""
-        dist_kwargs_str = f"({self.dist_kwargs})" if self.dist_kwargs else ""
-        return f"Variable(concept='{self.concept}', dist={self.distribution.__name__}{dist_kwargs_str}, size={self.size}, param_dim={self.param_dim}, {meta_str})"
+        if self.distribution not in PARAM_DIM:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): distribution "
+                f"{self.distribution.__name__} has no PARAM_DIM entry; cannot "
+                "resolve per-parameter sizes."
+            )
+        return {
+            param: fn(self.size)
+            for param, fn in PARAM_DIM[self.distribution].items()
+        }
+
+    def __repr__(self) -> str:
+        s = (
+            f"{type(self).__name__}(name={self.name!r}, "
+            f"distribution={self.distribution.__name__}, shape={tuple(self.shape)}"
+        )
+        return s + ")"
 
 
 class ConceptVariable(Variable):
+    """An interpretable random variable.
+
+    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
+    decides on a per-call basis whether the variable is observed.
     """
-    Represents a concept variable in a concept-based model.
-    
-    Concept variables are observable and supervisable variables that can be
-    directly measured or annotated in the data. These are typically the concepts
-    that we want to learn and predict, such as object attributes, semantic features,
-    or intermediate representations that have ground truth labels.
-    
-    Attributes:
-        concept (str): The concept name represented by this variable.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Size/cardinality of the variable.
-        dist_kwargs (Dict[str, Any]): Keyword arguments for the distribution constructor.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'concept'.
-        
-    Example:
-        >>> from torch.distributions import Bernoulli, Categorical, RelaxedBernoulli
-        >>> from torch_concepts import ConceptVariable
-        >>> # Observable binary concept
-        >>> has_wings = ConceptVariable(
-        ...     concepts='has_wings',
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> 
-        >>> # Relaxed binary concept with temperature
-        >>> has_wings_relaxed = ConceptVariable(
-        ...     concepts='has_wings',
-        ...     distribution=RelaxedBernoulli,
-        ...     size=1,
-        ...     dist_kwargs={'temperature': 0.5}
-        ... )
-        >>> 
-        >>> # Observable categorical concept (e.g., color)
-        >>> color = ConceptVariable(
-        ...     concepts=['color'],
-        ...     distribution=OneHotCategorical,
-        ...     size=3  # red, green, blue
-        ... )
+
+    @property
+    def variable_type(self) -> str:
+        return "concept"
+
+
+class EmbeddingVariable(Variable):
+    """A non-interpretable embedding variable.
+
+    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
+    decides on a per-call basis whether the variable is observed.
     """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None,
-                 **kwargs):
-        """
-        Initialize a ConceptVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
-            size: Size parameter for the distribution.
-            metadata: Optional metadata dictionary.
-            dist_kwargs: Optional keyword arguments for the distribution
-                constructor (e.g., ``{'temperature': 0.5}``).
-            **kwargs: Additional keyword arguments forwarded to
-                :class:`Variable` (e.g. ``activation``).
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'concept'
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
+
+    @property
+    def variable_type(self) -> str:
+        return "embedding"
 
 
-# Backward compatibility alias
-EndogenousVariable = ConceptVariable
-
-
-class ExogenousVariable(Variable):
-    """
-    Represents an exogenous variable in a concept-based model.
-    
-    Exogenous variables are high-dimensional representations related to a single
-    concept variable. They capture rich, detailed information about a specific
-    concept (e.g., image patches, embeddings, or feature vectors) that can be used
-    to predict or explain the corresponding concept.
-    
-    Attributes:
-        concept (str): The concept name represented by this variable.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Dimensionality of the high-dimensional representation.
-        concept_var (Optional[ConceptVariable]): The concept variable this exogenous variable is related to.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'exogenous'.
-        
-    Example:
-        >>> from torch.distributions import Normal, Bernoulli
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts import ConceptVariable, ExogenousVariable
-        >>> # Concept variable
-        >>> has_wings = ConceptVariable(
-        ...     concepts='has_wings',
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> 
-        >>> # Exogenous high-dim representation for has_wings
-        >>> wings_features = ExogenousVariable(
-        ...     concepts='wings_exogenous',
-        ...     distribution=Delta,
-        ...     size=128,  # 128-dimensional exogenous
-        ... )
-    """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 concept_var: Optional['ConceptVariable'] = None,
-                 metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None,
-                 **kwargs):
-        """
-        Initialize an ExogenousVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            distribution: Distribution type (typically Delta or Normal for continuous representations).
-            size: Dimensionality of the high-dimensional representation.
-            concept_var: Optional reference to the related concept variable.
-            metadata: Optional metadata dictionary.
-            dist_kwargs: Optional keyword arguments for the distribution constructor.
-            **kwargs: Additional keyword arguments forwarded to
-                :class:`Variable` (e.g. ``activation``).
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'exogenous'
-        if concept_var is not None:
-            metadata['concept_var'] = concept_var
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
-        self.concept_var = concept_var
-
-
-class LatentVariable(Variable):
-    """
-    Represents a latent variable in a concept-based model.
-    
-    Latent variables are high-dimensional global representations of the whole input
-    object (e.g., raw input images, text, or sensor data). They capture the complete
-    information about the input before it is decomposed into specific concepts.
-    These are typically unobserved, learned representations that encode all relevant
-    information from the raw input.
-    
-    Attributes:
-        concept (str): The concept name represented by this variable.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Dimensionality of the latent representation.
-        dist_kwargs (Dict[str, Any]): Keyword arguments for the distribution constructor.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'latent'.
-        
-    Example:
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts import LatentVariable
-        >>> # Global latent representation from input image
-        >>> image_latent = LatentVariable(
-        ...     concepts='global_image_features',
-        ...     distribution=Delta,
-        ...     size=512  # 512-dimensional global latent
-        ... )
-        >>> 
-        >>> # Multiple latent variables for hierarchical representation
-        >>> low_level_features = LatentVariable(
-        ...     concepts='low_level_features',
-        ...     distribution=Delta,
-        ...     size=256
-        ... )
-        >>> high_level_features = LatentVariable(
-        ...     concepts='high_level_features',
-        ...     distribution=Delta,
-        ...     size=512
-        ... )
-    """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None,
-                 dist_kwargs: Optional[Dict[str, Any]] = None,
-                 **kwargs):
-        """
-        Initialize a LatentVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            distribution: Distribution type (typically Delta or Normal for continuous representations).
-            size: Dimensionality of the latent representation.
-            metadata: Optional metadata dictionary.
-            dist_kwargs: Optional keyword arguments for the distribution constructor.
-            **kwargs: Additional keyword arguments forwarded to
-                :class:`Variable` (e.g. ``activation``).
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'latent'
-        super().__init__(concepts, distribution, size, metadata, dist_kwargs, **kwargs)
-
-
-# Backward compatibility alias
-InputVariable = LatentVariable

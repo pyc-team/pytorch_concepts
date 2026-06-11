@@ -9,7 +9,7 @@ from .utils import GroupConfig, check_collection
 from .outputs import ModelOutput
 from ...annotations import Annotations, AxisAnnotation
 from ...utils import instantiate_from_string
-from .mid.constructors.concept_graph import ConceptGraph
+from .concept_graph import ConceptGraph
 
 
 def _get_forward_signature(module: nn.Module):

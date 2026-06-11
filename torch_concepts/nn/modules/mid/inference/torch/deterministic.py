@@ -1,11 +1,11 @@
-"""TorchDeterministicInference — forward inference that evaluates MAP estimates."""
+"""DeterministicInference — forward inference that evaluates MAP estimates."""
 from __future__ import annotations
 
 from ...models.bayesian_network import BayesianNetwork
-from .forward import TorchForwardInference
+from .forward import ForwardInference
 
 
-class TorchDeterministicInference(TorchForwardInference):
+class DeterministicInference(ForwardInference):
     """Forward inference engine that returns MAP (deterministic) estimates.
 
     All continuous variables are evaluated at their distribution mean; discrete
@@ -20,7 +20,7 @@ class TorchDeterministicInference(TorchForwardInference):
         ground-truth value.  Defaults to ``1.0`` (always teacher-force).
     """
 
-    name = "TorchDeterministicInference"
+    name = "DeterministicInference"
 
     def __init__(
             self, 
