@@ -20,7 +20,7 @@ import torch.nn as nn
 from ...models.bayesian_network import BayesianNetwork
 from ...models.cpd import ParametricCPD
 from ..utils import make_temperature_schedule
-from ..outputs import InferenceOutput
+from ....outputs import InferenceOutput
 from .base import PyroBaseInference, trace_to_params
 
 

@@ -16,7 +16,7 @@ from typing import Dict, Optional, Tuple
 import pyro.distributions as pyro_dist
 import torch.distributions as td
 
-from ..outputs import ParamDict
+from ....outputs import ParamDict
 
 
 # Canonical parameter names emitted in InferenceOutput.params /

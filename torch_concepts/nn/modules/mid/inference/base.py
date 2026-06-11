@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from ..models.probabilistic_model import ProbabilisticModel
-from .outputs import InferenceOutput
+from ...outputs import InferenceOutput
 
 
 class BaseInference(nn.Module):

@@ -35,7 +35,7 @@ import torch
 import torch.distributions as dist
 
 from ...models.bayesian_network import BayesianNetwork
-from ..outputs import InferenceOutput
+from ....outputs import InferenceOutput
 from .ancestral import AncestralInference
 from .base import TorchBaseInference
 

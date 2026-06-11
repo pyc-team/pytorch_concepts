@@ -8,6 +8,10 @@ Two modes:
 - ``"ancestral"``: every variable is sampled with the same reparameterised
   distributions used by :class:`BayesianNetwork.forward` for unobserved sites
   (straight-through relaxations for the discrete families).
+
+Evidence variables (root or non-root) are hard-conditioned: the observed
+value is propagated to children directly and their CPD is never evaluated,
+so no parameters are produced for them.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import torch
 from ...models.bayesian_network import BayesianNetwork
 from ...models.variable import Variable
 from ..utils import make_temperature_schedule, reshape_value_to_event
-from ..outputs import InferenceOutput
+from ....outputs import InferenceOutput
 from .utils import propagated_value, sample_from
 from .base import TorchBaseInference
 
@@ -65,8 +69,8 @@ class ForwardInference(TorchBaseInference):
     Concrete subclasses (:class:`DeterministicInference`,
     :class:`AncestralInference`) implement the :meth:`_propagate` method to
     decide whether each variable is resolved deterministically (MAP estimate)
-    or by ancestral sampling.  All shared logic (topological traversal, teacher
-    forcing, temperature schedule) lives here.
+    or by ancestral sampling.  All shared logic (topological traversal,
+    evidence clamping, teacher forcing, temperature schedule) lives here.
     """
 
     name = "ForwardInference"
@@ -107,6 +111,20 @@ class ForwardInference(TorchBaseInference):
     # Per-variable and per-level prediction
     # ------------------------------------------------------------------
 
+    def _format_evidence(self, variable: Variable, value: torch.Tensor) -> torch.Tensor:
+        """Cast and reshape an observed value to the cached-value contract.
+
+        Evidence bypasses the CPD, so there is no network output to align
+        against: the value is cast to the PGM's parameter dtype (what child
+        CPDs expect as input) and reshaped to ``(batch, *variable.shape)``.
+        A numel mismatch raises instead of silently broadcasting.
+        """
+        try:
+            dtype = next(self.pgm.parameters()).dtype
+        except StopIteration:
+            dtype = torch.get_default_dtype()
+        return reshape_value_to_event(variable, value.to(dtype))
+
     def predict_variable(
         self,
         variable: Variable,
@@ -118,12 +136,20 @@ class ForwardInference(TorchBaseInference):
         query_names: set,
         evidence_names: set,
         layer_kwargs: Dict,
-    ) -> Tuple[str, Dict[str, torch.Tensor], torch.Tensor]:
+    ) -> Tuple[str, Optional[Dict[str, torch.Tensor]], torch.Tensor]:
         """Evaluate the CPD of a single variable and apply evidence / teacher forcing.
+
+        Observed variables are hard-conditioned: the evidence value is
+        propagated directly and the CPD is skipped entirely, so ``params``
+        is ``None`` for them.
 
         Returns ``(name, params, propagated_value)``.
         """
         name = variable.name
+        if name in evidence_names:
+            # Pure evidence: clamp to the observed value, skip the CPD.
+            return name, None, self._format_evidence(variable, evidence[name])
+
         cpd = self.pgm.name_to_factor(name)
         if cpd.is_root:
             params = cpd(parent_values={})
@@ -135,9 +161,7 @@ class ForwardInference(TorchBaseInference):
             parent_values = {p.name: cache[p.name] for p in cpd.parents}
             params = cpd(parent_values=parent_values, **layer_kwargs)
         value = self._propagate(variable, params, temperature)
-        if name in evidence_names:
-            propagated = _align_gt(evidence[name], value)
-        elif name in query_names and query[name] is not None:
+        if name in query_names and query[name] is not None:
             propagated = _teacher_force(value, query[name], self.p_int)
         else:
             propagated = value
@@ -154,11 +178,12 @@ class ForwardInference(TorchBaseInference):
         query_names: set,
         evidence_names: set,
         layer_kwargs: Dict[str, Dict],
-    ) -> List[Tuple[str, Dict[str, torch.Tensor], torch.Tensor]]:
-        """Evaluate all CPDs in a topological level sequentially.
+    ) -> List[Tuple[str, Optional[Dict[str, torch.Tensor]], torch.Tensor]]:
+        """Evaluate all variables in a topological level sequentially.
 
         Returns a list of ``(name, params, propagated_value)`` tuples, one per
-        variable in ``level``.
+        variable in ``level``; ``params`` is ``None`` for evidence variables
+        (their CPD is skipped).
         """
         return [
             self.predict_variable(
@@ -174,6 +199,15 @@ class ForwardInference(TorchBaseInference):
         evidence: Dict[str, torch.Tensor],
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
+        """Run a forward pass through the network in topological order.
+
+        Evidence variables are clamped to their observed values and their
+        CPDs are skipped; every other variable is resolved by
+        :meth:`_propagate`. CPD parameters are collected in ``out.params``
+        for query variables and — in ancestral mode — samples are collected
+        in ``out.samples`` for every non-evidence variable. A variable should
+        appear in either ``query`` or ``evidence``, not both.
+        """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         all_tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
