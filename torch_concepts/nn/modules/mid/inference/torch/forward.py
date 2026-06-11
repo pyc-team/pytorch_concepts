@@ -97,6 +97,10 @@ class ForwardInference(TorchBaseInference):
             "_temperature",
             torch.tensor(float(self._schedule(self._step))),
         )
+        # Memoized required-variable sets, keyed by the (query, evidence) name
+        # signature. The DAG is immutable, so a given signature always yields
+        # the same set — for a training loop the signature is constant.
+        self._required_cache: Dict[Tuple[frozenset, frozenset], set] = {}
 
     @property
     def temperature(self) -> torch.Tensor:
@@ -124,6 +128,45 @@ class ForwardInference(TorchBaseInference):
         except StopIteration:
             dtype = torch.get_default_dtype()
         return reshape_value_to_event(variable, value.to(dtype))
+
+    def _required_variables(
+        self,
+        query_names: set,
+        evidence_names: set,
+    ) -> set:
+        """Variables whose value must be resolved to answer the query.
+
+        The forward pass propagates strictly parent → child, so the value of
+        a query variable depends only on its ancestors. Evidence is an
+        absorbing barrier: an observed node is clamped to its value, so its
+        parents are never reached. The required set is therefore the ancestral
+        closure of the query set, with the upward walk halting at evidence
+        nodes. Everything outside it (barren subtrees, ancestors hidden behind
+        evidence) is pruned: its CPD — a neural-net forward pass — never fires.
+
+        The set is closed under "parents of every non-evidence member", which
+        guarantees every parent lookup in :meth:`predict_variable` is cached.
+        Results are memoized per (query, evidence) name signature.
+        """
+        key = (frozenset(query_names), frozenset(evidence_names))
+        cached = self._required_cache.get(key)
+        if cached is not None:
+            return cached
+
+        required: set = set()
+        stack: List[str] = list(query_names)
+        while stack:
+            name = stack.pop()
+            if name in required:
+                continue
+            required.add(name)
+            if name in evidence_names:
+                # Evidence clamps the value; its parents are unreachable.
+                continue
+            stack.extend(p.name for p in self.pgm.name_to_factor(name).parents)
+
+        self._required_cache[key] = required
+        return required
 
     def predict_variable(
         self,
@@ -201,12 +244,18 @@ class ForwardInference(TorchBaseInference):
     ) -> InferenceOutput:
         """Run a forward pass through the network in topological order.
 
-        Evidence variables are clamped to their observed values and their
-        CPDs are skipped; every other variable is resolved by
-        :meth:`_propagate`. CPD parameters are collected in ``out.params``
-        for query variables and — in ancestral mode — samples are collected
-        in ``out.samples`` for every non-evidence variable. A variable should
-        appear in either ``query`` or ``evidence``, not both.
+        Only the variables actually needed to answer the query are resolved:
+        the ancestral closure of the query set, with the upward walk halting at
+        evidence (see :meth:`_required_variables`). Barren subtrees and
+        ancestors hidden behind evidence are pruned and their CPDs never fire.
+
+        Evidence variables in that set are clamped to their observed values and
+        their CPDs are skipped; every other required variable is resolved by
+        :meth:`_propagate`. CPD parameters are collected in ``out.params`` for
+        query variables and — in ancestral mode — samples are collected in
+        ``out.samples`` for every required non-evidence variable (i.e. the
+        simulated sub-network, not necessarily the whole graph). A variable
+        should appear in either ``query`` or ``evidence``, not both.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
@@ -218,10 +267,14 @@ class ForwardInference(TorchBaseInference):
         evidence_names = set(evidence.keys())
         temperature = self.temperature
         sampled = self.mode == "ancestral"
+        required = self._required_variables(query_names, evidence_names)
 
         for level in self.pgm.levels:
+            active = [v for v in level if v.name in required]
+            if not active:
+                continue
             results = self.predict_level(
-                level, cache, batch_size, temperature,
+                active, cache, batch_size, temperature,
                 evidence, query, query_names, evidence_names, layer_kwargs
             )
             for name, params, propagated in results:

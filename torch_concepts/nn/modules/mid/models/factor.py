@@ -22,15 +22,21 @@ _PYC_PARAM_SETS = [
 
 
 def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """Aggregate parent values by flattening each and concatenating."""
-    flat = []
-    for v in inputs.values():
-        v = v.float() if not v.is_floating_point() else v
-        # Ensure at least 2 dims: (batch, event).
-        while v.dim() < 2:
-            v = v.unsqueeze(-1)
-        flat.append(v.flatten(start_dim=1))
-    return torch.cat(flat, dim=-1)
+    """Concatenate parent values along the last dim, preserving their shape.
+
+    No flattening or reshaping is performed: every parent value keeps its full
+    event shape and the tensors are concatenated along ``dim=-1``. This
+    deliberately raises when the values have mismatched non-concatenation
+    dimensions (e.g. a matrix-valued parent alongside a vector-valued one) —
+    such combinations are ambiguous and must be resolved with a custom
+    ``aggregate``. Values are cast to floating point so discrete parents can
+    feed float layers, but their shape is left untouched.
+    """
+    vals = [
+        v.float() if not v.is_floating_point() else v
+        for v in inputs.values()
+    ]
+    return torch.cat(vals, dim=-1)
 
 
 def _module_input_names(mod: nn.Module) -> Set[str]:
@@ -154,7 +160,8 @@ class ParametricFactor(nn.Module, ABC):
     ) -> torch.Tensor:
         """Default aggregation for standard torch modules.
 
-        Flattens each parent value and concatenates them into a single tensor.
+        Concatenates the parent values along the last dim without reshaping
+        (see :func:`_cat_parents`).
         """
         return _cat_parents(inputs)
 

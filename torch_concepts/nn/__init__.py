@@ -16,6 +16,7 @@ from torch_concepts.nn.modules.low.base.inference import BaseIntervention
 
 # LazyConstructor
 from .modules.low.lazy import LazyConstructor
+from .modules.low.sequential import Sequential
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
@@ -130,6 +131,7 @@ __all__ = [
     # Ops
     "SumOp",
     "ResidualCorrectionOp",
+    "Sequential",
 
     # COSMO
     "WANDAGraphLearner",
