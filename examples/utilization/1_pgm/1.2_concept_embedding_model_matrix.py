@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, OneHotCategorical
@@ -32,8 +30,8 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    embs = EmbeddingVariable(['emb1', 'emb2'], distribution=Delta, shape=(1, emb_dims))
-    concepts = ConceptVariable(['c1', 'c2'], distribution=Bernoulli)
+    embs = EmbeddingVariable('embs', distribution=Delta, shape=(2, emb_dims))
+    concepts = ConceptVariable('concepts', distribution=Bernoulli, size=2)
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
     layers = {
@@ -46,8 +44,8 @@ def main():
         ),
         # embedding encoder: (batch, latent_dims) -> (batch, n_concepts, embedding_size)
         "emb_encoder": pyc.nn.Sequential(
-            torch.nn.Linear(latent_dims, emb_dims),
-            torch.nn.Unflatten(unflattened_size=(1, emb_dims), dim=1),
+            torch.nn.Linear(latent_dims, 2 * emb_dims),
+            torch.nn.Unflatten(unflattened_size=(2, emb_dims), dim=1),
         ),
         # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts)
         "concept_encoder": pyc.nn.Sequential(
@@ -64,36 +62,26 @@ def main():
                 out_concepts=1,
                 cardinalities=[1, 1],
             )
-        )
+        ),
     }
-    
 
     # ParametricCPD setup
     input_cpd = ParametricCPD(input_var, parents=[])
     backbone = ParametricCPD(latent_var, parametrization=layers['backbone'], parents=[input_var])
     emb_encoder = ParametricCPD(embs, parametrization=layers['emb_encoder'], parents=[latent_var])
-    c1_encoder = ParametricCPD(concepts[0], parametrization=layers['concept_encoder'], parents=[embs[0]])
-    c2_encoder = ParametricCPD(concepts[1], parametrization=deepcopy(layers['concept_encoder']), parents=[embs[1]])
-    y_predictor = ParametricCPD(
-        tasks, 
-        parametrization={'probs': layers['task_predictor']}, 
-        parents=[*concepts, *embs], 
-        aggregate=lambda concepts, embeddings: {
-            'concepts': torch.cat(list(concepts.values()), dim=-1), 
-            'embeddings': torch.cat(list(embeddings.values()), dim=1)
-        }
-    )
+    c_encoder = ParametricCPD(concepts, parametrization=layers['concept_encoder'], parents=[embs])
+    y_predictor = ParametricCPD(tasks, parametrization=layers['task_predictor'], parents=[concepts, embs])
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, *embs, *concepts, tasks], 
-        factors=[input_cpd, backbone, *emb_encoder, c1_encoder, c2_encoder, y_predictor]
+        variables=[input_var, latent_var, embs, concepts, tasks], 
+        factors=[input_cpd, backbone, emb_encoder, c_encoder, y_predictor]
     )
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)
     evidence = {'input': x_train}
-    query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
+    query_concepts = {"concepts": c_train, "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
@@ -106,7 +94,7 @@ def main():
             query = query_concepts,
             evidence = evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['probs'], cy_pred.params['c2']['probs']], dim=1)
+        c_pred = cy_pred.params['concepts']['probs']
         y_pred = cy_pred.params['xor']['probs']
 
         # compute loss

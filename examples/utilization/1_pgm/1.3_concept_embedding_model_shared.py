@@ -9,7 +9,7 @@ from torch_concepts.data import ToyDataset
 from torch_concepts.nn import MLP, LinearEmbeddingToConcept, MixConceptEmbeddingToConcept, \
     ParametricCPD, BayesianNetwork, DeterministicInference
 
-
+# TODO: implement shared cpd logic that follow this API
 def main():
 
     seed_everything(42)
@@ -30,8 +30,11 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    embs = EmbeddingVariable('embs', distribution=Delta, shape=(2, emb_dims))
-    concepts = ConceptVariable('concepts', distribution=Bernoulli, size=2)
+    embs = EmbeddingVariable(['embs'], distribution=Delta, size=(4, emb_dims))
+    # ----------------------------------------------------------------------------------
+    # shared concept variable with 4 concepts, each of size 1
+    concepts = ConceptVariable(['c1', 'c2', 'c3', 'c4'], distribution=Bernoulli, size=1, shared_key='concepts') 
+    # ----------------------------------------------------------------------------------
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
     layers = {
@@ -43,36 +46,34 @@ def main():
             activation='leaky_relu',
         ),
         # embedding encoder: (batch, latent_dims) -> (batch, n_concepts, embedding_size)
-        "emb_encoder": torch.nn.Sequential(
-            torch.nn.Linear(latent_dims, 2 * emb_dims),
-            torch.nn.Unflatten(unflattened_size=(2, emb_dims), dim=1),
+        "emb_encoder": pyc.nn.Sequential(
+            torch.nn.Linear(latent_dims, 4 * emb_dims),
+            torch.nn.Unflatten(unflattened_size=(4, emb_dims), dim=1),
         ),
         # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts)
-        "concept_encoder": torch.nn.Sequential(
+        "concept_encoder": pyc.nn.Sequential(
             LinearEmbeddingToConcept(in_embeddings=emb_dims, out_concepts=1),
-            torch.nn.Flatten(),
-            torch.nn.Sigmoid()
+            torch.nn.Flatten()
         ),
         # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
         # Sequential (not torch.nn.Sequential) so the first layer can take both
         # concepts and embeddings; the result is threaded through the Sigmoid.
         "task_predictor": pyc.nn.Sequential(
             MixConceptEmbeddingToConcept(
-                in_concepts=2,
+                in_concepts=4,
                 in_embeddings=emb_dims,
                 out_concepts=1,
-                cardinalities=[1, 1],
-            ),
-            torch.nn.Sigmoid()
+                cardinalities=[1, 1, 1, 1],
+            )
         ),
     }
 
     # ParametricCPD setup
-    input_cpd = ParametricCPD(input_var, parametrization={'value': torch.nn.Identity()}, parents=[])
-    backbone = ParametricCPD(latent_var, parametrization={'value': layers['backbone']}, parents=[input_var])
-    emb_encoder = ParametricCPD(embs, parametrization={'value': layers['emb_encoder']}, parents=[latent_var])
-    c_encoder = ParametricCPD(concepts, parametrization={'probs': layers['concept_encoder']}, parents=[embs])
-    y_predictor = ParametricCPD(tasks, parametrization={'probs': layers['task_predictor']}, parents=[concepts, embs])
+    input_cpd = ParametricCPD(input_var, parents=[])
+    backbone = ParametricCPD(latent_var, parametrization=layers['backbone'], parents=[input_var])
+    emb_encoder = ParametricCPD(embs, parametrization=layers['emb_encoder'], parents=[latent_var])
+    c_encoder = ParametricCPD(concepts, parametrization=layers['concept_encoder'], parents=[embs], shared_key='concepts')
+    y_predictor = ParametricCPD(tasks, parametrization=layers['task_predictor'], parents=[concepts, embs])
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
@@ -82,8 +83,6 @@ def main():
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)
-    evidence = {'input': x_train}
-    query_concepts = {"concepts": c_train, "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
@@ -91,13 +90,35 @@ def main():
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
-        # generate concept and task predictions
+        # ------------------------------------------------------------
+        # 1 query all concepts together (with shared_key) P(c1, c2, c3, c4 | input)
         cy_pred = inference_engine.query(
-            query = query_concepts,
-            evidence = evidence
+            query = {"concepts": c_train, "xor": y_train},
+            evidence = {'input': x_train}
         )
-        c_pred = cy_pred.params['concepts']['probs']
+        c_pred = cy_pred.params['c1']['probs'] # should be able to access c1
         y_pred = cy_pred.params['xor']['probs']
+        # ------------------------------------------------------------
+
+        # ------------------------------------------------------------
+        # 2 query one concept P(c1, | input)
+        cy_pred = inference_engine.query(
+            query = {"c1": c_train[:,0], "xor": y_train},
+            evidence = {'input': x_train}
+        )
+        c_pred = cy_pred.params['c1']['probs']
+        y_pred = cy_pred.params['xor']['probs']
+        # -------------------------------------------------------------
+
+        # ------------------------------------------------------------
+        # 3 other concepts as evidence P(c1, | input, c2, c3, c4)
+        cy_pred = inference_engine.query(
+            query = {"c1": c_train[:,0], "xor": y_train},
+            evidence = {'input': x_train, "c2": c_train[:,1], "c3": c_train[:,2], "c4": c_train[:,3]}
+        )
+        c_pred = cy_pred.params['c1']['probs']
+        y_pred = cy_pred.params['xor']['probs']
+        # -------------------------------------------------------------
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

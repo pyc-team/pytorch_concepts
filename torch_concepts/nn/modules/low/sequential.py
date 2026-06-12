@@ -4,25 +4,26 @@ import torch
 
 
 class Sequential(torch.nn.Sequential):
-    r"""``nn.Sequential`` whose **first** module may take ``concepts`` and/or
-    ``embeddings`` instead of a single tensor.
+    r"""``nn.Sequential`` whose **first** module may take more than one input.
 
-    Standard ``nn.Sequential`` threads one tensor through every child, so it
-    cannot host a PyC layer like
+    Plain ``torch.nn.Sequential`` threads a single tensor through every child,
+    so it cannot host a PyC layer like
     :class:`~torch_concepts.nn.MixConceptEmbeddingToConcept` or
     :class:`~torch_concepts.nn.HyperlinearConceptEmbeddingToConcept` whose
-    ``forward(concepts, embeddings)`` takes two inputs. This subclass forwards
-    all of its inputs to the first module, then threads that module's single
-    output through the remaining (plain, single-tensor) modules exactly like
-    ``nn.Sequential``.
+    ``forward(concepts, embeddings)`` takes two inputs.
 
-    It exposes ``concepts``/``embeddings`` explicitly so that
-    :class:`~torch_concepts.nn.ParametricFactor` recognises it as a PyC layer
-    (see ``_PYC_PARAM_SETS``) and calls it as
-    ``module(concepts=..., embeddings=...)``. Whichever input the aggregator
-    does not supply is dropped before the first module is called (so a first
-    layer that takes only one of them works), and a single positional tensor is
-    also accepted, keeping it a drop-in ``nn.Sequential``.
+    This subclass simply forwards **all** of its inputs — positional or keyword —
+    to the *first* module, then threads that module's single output through the
+    remaining (plain, single-tensor) modules. That one rule makes it a superset
+    of ``nn.Sequential``:
+
+    - ``net(x)`` behaves exactly like ``nn.Sequential`` (single tensor);
+    - ``net(concepts=c, embeddings=e)`` feeds a multi-input PyC first layer.
+
+    As a :class:`~torch_concepts.nn.ParametricCPD` parametrization it adapts
+    automatically: the factor reads its input signature from the first layer
+    (see ``_module_input_names``), so a PyC first layer makes the whole chain a
+    PyC layer and a standard first layer makes it a standard one.
 
     Example:
         >>> import torch
@@ -35,20 +36,17 @@ class Sequential(torch.nn.Sequential):
         >>> out = net(concepts=torch.randn(2, 4), embeddings=torch.randn(2, 3, 8))
         >>> out.shape
         torch.Size([2, 3])
+        >>> # ...and still a drop-in single-input Sequential:
+        >>> Sequential(torch.nn.Linear(5, 3), torch.nn.ReLU())(torch.randn(2, 5)).shape
+        torch.Size([2, 3])
     """
 
-    def forward(self, *args, concepts=None, embeddings=None, **kwargs):
-        # Re-assemble only the PyC inputs that were actually supplied; the names
-        # exist in the signature so the factor recognises this as a PyC layer,
-        # but an absent one must not be forwarded (the first layer may take only
-        # one of them).
-        named = {}
-        if concepts is not None:
-            named["concepts"] = concepts
-        if embeddings is not None:
-            named["embeddings"] = embeddings
-        modules = list(self)
-        output = modules[0](*args, **named, **kwargs)
-        for module in modules[1:]:
-            output = module(output)
+    def forward(self, *args, **kwargs):
+        it = iter(self)
+        try:
+            output = next(it)(*args, **kwargs)  # first layer takes all inputs
+        except StopIteration:  # empty container: mirror nn.Sequential's identity
+            return args[0] if len(args) == 1 and not kwargs else None
+        for module in it:
+            output = module(output)  # the rest are single-tensor
         return output

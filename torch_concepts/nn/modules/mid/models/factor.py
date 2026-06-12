@@ -45,7 +45,15 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
 
 def _module_input_names(mod: nn.Module) -> Set[str]:
-    """Return the explicit keyword/positional parameter names of ``mod.forward``."""
+    """Return the explicit keyword/positional parameter names of ``mod.forward``.
+
+    A PyC :class:`~torch_concepts.nn.Sequential` forwards its inputs straight to
+    its first layer, so its input signature *is* that first layer's.
+    """
+    from ...low.sequential import Sequential
+
+    while isinstance(mod, Sequential) and len(mod) > 0:
+        mod = mod[0]
     sig = inspect.signature(mod.forward)
     return {
         name

@@ -39,8 +39,6 @@ def main():
 
     # One structural equation (parametrization module) per variable.
     layers = {
-        # input: clamped root (supplied as evidence below).
-        "input": torch.nn.Identity(),
         # genotype: learnable predisposition driven by the exogenous noise.
         "genotype": torch.nn.Sequential(torch.nn.Linear(1, 1), torch.nn.Sigmoid()),
         # smoking := 1[genotype].
@@ -55,11 +53,11 @@ def main():
     }
 
     # ParametricCPD setup — wire each structural equation to its variable.
-    input_cpd = ParametricCPD(input_var, parametrization={'value': layers['input']}, parents=[])
-    genotype_cpd = ParametricCPD(genotype_var, parametrization={'probs': layers['genotype']}, parents=[input_var])
-    smoking_cpd = ParametricCPD(smoking_var, parametrization={'probs': layers['smoking']}, parents=[genotype_var])
-    tar_cpd = ParametricCPD(tar_var, parametrization={'probs': layers['tar']}, parents=[genotype_var, smoking_var])
-    cancer_cpd = ParametricCPD(cancer_var, parametrization={'probs': layers['cancer']}, parents=[tar_var])
+    input_cpd = ParametricCPD(input_var, parents=[])
+    genotype_cpd = ParametricCPD(genotype_var, parametrization=layers['genotype'], parents=[input_var], activate=torch.nn.Identity())
+    smoking_cpd = ParametricCPD(smoking_var, parametrization=layers['smoking'], parents=[genotype_var], activate=torch.nn.Identity())
+    tar_cpd = ParametricCPD(tar_var, parametrization=layers['tar'], parents=[genotype_var, smoking_var], activate=torch.nn.Identity())
+    cancer_cpd = ParametricCPD(cancer_var, parametrization=layers['cancer'], parents=[tar_var], activate=torch.nn.Identity())
 
     concept_model = BayesianNetwork(
         variables=[input_var, genotype_var, smoking_var, tar_var, cancer_var],
