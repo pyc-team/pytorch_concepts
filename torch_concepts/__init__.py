@@ -8,6 +8,7 @@ from importlib import import_module
 from typing import Any
 
 from .annotations import Annotations, AxisAnnotation
+from .tensor import AnnotatedTensor
 from .nn.modules.utils import GroupConfig
 from .nn.modules.mid.constructors.concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable, LatentVariable, InputVariable, ExogenousVariable, ConceptVariable, EndogenousVariable
@@ -27,6 +28,7 @@ __all__ = [
     # Data properties
     "Annotations",
     "AxisAnnotation",
+    "AnnotatedTensor",
     "ConceptGraph",
 
     # Configuration

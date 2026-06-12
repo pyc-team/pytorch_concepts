@@ -4,14 +4,17 @@ Linear predictor modules for concept-based models.
 This module provides linear prediction layers that transform concept
 representations into new concept representations using a linear layer.
 """
+from typing import Union
+
 import torch
 
-from ..base.layer import BasePredictor
+from torch_concepts import AxisAnnotation
+from ..base.layer import BaseConceptLayer
 
 from ....functional import prune_linear_layer
 
 
-class LinearConceptToConcept(BasePredictor):
+class LinearConceptToConcept(BaseConceptLayer):
     """
     Linear concept predictor.
 
@@ -50,8 +53,9 @@ class LinearConceptToConcept(BasePredictor):
 
     def __init__(
         self,
-        in_concepts: int,
-        out_concepts: int,
+        in_concepts: Union[int, AxisAnnotation],
+        out_concepts: Union[int, AxisAnnotation],
+        *args,
         **kwargs,
     ):
         """
@@ -65,12 +69,11 @@ class LinearConceptToConcept(BasePredictor):
             in_concepts=in_concepts,
             out_concepts=out_concepts,
         )
-        self.predictor = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_concepts,
-                out_concepts
-            ),
-            torch.nn.Unflatten(-1, (out_concepts,)),
+        self.predictor = torch.nn.Linear(
+            in_concepts,
+            out_concepts,
+            *args,
+            **kwargs,
         )
 
     def forward(
@@ -81,10 +84,10 @@ class LinearConceptToConcept(BasePredictor):
         Forward pass through the predictor.
 
         Args:
-            concepts: Input concepts of shape (batch_size, in_concepts).
+            concepts: Input concepts of shape (..., in_concepts).
 
         Returns:
-            torch.Tensor: Predicted concept probabilities of shape (batch_size, out_concepts).
+            torch.Tensor: Predicted concept probabilities of shape (..., out_concepts).
         """
         return self.predictor(concepts)
         
@@ -116,4 +119,4 @@ class LinearConceptToConcept(BasePredictor):
             torch.Size([2, 5])
         """
         self.in_concepts = sum(mask.int())
-        self.predictor[0] = prune_linear_layer(self.predictor[0], mask, dim=0)
+        self.predictor = prune_linear_layer(self.predictor, mask, dim=0)
