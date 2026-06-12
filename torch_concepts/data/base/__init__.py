@@ -8,5 +8,7 @@ __all__: list[str] = [
     "ConceptDataModule",
     "Scaler",
     "Splitter",
+    "ConceptGenerator",
+    "Annotator",
 ]
 

@@ -10,7 +10,11 @@ Postprocessor = Callable[[List[str]], List[str]]
 
 
 class ConceptGenerator(ABC):
-    """Abstract base class for automatic concept generators."""
+    """Abstract base class for automatic concept generators.
+    
+    The generator maps:
+        dataset -> concepts
+    """
 
     @abstractmethod
     def generate(
