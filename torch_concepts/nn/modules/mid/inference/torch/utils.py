@@ -1,12 +1,10 @@
 """Pure-PyTorch distribution utilities for the pytorch inference backend.
 
-Provides straight-through estimators (STE) for discrete relaxations, a
+Provides reparameterisable relaxed surrogates for discrete families, a
 deterministic-value dispatcher, and a sampler — all using only
 ``torch.distributions`` without any Pyro dependency.
 
 Entry points:
-- :class:`_StraightThroughBernoulli` — STE relaxed Bernoulli.
-- :class:`_StraightThroughOneHotCategorical` — STE relaxed OneHotCategorical.
 - :func:`build_relaxed_distribution` — reparameterisable surrogate distribution.
 - :func:`propagated_value` — canonical deterministic value from a param dict.
 - :func:`sample_from` — reparameterised sample.
@@ -19,28 +17,6 @@ import torch
 import torch.distributions as dist
 
 from ...models.variable import Variable
-
-
-# ---------------------------------------------------------------------------
-# Straight-through estimators for discrete relaxations.
-# ---------------------------------------------------------------------------
-
-class _StraightThroughBernoulli(dist.RelaxedBernoulli):
-    """Relaxed Bernoulli with straight-through gradient estimator."""
-
-    def rsample(self, sample_shape=()):
-        soft = super().rsample(sample_shape)
-        hard = (soft > 0.5).to(soft.dtype)
-        return hard + (soft - soft.detach())
-
-
-class _StraightThroughOneHotCategorical(dist.RelaxedOneHotCategorical):
-    """Relaxed OneHotCategorical with straight-through gradient estimator."""
-
-    def rsample(self, sample_shape=()):
-        soft = super().rsample(sample_shape)
-        hard = torch.zeros_like(soft).scatter_(-1, soft.argmax(-1, keepdim=True), 1.0)
-        return hard + (soft - soft.detach())
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +42,10 @@ def build_relaxed_distribution(
 ) -> dist.Distribution:
     """Build a reparameterised distribution.
 
-    Discrete families use the straight-through estimator so that gradients
-    flow through hard samples. Continuous families fall back to the exact
-    distribution (which is already reparameterisable via ``rsample``).
+    Discrete families use their relaxed (Concrete / Gumbel-Softmax) counterpart,
+    whose ``rsample`` yields differentiable *soft* samples so that gradients flow
+    without a straight-through estimator. Continuous families fall back to the
+    exact distribution (which is already reparameterisable via ``rsample``).
     """
     D = variable.distribution
     if issubclass(D, dist.Bernoulli):
@@ -76,10 +53,10 @@ def build_relaxed_distribution(
         # Params are flat (*batch, size); reinterpret the single size axis as
         # the event so batch_shape stays (*batch,). The variable's declared
         # shape is restored on the sampled realization, not here.
-        d = _StraightThroughBernoulli(temperature=temperature, **params)
+        d = dist.RelaxedBernoulli(temperature=temperature, **params)
         return dist.Independent(d, 1)
     if issubclass(D, dist.OneHotCategorical):
-        return _StraightThroughOneHotCategorical(temperature=temperature, **params)
+        return dist.RelaxedOneHotCategorical(temperature=temperature, **params)
     if issubclass(D, dist.Categorical):
         raise ValueError(
             f"Variable {variable.name!r}: plain Categorical cannot be sampled "

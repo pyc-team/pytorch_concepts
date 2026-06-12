@@ -20,23 +20,17 @@ from .....distributions.delta import Delta
 
 # ---------------------------------------------------------------------------
 # Per-parameter dimension lookup table.
-#
-# Maps each supported distribution class to a dict over its distribution
-# parameters, each name pointing to a callable (size: int) -> int giving the
-# number of scalar network outputs required to produce *that* parameter for a
-# variable of the given event size. Most parameters need one scalar per event
-# element; the exceptions (e.g. MultivariateNormal's lower-triangular
-# ``scale_tril``) are encoded here. Families that accept either ``probs`` or
-# ``logits`` list both, since a CPD may be parameterised with whichever it uses.
 # ---------------------------------------------------------------------------
 PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
-    Delta:                   {"value": lambda size: size},
-    dist.Bernoulli:          {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Categorical:        {"probs": lambda size: size, "logits": lambda size: size},
-    dist.OneHotCategorical:  {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Normal:             {"loc": lambda size: size, "scale": lambda size: size},
-    dist.MultivariateNormal: {"loc": lambda size: size,
-                              "scale_tril": lambda size: size * (size + 1) // 2},
+    Delta:                         {"value": lambda size: size},
+    dist.Bernoulli:                {"probs": lambda size: size, "logits": lambda size: size},
+    dist.RelaxedBernoulli:         {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Categorical:              {"probs": lambda size: size, "logits": lambda size: size},
+    dist.OneHotCategorical:        {"probs": lambda size: size, "logits": lambda size: size},
+    dist.RelaxedOneHotCategorical: {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Normal:                   {"loc": lambda size: size, "scale": lambda size: size},
+    dist.MultivariateNormal:       {"loc": lambda size: size,
+                                    "scale_tril": lambda size: size * (size + 1) // 2},
 }
 
 _DEFAULT_DISTRIBUTIONS = {
