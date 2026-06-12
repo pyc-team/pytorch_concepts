@@ -10,7 +10,11 @@ from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
     BaseConceptLayer
 )
-from torch_concepts.nn.modules.low.base.inference import BaseInference, BaseIntervention
+from torch_concepts.nn.modules.low.base.intervention import (
+    BaseConceptInterventionStrategy,
+    BaseModuleInterventionStrategy,
+    BaseInterventionPolicy
+)
 
 # LazyConstructor
 from .modules.mid.base.model import BaseConstructor
@@ -63,28 +67,32 @@ from .modules.mid.inference import (
     IndependentInference,
 )
 
-# Interventions (low-level)
-from .modules.low.inference.intervention import (
-    RewiringIntervention,
-    GroundTruthIntervention,
-    DoIntervention,
-    DistributionIntervention,
-    intervention,
-)
+# Base intervention
+from .modules.low.intervention.intervention import intervention, BaseInterventionModule, InterventionModule
+
+# Intervention strategies
+from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
+from .modules.low.intervention.strategy.do import DoIntervention
+from .modules.low.intervention.strategy.distribution import DistributionIntervention
+from .modules.low.intervention.strategy.positive_weights import PositiveWeightsIntervention
 
 # Intervention policies
-from .modules.low.policy.uniform import UniformPolicy
-from .modules.low.policy.uncertainty import UncertaintyInterventionPolicy
-from .modules.low.policy.random import RandomPolicy
+from .modules.low.intervention.policy.uniform import UniformPolicy
+from .modules.low.intervention.policy.uncertainty import UncertaintyInterventionPolicy
+from .modules.low.intervention.policy.random import RandomPolicy
+from .modules.low.intervention.policy.gradient import GradientPolicy
+
 
 __all__ = [
     # Base classes
     "BaseConceptLayer",
     "BaseGraphLearner",
     "BaseModel",
-    "BaseInference",
-    "BaseIntervention",
+    "BaseConceptInterventionStrategy",
+    "BaseModuleInterventionStrategy",
+    "BaseInterventionPolicy",
     "BaseConstructor",
+    "BaseInterventionModule",
 
     # LazyConstructor
     "LazyConstructor",
@@ -139,14 +147,15 @@ __all__ = [
     "IndependentInference",
 
     # Interventions
-    "RewiringIntervention",
     "GroundTruthIntervention",
     "DoIntervention",
     "DistributionIntervention",
+    "PositiveWeightsIntervention",
     "intervention",
 
     # Intervention policies
     "UniformPolicy",
     "UncertaintyInterventionPolicy",
     "RandomPolicy",
+    "GradientPolicy",
 ]

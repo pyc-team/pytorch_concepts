@@ -25,7 +25,6 @@ from torch.nn import ModuleDict
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention
 
 
 def main():
@@ -90,20 +89,6 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
-
-    int_policy_c = RandomPolicy(out_concepts=c_train.shape[1], scale=100)
-    int_strategy_c = DoIntervention(model=model["concept_encoder"], constants=-10)
-    with intervention(
-        policies=int_policy_c,
-        strategies=int_strategy_c,
-        target_concepts=[1],
-        quantiles=1
-    ) as new_encoder:
-        latent = model["latent_encoder"](x_train)
-        c_pred = new_encoder(embeddings=latent)
-        y_pred = model["task_predictor"](concepts=c_pred)
-        cy_pred = torch.cat([c_pred, y_pred], dim=1)
-        print('intervened output: \n', cy_pred[:5])
 
     return
 
