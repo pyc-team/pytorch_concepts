@@ -36,7 +36,7 @@ import torch.distributions as dist
 
 from ...models.bayesian_network import BayesianNetwork
 from ....outputs import InferenceOutput
-from .ancestral import AncestralInference
+from ..utils import reshape_value_to_event
 from .base import TorchBaseInference
 
 
@@ -88,7 +88,6 @@ class RejectionSampling(TorchBaseInference):
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
         self.warn_low_acceptance = float(warn_low_acceptance)
-        self._sampler = AncestralInference(pgm, p_int=0.0)
 
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
@@ -116,36 +115,52 @@ class RejectionSampling(TorchBaseInference):
         root_evidence: Dict[str, torch.Tensor],
         layer_kwargs: Dict[str, Dict],
     ) -> Dict[str, torch.Tensor]:
-        """Draw ``n_samples`` joint samples conditioned on root evidence.
+        """Draw ``n_samples`` hard joint samples conditioned on root evidence.
 
-        Root evidence variables are clamped directly so that all ``n_samples``
-        samples already agree with those observations. Non-root evidence
-        variables are left to vary freely and are filtered later via rejection.
+        Root evidence variables are clamped so that all ``n_samples`` samples
+        already agree with those observations. Every other variable is sampled
+        from its exact (non-relaxed) discrete or continuous distribution using
+        the topological order of the PGM. Hard sampling (``dist.sample()``) is
+        used so that exact equality matching in :meth:`_build_mask` works.
         """
-        batched_root_evidence = {
-            name: val.unsqueeze(0).expand(self.n_samples, *val.shape)
-            for name, val in root_evidence.items()
-        }
+        N = self.n_samples
+        samples: Dict[str, torch.Tensor] = {}
 
-        dummy_query = {
-            v.name: torch.zeros(self.n_samples, *v.shape)
-            for v in self.pgm.sorted_variables
-            if v.name not in root_evidence
-        }
+        # Pre-expand root-clamped evidence to the sample dimension.
+        for name, val in root_evidence.items():
+            samples[name] = val.unsqueeze(0).expand(N, *val.shape)
 
         with torch.no_grad():
-            fwd = self._sampler.query(
-                query=dummy_query,
-                evidence=batched_root_evidence,
-                layer_kwargs=layer_kwargs
-            )
+            for level in self.pgm.levels:
+                for var in level:
+                    name = var.name
+                    if name in samples:
+                        continue  # already set (root evidence)
+                    cpd = self.pgm.name_to_factor(name)
+                    if cpd.is_root:
+                        params = cpd(parent_values={})
+                        params = {k: v.unsqueeze(0).expand(N, *v.shape)
+                                  for k, v in params.items()}
+                    else:
+                        parent_values = {p.name: samples[p.name] for p in cpd.parents}
+                        params = cpd(parent_values=parent_values,
+                                     **layer_kwargs.get(name, {}))
 
-        # ForwardInference stores evidence variables in out.samples only
-        # when sampled (mode=ancestral and not in evidence_names). Reconstruct
-        # the full dict so root-clamped variables are also present for masking.
-        samples = dict(fwd.samples)
-        for name, val in batched_root_evidence.items():
-            samples[name] = val
+                    D = var.distribution
+                    if issubclass(D, (dist.Bernoulli, dist.RelaxedBernoulli)):
+                        s = dist.Bernoulli(**params).sample()
+                    elif issubclass(D, (dist.OneHotCategorical,
+                                        dist.RelaxedOneHotCategorical)):
+                        s = dist.OneHotCategorical(**params).sample()
+                    elif issubclass(D, dist.Categorical):
+                        s = dist.Categorical(**params).sample()
+                    else:
+                        # Continuous: use exact reparameterised draw.
+                        from ..utils import build_distribution
+                        s = build_distribution(var, params).rsample()
+
+                    samples[name] = reshape_value_to_event(var, s)
+
         return samples
 
     def _build_mask(

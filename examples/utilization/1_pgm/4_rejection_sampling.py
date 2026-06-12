@@ -1,15 +1,11 @@
-"""Backward queries with importance sampling on the XOR dataset.
+"""Backward queries with rejection sampling on the XOR dataset.
 
 A Bayesian network (C1, C2 -> XOR) is trained forward with ancestral sampling,
 then queried backward: evidence on the task leaf (XOR=y), query on the root
 concepts (C1, C2). Forward inference cannot answer P(C1,C2|XOR=y) because
-there is no forward edge from a leaf to its parents. Importance sampling
-proposes the root variables from their priors and reweights by the evidence
-likelihood P(XOR=y | C1, C2).
-
-XOR ground truth:
-    XOR=1  =>  (C1=0,C2=1) or (C1=1,C2=0)  probability 0.5 each
-    XOR=0  =>  (C1=0,C2=0) or (C1=1,C2=1)  probability 0.5 each
+there is no forward edge from a leaf to its parents. Rejection sampling draws
+joint samples from the prior and keeps only those that match the evidence,
+estimating P(Q=q | E=e) = |{samples matching Q and E}| / |{samples matching E}|.
 """
 import torch
 import torch.nn as nn
@@ -19,8 +15,7 @@ from torch_concepts import seed_everything, ConceptVariable
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
     ParametricCPD, BayesianNetwork,
-    AncestralInference, ImportanceSampling, MutilatedNetworkProposal,
-    PyroImportanceSampling,
+    AncestralInference, RejectionSampling,
 )
 
 
@@ -84,13 +79,9 @@ def main():
     model.eval()
 
     # ---- Backward query: P(C1, C2 | XOR=y) ----------------------------------
-    # Both engines use the mutilated-network / likelihood-weighting proposal:
-    # sample roots from the prior, reweight by P(XOR=y | C1, C2).
-    torch_is = ImportanceSampling(
-        model, MutilatedNetworkProposal(model),
-        n_samples=40_000, initial_temperature=0.1,
-    )
-    pyro_is = PyroImportanceSampling(model, n_samples=40_000)
+    # Rejection sampling: draw 40k joint samples from the prior, keep those
+    # where XOR matches the evidence, count how many also satisfy the query.
+    rs = RejectionSampling(model, n_samples=40_000)
 
     combos = [(0, 0), (0, 1), (1, 0), (1, 1)]
     c1_q = torch.tensor([[float(a)] for a, _ in combos])       # (4, 1)
@@ -101,8 +92,7 @@ def main():
         y_ev = torch.zeros(4, 2)
         y_ev[:, 0 if xor_val == 1 else 1] = 1.0
 
-        torch_p = torch_is.query({"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
-        pyro_p  = pyro_is.query( {"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
+        rs_p = rs.query({"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
 
         # Exact posterior: enumerate all 4 (C1,C2) assignments under trained model
         with torch.no_grad():
@@ -126,10 +116,43 @@ def main():
         print(f"\n=== P(C1, C2 | XOR={xor_val}) — evidence on leaf, query on roots ===")
         print(f"{'(C1,C2)':>10} | {header}")
         print(f"{'exact':>10} | {fmt(exact)}")
-        print(f"{'torch IS':>10} | {fmt(torch_p)}")
-        print(f"{'pyro  IS':>10} | {fmt(pyro_p)}")
-        print(f"{'':>10}   torch err {float((torch_p - exact).abs().max()):.3f}"
-              f"   pyro err {float((pyro_p - exact).abs().max()):.3f}")
+        print(f"{'reject S':>10} | {fmt(rs_p)}")
+        print(f"{'':>10}   reject err {float((rs_p - exact).abs().max()):.3f}")
+
+    # ---- Backward query with additional concept evidence: P(C2 | C1=1, XOR=y) -
+    # C1=1 is a root variable, so it is clamped during generation (no rejection
+    # needed for it). XOR is still a non-root, filtered by rejection.
+    c2_targets = torch.tensor([[0.0], [1.0]])              # query C2=0 and C2=1
+    c1_ev      = torch.ones(2, 1)                          # C1=1 for both rows
+
+    for xor_val in (1, 0):
+        y_ev2 = torch.zeros(2, 2)
+        y_ev2[:, 0 if xor_val == 1 else 1] = 1.0
+
+        rs_p2 = rs.query({"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
+
+        # Exact: P(C2=c2, C1=1, XOR=xor_val) normalised over c2 ∈ {0,1}
+        with torch.no_grad():
+            p_c1 = model.name_to_factor("c1")(parent_values={})["probs"].item()
+            p_c2 = model.name_to_factor("c2")(parent_values={})["probs"].item()
+            joint2 = []
+            for b in (0, 1):
+                pb   = p_c2 if b == 1 else 1 - p_c2
+                prbs = model.name_to_factor("xor")(parent_values={
+                    "c1": torch.tensor([[1.0]]),
+                    "c2": torch.tensor([[float(b)]]),
+                })["probs"]                                # (1, 2)
+                p_y  = prbs[0, 0 if xor_val == 1 else 1].item()
+                joint2.append(p_c1 * pb * p_y)
+            exact2 = torch.tensor(joint2)
+            exact2 = exact2 / exact2.sum()
+
+        fmt2 = lambda t: "  ".join(f"{v:6.3f}" for v in t.tolist())
+        print(f"\n=== P(C2 | C1=1, XOR={xor_val}) — evidence on concept+leaf, query on remaining root ===")
+        print(f"{'C2':>10} |  C2=0   C2=1")
+        print(f"{'exact':>10} | {fmt2(exact2)}")
+        print(f"{'reject S':>10} | {fmt2(rs_p2)}")
+        print(f"{'':>10}   reject err {float((rs_p2 - exact2).abs().max()):.3f}")
 
 
 if __name__ == "__main__":
