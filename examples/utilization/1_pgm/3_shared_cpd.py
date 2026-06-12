@@ -1,120 +1,134 @@
-"""Shared CPD via a vector-valued concept variable.
+"""Shared CPD — one CPD parametrizes N concepts jointly (stacked).
 
-With the mid-level API a single CPD can emit *all* of a group's concepts at
-once: declare one :class:`ConceptVariable` with a vector event ``shape=(K,)``
-and give it one encoder ``8 -> K``. That is the idiomatic "shared CPD" — no
-special ``shared=`` flag needed.
+``ParametricCPD([c1, ..., cN], parametrization=encoder, parents=[embs],
+shared_key='concepts')`` builds ONE shared core plus a per-member facade. The
+encoder runs once for the whole group, each member is an ordinary, individually
+addressable graph node, and the member params are views into the single stacked
+tensor (no memory duplication). The sharing lives entirely inside the CPD, so
+the BayesianNetwork and every inference engine are untouched.
 
-This example checks that the shared (vector) formulation is equivalent to the
-"individual" one — ``K`` scalar concept variables, each with its own ``8 -> 1``
-encoder whose weights are the matching row of the shared encoder — by asserting
-both PGMs produce identical concept and task outputs.
-
-Architecture::
-
-    input (D=8)
-      └──► concepts  (K=5 Bernoulli)
-              └──► task   (OneHotCategorical, 3 classes)
+This script verifies the new mechanism:
+  1. it is numerically equivalent to N independent CPDs with identical weights;
+  2. the encoder runs exactly once for all members (shared compute);
+  3. the shared weights are counted once in ``model.parameters()``;
+  4. members are addressable individually (single member; partial evidence);
+  5. it works under a different backend (AncestralInference) unchanged.
 """
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli
 
+import torch_concepts as pyc
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD,
-    BayesianNetwork,
-    DeterministicInference,
+    ParametricCPD, BayesianNetwork, DeterministicInference, AncestralInference,
     LinearEmbeddingToConcept,
-    LinearConceptToConcept,
 )
 
-latent_dim = 8
-n_concepts = 5
-n_classes = 3
-concept_names = [f"c{i}" for i in range(n_concepts)]
+N = 4          # number of concepts in the shared group
+EMB = 5        # per-concept embedding size
+B = 6          # batch
+NAMES = [f"c{i}" for i in range(N)]
 
 
-def build_pgm_shared(encoder, task_head):
-    """Shared CPD: ONE vector-valued concept variable, one encoder for all K."""
-    input_var = EmbeddingVariable("input", distribution=Delta, size=latent_dim)
-    concepts_var = ConceptVariable("concepts", distribution=Bernoulli, shape=(n_concepts,))
-    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
-
-    return BayesianNetwork(
-        variables=[input_var, concepts_var, task_var],
-        factors=[
-            ParametricCPD(input_var, parametrization={"value": nn.Identity()}, parents=[]),
-            ParametricCPD(concepts_var, parametrization={"logits": encoder}, parents=[input_var]),
-            ParametricCPD(task_var, parametrization={"logits": task_head}, parents=[concepts_var]),
-        ],
-    )
+def build_shared(encoder):
+    """PGM with ONE shared CPD over a single (N, EMB) embedding variable."""
+    embs = EmbeddingVariable("embs", distribution=Delta, shape=(N, EMB))
+    concepts = ConceptVariable(NAMES, distribution=Bernoulli, size=1)
+    factors = [
+        ParametricCPD(embs, parents=[]),  # root, always supplied as evidence
+        *ParametricCPD(concepts, parametrization=encoder, parents=[embs], shared_key="concepts"),
+    ]
+    return BayesianNetwork(variables=[embs, *concepts], factors=factors)
 
 
-def build_pgm_individual(encoder, task_head):
-    """Individual CPDs: one scalar concept variable per concept.
+def build_individual(shared_linear):
+    """Equivalent PGM with N independent CPDs, each on its own (EMB,) embedding.
 
-    Each concept gets its own ``LinearEmbeddingToConcept(8, 1)`` with weights
-    copied from the matching row of the shared encoder, so it is numerically
-    equivalent to the shared formulation.
+    Each concept's encoder is its own ``LinearEmbeddingToConcept(EMB, 1)`` whose
+    weights are copied from the shared core's linear, so it is numerically
+    identical to the shared formulation.
     """
-    input_var = EmbeddingVariable("input", distribution=Delta, size=latent_dim)
-    concept_vars = ConceptVariable(concept_names, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=n_classes)
-
-    factors = [ParametricCPD(input_var, parametrization={"value": nn.Identity()}, parents=[])]
+    emb_vars = [EmbeddingVariable(f"e{i}", distribution=Delta, size=EMB) for i in range(N)]
+    concept_vars = [ConceptVariable(name, distribution=Bernoulli, size=1) for name in NAMES]
+    factors = [ParametricCPD(e, parents=[]) for e in emb_vars]
     for i, concept_var in enumerate(concept_vars):
-        single_enc = LinearEmbeddingToConcept(in_embeddings=latent_dim, out_concepts=1)
+        enc = LinearEmbeddingToConcept(in_embeddings=EMB, out_concepts=1)
         with torch.no_grad():
-            single_enc.encoder.weight.copy_(encoder.encoder.weight[i : i + 1])
-            single_enc.encoder.bias.copy_(encoder.encoder.bias[i : i + 1])
-        factors.append(
-            ParametricCPD(concept_var, parametrization={"logits": single_enc}, parents=[input_var])
-        )
-    factors.append(
-        ParametricCPD(task_var, parametrization={"logits": task_head}, parents=[*concept_vars])
-    )
-
-    return BayesianNetwork(
-        variables=[input_var, *concept_vars, task_var],
-        factors=factors,
-    )
+            enc.encoder.weight.copy_(shared_linear.encoder.weight)
+            enc.encoder.bias.copy_(shared_linear.encoder.bias)
+        factors.append(ParametricCPD(concept_var, parametrization=enc, parents=[emb_vars[i]]))
+    return BayesianNetwork(variables=[*emb_vars, *concept_vars], factors=factors)
 
 
 def main():
     seed_everything(42)
 
-    # Shared encoder (8 -> 5) and task head (5 -> 3) — same weights for both PGMs.
-    encoder = LinearEmbeddingToConcept(in_embeddings=latent_dim, out_concepts=n_concepts)
-    task_head = LinearConceptToConcept(in_concepts=n_concepts, out_concepts=n_classes)
+    # Shared encoder: per-concept embedding -> per-concept logit. Wrapping it in a
+    # pyc.nn.Sequential lets the single LinearEmbeddingToConcept broadcast over the
+    # N concept axis of the (B, N, EMB) embedding, then Flatten -> (B, N).
+    encoder = pyc.nn.Sequential(LinearEmbeddingToConcept(in_embeddings=EMB, out_concepts=1), nn.Flatten())
 
-    pgm_shared = build_pgm_shared(encoder, task_head)
-    pgm_individual = build_pgm_individual(encoder, task_head)
+    # Count how many times the shared encoder actually runs.
+    runs = {"n": 0}
+    inner = encoder[0]
+    _orig = inner.forward
+    inner.forward = lambda *a, **k: (runs.__setitem__("n", runs["n"] + 1), _orig(*a, **k))[1]
 
-    inf_shared = DeterministicInference(pgm_shared)
-    inf_individual = DeterministicInference(pgm_individual)
+    shared_net = build_shared(encoder)
+    shared_core = shared_net.name_to_factor("c0").core           # the _SharedCPD
+    shared_linear = shared_core.parametrization["probs"][0]       # LinearEmbeddingToConcept
 
-    x = torch.randn(4, latent_dim)
-    out_shared = inf_shared.query(["concepts", "task"], evidence={"input": x})
-    out_individual = inf_individual.query(concept_names + ["task"], evidence={"input": x})
+    individual_net = build_individual(shared_linear)
 
-    # Shared emits all concepts in one (B, K) tensor; individual emits K (B, 1)
-    # tensors — stack them to compare.
-    concepts_shared = out_shared.params["concepts"]["logits"]
-    concepts_individual = torch.cat(
-        [out_individual.params[name]["logits"] for name in concept_names], dim=-1
-    )
-    task_shared = out_shared.params["task"]["logits"]
-    task_individual = out_individual.params["task"]["logits"]
+    embs_value = torch.randn(B, N, EMB)
+    shared_eng = DeterministicInference(shared_net)
+    indiv_eng = DeterministicInference(individual_net)
 
-    print(f"concepts — shared {tuple(concepts_shared.shape)} vs individual {tuple(concepts_individual.shape)}")
-    print(f"task     — shared {tuple(task_shared.shape)} vs individual {tuple(task_individual.shape)}")
+    # 1) Equivalence: shared stacked output == N independent CPDs with same weights.
+    runs["n"] = 0
+    shared_out = shared_eng.query(NAMES, evidence={"embs": embs_value})
+    shared_probs = torch.cat([shared_out.params[n]["probs"] for n in NAMES], dim=1)  # (B, N)
 
-    assert torch.allclose(concepts_shared, concepts_individual, atol=1e-6), "concept outputs differ"
-    assert torch.allclose(task_shared, task_individual, atol=1e-6), "task outputs differ"
-    print("\nShared (vector-variable) CPD matches the individual per-concept CPDs.")
+    indiv_out = indiv_eng.query(NAMES, evidence={f"e{i}": embs_value[:, i, :] for i in range(N)})
+    indiv_probs = torch.cat([indiv_out.params[n]["probs"] for n in NAMES], dim=1)    # (B, N)
+
+    print(f"shared {tuple(shared_probs.shape)} vs individual {tuple(indiv_probs.shape)}")
+    assert torch.allclose(shared_probs, indiv_probs, atol=1e-6), "shared != individual"
+
+    # 2) Shared compute: querying all N members ran the encoder once.
+    print(f"encoder runs for {N} members: {runs['n']}")
+    assert runs["n"] == 1, runs["n"]
+
+    # 2b) member params are views into one tensor (no memory duplication).
+    same_storage = shared_out.params["c0"]["probs"].storage().data_ptr() == \
+        shared_out.params["c1"]["probs"].storage().data_ptr()
+    print(f"member params share storage (views): {same_storage}")
+    assert same_storage
+
+    # 3) Shared weights counted once in parameters().
+    n_appear = sum(1 for p in shared_net.parameters() if any(p is q for q in shared_linear.parameters()))
+    print(f"shared linear params in model.parameters(): {n_appear} (expect {len(list(shared_linear.parameters()))})")
+    assert n_appear == len(list(shared_linear.parameters()))
+
+    # 4) Individual addressing.
+    runs["n"] = 0
+    one = shared_eng.query(["c0"], evidence={"embs": embs_value})
+    print(f"query only c0 -> keys {sorted(one.params)}, encoder runs {runs['n']} (other members pruned)")
+    assert set(one.params) == {"c0"} and runs["n"] == 1
+
+    others = {"c1": torch.ones(B, 1), "c2": torch.zeros(B, 1), "c3": torch.ones(B, 1)}
+    partial = shared_eng.query(["c0"], evidence={"embs": embs_value, **others})
+    assert tuple(partial.params["c0"]["probs"].shape) == (B, 1)
+    print("partial evidence (c0 queried, c1..c3 observed): OK")
+
+    # 5) A different backend works unchanged.
+    anc = AncestralInference(shared_net).query(NAMES, evidence={"embs": embs_value})
+    print(f"AncestralInference samples: {[tuple(anc.samples[n].shape) for n in NAMES]}")
+
+    print("\nShared CPD matches N independent CPDs; one shared compute; addressable per member.")
 
 
 if __name__ == "__main__":
