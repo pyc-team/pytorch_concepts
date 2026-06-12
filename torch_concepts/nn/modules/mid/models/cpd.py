@@ -152,6 +152,7 @@ class ParametricCPD(ParametricFactor):
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
         activate: Optional[Union[Callable, Dict[str, Callable]]] = None,
+        shared_key: Optional[str] = None,
     ):
         # Single-Variable path: defer to normal __init__.
         if isinstance(variable, Variable):
@@ -165,6 +166,11 @@ class ParametricCPD(ParametricFactor):
                 "ParametricCPD: `variable` must be a Variable or a list of "
                 f"Variables, got {type(variable).__name__}."
             )
+
+        # Shared path: one CPD parametrizes all variables jointly (stacked),
+        # exposing per-variable facades that slice the shared output.
+        if shared_key is not None:
+            return _make_shared_cpd(variable, parametrization, parents, aggregate, activate, shared_key)
 
         n = len(variable)
         if isinstance(parametrization, list):
@@ -204,9 +210,12 @@ class ParametricCPD(ParametricFactor):
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
         activate: Optional[Union[Callable, Dict[str, Callable]]] = None,
+        shared_key: Optional[str] = None,
     ):
         # When __new__ returned a list, __init__ is also invoked once per
         # element with a singular Variable, so the list-path is a no-op here.
+        # ``shared_key`` is consumed by __new__ (shared path); on the single
+        # path it is meaningless and ignored.
         if not isinstance(variable, Variable):
             return  # pragma: no cover
 
@@ -428,3 +437,115 @@ class ParametricCPD(ParametricFactor):
                 out = mod(cat, **layer_kwargs)
             result[pname] = self._activations[pname](out)
         return result
+
+
+# ---------------------------------------------------------------------------
+# Shared CPDs: one parametrization producing several homogeneous variables
+# stacked, with per-variable facades for individual addressing.
+# ---------------------------------------------------------------------------
+class _SharedCPD(ParametricCPD):
+    """Core CPD of a shared group: parametrizes the stacked group variable and
+    caches its forward output for one pass.
+
+    The (potentially heavy) parametrization runs **once per forward pass** no
+    matter how many member facades request their slice. The cache is keyed by
+    the *identity* of the parent value tensors: within one inference pass every
+    facade is called with the same parent tensors, so the first call computes
+    and the rest reuse it; a new pass brings fresh tensors and recomputes. Root
+    groups (no parents) are not cached — their recompute is trivial.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cache_parents: Optional[Dict[str, torch.Tensor]] = None
+        self._cache_out: Optional[Dict[str, torch.Tensor]] = None
+
+    def forward(self, parent_values=None, **layer_kwargs):
+        if self._cache_hit(parent_values, layer_kwargs):
+            return self._cache_out
+        out = super().forward(parent_values, **layer_kwargs)
+        self._cache_parents, self._cache_out = parent_values, out
+        return out
+
+    def _cache_hit(self, parent_values, layer_kwargs) -> bool:
+        # Only cache the non-root, no-extra-kwargs case; require an exact
+        # tensor-identity match on every parent so a new forward pass misses.
+        if not parent_values or layer_kwargs or self._cache_parents is None:
+            return False
+        if parent_values.keys() != self._cache_parents.keys():
+            return False
+        return all(parent_values[k] is self._cache_parents[k] for k in parent_values)
+
+
+class _SharedMemberCPD(ParametricFactor):
+    """Facade CPD for one member of a shared group.
+
+    Holds no parameters of its own: it delegates to the shared :class:`_SharedCPD`
+    ``core`` and returns this member's slice of the cached stacked parameters
+    (a *view*, so no memory is duplicated). It quacks like a CPD —
+    ``variable``, ``parents``, ``is_root``, ``forward`` — so the graph and every
+    inference backend treat it as an ordinary node with no changes.
+    """
+
+    def __init__(
+        self,
+        variable: Variable,
+        parents: List[Variable],
+        core: _SharedCPD,
+        index: int,
+        member_size: int,
+    ):
+        nn.Module.__init__(self)  # deliberately skip ParametricFactor.__init__
+        self.variable = variable
+        self.parents = list(parents)
+        self.core = core  # shared module; registered once (parameters() dedups by identity)
+        self._index = index
+        self._member_size = member_size
+
+    @property
+    def is_root(self) -> bool:
+        return len(self.parents) == 0
+
+    def forward(self, parent_values=None, **layer_kwargs):
+        stacked = self.core(parent_values, **layer_kwargs)
+        start = self._index * self._member_size
+        sl = slice(start, start + self._member_size)
+        return {pname: value[..., sl] for pname, value in stacked.items()}
+
+
+def _make_shared_cpd(variables, parametrization, parents, aggregate, activate, shared_key):
+    """Build a shared CPD over homogeneous ``variables``; return one facade per member.
+
+    All members must share the same distribution family and size. The core
+    parametrizes a synthetic stacked variable of size ``n * member_size``; each
+    returned :class:`_SharedMemberCPD` slices out its member. The facades are
+    ordinary graph nodes, so the PGM and inference engines need no changes.
+    """
+    if isinstance(parametrization, list):
+        raise TypeError(
+            f"ParametricCPD(shared_key={shared_key!r}): a shared group is driven by ONE "
+            "parametrization; pass a single nn.Module / dict / None, not a per-member list."
+        )
+    dist0, size0, kw0 = variables[0].distribution, variables[0].size, variables[0].dist_kwargs
+    for v in variables:
+        if v.distribution is not dist0 or v.size != size0:
+            raise ValueError(
+                f"ParametricCPD(shared_key={shared_key!r}): shared members must be homogeneous "
+                f"(same distribution and size); {v.name!r} is {v.distribution.__name__}/size "
+                f"{v.size} vs {dist0.__name__}/size {size0}."
+            )
+    member_size = size0
+    group_variable = type(variables[0])(
+        shared_key,
+        distribution=dist0,
+        size=len(variables) * member_size,
+        dist_kwargs=copy.deepcopy(kw0),
+    )
+    core = _SharedCPD(
+        group_variable, parametrization, parents=parents,
+        aggregate=aggregate, activate=activate,
+    )
+    return [
+        _SharedMemberCPD(member, parents, core, i, member_size)
+        for i, member in enumerate(variables)
+    ]
