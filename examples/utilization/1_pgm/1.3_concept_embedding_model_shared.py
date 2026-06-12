@@ -1,6 +1,23 @@
+"""Concept Embedding Model with a *shared* concept CPD.
+
+The N concepts are parametrized **jointly** by one CPD and produced stacked
+(one forward of the encoder for all of them), yet each concept stays an
+individually addressable graph node — you can query, observe, or read out a
+single concept. ``shared_key`` on the CPD is the only thing needed:
+
+    concepts  = ConceptVariable(['c1', 'c2'], distribution=Bernoulli, size=1)
+    c_encoder = ParametricCPD(concepts, parametrization=encoder,
+                              parents=[embs], shared_key='concepts')  # -> one facade per member
+
+The sharing lives entirely inside the CPD (a cached core + per-member facades),
+so the BayesianNetwork and every inference engine are unchanged — it works with
+any backend. Members are ordinary nodes, hence ``*concepts`` is unpacked into
+``variables``/``factors``/``parents``, and they are addressed by member name.
+"""
+
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli
 
 import torch_concepts as pyc
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
@@ -9,7 +26,7 @@ from torch_concepts.data import ToyDataset
 from torch_concepts.nn import MLP, LinearEmbeddingToConcept, MixConceptEmbeddingToConcept, \
     ParametricCPD, BayesianNetwork, DeterministicInference
 
-# TODO: implement shared cpd logic that follow this API
+
 def main():
 
     seed_everything(42)
@@ -24,17 +41,17 @@ def main():
     x_train = dataset.input_data
     concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
     task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-    c_train = dataset.concepts[:, concept_idx]
-    y_train = dataset.concepts[:, task_idx]
+    c_train = dataset.concepts[:, concept_idx]   # (N, n_concepts)
+    y_train = dataset.concepts[:, task_idx]       # (N, n_tasks)
+    n_concepts = c_train.shape[1]
+    concept_names = [f"c{i + 1}" for i in range(n_concepts)]
 
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    embs = EmbeddingVariable(['embs'], distribution=Delta, size=(4, emb_dims))
-    # ----------------------------------------------------------------------------------
-    # shared concept variable with 4 concepts, each of size 1
-    concepts = ConceptVariable(['c1', 'c2', 'c3', 'c4'], distribution=Bernoulli, size=1, shared_key='concepts') 
-    # ----------------------------------------------------------------------------------
+    embs = EmbeddingVariable("embs", distribution=Delta, shape=(n_concepts, emb_dims))
+    # Shared concept group: c1..cN, each a Bernoulli of size 1.
+    concepts = ConceptVariable(concept_names, distribution=Bernoulli, size=1)
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
     layers = {
@@ -47,38 +64,37 @@ def main():
         ),
         # embedding encoder: (batch, latent_dims) -> (batch, n_concepts, embedding_size)
         "emb_encoder": pyc.nn.Sequential(
-            torch.nn.Linear(latent_dims, 4 * emb_dims),
-            torch.nn.Unflatten(unflattened_size=(4, emb_dims), dim=1),
+            torch.nn.Linear(latent_dims, n_concepts * emb_dims),
+            torch.nn.Unflatten(unflattened_size=(n_concepts, emb_dims), dim=1),
         ),
-        # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts)
+        # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts).
+        # ONE encoder shared across all concepts (per-concept embedding -> per-concept logit).
         "concept_encoder": pyc.nn.Sequential(
             LinearEmbeddingToConcept(in_embeddings=emb_dims, out_concepts=1),
-            torch.nn.Flatten()
+            torch.nn.Flatten(),
         ),
         # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
-        # Sequential (not torch.nn.Sequential) so the first layer can take both
-        # concepts and embeddings; the result is threaded through the Sigmoid.
         "task_predictor": pyc.nn.Sequential(
             MixConceptEmbeddingToConcept(
-                in_concepts=4,
+                in_concepts=n_concepts,
                 in_embeddings=emb_dims,
                 out_concepts=1,
-                cardinalities=[1, 1, 1, 1],
+                cardinalities=[1] * n_concepts,
             )
         ),
     }
 
     # ParametricCPD setup
     input_cpd = ParametricCPD(input_var, parents=[])
-    backbone = ParametricCPD(latent_var, parametrization=layers['backbone'], parents=[input_var])
-    emb_encoder = ParametricCPD(embs, parametrization=layers['emb_encoder'], parents=[latent_var])
-    c_encoder = ParametricCPD(concepts, parametrization=layers['concept_encoder'], parents=[embs], shared_key='concepts')
-    y_predictor = ParametricCPD(tasks, parametrization=layers['task_predictor'], parents=[concepts, embs])
+    backbone = ParametricCPD(latent_var, parametrization=layers["backbone"], parents=[input_var])
+    emb_encoder = ParametricCPD(embs, parametrization=layers["emb_encoder"], parents=[latent_var])
+    # ONE shared CPD for all concepts -> one ParametricCPD facade per member.
+    c_encoder = ParametricCPD(concepts, parametrization=layers["concept_encoder"], parents=[embs], shared_key="concepts")
+    y_predictor = ParametricCPD(tasks, parametrization=layers["task_predictor"], parents=[*concepts, embs])
 
-    # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, embs, concepts, tasks], 
-        factors=[input_cpd, backbone, emb_encoder, c_encoder, y_predictor]
+        variables=[input_var, latent_var, embs, *concepts, tasks],
+        factors=[input_cpd, backbone, emb_encoder, *c_encoder, y_predictor],
     )
 
     # Inference Initialization
@@ -90,35 +106,18 @@ def main():
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
-        # ------------------------------------------------------------
-        # 1 query all concepts together (with shared_key) P(c1, c2, c3, c4 | input)
         cy_pred = inference_engine.query(
-            query = {"concepts": c_train, "xor": y_train},
-            evidence = {'input': x_train}
+            query = {"c1": c_train[:, 0],
+                     "c2": c_train[:, 1],
+                     "xor": None }, 
+            evidence={"input": x_train}
         )
-        c_pred = cy_pred.params['c1']['probs'] # should be able to access c1
-        y_pred = cy_pred.params['xor']['probs']
-        # ------------------------------------------------------------
 
-        # ------------------------------------------------------------
-        # 2 query one concept P(c1, | input)
-        cy_pred = inference_engine.query(
-            query = {"c1": c_train[:,0], "xor": y_train},
-            evidence = {'input': x_train}
-        )
-        c_pred = cy_pred.params['c1']['probs']
+        c_pred = torch.cat([
+            cy_pred.params['c1']['probs'], 
+            cy_pred.params['c2']['probs']
+        ], dim=1)
         y_pred = cy_pred.params['xor']['probs']
-        # -------------------------------------------------------------
-
-        # ------------------------------------------------------------
-        # 3 other concepts as evidence P(c1, | input, c2, c3, c4)
-        cy_pred = inference_engine.query(
-            query = {"c1": c_train[:,0], "xor": y_train},
-            evidence = {'input': x_train, "c2": c_train[:,1], "c3": c_train[:,2], "c4": c_train[:,3]}
-        )
-        c_pred = cy_pred.params['c1']['probs']
-        y_pred = cy_pred.params['xor']['probs']
-        # -------------------------------------------------------------
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -129,24 +128,32 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+            task_acc = accuracy_score(y_train, y_pred.detach() > 0.5)
+            concept_acc = accuracy_score(c_train, c_pred.detach() > 0.5)
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_acc:.2f} | Concept Acc: {concept_acc:.2f}")
 
-    # print("=== Interventions ===")
-    # print(cy_pred.logits[:5])
+    # ------------------------------------------------------------------
+    # The shared CPD is addressable per member (the encoder still runs once).
+    # ------------------------------------------------------------------
+    concept_model.eval()
 
-    # int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
-    # int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
-    # with intervention(policies=int_policy_c,
-    #                   strategies=int_strategy_c,
-    #                   target_concepts=["c1", "c2"],
-    #                   quantiles=1):
-    #     # intervention affect the layer output 
-    #     # -> the parametrization of the distribution 
-    #     # -> the logits for discrete variables
-    #     cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
-    #     print(cy_pred.logits[:5])
+    # (1) Query a single concept — only its slice of the shared CPD is needed.
+    only_c1 = inference_engine.query({"c1": None}, evidence={"input": x_train})
+    print(f"\nP(c1 | input)         [:5]: {only_c1.params['c1']['probs'][:5].flatten().tolist()}")
+
+    only_c1 = inference_engine.query({"c1": c_train[:, 0]}, evidence={"input": x_train})
+    print(f"\nP(c1 | input) with data        [:5]: {only_c1.params['c1']['probs'][:5].flatten().tolist()}")
+
+    # (2) Query one concept with the others observed (partial evidence on the group).
+    others = {name: c_train[:, i:i + 1] for i, name in enumerate(concept_names) if name != "c1"}
+    cond_c1 = inference_engine.query({"c1": None}, evidence={**{"input": x_train}, **others})
+    print(f"P(c1 | input, c2) [:5]: {cond_c1.params['c1']['probs'][:5].flatten().tolist()}")
+
+    out = inference_engine.query({"xor": None}, evidence={"input": x_train})
+    print(f"\nP(xor | input) [:5]: {out.params['xor']['probs'][:5].flatten().tolist()}")
+
+    out = inference_engine.query({"xor": None}, evidence={"input": x_train, **others})
+    print(f"\nP(xor | input, c1, c2) [:5]: {out.params['xor']['probs'][:5].flatten().tolist()}")
 
     return
 
