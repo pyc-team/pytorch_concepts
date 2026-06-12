@@ -11,7 +11,7 @@ Entry points:
 """
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 import torch.distributions as dist
@@ -39,6 +39,7 @@ def build_relaxed_distribution(
     variable: Variable,
     params: Dict[str, torch.Tensor],
     temperature: torch.Tensor,
+    validate_args: Optional[bool] = None,
 ) -> dist.Distribution:
     """Build a reparameterised distribution.
 
@@ -46,6 +47,13 @@ def build_relaxed_distribution(
     whose ``rsample`` yields differentiable *soft* samples so that gradients flow
     without a straight-through estimator. Continuous families fall back to the
     exact distribution (which is already reparameterisable via ``rsample``).
+
+    ``validate_args`` is forwarded to the distribution constructors. Pass
+    ``False`` when the relaxed samples will be scored with ``log_prob`` (e.g.
+    importance weighting): at low temperature a relaxed draw lands on the
+    boundary of the simplex / unit interval, which torch's argument validation
+    rejects even though it is the expected behaviour. The default ``None``
+    preserves torch's global setting for callers that only ``rsample``.
     """
     D = variable.distribution
     if issubclass(D, dist.Bernoulli):
@@ -53,10 +61,10 @@ def build_relaxed_distribution(
         # Params are flat (*batch, size); reinterpret the single size axis as
         # the event so batch_shape stays (*batch,). The variable's declared
         # shape is restored on the sampled realization, not here.
-        d = dist.RelaxedBernoulli(temperature=temperature, **params)
-        return dist.Independent(d, 1)
+        d = dist.RelaxedBernoulli(temperature=temperature, **params, validate_args=validate_args)
+        return dist.Independent(d, 1, validate_args=validate_args)
     if issubclass(D, dist.OneHotCategorical):
-        return dist.RelaxedOneHotCategorical(temperature=temperature, **params)
+        return dist.RelaxedOneHotCategorical(temperature=temperature, **params, validate_args=validate_args)
     if issubclass(D, dist.Categorical):
         raise ValueError(
             f"Variable {variable.name!r}: plain Categorical cannot be sampled "

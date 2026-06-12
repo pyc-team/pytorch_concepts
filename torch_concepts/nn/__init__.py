@@ -69,8 +69,12 @@ from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.ancestral import AncestralInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.independent import IndependentInference
+from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
+from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
+from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
 from .modules.mid.inference.pyro.base import PyroBaseInference
 from .modules.mid.inference.pyro.variational import VariationalInference
+from .modules.mid.inference.pyro.importance import PyroImportanceSampling
 
 # Interventions (low-level)
 from .modules.low.inference.intervention import (
@@ -174,8 +178,12 @@ __all__ = [
     "AncestralInference",
     "RejectionSampling",
     "IndependentInference",
+    "ImportanceSampling",
+    "BaseProposal",
+    "MutilatedNetworkProposal",
     "PyroBaseInference",
     "VariationalInference",
+    "PyroImportanceSampling",
 
     # Interventions
     "RewiringIntervention",
