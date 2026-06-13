@@ -35,7 +35,7 @@ def main():
     # ParametricCPD setup
     input_cpd = ParametricCPD(input_var, parents=[]) # learnable prior parametrization is automatically set
     backbone = ParametricCPD(latent_var, parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()), parents=[input_var])
-    c_encoder = ParametricCPD(concepts, parametrization=LinearEmbeddingToConcept(latent_dims, 1), parents=[latent_var])
+    c_encoder = ParametricCPD(concepts, parametrization=LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=1), parents=[latent_var])
     y_predictor = ParametricCPD(tasks, parametrization=LinearConceptToConcept(in_concepts=2, out_concepts=2), parents=[*concepts])
 
     # ProbabilisticModel Initialization

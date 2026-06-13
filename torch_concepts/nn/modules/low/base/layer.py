@@ -4,10 +4,13 @@ Base layer classes for concept-based neural networks.
 This module provides abstract base classes for building concept layers,
 including encoders and predictors.
 """
+from typing import Union
 
 import torch
 
 from abc import ABC
+
+from torch_concepts import AxisAnnotation, AnnotatedTensor
 
 
 class BaseConceptLayer(ABC, torch.nn.Module):
@@ -57,9 +60,9 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     def __init__(
         self,
-        out_concepts: int,
-        in_concepts: int = None,
-        in_embeddings: int = None,
+        out_concepts: Union[int, AxisAnnotation],
+        in_concepts: Union[int, AxisAnnotation] = None,
+        in_embeddings: Union[int, AxisAnnotation] = None,
         *args,
         **kwargs,
     ):
@@ -67,6 +70,16 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self.in_concepts = in_concepts
         self.in_embeddings = in_embeddings
         self.out_concepts = out_concepts
+
+        self.in_concepts_shape = None
+        if in_concepts is not None:
+            self.in_concepts_shape = in_concepts if isinstance(in_concepts, int) else in_concepts.shape
+
+        self.in_embeddings_shape = None
+        if in_embeddings is not None:
+            self.in_embeddings_shape = in_embeddings if isinstance(in_embeddings, int) else in_embeddings.shape
+
+        self.out_concepts_shape = out_concepts if isinstance(out_concepts, int) else out_concepts.shape
 
     def forward(
         self,
@@ -86,107 +99,13 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         """
         raise NotImplementedError
 
-
-class BaseEncoder(BaseConceptLayer):
-    """
-    Abstract base class for concept encoder layers.
-
-    Encoders transform input embeddings into concept representations.
-
-    Args:
-        out_concepts: Number of output concept features.
-        in_embeddings: Number of input embedding features (optional).
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import BaseEncoder
-        >>>
-        >>> # Create a custom encoder
-        >>> class MyEncoder(BaseEncoder):
-        ...     def __init__(self, out_concepts, in_embeddings):
-        ...         super().__init__(
-        ...             out_concepts=out_concepts,
-        ...             in_embeddings=in_embeddings
-        ...         )
-        ...         self.net = torch.nn.Sequential(
-        ...             torch.nn.Linear(in_embeddings, 128),
-        ...             torch.nn.ReLU(),
-        ...             torch.nn.Linear(128, out_concepts)
-        ...         )
-        ...
-        ...     def forward(self, embeddings):
-        ...         return self.net(embeddings)
-        >>>
-        >>> # Example usage
-        >>> encoder = MyEncoder(out_concepts=10, in_embeddings=784)
-        >>>
-        >>> # Generate random input embeddings (e.g., flattened MNIST)
-        >>> x = torch.randn(4, 784)  # batch_size=4, pixels=784
-        >>>
-        >>> # Encode to concepts
-        >>> concepts = encoder(x)
-        >>> print(concepts.shape)  # torch.Size([4, 10])
-    """
-
-    def __init__(self,
-                 out_concepts: int,
-                 in_embeddings: int = None):
-        super().__init__(
-            in_concepts=None,
-            in_embeddings=in_embeddings,
-            out_concepts=out_concepts
-        )
-
-
-class BasePredictor(BaseConceptLayer):
-    """
-    Abstract base class for concept predictor layers.
-
-    Predictors take concept representations (plus optional embeddings)
-    and predict other concept representations.
-
-    Args:
-        out_concepts: Number of output concept features.
-        in_concepts: Number of input concept features.
-        in_embeddings: Number of input embedding features (optional).
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import BasePredictor
-        >>>
-        >>> # Create a custom predictor
-        >>> class MyPredictor(BasePredictor):
-        ...     def __init__(self, out_concepts, in_concepts):
-        ...         super().__init__(
-        ...             out_concepts=out_concepts,
-        ...             in_concepts=in_concepts,
-        ...         )
-        ...         self.linear = torch.nn.Linear(in_concepts, out_concepts)
-        ...
-        ...     def forward(self, concepts):
-        ...         return self.linear(concepts)
-        >>>
-        >>> # Example usage
-        >>> predictor = MyPredictor(out_concepts=3, in_concepts=10)
-        >>>
-        >>> # Generate random concept probabilities
-        >>> concept_probs = torch.rand(4, 10)  # batch_size=4, n_concepts=10
-        >>>
-        >>> # Predict task labels from concepts
-        >>> task_logits = predictor(concept_probs)
-        >>> print(task_logits.shape)  # torch.Size([4, 3])
-    """
-
-    def __init__(self,
-                 out_concepts: int,
-                 in_concepts: int,
-                 in_embeddings: int = None,
-                 **kwargs):
-        super().__init__(
-            in_concepts=in_concepts,
-            in_embeddings=in_embeddings,
-            out_concepts=out_concepts,
-        )
+    def annotate(self, x, out_concepts: AxisAnnotation = None) -> AnnotatedTensor:
+        if out_concepts is None:
+            if isinstance(self.out_concepts, AxisAnnotation):
+                out_concepts = self.out_concepts
+            else:
+                return x
+        return AnnotatedTensor(x, out_concepts)
 
     def prune(self, mask: torch.Tensor):
         """

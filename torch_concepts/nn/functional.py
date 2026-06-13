@@ -162,7 +162,6 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
-    assert torch.all(torch.tensor(groups) > 1), f"All group sizes must be greater than 1. Current group_sizes: {groups}"
 
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 

@@ -4,11 +4,14 @@ LazyConstructor module for delayed module instantiation.
 This module provides a wrapper that delays the instantiation of neural network
 modules until the required dimensions are known, enabling flexible model construction.
 """
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 
 import inspect
+
+from torch_concepts import AxisAnnotation
+
 
 def _filter_kwargs_for_ctor(cls, **kwargs):
     """
@@ -149,8 +152,8 @@ class LazyConstructor(torch.nn.Module):
 
     def build(self,
               out_concepts: int,
-              in_concepts: Optional[int] = None,
-              in_embeddings: Optional[int] = None,
+              in_concepts: Optional[Union[int, AxisAnnotation]] = None,
+              in_embeddings: Optional[Union[int, AxisAnnotation]] = None,
               **kwargs
               ) -> torch.nn.Module:
         """

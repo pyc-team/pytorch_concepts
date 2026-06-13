@@ -24,8 +24,7 @@ from torch.nn import ModuleDict
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, MLP
-from torch_concepts.nn import RandomPolicy, DoIntervention, intervention
+from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept
 
 
 def main():
@@ -48,25 +47,24 @@ def main():
     concept_dims = c_train.shape[1]
     task_dims = y_train.shape[1]
 
-    model = ModuleDict({
-        # input encoding: (batch, n_features) -> (batch, latent_dims)
-        "encoder": MLP(
-            input_size=n_features,
-            hidden_size=latent_dims,
-            n_layers=1,
-            activation='leaky_relu',
-        ),
-        # concept encoder: (batch, latent_dims) -> (batch, concept_dims)
-        "concept_encoder": LinearEmbeddingToConcept(
-            in_embeddings=latent_dims,
-            out_concepts=concept_dims,
-        ),
-        # predictor: (batch, concept_dims) -> (batch, task_dims)
-        "task_predictor": LinearConceptToConcept(
-            in_concepts=concept_dims,
-            out_concepts=task_dims,
-        ),
-    })
+    latent_encoder = torch.nn.Sequential(
+        torch.nn.Linear(n_features, latent_dims),
+        torch.nn.LeakyReLU(),
+    )
+
+    # PyC layers
+    c_encoder = LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=concept_dims)
+    y_predictor = LinearConceptToConcept(in_concepts=concept_dims, out_concepts=task_dims)
+
+    # these are equivalent to the following torch layers
+    # c_encoder = torch.nn.Linear(latent_dims, concept_dims)
+    # y_predictor = torch.nn.Linear(concept_dims, task_dims)
+    
+    model = ModuleDict(
+        {"latent_encoder": latent_encoder,
+         "concept_encoder": c_encoder,
+         "task_predictor": y_predictor}
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -75,9 +73,9 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        embeddings = model["encoder"](x_train)
-        c_pred = model["concept_encoder"](embeddings)
-        y_pred = model["task_predictor"](c_pred)
+        latent = model["latent_encoder"](x_train)
+        c_pred = model["concept_encoder"](embeddings=latent)
+        y_pred = model["task_predictor"](concepts=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -91,20 +89,6 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
-
-    int_policy_c = RandomPolicy(out_concepts=c_train.shape[1], scale=100)
-    int_strategy_c = DoIntervention(model=model["concept_encoder"], constants=-10)
-    with intervention(
-        policies=int_policy_c,
-        strategies=int_strategy_c,
-        target_concepts=[1],
-        quantiles=1
-    ) as new_encoder:
-        embeddings = model["encoder"](x_train)
-        c_pred = new_encoder(embeddings)
-        y_pred = model["task_predictor"](c_pred)
-        cy_pred = torch.cat([c_pred, y_pred], dim=1)
-        print('intervened output: \n', cy_pred[:5])
 
     return
 

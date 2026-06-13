@@ -4,14 +4,17 @@ Linear predictor modules for concept-based models.
 This module provides linear prediction layers that transform concept
 representations into new concept representations using a linear layer.
 """
+from typing import Union
+
 import torch
 
-from ..base.layer import BasePredictor
+from torch_concepts import AxisAnnotation
+from ..base.layer import BaseConceptLayer
 
 from ....functional import prune_linear_layer
 
 
-class LinearConceptToConcept(BasePredictor):
+class LinearConceptToConcept(BaseConceptLayer):
     """
     Linear concept predictor.
 
@@ -50,8 +53,8 @@ class LinearConceptToConcept(BasePredictor):
 
     def __init__(
         self,
-        in_concepts: int,
-        out_concepts: int,
+        in_concepts: Union[int, AxisAnnotation],
+        out_concepts: Union[int, AxisAnnotation],
         *args,
         **kwargs,
     ):

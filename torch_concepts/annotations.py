@@ -74,6 +74,7 @@ class AxisAnnotation:
     labels: List[str]
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
+    types: Optional[List[str]] = field(default=None)  # e.g., 'discrete' or 'continuous' # TODO: make consistent
     metadata: Optional[Dict[str, Dict]] = field(default=None)
 
     def __setattr__(self, key, value):
@@ -271,6 +272,27 @@ class AxisAnnotation:
                 for i, name in enumerate(self.labels)}
     
     @cached_property
+    def labels_by_type(self) -> Dict[str, List[str]]:
+        """Precomputed mapping from type name to the ordered list of labels of that type.
+
+        Returns ``{}`` when ``types`` is ``None``.
+
+        Example:
+            >>> axis = AxisAnnotation(
+            ...     labels=['a', 'b', 'c'],
+            ...     types=['discrete', 'continuous', 'discrete'],
+            ... )
+            >>> axis.labels_by_type
+            {'discrete': ['a', 'c'], 'continuous': ['b']}
+        """
+        if self.types is None:
+            return {}
+        groups: Dict[str, List[str]] = {}
+        for label, t in zip(self.labels, self.types):
+            groups.setdefault(t, []).append(label)
+        return groups
+
+    @cached_property
     def type_groups(self) -> Dict[str, Dict[str, List]]:
         """Precomputed type-based groupings at both concept and logit levels.
         
@@ -303,9 +325,11 @@ class AxisAnnotation:
         
         for i, label in enumerate(self.labels):
             card = self.cardinalities[i]
-            
-            # Determine type from metadata or infer from cardinality
-            if self.metadata and label in self.metadata:
+
+            # Prefer the first-class `types` field, then metadata, then infer
+            if self.types is not None:
+                concept_type = self.types[i]
+            elif self.metadata and label in self.metadata:
                 concept_type = self.metadata[label].get('type', 'discrete')
             else:
                 concept_type = 'discrete'  # Default assumption
@@ -402,6 +426,33 @@ class AxisAnnotation:
         """
         return self.get_slice(labels)
 
+    @classmethod
+    def empty(
+            cls,
+            n: int,
+            cardinalities: Optional[Union[int, List[int]]] = None,
+            types: Optional[Union[str, List[str]]] = None
+    ) -> "AxisAnnotation":
+        """Create an AxisAnnotation with *n* anonymous binary labels ``c_0 … c_{n-1}``.
+
+        Args:
+            n: Number of labels.
+
+        Returns:
+            A new :class:`AxisAnnotation` with labels ``['c_0', 'c_1', 'c_2', 'c_3']``.
+
+        Example:
+            >>> axis = AxisAnnotation.empty(4)
+            >>> axis.labels   # ['c_0', 'c_1', 'c_2', 'c_3']
+        """
+        cardinalities = [cardinalities] * n if isinstance(cardinalities, int) else cardinalities
+        types = [types] * n if isinstance(types, str) else types  # broadcast single str to list
+        return cls(
+            labels=[f"c_{i}" for i in range(n)],
+            cardinalities=cardinalities,
+            types=types
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert to JSON-serializable dictionary.
@@ -416,6 +467,7 @@ class AxisAnnotation:
             'is_nested': self.is_nested,
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
+            'types': list(self.types) if self.types else None,
             'metadata': self.metadata,
         }
         return result
@@ -444,6 +496,7 @@ class AxisAnnotation:
             labels=labels,
             states=states,
             cardinalities=cardinalities,
+            types=data.get('types'),
             metadata=data.get('metadata'),
         )
 
@@ -464,7 +517,7 @@ class AxisAnnotation:
 
         idxs = [self.get_index(lab) for lab in keep_labels]
 
-        # 2) slice labels / states / cardinalities
+        # 2) slice labels / states / cardinalities / types
         new_labels = [self.labels[i] for i in idxs]
 
         if self.states is not None:
@@ -473,6 +526,8 @@ class AxisAnnotation:
         else:
             new_states = None
             new_cards = None
+
+        new_types = [self.types[i] for i in idxs] if self.types is not None else None
 
         # 3) slice metadata (if present)
         new_metadata = None
@@ -484,15 +539,25 @@ class AxisAnnotation:
             labels=new_labels,
             states=new_states,
             cardinalities=new_cards,
+            types=new_types,
             metadata=new_metadata,
         )
 
-    # --- AxisAnnotation: add a tiny union helper (non-nested kept non-nested) ---
     def union_with(self, other: "AxisAnnotation") -> "AxisAnnotation":
         left = list(self.labels)
         right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
-        # keep it simple: stay non-nested; merge metadata left-win
+        # merge types: left types + right-only types (left-wins for overlap)
+        new_types = None
+        if self.types is not None or other.types is not None:
+            left_types = self.types or ['discrete'] * len(self.labels)
+            right_types = other.types or ['discrete'] * len(other.labels)
+            right_only_types = [
+                right_types[other.labels.index(l)]
+                for l in right_only
+            ]
+            new_types = left_types + right_only_types
+        # merge metadata left-wins
         meta = None
         if self.metadata or other.metadata:
             meta = {}
@@ -501,7 +566,7 @@ class AxisAnnotation:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return AxisAnnotation(labels=labels, states=None, cardinalities=None, metadata=meta)
+        return AxisAnnotation(labels=labels, states=None, cardinalities=None, types=new_types, metadata=meta)
 
 
 class Annotations:

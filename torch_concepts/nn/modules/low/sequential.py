@@ -1,45 +1,32 @@
-"""A ``Sequential`` container whose first module may take multiple inputs."""
+"""
+Annotated sequential container for concept-based pipelines.
+"""
+from typing import Optional, Union
 
 import torch
 
+from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.tensor import AnnotatedTensor
+
 
 class Sequential(torch.nn.Sequential):
-    r"""``nn.Sequential`` whose **first** module may take more than one input.
+    """``nn.Sequential`` whose **first** module may take multiple inputs.
 
-    Plain ``torch.nn.Sequential`` threads a single tensor through every child,
-    so it cannot host a PyC layer like
-    :class:`~torch_concepts.nn.MixConceptEmbeddingToConcept` or
-    :class:`~torch_concepts.nn.HyperlinearConceptEmbeddingToConcept` whose
-    ``forward(concepts, embeddings)`` takes two inputs.
+    Standard ``nn.Sequential`` threads one tensor through the chain, so its first
+    layer cannot be a multi-input PyC layer such as
+    :class:`~torch_concepts.nn.MixConceptEmbeddingToConcept` (``forward(concepts,
+    embeddings)``). This subclass forwards **all** of its inputs to the first
+    module, then threads that module's single output through the rest — while a
+    single-tensor ``seq(x)`` still behaves exactly like ``nn.Sequential``.
 
-    This subclass simply forwards **all** of its inputs — positional or keyword —
-    to the *first* module, then threads that module's single output through the
-    remaining (plain, single-tensor) modules. That one rule makes it a superset
-    of ``nn.Sequential``:
-
-    - ``net(x)`` behaves exactly like ``nn.Sequential`` (single tensor);
-    - ``net(concepts=c, embeddings=e)`` feeds a multi-input PyC first layer.
-
-    As a :class:`~torch_concepts.nn.ParametricCPD` parametrization it adapts
-    automatically: the factor reads its input signature from the first layer
-    (see ``_module_input_names``), so a PyC first layer makes the whole chain a
-    PyC layer and a standard first layer makes it a standard one.
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import (
-        ...     Sequential, HyperlinearConceptEmbeddingToConcept)
-        >>> net = Sequential(
-        ...     HyperlinearConceptEmbeddingToConcept(in_concepts=4, in_embeddings=8),
-        ...     torch.nn.Sigmoid(),
-        ... )
-        >>> out = net(concepts=torch.randn(2, 4), embeddings=torch.randn(2, 3, 8))
-        >>> out.shape
-        torch.Size([2, 3])
-        >>> # ...and still a drop-in single-input Sequential:
-        >>> Sequential(torch.nn.Linear(5, 3), torch.nn.ReLU())(torch.randn(2, 5)).shape
-        torch.Size([2, 3])
+    If ``out_concepts`` (an :class:`~torch_concepts.AxisAnnotation`) is set,
+    :meth:`annotate` wraps an output in an
+    :class:`~torch_concepts.tensor.AnnotatedTensor` to label its columns.
     """
+
+    def __init__(self, *args, out_concepts: Optional[AxisAnnotation] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.out_concepts = out_concepts
 
     def forward(self, *args, **kwargs):
         it = iter(self)
@@ -50,3 +37,11 @@ class Sequential(torch.nn.Sequential):
         for module in it:
             output = module(output)  # the rest are single-tensor
         return output
+    
+    def annotate(self, x, out_concepts: AxisAnnotation = None) -> AnnotatedTensor:
+        if out_concepts is None:
+            if isinstance(self.out_concepts, AxisAnnotation):
+                out_concepts = self.out_concepts
+            else:
+                return x
+        return AnnotatedTensor(x, out_concepts)

@@ -8,11 +8,13 @@ This module provides neural network components for building concept-based archit
 from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer,
-    BaseEncoder,
-    BasePredictor,
+    BaseConceptLayer
 )
-from torch_concepts.nn.modules.low.base.inference import BaseIntervention
+from torch_concepts.nn.modules.low.base.intervention import (
+    BaseConceptInterventionStrategy,
+    BaseModuleInterventionStrategy,
+    BaseInterventionPolicy
+)
 
 # LazyConstructor
 from .modules.low.lazy import LazyConstructor
@@ -20,18 +22,16 @@ from .modules.low.sequential import Sequential
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
-from .modules.low.encoders.stochastic import StochasticEmbeddingToConcept
 
 # Predictors
-from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, MixSumConceptEmbeddingToConcept
-from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
+from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
+from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
 
 # Dense layers
-from .modules.low.dense_layers import Dense, ResidualMLP, MLP
-from .modules.low.dense_layers import LinearEmbeddingEncoder, SelectorEmbeddingEncoder
-from .modules.low.ops import SumOp, ResidualCorrectionOp
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.sequential import Sequential
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
@@ -46,13 +46,11 @@ from .modules.metrics import ConceptMetrics, compute_cace
 # Output containers
 from .modules.outputs import ModelOutput, InferenceOutput
 
-# # Models (high-level)
+# Models (high-level)
 # from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 # from .modules.high.models.cbm import ConceptBottleneckModel
 # from .modules.high.models.cem import ConceptEmbeddingModel
 # from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
-
-
 
 # Models (mid-level)
 from .modules.mid.models.factor import ParametricFactor
@@ -62,80 +60,69 @@ from .modules.mid.models.bayesian_network import BayesianNetwork
 from .modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
+# base
 from .modules.mid.inference.base import BaseInference
 from .modules.mid.inference.torch.base import TorchBaseInference
+from .modules.mid.inference.pyro.base import PyroBaseInference
+# torch
 from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
+from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.ancestral import AncestralInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
-from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
 from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
-from .modules.mid.inference.pyro.base import PyroBaseInference
+# pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 from .modules.mid.inference.pyro.importance import PyroImportanceSampling
 
-# Interventions (low-level)
-from .modules.low.inference.intervention import (
-    RewiringIntervention,
-    GroundTruthIntervention,
-    DoIntervention,
-    DistributionIntervention,
-    intervention,
-)
+# Base intervention
+from .modules.low.intervention.intervention import intervention, BaseInterventionModule, InterventionModule
+
+# Intervention strategies
+from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
+from .modules.low.intervention.strategy.do import DoIntervention
+from .modules.low.intervention.strategy.distribution import DistributionIntervention
+from .modules.low.intervention.strategy.positive_weights import PositiveWeightsIntervention
 
 # Intervention policies
-from .modules.low.policy.uniform import UniformPolicy
-from .modules.low.policy.uncertainty import UncertaintyInterventionPolicy
-from .modules.low.policy.random import RandomPolicy
+from .modules.low.intervention.policy.uniform import UniformPolicy
+from .modules.low.intervention.policy.uncertainty import UncertaintyInterventionPolicy
+from .modules.low.intervention.policy.random import RandomPolicy
+from .modules.low.intervention.policy.gradient import GradientPolicy
+
 
 __all__ = [
     # Base classes
     "BaseConceptLayer",
-    "BaseEncoder",
-    "BasePredictor",
     "BaseGraphLearner",
     "BaseModel",
-    "BaseIntervention",
+    "BaseConceptInterventionStrategy",
+    "BaseModuleInterventionStrategy",
+    "BaseInterventionPolicy",
+    "BaseConstructor",
+    "BaseInterventionModule",
 
     # LazyConstructor
     "LazyConstructor",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
-    "StochasticEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
-    "MixConceptEmbeddingToConcept",
-    "MixSumConceptEmbeddingToConcept",
-    "HyperlinearConceptEmbeddingToConcept",
     "CallableConceptToConcept",
+    "HyperlinearConceptEmbeddingToConcept",
+    "MixConceptEmbeddingToConcept",
 
-    # Embedding encoders
-    "LinearEmbeddingToEmbedding",
-    "SelectorEmbeddingToEmbedding",
-
-    # Deprecated aliases (kept until consumers migrate)
-    "LinearLatentToConcept",
-    "LinearExogenousToConcept",
-    "StochasticLatentToConcept",
-    "MixConceptExogegnousToConcept",
-    "MixSumConceptExogenousToConcept",
-    "HyperlinearConceptExogenousToConcept",
-    
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
+    "Sequential",
     "LinearEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
-
-    # Ops
-    "SumOp",
-    "ResidualCorrectionOp",
-    "Sequential",
 
     # COSMO
     "WANDAGraphLearner",
@@ -154,12 +141,12 @@ __all__ = [
     "ModelOutput",
     "InferenceOutput",
 
-    # Models (high-level)
-    "BlackBox",
-    "BlackBoxTaskOnly",
-    "ConceptBottleneckModel",
-    "CausallyReliableConceptBottleneckModel",
-    "ConceptEmbeddingModel",
+    # # Models (high-level)
+    # "BlackBox",
+    # "BlackBoxTaskOnly",
+    # "ConceptBottleneckModel",
+    # "ConceptEmbeddingModel",
+    # "CausallyReliableConceptBottleneckModel",
 
     # Models (mid-level)
     "ParametricFactor",
@@ -186,14 +173,15 @@ __all__ = [
     "PyroImportanceSampling",
 
     # Interventions
-    "RewiringIntervention",
     "GroundTruthIntervention",
     "DoIntervention",
     "DistributionIntervention",
+    "PositiveWeightsIntervention",
     "intervention",
 
     # Intervention policies
     "UniformPolicy",
     "UncertaintyInterventionPolicy",
     "RandomPolicy",
+    "GradientPolicy",
 ]

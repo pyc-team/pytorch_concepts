@@ -1,14 +1,11 @@
 import torch
 from sklearn.metrics import accuracy_score
-from torch.nn import ModuleDict
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
     LinearEmbeddingToConcept,
-    LinearEmbeddingEncoder,
     HyperlinearConceptEmbeddingToConcept,
-    MLP,
 )
 
 
@@ -33,30 +30,26 @@ def main():
     n_concepts = c_train.shape[1]
     n_tasks = y_train.shape[1]
 
-    model = ModuleDict({
-        "encoder": MLP(
-            input_size=n_features,
-            hidden_size=latent_dims,
-            n_layers=2,
-            activation='leaky_relu',
-        ),
-        # Concept encoder: latent -> concepts
-        "concept_encoder": LinearEmbeddingToConcept(
-            in_embeddings=latent_dims,
-            out_concepts=n_concepts,
-        ),
-        # Exogenous encoder: latent -> per-task embeddings
-        "exog_encoder": LinearEmbeddingEncoder(
-            in_features=latent_dims,
-            out_features=exog_dims,
-            n_embeddings=n_tasks,
-        ),
-        "task_predictor": HyperlinearConceptEmbeddingToConcept(
-            in_concepts=n_concepts,
-            in_embeddings=exog_dims,
-            hidden_size=latent_dims,
-        ),
-    })
+    encoder = torch.nn.Sequential(
+        torch.nn.Linear(n_features, latent_dims),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(latent_dims, latent_dims),
+        torch.nn.LeakyReLU(),
+    )
+    concept_encoder = LinearEmbeddingToConcept(
+        in_embeddings=latent_dims,
+        out_concepts=n_concepts
+    )
+    exog_encoder = torch.nn.Sequential(
+        torch.nn.Linear(latent_dims, exog_dims*n_tasks),
+        torch.nn.Unflatten(dim=1, unflattened_size=(n_tasks, exog_dims)),
+    )
+    task_predictor = HyperlinearConceptEmbeddingToConcept(
+        in_concepts=n_concepts,
+        in_embeddings=exog_dims,
+        hidden_size=latent_dims,
+    )
+    model = torch.nn.Sequential(encoder, exog_encoder, concept_encoder, task_predictor)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -65,10 +58,10 @@ def main():
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        latent = model["encoder"](x_train)
-        c_pred = model["concept_encoder"](latent)  # (batch, n_concepts)
-        exog = model["exog_encoder"](latent)   # (batch, n_tasks, exog_dims)
-        y_pred = model["task_predictor"](concepts=c_pred, embeddings=exog)
+        latent = encoder(x_train)
+        c_pred = concept_encoder(embeddings=latent)
+        exog = exog_encoder(latent)
+        y_pred = task_predictor(concepts=c_pred, embeddings=exog)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -81,7 +74,8 @@ def main():
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | "
+                  f"Concept Acc: {concept_accuracy:.2f}")
 
     return
 

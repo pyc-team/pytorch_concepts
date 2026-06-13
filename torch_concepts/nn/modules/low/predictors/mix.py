@@ -1,11 +1,13 @@
 import torch
+import numpy as np
 
-from ..base.layer import BasePredictor
+from torch_concepts import AxisAnnotation
+from ..base.layer import BaseConceptLayer
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
-from typing import List
+from typing import List, Union
 
 
-class MixConceptEmbeddingToConcept(BasePredictor):
+class MixConceptEmbeddingToConcept(BaseConceptLayer):
     """
     Concept predictor that mixes concept activations with embeddings.
 
@@ -68,10 +70,9 @@ class MixConceptEmbeddingToConcept(BasePredictor):
     """
     def __init__(
         self,
-        in_concepts: int,
-        in_embeddings: int,
-        out_concepts: int,
-        cardinalities: List[int],
+        in_concepts: AxisAnnotation,
+        in_embeddings: Union[int, AxisAnnotation],
+        out_concepts: Union[int, AxisAnnotation],
         **kwargs,
     ):
         super().__init__(
@@ -79,27 +80,23 @@ class MixConceptEmbeddingToConcept(BasePredictor):
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
         )
-        if cardinalities is None:
-            raise ValueError("Cardinalities must be provided for MixConceptEmbeddingToConcept.")
-        else:
-            self.cardinalities = cardinalities
-            assert sum(self.cardinalities) == in_concepts, "Cardinalities must sum to in_concepts."
-
         # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
-        self.cardinalities_expanded = torch.tensor(self.cardinalities)
+        self.cardinalities_expanded = torch.tensor(in_concepts.cardinalities)
+        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) == 'discrete')
         cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
         start_positions = cumsum - self.cardinalities_expanded
-        self.mask_cardinality_1 = start_positions[self.cardinalities_expanded == 1]
-        self.cardinalities_expanded[self.cardinalities_expanded == 1] = 2
+        bernoulli_mask = self.cardinalities_expanded == 1 & self.binary_mask
+        self.mask_cardinality_1 = start_positions[bernoulli_mask]
+        self.cardinalities_expanded[bernoulli_mask] = 2
 
         self.bernoulli_to_categorical_embedding_splitter = torch.nn.Sequential(
-            torch.nn.Linear(in_embeddings, in_embeddings*2),
+            torch.nn.Linear(self.in_embeddings_shape, self.in_embeddings_shape*2),
             torch.nn.LeakyReLU(),
-            torch.nn.Unflatten(-1, (-1, in_embeddings)),
+            torch.nn.Unflatten(-1, (-1, self.in_embeddings_shape)),
         )
         self.predictor = torch.nn.Linear(
-            in_embeddings * len(self.cardinalities),
-            out_concepts,
+            self.in_embeddings_shape * len(in_concepts.cardinalities),
+            self.out_concepts_shape,
         )
 
     def _mix(
