@@ -37,7 +37,7 @@ from .....utils import add_distribution_to_annotations, add_activation_to_annota
 from ...utils import with_training_mode
 from ...outputs import ModelOutput
 
-from ...concept_graph import ConceptGraph
+from .....concept_graph import ConceptGraph
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.

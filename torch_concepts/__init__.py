@@ -10,7 +10,7 @@ from typing import Any
 from .annotations import Annotations, AxisAnnotation
 from .tensor import AnnotatedTensor
 from .nn.modules.utils import GroupConfig
-from .nn.modules.concept_graph import ConceptGraph
+from .concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
 from . import nn, distributions
