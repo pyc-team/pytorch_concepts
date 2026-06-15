@@ -42,15 +42,6 @@ _DEFAULT_DIST_KWARGS = {
     dist.RelaxedBernoulli: {'temperature': 0.5},
     dist.RelaxedOneHotCategorical: {'temperature': 0.5},
 }
-_DEFAULT_ACTIVATIONS = {
-    dist.Bernoulli: torch.sigmoid,
-    dist.RelaxedBernoulli: torch.sigmoid,
-    dist.OneHotCategorical: partial(torch.softmax, dim=-1),
-    dist.RelaxedOneHotCategorical: partial(torch.softmax, dim=-1),
-    dist.Normal: lambda x: x,
-    dist.MultivariateNormal: lambda x: x,
-    Delta: lambda x: x,
-}
 
 
 def _broadcast(value, n: int, name: str):

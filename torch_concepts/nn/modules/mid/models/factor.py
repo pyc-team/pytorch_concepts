@@ -11,6 +11,7 @@ from typing import Callable, Dict, Optional, List, Set, Tuple, Union
 import torch
 import torch.nn as nn
 from .variable import Variable
+from ...low.lazy import LazyConstructor
 
 
 # Known PyC parameter-name combinations
@@ -19,11 +20,6 @@ _PYC_PARAM_SETS = [
     {'embeddings'},
     {'concepts', 'embeddings'},
 ]
-
-
-def _identity(x: torch.Tensor) -> torch.Tensor:
-    """No-op activation: return the module output unchanged."""
-    return x
 
 
 def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -108,12 +104,6 @@ class ParametricFactor(nn.Module, ABC):
                 Dict[str, Callable],
             ]
         ] = None,
-        activate: Optional[
-            Union[
-                Callable,
-                Dict[str, Callable],
-            ]
-        ] = None,
     ):
         super().__init__()
 
@@ -149,9 +139,6 @@ class ParametricFactor(nn.Module, ABC):
             pname: self._resolve_aggregator(pname, agg) for pname, agg in per_param.items()
         }
 
-        self._activations: Dict[str, Callable] = self._resolve_per_param(
-            activate, parametrization, self._select_default_activation, "activate"
-        )
         self.parametrization = parametrization
 
     def _initialize_parametrization(
@@ -168,7 +155,6 @@ class ParametricFactor(nn.Module, ABC):
         :meth:`ParametricCPD._instantiate_lazy`). As a safeguard, an
         already-built ``LazyConstructor`` is unwrapped to its concrete module.
         """
-        from ...low.lazy import LazyConstructor
 
         modules: Dict[str, nn.Module] = {}
         for pname, module in parametrization.items():
@@ -264,47 +250,6 @@ class ParametricFactor(nn.Module, ABC):
         if embeddings:
             out["embeddings"] = _cat_parents(embeddings)
         return out
-
-    @staticmethod
-    def _resolve_per_param(
-        spec: Optional[Union[Callable, Dict[str, Callable]]],
-        names,
-        default_selector: Callable[[str], Callable],
-        what: str,
-    ) -> Dict[str, Callable]:
-        """Resolve a per-parameter callable spec into a ``{name: callable}`` dict.
-
-        Shared by ``aggregate`` and ``activate``: ``None`` falls back to
-        ``default_selector`` per name, a single callable applies to all, and a
-        dict supplies per-name overrides (auto-default for missing keys).
-        """
-        if spec is None:
-            return {pname: default_selector(pname) for pname in names}
-        if callable(spec):
-            return {pname: spec for pname in names}
-        if isinstance(spec, dict):
-            bad = [k for k, v in spec.items() if not callable(v)]
-            if bad:
-                raise TypeError(
-                    f"ParametricFactor: {what} dict contains non-callable "
-                    f"values for keys {bad}."
-                )
-            return {
-                pname: spec.get(pname, default_selector(pname))
-                for pname in names
-            }
-        raise TypeError(
-            f"ParametricFactor: `{what}` must be None, a callable, or a "
-            f"dict mapping parameter names to callables, got {type(spec).__name__}."
-        )
-
-    def _select_default_activation(self, pname: str) -> Callable:
-        """Default activation for a parameter (identity unless overridden).
-
-        Distribution-aware subclasses (e.g. :class:`ParametricCPD`) override this
-        to map each parameter's raw module output into its natural domain.
-        """
-        return _identity
 
     @abstractmethod
     def forward(

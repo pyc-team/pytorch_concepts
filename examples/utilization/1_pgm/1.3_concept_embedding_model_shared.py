@@ -24,7 +24,7 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import MLP, LinearEmbeddingToConcept, MixConceptEmbeddingToConcept, \
-    ParametricCPD, BayesianNetwork, DeterministicInference
+    ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior, Sequential
 
 
 def main():
@@ -71,20 +71,22 @@ def main():
         # ONE encoder shared across all concepts (per-concept embedding -> per-concept logit).
         "concept_encoder": pyc.nn.Sequential(
             LinearEmbeddingToConcept(in_embeddings=emb_dims, out_concepts=1),
+            torch.nn.Sigmoid(),
             torch.nn.Flatten(),
         ),
         # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
-        "task_predictor": pyc.nn.Sequential(
+        "task_predictor": Sequential(
             MixConceptEmbeddingToConcept(
                 in_concepts=pyc.AxisAnnotation.empty(n_concepts, types=['discrete'] * n_concepts),
                 in_embeddings=emb_dims,
                 out_concepts=1,
-            )
+            ),
+            torch.nn.Sigmoid(),        
         ),
     }
 
     # ParametricCPD setup
-    input_cpd = ParametricCPD(input_var, parents=[])
+    input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(input_var.size), parents=[])
     backbone = ParametricCPD(latent_var, parametrization=layers["backbone"], parents=[input_var])
     emb_encoder = ParametricCPD(embs, parametrization=layers["emb_encoder"], parents=[latent_var])
     # ONE shared CPD for all concepts -> one ParametricCPD facade per member.

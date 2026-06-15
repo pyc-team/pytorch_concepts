@@ -83,6 +83,7 @@ class ForwardInference(TorchBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        parallelize_levels: bool = False,
     ):
         super().__init__(pgm)
         if mode not in {"deterministic", "ancestral"}:
@@ -91,6 +92,9 @@ class ForwardInference(TorchBaseInference):
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
         self.mode = mode
         self.p_int = float(p_int)
+        # When True, variables in the same topological level (conditionally
+        # independent given the previous levels) are evaluated concurrently.
+        self.parallelize_levels = bool(parallelize_levels)
         self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
         self._step = 0
         self.register_buffer(
@@ -227,14 +231,37 @@ class ForwardInference(TorchBaseInference):
         Returns a list of ``(name, params, propagated_value)`` tuples, one per
         variable in ``level``; ``params`` is ``None`` for evidence variables
         (their CPD is skipped).
+
+        When :attr:`parallelize_levels` is enabled and the level holds
+        more than one variable, each call is dispatched with
+        :func:`torch.jit.fork`, which runs them on PyTorch's interop thread pool —
+        real multi-core parallelism on CPU and concurrent kernel launches on GPU,
+        while staying autograd-aware so gradients still flow. Otherwise the
+        variables are evaluated sequentially.
+
+        NOTE: with stochastic (``mode="ancestral"``) inference the per-thread
+        order of global-RNG consumption is not deterministic, so enabling
+        ``parallelize_levels`` trades exact run-to-run reproducibility for speed;
+        deterministic inference is unaffected.
         """
-        return [
-            self.predict_variable(
+        if not self.parallelize_levels or len(level) == 1:
+            return [
+                self.predict_variable(
+                    var, cache, batch_size, temperature,
+                    evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {})
+                )
+                for var in level
+            ]
+
+        futures = [
+            torch.jit.fork(
+                self.predict_variable,
                 var, cache, batch_size, temperature,
-                evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {})
+                evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {}),
             )
             for var in level
         ]
+        return [torch.jit.wait(f) for f in futures]
 
     def query(
         self,

@@ -20,6 +20,9 @@ from torch_concepts.nn.modules.low.base.intervention import (
 from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
+# Priors (root-CPD parametrizations)
+from .modules.low.priors import LearnablePrior, FixedPrior
+
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 
@@ -106,6 +109,10 @@ __all__ = [
 
     # LazyConstructor
     "LazyConstructor",
+
+    # Priors
+    "LearnablePrior",
+    "FixedPrior",
 
     # Encoder classes
     "LinearEmbeddingToConcept",

@@ -24,7 +24,7 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD, BayesianNetwork, DeterministicInference, AncestralInference,
-    LinearEmbeddingToConcept,
+    LinearEmbeddingToConcept, LearnablePrior, Sequential
 )
 
 N = 4          # number of concepts in the shared group
@@ -38,7 +38,7 @@ def build_shared(encoder):
     embs = EmbeddingVariable("embs", distribution=Delta, shape=(N, EMB))
     concepts = ConceptVariable(NAMES, distribution=Bernoulli, size=1)
     factors = [
-        ParametricCPD(embs, parents=[]),  # root, always supplied as evidence
+        ParametricCPD(embs, parametrization=LearnablePrior(embs.size), parents=[]),  # root, always supplied as evidence
         *ParametricCPD(concepts, parametrization=encoder, parents=[embs], shared_key="concepts"),
     ]
     return BayesianNetwork(variables=[embs, *concepts], factors=factors)
@@ -53,13 +53,16 @@ def build_individual(shared_linear):
     """
     emb_vars = [EmbeddingVariable(f"e{i}", distribution=Delta, size=EMB) for i in range(N)]
     concept_vars = [ConceptVariable(name, distribution=Bernoulli, size=1) for name in NAMES]
-    factors = [ParametricCPD(e, parents=[]) for e in emb_vars]
+    factors = [ParametricCPD(e, parametrization=LearnablePrior(e.size), parents=[]) for e in emb_vars]
     for i, concept_var in enumerate(concept_vars):
         enc = LinearEmbeddingToConcept(in_embeddings=EMB, out_concepts=1)
         with torch.no_grad():
             enc.encoder.weight.copy_(shared_linear.encoder.weight)
             enc.encoder.bias.copy_(shared_linear.encoder.bias)
-        factors.append(ParametricCPD(concept_var, parametrization=enc, parents=[emb_vars[i]]))
+        # Mirror the shared encoder exactly (linear -> sigmoid -> flatten) so the
+        # probs are in-domain: no activation is applied after the parametrization.
+        parametrization = Sequential(enc, nn.Sigmoid(), nn.Flatten())
+        factors.append(ParametricCPD(concept_var, parametrization=parametrization, parents=[emb_vars[i]]))
     return BayesianNetwork(variables=[*emb_vars, *concept_vars], factors=factors)
 
 
@@ -69,7 +72,7 @@ def main():
     # Shared encoder: per-concept embedding -> per-concept logit. Wrapping it in a
     # pyc.nn.Sequential lets the single LinearEmbeddingToConcept broadcast over the
     # N concept axis of the (B, N, EMB) embedding, then Flatten -> (B, N).
-    encoder = pyc.nn.Sequential(LinearEmbeddingToConcept(in_embeddings=EMB, out_concepts=1), nn.Flatten())
+    encoder = Sequential(LinearEmbeddingToConcept(in_embeddings=EMB, out_concepts=1), nn.Sigmoid(), nn.Flatten())
 
     # Count how many times the shared encoder actually runs.
     runs = {"n": 0}

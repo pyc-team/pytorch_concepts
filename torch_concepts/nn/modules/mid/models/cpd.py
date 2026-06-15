@@ -5,16 +5,14 @@ ParametricCPD — Conditional distribution parameterised by a neural network.
 from __future__ import annotations
 
 import copy
-from functools import partial
 from typing import Callable, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 import torch.distributions as dist
 
-from .factor import ParametricFactor, _identity
+from .factor import ParametricFactor
 from .variable import Variable, Delta
 
 
@@ -37,32 +35,7 @@ _DIST_VALID_PARAM_SETS: Dict[type, List[set]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Default domain-mapping activation per (distribution family, parameter name)
-# ---------------------------------------------------------------------------
-# Parametrization modules are expected to output unconstrained reals; these
-# defaults map each raw output into the parameter's natural domain so the user
-# does not have to bake the final non-linearity into every module:
-#   * ``probs``      -> sigmoid (Bernoulli) / softmax over the last dim
-#                       (Categorical, OneHotCategorical), giving values in [0, 1];
-#   * ``scale``      -> softplus, giving a positive standard deviation;
-#   * ``logits``, ``loc``, ``value``, ``scale_tril`` -> identity (already
-#     unconstrained, or assembled into their domain downstream).
-# Lookup is by ``issubclass`` (see :meth:`ParametricCPD._select_default_activation`);
-# any (distribution, parameter) pair not listed here falls back to the identity.
-_softmax = partial(torch.softmax, dim=-1)
-_DEFAULT_PARAM_ACTIVATIONS: Dict[type, Dict[str, Callable]] = {
-    dist.Bernoulli:                {"probs": torch.sigmoid, "logits": _identity},
-    dist.RelaxedBernoulli:         {"probs": torch.sigmoid, "logits": _identity},
-    dist.Categorical:              {"probs": _softmax, "logits": _identity},
-    dist.OneHotCategorical:        {"probs": _softmax, "logits": _identity},
-    dist.RelaxedOneHotCategorical: {"probs": _softmax, "logits": _identity},
-    dist.Normal:                   {"loc": _identity, "scale": F.softplus},
-    dist.MultivariateNormal:       {"loc": _identity, "scale_tril": _identity},
-    Delta:                         {"value": _identity},
-}
-
-# ---------------------------------------------------------------------------
-# Default parameter-name list per distribution (used for None / nn.Module shorthands).
+# Default parameter-name list per distribution (used for the nn.Module shorthand).
 # ---------------------------------------------------------------------------
 # For distributions whose only ambiguity is probs-vs-logits, ``probs`` is the
 # default.  For distributions that require *multiple distinct* parameters (e.g.
@@ -79,54 +52,28 @@ _DIST_DEFAULT_PARAM_SET: Dict[type, List[str]] = {
     Delta:                         ["value"],
 }
 
-class _RootParameter(nn.Module):
-    """Learnable parameter module for root CPD nodes (no parents).
-
-    Wraps a single ``nn.Parameter`` of the required size and returns it on
-    ``forward()``, making it a drop-in replacement for any user-supplied
-    no-argument parametrization module.  The parameter is initialised from a
-    standard normal distribution (random init).
-    """
-
-    def __init__(self, size: int) -> None:
-        super().__init__()
-        self.param = nn.Parameter(torch.randn(size))
-
-    def forward(self) -> torch.Tensor:
-        return self.param
-
 
 class ParametricCPD(ParametricFactor):
     """Conditional distribution parameterised by a neural network
     :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
 
-    ``parametrization`` accepts three forms:
+    ``parametrization`` is **required** (no default is inferred) and accepts two
+    forms:
 
     * **Dict** ``{param_name: nn.Module}`` — explicit, works for any distribution.
-    * **Single** ``nn.Module`` — shorthand when the distribution has one canonical
-      parameter (e.g. Bernoulli → ``probs``, Delta → ``value``). Raises if the
+    * **Single** ``nn.Module`` — shorthand when the distribution has 
+      one parameter (e.g. Bernoulli → ``probs``, Delta → ``value``). Raises if the
       distribution requires multiple distinct parameters (e.g. Normal needs both
       ``loc`` and ``scale``); pass a dict in that case.
-    * ``None`` — only valid for *root* CPDs (no parents). A learnable
-      :class:`_RootParameter` (randomly initialised ``torch.Parameter``) is
-      created automatically for each distribution parameter in the canonical set.
 
-    Each module produces an *unconstrained* real-valued tensor; the ``activate``
-    step then maps that output into the parameter's natural domain.
+    Every module must already emit a value in the parameter's natural domain. 
+    Root CPDs (no parents) use the same interface:
+    pass a :class:`~torch_concepts.nn.LearnablePrior` as the parametrization,
+    which holds a learnable parameter and returns it on ``forward()``.
 
-    ``activate`` mirrors ``aggregate`` and accepts ``None`` (default), a single
-    ``Callable``, or a ``Dict[str, Callable]`` keyed by parameter name. When
-    ``None``, a domain-aware default is selected per parameter (see
-    :data:`_DEFAULT_PARAM_ACTIVATIONS`): e.g. a Bernoulli ``probs`` is passed
-    through ``sigmoid`` to land in ``[0, 1]``, a Normal ``scale`` through
-    ``softplus`` to stay positive, while unconstrained parameters such as
-    ``logits``/``loc`` pass through unchanged. Because the default already
-    applies the squashing non-linearity, parametrization modules should output
-    raw reals (do not append your own ``nn.Sigmoid``/``nn.Softmax``).
-
-    Example — root Bernoulli prior (default parametrization):
+    Example — root Bernoulli prior (logits parametrized by a LearnablePrior):
     ```
-        prior = ParametricCPD(variable=z)          # z has no parents → _RootParameter auto-created
+        prior = ParametricCPD(variable=z, parametrization={"logits": LearnablePrior(z.size)})
     ```
 
     Example — non-root Bernoulli CPD (single-module shorthand):
@@ -139,8 +86,8 @@ class ParametricCPD(ParametricFactor):
     ```
 
     Passing a list of ``Variable`` instances returns a list of independent CPDs
-    sharing the same parent list; ``parametrization`` may be ``None``, a single
-    dict / ``nn.Module`` (deep-copied per CPD), or a per-CPD list of dicts.
+    sharing the same parent list; ``parametrization`` may be a single dict /
+    ``nn.Module`` (deep-copied per CPD), or a per-CPD list of dicts.
     """
 
     def __new__(
@@ -151,7 +98,6 @@ class ParametricCPD(ParametricFactor):
         ] = None,
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
-        activate: Optional[Union[Callable, Dict[str, Callable]]] = None,
         shared_key: Optional[str] = None,
     ):
         # Single-Variable path: defer to normal __init__.
@@ -170,7 +116,7 @@ class ParametricCPD(ParametricFactor):
         # Shared path: one CPD parametrizes all variables jointly (stacked),
         # exposing per-variable facades that slice the shared output.
         if shared_key is not None:
-            return _make_shared_cpd(variable, parametrization, parents, aggregate, activate, shared_key)
+            return _make_shared_cpd(variable, parametrization, parents, aggregate, shared_key)
 
         n = len(variable)
         if isinstance(parametrization, list):
@@ -189,17 +135,15 @@ class ParametricCPD(ParametricFactor):
             modules = [copy.deepcopy(parametrization) for _ in range(n)]
         elif isinstance(parametrization, nn.Module):
             modules = [copy.deepcopy(parametrization) for _ in range(n)]
-        elif parametrization is None:
-            modules = [None] * n
         else:
             raise TypeError(
-                "ParametricCPD: `parametrization` must be None, an nn.Module, a dict "
+                "ParametricCPD: `parametrization` must be an nn.Module, a dict "
                 "mapping parameter names to nn.Module instances, or a list of such dicts; "
                 f"got {type(parametrization).__name__}."
             )
 
         return [
-            cls(v, modules[i], parents=parents, aggregate=aggregate, activate=activate)
+            cls(v, modules[i], parents=parents, aggregate=aggregate)
             for i, v in enumerate(variable)
         ]
 
@@ -209,7 +153,6 @@ class ParametricCPD(ParametricFactor):
         parametrization: Optional[Union[nn.Module, Dict[str, nn.Module]]] = None,
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
-        activate: Optional[Union[Callable, Dict[str, Callable]]] = None,
         shared_key: Optional[str] = None,
     ):
         # When __new__ returned a list, __init__ is also invoked once per
@@ -231,27 +174,13 @@ class ParametricCPD(ParametricFactor):
 
         # --- Expand parametrization shorthands ---
         if parametrization is None:
-            if parents:
-                raise ValueError(
-                    f"ParametricCPD({variable.name!r}): `parametrization=None` is only valid "
-                    "for root CPDs with no parents; pass an explicit parametrization for "
-                    "non-root nodes."
-                )
-            default_pnames = next(
-                (pnames for base, pnames in _DIST_DEFAULT_PARAM_SET.items()
-                 if issubclass(D, base)),
-                None,
+            raise ValueError(
+                f"ParametricCPD({variable.name!r}): `parametrization` is required. "
+                "There is no default for any node (root or non-root); pass an "
+                "nn.Module or a {param_name: nn.Module} dict whose output is already "
+                "in the parameter's domain. For a root prior, pass a LearnablePrior, "
+                "e.g. parametrization={'logits': LearnablePrior(size)}."
             )
-            if default_pnames is None:
-                raise ValueError(
-                    f"ParametricCPD({variable.name!r}): cannot infer a default parametrization "
-                    f"for {D.__name__}; pass an explicit parametrization dict."
-                )
-            param_sizes = variable.param_sizes
-            parametrization = {
-                pname: _RootParameter(param_sizes[pname])
-                for pname in default_pnames
-            }
         elif isinstance(parametrization, nn.Module):
             default_pnames = next(
                 (pnames for base, pnames in _DIST_DEFAULT_PARAM_SET.items()
@@ -301,18 +230,15 @@ class ParametricCPD(ParametricFactor):
         # and target (output) variable sizes are known.
         parametrization = self._instantiate_lazy(parametrization, variable, parents)
 
-        # Store the target variable, parents, and effective distribution *before*
-        # super().__init__: resolving the default activations is distribution-aware
-        # (see _select_default_activation), so it must be able to read
-        # self.variable.distribution. These are plain (non-nn.Module) objects, so
-        # assigning them prior to nn.Module.__init__ is safe.
+        # Store the target variable and parents before super().__init__. These
+        # are plain (non-nn.Module) objects, so assigning them prior to
+        # nn.Module.__init__ is safe, and forward() reads self.variable.
         self.variable: Variable = variable
         self.parents: List[Variable] = parents
 
         super().__init__(
             parametrization=parametrization,
             aggregate=aggregate,
-            activate=activate,
         )
 
     @staticmethod
@@ -370,36 +296,18 @@ class ParametricCPD(ParametricFactor):
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
-    def _select_default_activation(self, pname: str) -> Callable:
-        """Domain-aware default activation for parameter ``pname``.
-
-        Looks up :data:`_DEFAULT_PARAM_ACTIVATIONS` by this CPD's distribution
-        family (``issubclass`` match, mirroring the parametrization-key check) and
-        returns the activation registered for ``pname`` — e.g. ``sigmoid`` for a
-        Bernoulli ``probs``, ``softplus`` for a Normal ``scale``. Any unlisted
-        (distribution, parameter) pair falls back to the identity.
-        """
-        D = self.variable.distribution
-        table = next(
-            (acts for base, acts in _DEFAULT_PARAM_ACTIVATIONS.items()
-             if issubclass(D, base)),
-            None,
-        )
-        if table is not None and pname in table:
-            return table[pname]
-        return _identity
-
     def forward(
         self,
         parent_values: Optional[Dict[str, torch.Tensor]] = None,
         **layer_kwargs,
     ):
-        """Compute the distribution parameters by processing the parent values through the 
+        """Compute the distribution parameters by processing the parent values through the
         nn.Module(s).
 
         Root CPDs are called with no parent values: the parametrization module
-        is called with no arguments and its raw scalar output is split into the
-        named parameter dict for ``self.variable.distribution``.
+        is called with no arguments and its output is returned under the named
+        parameter dict for ``self.variable.distribution`` (typically a
+        :class:`~torch_concepts.nn.LearnablePrior`).
 
         Non-root CPDs receive a ``parent_values`` dict mapping each parent name
         to its tensor value (shape ``(*batch, *parent.shape)``). These tensors are
@@ -407,9 +315,9 @@ class ParametricCPD(ParametricFactor):
         along the last axis) to produce a single input tensor, which is then
         forwarded to each parameter module independently.
 
-        Each module's raw output is passed through its per-parameter activation
-        (``self._activations[pname]``) to map it into the parameter's natural
-        domain before being returned.
+        No activation is applied: each module's output is used as the distribution
+        parameter verbatim, so the module must already emit a value in the
+        parameter's natural domain.
 
         Returns a ``Dict[str, Tensor]`` ready to pass to the distribution
         constructor (e.g. ``{"probs": ...}`` for Bernoulli,
@@ -418,15 +326,14 @@ class ParametricCPD(ParametricFactor):
         if self.is_root:
             # Root CPD: no parents expected.
             return {
-                pname: self._activations[pname](mod())
+                pname: mod()
                 for pname, mod in self.parametrization.items()
             }
 
         # Compose the Variable → Tensor dict for the parents (ordered by parent list).
         parent_variable_values = {p: parent_values[p.name] for p in self.parents}
 
-        # Each parameter module uses its own pre-resolved aggregation function,
-        # then its per-parameter activation maps the output into the right domain.
+        # Each parameter module uses its own pre-resolved aggregation function.
         result = {}
         for pname, mod in self.parametrization.items():
             cat = self._aggregators[pname](parent_variable_values)
@@ -435,7 +342,7 @@ class ParametricCPD(ParametricFactor):
                 out = mod(**layer_kwargs)
             else:
                 out = mod(cat, **layer_kwargs)
-            result[pname] = self._activations[pname](out)
+            result[pname] = out
         return result
 
 
@@ -513,7 +420,7 @@ class _SharedMemberCPD(ParametricFactor):
         return {pname: value[..., sl] for pname, value in stacked.items()}
 
 
-def _make_shared_cpd(variables, parametrization, parents, aggregate, activate, shared_key):
+def _make_shared_cpd(variables, parametrization, parents, aggregate, shared_key):
     """Build a shared CPD over homogeneous ``variables``; return one facade per member.
 
     All members must share the same distribution family and size. The core
@@ -524,7 +431,7 @@ def _make_shared_cpd(variables, parametrization, parents, aggregate, activate, s
     if isinstance(parametrization, list):
         raise TypeError(
             f"ParametricCPD(shared_key={shared_key!r}): a shared group is driven by ONE "
-            "parametrization; pass a single nn.Module / dict / None, not a per-member list."
+            "parametrization; pass a single nn.Module / dict, not a per-member list."
         )
     dist0, size0, kw0 = variables[0].distribution, variables[0].size, variables[0].dist_kwargs
     for v in variables:
@@ -543,7 +450,7 @@ def _make_shared_cpd(variables, parametrization, parents, aggregate, activate, s
     )
     core = _SharedCPD(
         group_variable, parametrization, parents=parents,
-        aggregate=aggregate, activate=activate,
+        aggregate=aggregate,
     )
     return [
         _SharedMemberCPD(member, parents, core, i, member_size)

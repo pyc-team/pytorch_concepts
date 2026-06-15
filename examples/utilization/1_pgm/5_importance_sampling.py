@@ -14,7 +14,7 @@ from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts import seed_everything, ConceptVariable
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork,
+    ParametricCPD, BayesianNetwork, LearnablePrior,
     AncestralInference, ImportanceSampling, MutilatedNetworkProposal,
     PyroImportanceSampling,
 )
@@ -38,12 +38,14 @@ def main():
     c2_var  = ConceptVariable("c2",  distribution=Bernoulli,         size=1)
     xor_var = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
-    c1_cpd  = ParametricCPD(c1_var)
-    c2_cpd  = ParametricCPD(c2_var)
+    # Discrete variables are parametrized by *logits* (an unconstrained real,
+    # already in-domain): roots use a LearnablePrior, the leaf an MLP (XOR is
+    # not linearly separable). No activation is applied after the parametrization.
+    c1_cpd  = ParametricCPD(c1_var, parametrization={"logits": LearnablePrior(1)})
+    c2_cpd  = ParametricCPD(c2_var, parametrization={"logits": LearnablePrior(1)})
     xor_cpd = ParametricCPD(
         xor_var,
-        # XOR is not linearly separable, so a small MLP is needed
-        parametrization=nn.Sequential(nn.Linear(2, 8), nn.ReLU(), nn.Linear(8, 2)),
+        parametrization={"logits": nn.Sequential(nn.Linear(2, 8), nn.ReLU(), nn.Linear(8, 2))},
         parents=[c1_var, c2_var],
     )
 
@@ -53,9 +55,10 @@ def main():
     )
 
     # ---- Training: forward with ancestral sampling (teacher-forced) ----------
+    # Parameters are logits, so the loss operates on logits directly.
     engine    = AncestralInference(model, p_int=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.05)
-    bce       = nn.BCELoss()
+    bce       = nn.BCEWithLogitsLoss()
 
     model.train()
     print("Training with ancestral sampling ...")
@@ -65,13 +68,13 @@ def main():
             query={"c1": c_train[:, 0:1], "c2": c_train[:, 1:2], "xor": y_train_oh},
             evidence={},
         )
-        c1_pred  = out.params["c1"]["probs"].expand_as(c_train[:, 0:1])
-        c2_pred  = out.params["c2"]["probs"].expand_as(c_train[:, 1:2])
-        xor_pred = out.params["xor"]["probs"]                   # (N, 2)
+        c1_logit  = out.params["c1"]["logits"].expand_as(c_train[:, 0:1])
+        c2_logit  = out.params["c2"]["logits"].expand_as(c_train[:, 1:2])
+        xor_logit = out.params["xor"]["logits"]                 # (N, 2)
         loss = (
-            bce(c1_pred,  c_train[:, 0:1])
-            + bce(c2_pred,  c_train[:, 1:2])
-            + bce(xor_pred, y_train_oh)
+            bce(c1_logit,  c_train[:, 0:1])
+            + bce(c2_logit,  c_train[:, 1:2])
+            + bce(xor_logit, y_train_oh)
         )
         loss.backward()
         optimizer.step()
@@ -100,32 +103,24 @@ def main():
         torch_p = torch_is.query({"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
         pyro_p  = pyro_is.query( {"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
 
-        # Exact posterior: enumerate all 4 (C1,C2) assignments under trained model
-        with torch.no_grad():
-            p_c1 = model.name_to_factor("c1")(parent_values={})["probs"].item()
-            p_c2 = model.name_to_factor("c2")(parent_values={})["probs"].item()
-            joint = []
-            for a, b in combos:
-                pa   = p_c1 if a == 1 else 1 - p_c1
-                pb   = p_c2 if b == 1 else 1 - p_c2
-                prbs = model.name_to_factor("xor")(parent_values={
-                    "c1": torch.tensor([[float(a)]]),
-                    "c2": torch.tensor([[float(b)]]),
-                })["probs"]                                     # (1, 2)
-                p_y  = prbs[0, 0 if xor_val == 1 else 1].item()
-                joint.append(pa * pb * p_y)
-            exact = torch.tensor(joint)
-            exact = exact / exact.sum()
+        # Empirical posterior from the dataset: among the rows whose XOR equals
+        # xor_val, the fraction taking each (C1, C2) assignment.
+        mask = (y_train[:, 0] == xor_val)
+        sub  = c_train[mask]
+        emp  = torch.tensor([
+            float(((sub[:, 0] == a) & (sub[:, 1] == b)).float().mean())
+            for a, b in combos
+        ])
 
         header = "  ".join(f"({a},{b})" for a, b in combos)
         fmt    = lambda t: "  ".join(f"{v:6.3f}" for v in t.tolist())
         print(f"\n=== P(C1, C2 | XOR={xor_val}) — evidence on leaf, query on roots ===")
         print(f"{'(C1,C2)':>10} | {header}")
-        print(f"{'exact':>10} | {fmt(exact)}")
+        print(f"{'empirical':>10} | {fmt(emp)}")
         print(f"{'torch IS':>10} | {fmt(torch_p)}")
         print(f"{'pyro  IS':>10} | {fmt(pyro_p)}")
-        print(f"{'':>10}   torch err {float((torch_p - exact).abs().max()):.3f}"
-              f"   pyro err {float((pyro_p - exact).abs().max()):.3f}")
+        print(f"{'':>10}   torch err {float((torch_p - emp).abs().max()):.3f}"
+              f"   pyro err {float((pyro_p - emp).abs().max()):.3f}")
 
     # ---- Backward query with additional concept evidence: P(C2 | C1=1, XOR=y) -
     # C1=1 is now observed alongside XOR — the posterior over the remaining root
@@ -140,30 +135,21 @@ def main():
         torch_p2 = torch_is.query({"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
         pyro_p2  = pyro_is.query( {"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
 
-        # Exact: P(C2=c2, C1=1, XOR=xor_val) normalised over c2 ∈ {0,1}
-        with torch.no_grad():
-            p_c1 = model.name_to_factor("c1")(parent_values={})["probs"].item()
-            p_c2 = model.name_to_factor("c2")(parent_values={})["probs"].item()
-            joint2 = []
-            for b in (0, 1):
-                pb   = p_c2 if b == 1 else 1 - p_c2
-                prbs = model.name_to_factor("xor")(parent_values={
-                    "c1": torch.tensor([[1.0]]),
-                    "c2": torch.tensor([[float(b)]]),
-                })["probs"]                                # (1, 2)
-                p_y  = prbs[0, 0 if xor_val == 1 else 1].item()
-                joint2.append(p_c1 * pb * p_y)
-            exact2 = torch.tensor(joint2)
-            exact2 = exact2 / exact2.sum()
+        # Empirical: among rows with C1=1 and XOR=xor_val, the fraction with each C2.
+        mask2 = (c_train[:, 0] == 1) & (y_train[:, 0] == xor_val)
+        sub2  = c_train[mask2]
+        emp2  = torch.tensor([
+            float((sub2[:, 1] == c2v).float().mean()) for c2v in (0.0, 1.0)
+        ])
 
         fmt2 = lambda t: "  ".join(f"{v:6.3f}" for v in t.tolist())
         print(f"\n=== P(C2 | C1=1, XOR={xor_val}) — evidence on concept+leaf, query on remaining root ===")
         print(f"{'C2':>10} |  C2=0   C2=1")
-        print(f"{'exact':>10} | {fmt2(exact2)}")
+        print(f"{'empirical':>10} | {fmt2(emp2)}")
         print(f"{'torch IS':>10} | {fmt2(torch_p2)}")
         print(f"{'pyro  IS':>10} | {fmt2(pyro_p2)}")
-        print(f"{'':>10}   torch err {float((torch_p2 - exact2).abs().max()):.3f}"
-              f"   pyro err {float((pyro_p2 - exact2).abs().max()):.3f}")
+        print(f"{'':>10}   torch err {float((torch_p2 - emp2).abs().max()):.3f}"
+              f"   pyro err {float((pyro_p2 - emp2).abs().max()):.3f}")
 
 
 if __name__ == "__main__":
