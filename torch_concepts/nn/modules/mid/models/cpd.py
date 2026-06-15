@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.distributions as dist
 
 from .factor import ParametricFactor
-from .variable import Variable, Delta
+from .variable import Variable, Delta, PARAM_DIM
 
 
 # ---------------------------------------------------------------------------
@@ -371,8 +371,42 @@ class _SharedCPD(ParametricCPD):
         if self._cache_hit(parent_values, layer_kwargs):
             return self._cache_out
         out = super().forward(parent_values, **layer_kwargs)
+        self._validate_output_sizes(out)
         self._cache_parents, self._cache_out = parent_values, out
         return out
+
+    def _validate_output_sizes(self, result: Dict[str, torch.Tensor]) -> None:
+        """Ensure each parametrization output covers every member on the last dim.
+
+        Member facades slice their parameters out of the stacked output along the
+        **last** dimension (see :meth:`_SharedMemberCPD.forward`), so the shared
+        parametrization must emit exactly ``param_sizes[pname]`` scalars there —
+        i.e. ``n_members * member_size`` for size-proportional parameters. A
+        narrower output would silently slice later members into empty tensors, so
+        we fail loudly here instead.
+
+        A module's true output width is only knowable once it has run, hence this
+        is a forward-time check. Distributions without a :data:`PARAM_DIM` entry
+        are skipped (their per-parameter sizes are unknown).
+        """
+        if self.variable.distribution not in PARAM_DIM:
+            return
+        expected = self.variable.param_sizes
+        for pname, value in result.items():
+            exp = expected.get(pname)
+            if exp is None or not hasattr(value, "shape"):
+                continue
+            got = value.shape[-1] if value.ndim else 0
+            if got != exp:
+                raise ValueError(
+                    f"ParametricCPD(shared_key={self.variable.name!r}): the shared "
+                    f"parametrization for {pname!r} produced an output of width {got} "
+                    f"on the last dimension, but {exp} are required to cover all "
+                    f"members of the group ({self.variable.distribution.__name__}, "
+                    f"n_members * member_size = {self.variable.size}). Make the shared "
+                    f"parametrization emit all members stacked along the last "
+                    f"dimension (e.g. end it with a Flatten)."
+                )
 
     def _cache_hit(self, parent_values, layer_kwargs) -> bool:
         # Only cache the non-root, no-extra-kwargs case; require an exact
@@ -412,6 +446,17 @@ class _SharedMemberCPD(ParametricFactor):
     @property
     def is_root(self) -> bool:
         return len(self.parents) == 0
+
+    @property
+    def parametrization(self) -> nn.ModuleDict:
+        """The shared parametrization, so a member facade reads like an ordinary CPD.
+
+        Returns the group's single ``nn.ModuleDict`` (``self.core.parametrization``)
+        — identical for every member of the group — so callers can write
+        ``member.parametrization["probs"]`` instead of reaching through
+        ``member.core``. Read-only: the modules are owned by the shared core.
+        """
+        return self.core.parametrization
 
     def forward(self, parent_values=None, **layer_kwargs):
         stacked = self.core(parent_values, **layer_kwargs)
