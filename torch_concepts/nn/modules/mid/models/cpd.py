@@ -366,6 +366,53 @@ class _SharedCPD(ParametricCPD):
         super().__init__(*args, **kwargs)
         self._cache_parents: Optional[Dict[str, torch.Tensor]] = None
         self._cache_out: Optional[Dict[str, torch.Tensor]] = None
+        self._check_output_sizes()
+
+    def _check_output_sizes(self) -> None:
+        """One-shot construction check that the shared parametrization produces the
+        full stacked width (``n_members * member_size``) on the last dim.
+
+        Member facades slice their parameters out of the stacked output along the
+        **last** dimension (see :meth:`_SharedMemberCPD.forward`), so a too-narrow
+        output would silently hand later members empty tensors. A module's output
+        width is only knowable once it runs, but the width depends solely on the
+        *input shape*, which the parents already fix — so we can validate it once,
+        here, with a single dummy forward, instead of re-checking on every real
+        forward.
+
+        The probe feeds zero inputs shaped from the parents (batch size 2 so
+        norm layers needing >1 sample don't choke), runs in ``eval`` + ``no_grad``
+        to avoid touching running stats or the autograd graph, and calls the base
+        :meth:`ParametricCPD.forward` directly so the output cache is untouched.
+        Distributions without a :data:`PARAM_DIM` entry are skipped.
+        """
+        if self.variable.distribution not in PARAM_DIM:
+            return
+        dummy = {p.name: torch.zeros(2, *p.shape) for p in self.parents}
+        was_training = self.training
+        self.eval()
+        try:
+            with torch.no_grad():
+                out = ParametricCPD.forward(self, dummy if self.parents else None)
+        finally:
+            self.train(was_training)
+
+        expected = self.variable.param_sizes
+        for pname, value in out.items():
+            exp = expected.get(pname)
+            if exp is None or not hasattr(value, "shape"):
+                continue
+            got = value.shape[-1] if value.ndim else 0
+            if got != exp:
+                raise ValueError(
+                    f"ParametricCPD(shared_key={self.variable.name!r}): the shared "
+                    f"parametrization for {pname!r} produces an output of width {got} "
+                    f"on the last dimension, but {exp} are required to cover all "
+                    f"members of the group ({self.variable.distribution.__name__}, "
+                    f"n_members * member_size = {self.variable.size}). Make the shared "
+                    f"parametrization emit all members stacked along the last "
+                    f"dimension (set its output size to the total)."
+                )
 
     def forward(self, parent_values=None, **layer_kwargs):
         if self._cache_hit(parent_values, layer_kwargs):
