@@ -371,42 +371,8 @@ class _SharedCPD(ParametricCPD):
         if self._cache_hit(parent_values, layer_kwargs):
             return self._cache_out
         out = super().forward(parent_values, **layer_kwargs)
-        self._validate_output_sizes(out)
         self._cache_parents, self._cache_out = parent_values, out
         return out
-
-    def _validate_output_sizes(self, result: Dict[str, torch.Tensor]) -> None:
-        """Ensure each parametrization output covers every member on the last dim.
-
-        Member facades slice their parameters out of the stacked output along the
-        **last** dimension (see :meth:`_SharedMemberCPD.forward`), so the shared
-        parametrization must emit exactly ``param_sizes[pname]`` scalars there —
-        i.e. ``n_members * member_size`` for size-proportional parameters. A
-        narrower output would silently slice later members into empty tensors, so
-        we fail loudly here instead.
-
-        A module's true output width is only knowable once it has run, hence this
-        is a forward-time check. Distributions without a :data:`PARAM_DIM` entry
-        are skipped (their per-parameter sizes are unknown).
-        """
-        if self.variable.distribution not in PARAM_DIM:
-            return
-        expected = self.variable.param_sizes
-        for pname, value in result.items():
-            exp = expected.get(pname)
-            if exp is None or not hasattr(value, "shape"):
-                continue
-            got = value.shape[-1] if value.ndim else 0
-            if got != exp:
-                raise ValueError(
-                    f"ParametricCPD(shared_key={self.variable.name!r}): the shared "
-                    f"parametrization for {pname!r} produced an output of width {got} "
-                    f"on the last dimension, but {exp} are required to cover all "
-                    f"members of the group ({self.variable.distribution.__name__}, "
-                    f"n_members * member_size = {self.variable.size}). Make the shared "
-                    f"parametrization emit all members stacked along the last "
-                    f"dimension (e.g. end it with a Flatten)."
-                )
 
     def _cache_hit(self, parent_values, layer_kwargs) -> bool:
         # Only cache the non-root, no-extra-kwargs case; require an exact
