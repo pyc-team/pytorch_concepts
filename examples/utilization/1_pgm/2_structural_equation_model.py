@@ -23,7 +23,7 @@ from torch.distributions import Bernoulli
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import ParametricCPD, BayesianNetwork, AncestralInference, \
-    CallableConceptToConcept
+    CallableConceptToConcept, LearnablePrior
 
 
 def main():
@@ -53,11 +53,11 @@ def main():
     }
 
     # ParametricCPD setup — wire each structural equation to its variable.
-    input_cpd = ParametricCPD(input_var, parents=[])
-    genotype_cpd = ParametricCPD(genotype_var, parametrization=layers['genotype'], parents=[input_var], activate=torch.nn.Identity())
-    smoking_cpd = ParametricCPD(smoking_var, parametrization=layers['smoking'], parents=[genotype_var], activate=torch.nn.Identity())
-    tar_cpd = ParametricCPD(tar_var, parametrization=layers['tar'], parents=[genotype_var, smoking_var], activate=torch.nn.Identity())
-    cancer_cpd = ParametricCPD(cancer_var, parametrization=layers['cancer'], parents=[tar_var], activate=torch.nn.Identity())
+    input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(input_var.size), parents=[])
+    genotype_cpd = ParametricCPD(genotype_var, parametrization=layers['genotype'], parents=[input_var])
+    smoking_cpd = ParametricCPD(smoking_var, parametrization=layers['smoking'], parents=[genotype_var])
+    tar_cpd = ParametricCPD(tar_var, parametrization=layers['tar'], parents=[genotype_var, smoking_var])
+    cancer_cpd = ParametricCPD(cancer_var, parametrization=layers['cancer'], parents=[tar_var])
 
     concept_model = BayesianNetwork(
         variables=[input_var, genotype_var, smoking_var, tar_var, cancer_var],

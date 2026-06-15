@@ -81,7 +81,7 @@ def main():
     inner.forward = lambda *a, **k: (runs.__setitem__("n", runs["n"] + 1), _orig(*a, **k))[1]
 
     shared_net = build_shared(encoder)
-    shared_core = shared_net.name_to_factor("c0").core           # the _SharedCPD
+    shared_core = shared_net.factors["c0"].core           # the _SharedCPD
     shared_linear = shared_core.parametrization["probs"][0]       # LinearEmbeddingToConcept
 
     individual_net = build_individual(shared_linear)

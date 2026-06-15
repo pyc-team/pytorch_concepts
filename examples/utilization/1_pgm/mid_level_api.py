@@ -369,13 +369,13 @@ print()
 pgm = make_pgm()
 
 c1_guide = ParametricCPD(
-    pgm.name_to_variable('c1'),
+    pgm.variables['c1'],
     {"probs": nn.Sequential(nn.Linear(16, 16), nn.ReLU(), nn.Linear(16, 1), nn.Sigmoid())},
-    parents=[pgm.name_to_variable('x')])
+    parents=[pgm.variables['x']])
 c2_guide = ParametricCPD(
-    pgm.name_to_variable('c2'),
+    pgm.variables['c2'],
     {"probs": nn.Sequential(nn.Linear(16, 16), nn.ReLU(), nn.Linear(16, 1), nn.Sigmoid())},
-    parents=[pgm.name_to_variable('x')]
+    parents=[pgm.variables['x']]
 )
 
 vi = VariationalInference(

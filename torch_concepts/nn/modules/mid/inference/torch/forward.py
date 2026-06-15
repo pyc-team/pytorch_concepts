@@ -167,7 +167,7 @@ class ForwardInference(TorchBaseInference):
             if name in evidence_names:
                 # Evidence clamps the value; its parents are unreachable.
                 continue
-            stack.extend(p.name for p in self.pgm.name_to_factor(name).parents)
+            stack.extend(p.name for p in self.pgm.factors[name].parents)
 
         self._required_cache[key] = required
         return required
@@ -197,7 +197,7 @@ class ForwardInference(TorchBaseInference):
             # Pure evidence: clamp to the observed value, skip the CPD.
             return name, None, self._format_evidence(variable, evidence[name])
 
-        cpd = self.pgm.name_to_factor(name)
+        cpd = self.pgm.factors[name]
         if cpd.is_root:
             params = cpd(parent_values={})
             params = {

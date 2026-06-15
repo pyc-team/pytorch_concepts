@@ -35,7 +35,7 @@ class BayesianNetwork(ProbabilisticModel):
         variables: List[Variable],
         factors: List[ParametricCPD],
     ):
-        super().__init__(variables)  # registers self.variables, self._name_to_variable, self.guides
+        super().__init__(variables)  # registers self.variables (dict), self.guides
 
         # ---- factors --------------------------------------------------------
         if len(factors) != len(variables):
@@ -43,11 +43,14 @@ class BayesianNetwork(ProbabilisticModel):
                 f"Got {len(variables)} variables but {len(factors)} factors; "
                 "exactly one factor per variable is required."
             )
+        # ``_factors`` maps {variable name: ParametricCPD}; the key is taken from
+        # each child ``f.variable.name``.
+        # Exposed through the ``factors`` property (the abstract contract).
         self._factors: nn.ModuleDict = nn.ModuleDict()
         for f in factors:
             if f.variable.name in self._factors:
                 raise ValueError(f"Duplicate factor for variable {f.variable.name!r}.")
-            if f.variable.name not in self._name_to_variable:
+            if f.variable.name not in self.variables:
                 raise ValueError(
                     f"Factor name {f.variable.name!r} has no matching Variable."
                 )
@@ -62,9 +65,10 @@ class BayesianNetwork(ProbabilisticModel):
         # Cache for topological levels (computed lazily on first access).
         self._levels_cache: Optional[List[List[Variable]]] = None
 
-    def name_to_factor(self, name: str) -> nn.Module:
-        """Return the factor module associated with the factor name."""
-        return self._factors[name]
+    @property
+    def factors(self) -> nn.ModuleDict:
+        """Mapping ``{child variable name: ParametricCPD}`` (one CPD per variable)."""
+        return self._factors
 
     @property
     def levels(self) -> List[List[Variable]]:
@@ -98,7 +102,7 @@ class BayesianNetwork(ProbabilisticModel):
         """Validate every CPD's parents against ``self.variables`` and dedup.
 
         Each parent must be the exact same object as the one registered in
-        ``self._name_to_variable``; a same-name-but-different-instance
+        ``self.variables``; a same-name-but-different-instance
         parent is rejected with ``ValueError``. After validation, each CPD's
         ``parents`` list is replaced by an order-preserving deduplicated copy
         to guard against accidental repetition.
@@ -113,11 +117,11 @@ class BayesianNetwork(ProbabilisticModel):
                         f"Factor {name!r}: parent must be a Variable, "
                         f"got {type(p).__name__}."
                     )
-                if p.name not in self._name_to_variable:
+                if p.name not in self.variables:
                     raise ValueError(
                         f"Factor {name!r}: parent {p.name!r} not in variables list."
                     )
-                if self._name_to_variable[p.name] is not p:
+                if self.variables[p.name] is not p:
                     raise ValueError(
                         f"Factor {name!r}: parent {p.name!r} is a different "
                         "Variable instance than the one registered in "
@@ -128,7 +132,7 @@ class BayesianNetwork(ProbabilisticModel):
 
     # ----------------------------------------------------------- topo sort
     def _topological_sort(self) -> List[Variable]:
-        indeg: Dict[str, int] = {v.name: 0 for v in self.variables}
+        indeg: Dict[str, int] = {name: 0 for name in self.variables}
         children: Dict[str, List[str]] = defaultdict(list)
         for name, f in self._factors.items():
             for p in f.parents:
@@ -139,7 +143,7 @@ class BayesianNetwork(ProbabilisticModel):
         out: List[Variable] = []
         while queue:
             n = queue.popleft()
-            out.append(self._name_to_variable[n])
+            out.append(self.variables[n])
             for c in children[n]:
                 indeg[c] -= 1
                 if indeg[c] == 0:

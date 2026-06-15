@@ -35,11 +35,11 @@ class BaseInference(nn.Module):
 
         roots_needing_input: List[str] = [
             v.name
-            for v in pgm.variables
-            if pgm.name_to_factor(v.name).is_root
+            for v in pgm.variables.values()
+            if pgm.factors[v.name].is_root
             and any(
                 len(inspect.signature(mod.forward).parameters) > 0
-                for mod in pgm.name_to_factor(v.name).parametrization.values()
+                for mod in pgm.factors[v.name].parametrization.values()
             )
         ]
         if roots_needing_input:
@@ -64,7 +64,7 @@ class BaseInference(nn.Module):
          - batch sizes match.
         """
 
-        all_names = {v.name for v in self.pgm.variables}
+        all_names = {v.name for v in self.pgm.variables.values()}
         unknown_q = set(query.keys()) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")

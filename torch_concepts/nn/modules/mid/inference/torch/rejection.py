@@ -92,7 +92,7 @@ class RejectionSampling(TorchBaseInference):
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
-            v = self.pgm.name_to_variable(name)
+            v = self.pgm.variables[name]
             if not any(issubclass(v.distribution, d) for d in self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: {role} variable {name!r} has "
@@ -136,7 +136,7 @@ class RejectionSampling(TorchBaseInference):
                     name = var.name
                     if name in samples:
                         continue  # already set (root evidence)
-                    cpd = self.pgm.name_to_factor(name)
+                    cpd = self.pgm.factors[name]
                     if cpd.is_root:
                         params = cpd(parent_values={})
                         params = {k: v.unsqueeze(0).expand(N, *v.shape)
@@ -191,8 +191,8 @@ class RejectionSampling(TorchBaseInference):
         # and non-root vars (handled by rejection filtering). The PGM might
         # require constant evidence on certain roots (e.g. a root image).
         root_names = {
-            v.name for v in self.pgm.variables
-            if self.pgm.name_to_factor(v.name).is_root
+            v.name for v in self.pgm.variables.values()
+            if self.pgm.factors[v.name].is_root
         }
         root_evidence_names = set(evidence.keys()) & root_names
         nonroot_evidence_names = set(evidence.keys()) - root_names
@@ -268,7 +268,7 @@ class RejectionSampling(TorchBaseInference):
             )
         B = next(iter(batch_sizes.values()))
 
-        all_names = {v.name for v in self.pgm.variables}
+        all_names = {v.name for v in self.pgm.variables.values()}
         unknown = set(all_tensors.keys()) - all_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")

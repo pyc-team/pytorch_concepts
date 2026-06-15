@@ -179,7 +179,7 @@ class ImportanceSampling(TorchBaseInference):
         log_p = torch.zeros(batch_size, device=temperature.device)
         for var in pgm.sorted_variables:
             name = var.name
-            cpd = pgm.name_to_factor(name)
+            cpd = pgm.factors[name]
             if cpd.is_root:
                 params = cpd(parent_values={})
                 params = {
@@ -239,7 +239,7 @@ class ImportanceSampling(TorchBaseInference):
 
         match = torch.ones(N, B, device=temperature.device)
         for name, target in query.items():
-            var = self.pgm.name_to_variable(name)
+            var = self.pgm.variables[name]
             sample_nb = samples[name].reshape(N, B, *var.shape)
             target_nb = _expand(target).reshape(N, B, *var.shape)
             match = match * _soft_match(var, sample_nb, target_nb)
@@ -307,7 +307,7 @@ class ImportanceSampling(TorchBaseInference):
         if len(set(batch_sizes.values())) > 1:
             raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
 
-        all_names = {v.name for v in self.pgm.variables}
+        all_names = {v.name for v in self.pgm.variables.values()}
         unknown = set(all_tensors.keys()) - all_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
@@ -317,7 +317,7 @@ class ImportanceSampling(TorchBaseInference):
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
-            v = self.pgm.name_to_variable(name)
+            v = self.pgm.variables[name]
             if not issubclass(v.distribution, self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "

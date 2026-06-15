@@ -73,7 +73,7 @@ class MutilatedNetworkProposal(BaseProposal):
         the requested ``batch_size``; non-roots are evaluated on the already
         sampled / clamped parent values, exactly as the generative model would.
         """
-        cpd = self.pgm.name_to_factor(variable.name)
+        cpd = self.pgm.factors[variable.name]
         if cpd.is_root:
             params = cpd(parent_values={})
             return {

@@ -198,7 +198,7 @@ class BaseProposal(nn.Module, ABC):
                 samples[name] = reshape_value_to_event(var, value)
                 continue
 
-            cpd = pgm.name_to_factor(name)
+            cpd = pgm.factors[name]
             parent_values = {p.name: samples[p.name] for p in cpd.parents}
             params = self.propose(
                 var, parent_values, evidence, batch_size, temperature,

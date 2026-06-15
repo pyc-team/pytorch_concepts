@@ -132,7 +132,7 @@ class VariationalInference(PyroBaseInference):
                 f"got {type(latents).__name__}."
             )
 
-        all_var_names = {v.name for v in pgm.variables}
+        all_var_names = {v.name for v in pgm.variables.values()}
         latent_set = set(latents.keys())
 
         for lat_name, cpd in latents.items():
@@ -161,7 +161,7 @@ class VariationalInference(PyroBaseInference):
                         f"{cls.__name__}: guide for {lat_name!r} cannot "
                         f"condition on latent variable {p.name!r}."
                     )
-                if pgm.name_to_variable(p.name) is not p:
+                if pgm.variables[p.name] is not p:
                     raise ValueError(
                         f"{cls.__name__}: guide for {lat_name!r}: parent "
                         f"{p.name!r} is a different Variable instance than the one "
@@ -220,7 +220,7 @@ class VariationalInference(PyroBaseInference):
         aligned = {}
         for name, pdict in params.items():
             cpd = (self.pgm.guides[name] if use_guides and name in self.pgm.guides
-                   else self.pgm.name_to_factor(name) if not use_guides else None)
+                   else self.pgm.factors[name] if not use_guides else None)
             if cpd is None:
                 aligned[name] = pdict
                 continue
@@ -266,7 +266,7 @@ class VariationalInference(PyroBaseInference):
 
         non_latent_missing = [
             v.name
-            for v in self.pgm.variables
+            for v in self.pgm.variables.values()
             if v.name not in self._latent_names and v.name not in data
         ]
         if non_latent_missing:

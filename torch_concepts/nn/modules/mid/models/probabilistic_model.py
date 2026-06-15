@@ -22,31 +22,33 @@ class ProbabilisticModel(nn.Module, ABC):
     Parameters
     ----------
     variables : list of Variable
-        All random variables in the model.  Names must be unique.
+        All random variables in the model. Names must be unique. Stored as the
+        ``variables`` mapping ``{name: Variable}`` (the name is taken from each
+        ``Variable.name``, so no name needs to be passed separately).
     """
 
     def __init__(self, variables: List[Variable]) -> None:
         super().__init__()
 
-        self.variables = list(variables)
-        self._name_to_variable: Dict[str, Variable] = {
-            v.name: v for v in self.variables
-        }
-        if len(self._name_to_variable) != len(self.variables):
+        variables = list(variables)
+        self.variables: Dict[str, Variable] = {v.name: v for v in variables}
+        if len(self.variables) != len(variables):
             raise ValueError("Duplicate variable names in `variables`.")
 
         # Guide modules are stored here so pgm.parameters() includes them.
         # The latent/conditioning contract lives on the inference engine.
         self.guides: nn.ModuleDict = nn.ModuleDict()
 
-    def name_to_variable(self, name: str) -> Variable:
-        """Mapping from variable name to Variable instance."""
-        return self._name_to_variable[name]
-    
+    @property
     @abstractmethod
-    def name_to_factor(self, name: str) -> nn.Module:
-        """Return the factor module associated with the variable name."""
-        return NotImplementedError
+    def factors(self) -> nn.ModuleDict:
+        """Mapping ``{name: factor module}``, enabling ``model.factors[name]``.
+
+        The subclass defines the name->factor correspondence. For a
+        :class:`BayesianNetwork` the key is a child variable's name and the
+        value is the :class:`ParametricCPD` parametrizing that child.
+        """
+        raise NotImplementedError
 
     @property
     def has_guides(self) -> bool:

@@ -156,7 +156,7 @@ class PyroImportanceSampling(PyroBaseInference):
                 f"{cls.__name__}: `proposal` must be a dict mapping variable "
                 f"names to ParametricCPD instances, got {type(proposal).__name__}."
             )
-        all_names = {v.name for v in pgm.variables}
+        all_names = {v.name for v in pgm.variables.values()}
         for name, cpd in proposal.items():
             if name not in all_names:
                 raise ValueError(f"{cls.__name__}: unknown proposal variable {name!r}.")
@@ -201,7 +201,7 @@ class PyroImportanceSampling(PyroBaseInference):
         with pyro.plate("batch", batch, dim=-1):
             for level in pgm.levels:
                 for var in level:
-                    cpd = pgm.name_to_factor(var.name)
+                    cpd = pgm.factors[var.name]
                     parent_values = {
                         p.name: cache.get(p.name, data.get(p.name)) for p in cpd.parents
                     }
@@ -229,7 +229,7 @@ class PyroImportanceSampling(PyroBaseInference):
                     if var.name in self.proposal:
                         cpd = self.proposal[var.name]
                     else:
-                        cpd = pgm.name_to_factor(var.name)  # prior (mutilated)
+                        cpd = pgm.factors[var.name]  # prior (mutilated)
                     parent_values = {
                         p.name: cache.get(p.name, data.get(p.name)) for p in cpd.parents
                     }
@@ -291,7 +291,7 @@ class PyroImportanceSampling(PyroBaseInference):
 
         match = torch.ones(N, B, device=log_w.device)
         for name, target in query.items():
-            var = self.pgm.name_to_variable(name)
+            var = self.pgm.variables[name]
             sample_nb = model_tr.nodes[name]["value"].reshape(N, B, *var.shape)
             target_nb = _expand(target).reshape(N, B, *var.shape)
             match = match * _hard_match(sample_nb, target_nb)
@@ -348,7 +348,7 @@ class PyroImportanceSampling(PyroBaseInference):
         batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
         if len(set(batch_sizes.values())) > 1:
             raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
-        all_names = {v.name for v in self.pgm.variables}
+        all_names = {v.name for v in self.pgm.variables.values()}
         unknown = set(all_tensors.keys()) - all_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
@@ -357,7 +357,7 @@ class PyroImportanceSampling(PyroBaseInference):
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
-            v = self.pgm.name_to_variable(name)
+            v = self.pgm.variables[name]
             if not issubclass(v.distribution, self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "

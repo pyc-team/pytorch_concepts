@@ -143,7 +143,7 @@ class PyroBaseInference(BaseInference):
         with pyro.plate("batch", B, dim=-1):
             for level in pgm.levels:
                 for var in level:
-                    cpd = pgm.name_to_factor(var.name)
+                    cpd = pgm.factors[var.name]
 
                     if cpd.is_root:
                         params = cpd(parent_values={})
