@@ -41,9 +41,6 @@ from __future__ import annotations
 import warnings
 from typing import Dict, List, Optional, Set
 
-import pyro
-import pyro.distributions as pyro_dist
-import pyro.poutine as poutine
 import torch
 import torch.distributions as td
 import torch.nn as nn
@@ -52,7 +49,7 @@ from ...models.bayesian_network import BayesianNetwork
 from ...models.cpd import ParametricCPD
 from ..utils import build_distribution, reshape_value_to_event
 from ....outputs import InferenceOutput
-from .base import PyroBaseInference
+from .base import PyroBaseInference, _import_pyro
 
 
 # Discrete families admissible as query variables (relaxed variants included:
@@ -75,6 +72,7 @@ def _pyro_exact_distribution(variable, params: Dict[str, torch.Tensor]):
     families are wrapped with ``to_event(1)`` so the single ``size`` axis is the
     event and ``batch_shape`` stays ``(*batch,)`` — matching the ``pyro.plate``.
     """
+    _, pyro_dist, _ = _import_pyro()
     D = variable.distribution
     if issubclass(D, _BERNOULLI):
         return pyro_dist.Bernoulli(**params).to_event(1)
@@ -197,6 +195,7 @@ class PyroImportanceSampling(PyroBaseInference):
     def _model_fn(self, data: Dict[str, torch.Tensor], batch: int,
                   layer_kwargs: Dict[str, Dict]) -> None:
         """Generative model: evidence observed (``obs=``), the rest sampled."""
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         cache: Dict[str, torch.Tensor] = {}
         with pyro.plate("batch", batch, dim=-1):
@@ -219,6 +218,7 @@ class PyroImportanceSampling(PyroBaseInference):
     def _guide_fn(self, data: Dict[str, torch.Tensor], batch: int,
                   layer_kwargs: Dict[str, Dict]) -> None:
         """Proposal: sample every non-evidence node (declared guide, else prior)."""
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         cache: Dict[str, torch.Tensor] = {}
         with pyro.plate("batch", batch, dim=-1):
@@ -261,6 +261,7 @@ class PyroImportanceSampling(PyroBaseInference):
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         """Estimate ``P(Q=q | E=e)`` for a batch via Pyro importance sampling."""
+        _, _, poutine = _import_pyro()
         if evidence is None:
             evidence = {}
         B = self._validate(query, evidence)

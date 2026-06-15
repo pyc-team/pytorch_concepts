@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-import pyro.distributions as pyro_dist
 import torch.distributions as td
 
 from ....outputs import ParamDict
@@ -35,11 +34,16 @@ _DISCRETE_FAMILIES: Tuple[type, ...] = (
     td.Bernoulli, td.Categorical, td.OneHotCategorical,
 )
 
-# Relaxed surrogates that also carry a ``temperature`` parameter.
-_RELAXED_DISCRETE_FAMILIES: Tuple[type, ...] = (
-    pyro_dist.RelaxedBernoulliStraightThrough,
-    pyro_dist.RelaxedOneHotCategoricalStraightThrough,
-)
+# Relaxed surrogates that also carry a ``temperature`` parameter. Resolved
+# lazily so importing this module does not require Pyro to be installed.
+def _relaxed_discrete_families() -> Tuple[type, ...]:
+    # Reached only during inference, after a Pyro engine was constructed, so
+    # Pyro is guaranteed importable here.
+    import pyro.distributions as pyro_dist
+    return (
+        pyro_dist.RelaxedBernoulliStraightThrough,
+        pyro_dist.RelaxedOneHotCategoricalStraightThrough,
+    )
 
 
 def _discrete_prob_key(d) -> str:
@@ -107,7 +111,7 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
     # Relaxed discrete (STE): always extract probs; temperature too.
     # The internal representation is always logits (LogitRelaxedBernoulli),
     # but .probs is available as a property (sigmoid of stored logits).
-    if isinstance(base, _RELAXED_DISCRETE_FAMILIES):
+    if isinstance(base, _relaxed_discrete_families()):
         return {"probs": base.probs, "temperature": base.temperature}
 
     # Plain discrete: probs or logits, detected via _param.

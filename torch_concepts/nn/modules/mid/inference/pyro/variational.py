@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 from typing import Callable, Dict, List, Optional, Union
 
-import pyro.poutine as poutine
 import torch
 import torch.nn as nn
 
@@ -21,7 +20,7 @@ from ...models.bayesian_network import BayesianNetwork
 from ...models.cpd import ParametricCPD
 from ..utils import make_temperature_schedule
 from ....outputs import InferenceOutput
-from .base import PyroBaseInference, trace_to_params
+from .base import PyroBaseInference, trace_to_params, _import_pyro
 
 
 _YELLOW_START = "\033[33m"
@@ -245,6 +244,7 @@ class VariationalInference(PyroBaseInference):
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         """Run variational inference and return model and guide parameters."""
+        _, _, poutine = _import_pyro()
         if query is None:
             query = {}
         if evidence is None:

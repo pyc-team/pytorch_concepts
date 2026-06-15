@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-import pyro
-import pyro.distributions as pyro_dist
 import torch
 import torch.distributions as td
 
@@ -29,6 +27,20 @@ from ...models.variable import Delta
 from ..base import BaseInference
 from ..utils import build_distribution, reshape_value_to_event
 from .utils import dist_to_params, trace_to_params
+
+
+def _import_pyro():
+    """Lazily import Pyro, raising a clear error if it is not installed."""
+    try:
+        import pyro
+        import pyro.distributions as pyro_dist
+        import pyro.poutine as poutine
+        return pyro, pyro_dist, poutine
+    except ImportError as exc:
+        raise ImportError(
+            "Pyro-based inference requires the `pyro-ppl` package. "
+            "Install it with: pip install pyro-ppl"
+        ) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -68,6 +80,7 @@ class PyroBaseInference(BaseInference):
         # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
         # (*batch,) and the ``pyro.plate("batch", ...)`` dim lines up. The
         # variable's declared shape is restored on the sampled realization.
+        _, pyro_dist, _ = _import_pyro()
         D = variable.distribution
         if issubclass(D, td.Bernoulli):
             d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
@@ -112,6 +125,7 @@ class PyroBaseInference(BaseInference):
         every call so SVI updates flow back into the original PGM's
         ``nn.Parameter`` tensors (no parameter duplication).
         """
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         pyro.module("pgm", pgm)
 
@@ -183,6 +197,7 @@ class PyroBaseInference(BaseInference):
         ``pyro.module`` on every call so SVI updates flow back into the
         original guide CPDs' ``nn.Parameter`` tensors.
         """
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         pyro.module("pgm_guides", pgm.guides)
         B = next(iter(data.values())).shape[0] if data else 1
