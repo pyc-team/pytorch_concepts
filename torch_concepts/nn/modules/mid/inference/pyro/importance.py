@@ -202,9 +202,7 @@ class PyroImportanceSampling(PyroBaseInference):
             for level in pgm.levels:
                 for var in level:
                     cpd = pgm.factors[var.name]
-                    parent_values = {
-                        p.name: cache.get(p.name, data.get(p.name)) for p in cpd.parents
-                    }
+                    parent_values = self._gather_parents(cpd, cache, data)
                     params = self._params_with_batch(
                         cpd, parent_values, batch, layer_kwargs.get(var.name, {})
                     )
@@ -230,9 +228,7 @@ class PyroImportanceSampling(PyroBaseInference):
                         cpd = self.proposal[var.name]
                     else:
                         cpd = pgm.factors[var.name]  # prior (mutilated)
-                    parent_values = {
-                        p.name: cache.get(p.name, data.get(p.name)) for p in cpd.parents
-                    }
+                    parent_values = self._gather_parents(cpd, cache, data)
                     params = self._params_with_batch(
                         cpd, parent_values, batch, layer_kwargs.get(var.name, {})
                     )
@@ -291,9 +287,14 @@ class PyroImportanceSampling(PyroBaseInference):
 
         match = torch.ones(N, B, device=log_w.device)
         for name, target in query.items():
-            var = self.pgm.variables[name]
-            sample_nb = model_tr.nodes[name]["value"].reshape(N, B, *var.shape)
-            target_nb = _expand(target).reshape(N, B, *var.shape)
+            # A member query reads the plate's site value and slices its column.
+            var = self.pgm.resolve(name)
+            sample = self.pgm.factors[var.name].select_value(
+                model_tr.nodes[var.name]["value"], name
+            )
+            event = sample.shape[1:]
+            sample_nb = sample.reshape(N, B, *event)
+            target_nb = _expand(target).reshape(N, B, *event)
             match = match * _hard_match(sample_nb, target_nb)
 
         prob = (w_tilde * match).sum(dim=0)  # (B,)
@@ -348,7 +349,7 @@ class PyroImportanceSampling(PyroBaseInference):
         batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
         if len(set(batch_sizes.values())) > 1:
             raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
-        all_names = {v.name for v in self.pgm.variables.values()}
+        all_names = self.pgm.queryable_names  # variables plus plate members
         unknown = set(all_tensors.keys()) - all_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
@@ -357,7 +358,7 @@ class PyroImportanceSampling(PyroBaseInference):
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
-            v = self.pgm.variables[name]
+            v = self.pgm.resolve(name)
             if not issubclass(v.distribution, self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "

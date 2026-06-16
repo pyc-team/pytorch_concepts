@@ -293,7 +293,8 @@ class VariationalInference(PyroBaseInference):
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
-        return InferenceOutput(
-            params=self._align_param_keys(trace_to_params(model_tr), use_guides=False),
-            guide_params=guide_params,
+        model_params = self._expose_members(
+            self._align_param_keys(trace_to_params(model_tr), use_guides=False),
+            set(query),
         )
+        return InferenceOutput(params=model_params, guide_params=guide_params)

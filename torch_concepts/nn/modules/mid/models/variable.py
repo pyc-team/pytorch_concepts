@@ -88,9 +88,17 @@ class Variable(ABC):
         shape: Union[int, Tuple, "torch.Size", List] = None,
         dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
         size: Optional[Union[int, List[int]]] = None,
+        members: Optional[List[str]] = None,
     ):
         if isinstance(names, str):
+            # Single variable — possibly a plate of named ``members``.
             return super().__new__(cls)
+        if members is not None:
+            raise TypeError(
+                "`members` is only valid with a single (string) name — it makes that "
+                "variable a plate of named members. Pass a list of names to create "
+                "several independent variables instead."
+            )
         if not isinstance(names, list) or not all(
             isinstance(n, str) for n in names
         ):
@@ -121,35 +129,85 @@ class Variable(ABC):
         shape: Union[int, Tuple, "torch.Size"] = None,
         dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
         size: Optional[Union[int, List[int]]] = None,
+        members: Optional[List[str]] = None,
     ):
         if not isinstance(names, str):
             return
-        if shape is not None and size is not None:
-            raise ValueError(
-                f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
-                "exclusive — provide one or the other, not both."
-            )
-        if size is not None:
-            if not isinstance(size, int) or size <= 0:
-                raise ValueError(
-                    f"{type(self).__name__}({names!r}): `size` must be a positive int, "
-                    f"got {size!r}."
-                )
-            shape = torch.Size([size])
-        elif shape is None:
-            shape = torch.Size([1])  # default
-        elif isinstance(shape, int):
-            shape = torch.Size([shape])
-        else:
-            shape = torch.Size(shape)
-        if len(shape) == 0:
-            raise ValueError("shape must be non-empty.")
-        if any(s <= 0 for s in shape):
-            raise ValueError(
-                f"{type(self).__name__}({names!r}): all shape dimensions must be "
-                f"positive, got {tuple(shape)}."
-            )
         self.name: str = names
+
+        if members is not None:
+            # Plate: a single variable holding several named members. ``size`` is
+            # the per-member size (default 1); the total event width is
+            # ``len(members) * member_size``, stacked on the last dimension.
+            if shape is not None:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `members` and `shape` are mutually "
+                    "exclusive — use `size` for the per-member size."
+                )
+            if (not isinstance(members, (list, tuple)) or not members
+                    or not all(isinstance(m, str) for m in members)):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `members` must be a non-empty "
+                    "list of strings."
+                )
+            if len(set(members)) != len(members):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): duplicate member names in {members}."
+                )
+            member_size = 1 if size is None else size
+            if not isinstance(member_size, int) or member_size <= 0:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): per-member `size` must be a "
+                    f"positive int, got {size!r}."
+                )
+            self.members: List[str] = list(members)
+            self.member_size: int = member_size
+            total = len(self.members) * member_size
+            # Per-member addressing slices a contiguous block of every parameter,
+            # so each parameter must be laid out one-scalar-per-event-element
+            # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
+            # is triangular (size*(size+1)/2), so its members aren't sliceable —
+            # model those as separate variables instead.
+            if distribution in PARAM_DIM and not all(
+                fn(total) == total for fn in PARAM_DIM[distribution].values()
+            ):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): plate `members` need a distribution "
+                    f"with per-element parameters; {distribution.__name__} has a "
+                    "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
+                    "Model these members as separate variables instead."
+                )
+            shape = torch.Size([total])
+        else:
+            # Ordinary variable: one member coinciding with the variable name.
+            if shape is not None and size is not None:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
+                    "exclusive — provide one or the other, not both."
+                )
+            if size is not None:
+                if not isinstance(size, int) or size <= 0:
+                    raise ValueError(
+                        f"{type(self).__name__}({names!r}): `size` must be a positive int, "
+                        f"got {size!r}."
+                    )
+                shape = torch.Size([size])
+            elif shape is None:
+                shape = torch.Size([1])  # default
+            elif isinstance(shape, int):
+                shape = torch.Size([shape])
+            else:
+                shape = torch.Size(shape)
+            if len(shape) == 0:
+                raise ValueError("shape must be non-empty.")
+            if any(s <= 0 for s in shape):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): all shape dimensions must be "
+                    f"positive, got {tuple(shape)}."
+                )
+            self.members = [self.name]
+            self.member_size = math.prod(shape)
+
         if distribution is None:
             raise ValueError(
                 f"{type(self).__name__}({names!r}): `distribution` is required. "
@@ -158,10 +216,58 @@ class Variable(ABC):
             )
         self.distribution = distribution
         self._shape: torch.Size = shape
+        # Column span of each member within the event (last) dimension.
+        self._column: Dict[str, slice] = {
+            m: slice(i * self.member_size, (i + 1) * self.member_size)
+            for i, m in enumerate(self.members)
+        }
         self.dist_kwargs: dict = dict(dist_kwargs) if dist_kwargs else {}
         self.metadata: dict = {
             "variable_type": self.variable_type,
         }
+        # Set on a member view returned by ``member()``; points back to the plate.
+        self._plate: Optional["Variable"] = None
+
+    @property
+    def is_plate(self) -> bool:
+        """Whether this variable holds more than one named member."""
+        return len(self.members) > 1
+
+    @property
+    def plate(self) -> "Variable":
+        """The plate this variable belongs to.
+
+        For a member handle (from :meth:`member`) this is the owning plate; for an
+        ordinary variable or a plate itself it is the variable. Graph code uses
+        ``p.plate.name`` to find the node an edge from ``p`` originates at.
+        """
+        return self._plate if self._plate is not None else self
+
+    def column_of(self, member: str) -> slice:
+        """Column span of ``member`` within this variable's event (last) dimension."""
+        return self._column[member]
+
+    def member(self, name: str) -> "Variable":
+        """A handle to a single member, usable as a parent (an edge to that member only).
+
+        A child can then depend on just this member of the plate; the engine
+        slices the member's column out of the plate's output. The handle carries
+        the member's name, per-member size and the plate's distribution, plus a
+        back-reference to the owning plate so the graph routes the edge from it.
+        """
+        if name not in self._column:
+            raise KeyError(
+                f"{type(self).__name__}({self.name!r}) has no member {name!r}; "
+                f"members are {self.members}."
+            )
+        view = type(self)(
+            name,
+            distribution=self.distribution,
+            size=self.member_size,
+            dist_kwargs=copy.deepcopy(self.dist_kwargs),
+        )
+        view._plate = self
+        return view
 
     @property
     def shape(self) -> torch.Size:
@@ -205,6 +311,9 @@ class Variable(ABC):
             f"{type(self).__name__}(name={self.name!r}, "
             f"distribution={self.distribution.__name__}, shape={tuple(self.shape)}"
         )
+        # Show members only when they differ from the variable name (a plate).
+        if self.members != [self.name]:
+            s += f", members={self.members}"
         return s + ")"
 
 

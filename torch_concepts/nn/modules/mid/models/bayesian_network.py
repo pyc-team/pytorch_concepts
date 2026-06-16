@@ -88,7 +88,9 @@ class BayesianNetwork(ProbabilisticModel):
         depth: Dict[str, int] = {}
         for v in self.sorted_variables:
             parents = self._factors[v.name].parents
-            depth[v.name] = 0 if not parents else 1 + max(depth[p.name] for p in parents)
+            depth[v.name] = 0 if not parents else 1 + max(
+                depth[p.plate.name] for p in parents
+            )
 
         groups: Dict[int, List[Variable]] = defaultdict(list)
         for v in self.sorted_variables:
@@ -117,6 +119,21 @@ class BayesianNetwork(ProbabilisticModel):
                         f"Factor {name!r}: parent must be a Variable, "
                         f"got {type(p).__name__}."
                     )
+                plate = getattr(p, "_plate", None)
+                if plate is not None:
+                    # Member handle (``plate.member(name)``): the edge depends on a
+                    # single member; validate the plate is registered and owns it.
+                    if self.variables.get(plate.name) is not plate:
+                        raise ValueError(
+                            f"Factor {name!r}: parent {p.name!r} is a member of plate "
+                            f"{plate.name!r}, which is not the registered variable. "
+                            "Pass the same plate object via `variables`."
+                        )
+                    if p.name not in plate.members:
+                        raise ValueError(
+                            f"Factor {name!r}: {plate.name!r} has no member {p.name!r}."
+                        )
+                    continue
                 if p.name not in self.variables:
                     raise ValueError(
                         f"Factor {name!r}: parent {p.name!r} not in variables list."
@@ -137,7 +154,7 @@ class BayesianNetwork(ProbabilisticModel):
         for name, f in self._factors.items():
             for p in f.parents:
                 indeg[name] += 1
-                children[p.name].append(name)
+                children[p.plate.name].append(name)
 
         queue = deque([n for n, d in indeg.items() if d == 0])
         out: List[Variable] = []

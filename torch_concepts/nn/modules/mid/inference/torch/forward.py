@@ -133,44 +133,48 @@ class ForwardInference(TorchBaseInference):
             dtype = torch.get_default_dtype()
         return reshape_value_to_event(variable, value.to(dtype))
 
-    def _required_variables(
-        self,
-        query_names: set,
-        evidence_names: set,
-    ) -> set:
+    def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.
 
-        The forward pass propagates strictly parent → child, so the value of
-        a query variable depends only on its ancestors. Evidence is an
-        absorbing barrier: an observed node is clamped to its value, so its
-        parents are never reached. The required set is therefore the ancestral
-        closure of the query set, with the upward walk halting at evidence
-        nodes. Everything outside it (barren subtrees, ancestors hidden behind
-        evidence) is pruned: its CPD — a neural-net forward pass — never fires.
-
-        The set is closed under "parents of every non-evidence member", which
-        guarantees every parent lookup in :meth:`predict_variable` is cached.
-        Results are memoized per (query, evidence) name signature.
+        Ancestral closure of the variables behind the queried names, walking
+        parent -> variable and halting at a fully-observed variable (its value is
+        clamped, so its parents are unreachable). A plate is a single variable, so
+        the closure is O(number of CPDs), not O(members). Names that are plate
+        members resolve to their owning variable. Memoized per name signature.
         """
         key = (frozenset(query_names), frozenset(evidence_names))
         cached = self._required_cache.get(key)
         if cached is not None:
             return cached
 
+        resolve = self.pgm.resolve
         required: set = set()
-        stack: List[str] = list(query_names)
+        stack = [resolve(name) for name in query_names]
         while stack:
-            name = stack.pop()
-            if name in required:
+            var = stack.pop()
+            if var in required:
                 continue
-            required.add(name)
-            if name in evidence_names:
-                # Evidence clamps the value; its parents are unreachable.
-                continue
-            stack.extend(p.name for p in self.pgm.factors[name].parents)
+            required.add(var)
+            if var.name in evidence_names:
+                continue  # whole-variable evidence clamps it; its parents are unreachable
+            cpd = self.pgm.factors[var.name]
+            stack.extend(resolve(p.name) for p in cpd.parents)
 
         self._required_cache[key] = required
         return required
+
+    def _parent_value(self, parent: Variable, cache: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Cached value of a parent variable.
+
+        Ordinary parents are read straight from the cache. A parent that is a
+        plate member is sliced out of its owning variable's cached value by that
+        variable's CPD, so a child can depend on a subset of a plate's members.
+        """
+        value = cache.get(parent.name)
+        if value is not None:
+            return value
+        var = self.pgm.resolve(parent.name)
+        return self.pgm.factors[var.name].select_value(cache[var.name], parent.name)
 
     def predict_variable(
         self,
@@ -180,39 +184,38 @@ class ForwardInference(TorchBaseInference):
         temperature: torch.Tensor,
         evidence: Dict[str, torch.Tensor],
         query: Dict[str, Optional[torch.Tensor]],
-        query_names: set,
         evidence_names: set,
         layer_kwargs: Dict,
+        member_evidence: Dict[str, torch.Tensor],
     ) -> Tuple[str, Optional[Dict[str, torch.Tensor]], torch.Tensor]:
-        """Evaluate the CPD of a single variable and apply evidence / teacher forcing.
+        """Evaluate one variable's CPD, applying evidence / teacher forcing.
 
-        Observed variables are hard-conditioned: the evidence value is
-        propagated directly and the CPD is skipped entirely, so ``params``
-        is ``None`` for them.
-
-        Returns ``(name, params, propagated_value)``.
+        A fully-observed variable is clamped and its CPD is skipped (``params``
+        is ``None``). ``member_evidence`` carries any individually-observed plate
+        members (precomputed by the caller), which are spliced over the computed
+        value (partial observation). Returns ``(name, params, value)``.
         """
         name = variable.name
         if name in evidence_names:
-            # Pure evidence: clamp to the observed value, skip the CPD.
+            # Pure (whole-variable) evidence: clamp to the observed value, skip the CPD.
             return name, None, self._format_evidence(variable, evidence[name])
 
         cpd = self.pgm.factors[name]
         if cpd.is_root:
-            params = cpd(parent_values={})
-            params = {
-                key: value.unsqueeze(0).expand(batch_size, *value.shape)
-                for key, value in params.items()
-            }
+            params = cpd.root_params(batch_size)
         else:
-            parent_values = {p.name: cache[p.name] for p in cpd.parents}
+            parent_values = {p.name: self._parent_value(p, cache) for p in cpd.parents}
             params = cpd(parent_values=parent_values, **layer_kwargs)
+
         value = self._propagate(variable, params, temperature)
-        if name in query_names and query[name] is not None:
-            propagated = _teacher_force(value, query[name], self.p_int)
-        else:
-            propagated = value
-        return name, params, propagated
+        target = query.get(name)
+        if target is not None:
+            value = _teacher_force(value, target, self.p_int)
+        # Partial-plate observation: splice the observed members over the computed
+        # value (the CPD owns the column write). ``member_evidence`` is {} unless
+        # this variable has individually-observed members.
+        value = cpd.clamp_members(value, member_evidence)
+        return name, params, value
 
     def predict_level(
         self,
@@ -222,33 +225,29 @@ class ForwardInference(TorchBaseInference):
         temperature: torch.Tensor,
         evidence: Dict[str, torch.Tensor],
         query: Dict[str, Optional[torch.Tensor]],
-        query_names: set,
         evidence_names: set,
         layer_kwargs: Dict[str, Dict],
+        observed_members: Dict[str, Dict[str, torch.Tensor]],
     ) -> List[Tuple[str, Optional[Dict[str, torch.Tensor]], torch.Tensor]]:
-        """Evaluate all variables in a topological level sequentially.
+        """Evaluate every variable in a topological level.
 
-        Returns a list of ``(name, params, propagated_value)`` tuples, one per
-        variable in ``level``; ``params`` is ``None`` for evidence variables
-        (their CPD is skipped).
+        Returns one ``(name, params, value)`` tuple per variable; ``params`` is
+        ``None`` for fully-observed variables (their CPD is skipped).
+        ``observed_members`` maps a variable name to its individually-observed
+        plate members (precomputed once per query).
 
-        When :attr:`parallelize_levels` is enabled and the level holds
-        more than one variable, each call is dispatched with
-        :func:`torch.jit.fork`, which runs them on PyTorch's interop thread pool —
-        real multi-core parallelism on CPU and concurrent kernel launches on GPU,
-        while staying autograd-aware so gradients still flow. Otherwise the
-        variables are evaluated sequentially.
-
-        NOTE: with stochastic (``mode="ancestral"``) inference the per-thread
-        order of global-RNG consumption is not deterministic, so enabling
-        ``parallelize_levels`` trades exact run-to-run reproducibility for speed;
-        deterministic inference is unaffected.
+        When :attr:`parallelize_levels` is enabled and the level holds more than
+        one variable, each call is dispatched with :func:`torch.jit.fork` (real
+        interop-thread parallelism, autograd-aware); otherwise they run
+        sequentially. With ``mode="ancestral"`` the per-thread RNG order is not
+        deterministic, so parallelism trades reproducibility for speed.
         """
         if not self.parallelize_levels or len(level) == 1:
             return [
                 self.predict_variable(
-                    var, cache, batch_size, temperature,
-                    evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {})
+                    var, cache, batch_size, temperature, evidence, query,
+                    evidence_names, layer_kwargs.get(var.name, {}),
+                    observed_members.get(var.name, {}),
                 )
                 for var in level
             ]
@@ -256,8 +255,9 @@ class ForwardInference(TorchBaseInference):
         futures = [
             torch.jit.fork(
                 self.predict_variable,
-                var, cache, batch_size, temperature,
-                evidence, query, query_names, evidence_names, layer_kwargs.get(var.name, {}),
+                var, cache, batch_size, temperature, evidence, query,
+                evidence_names, layer_kwargs.get(var.name, {}),
+                observed_members.get(var.name, {}),
             )
             for var in level
         ]
@@ -269,47 +269,76 @@ class ForwardInference(TorchBaseInference):
         evidence: Dict[str, torch.Tensor],
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Run a forward pass through the network in topological order.
+        """Run a forward pass in topological order, looping over variables.
 
-        Only the variables actually needed to answer the query are resolved:
-        the ancestral closure of the query set, with the upward walk halting at
-        evidence (see :meth:`_required_variables`). Barren subtrees and
-        ancestors hidden behind evidence are pruned and their CPDs never fire.
+        A plate is a single variable: one forward produces all its members'
+        parameters stacked together. Each queried name reads its result from the
+        owning variable — the whole stacked output for the variable/plate name, or
+        a column slice for an individual member. Only variables in the ancestral
+        closure of the query run (evidence halts the upward walk), so the pass is
+        O(number of CPDs), independent of how many members a plate has.
 
-        Evidence variables in that set are clamped to their observed values and
-        their CPDs are skipped; every other required variable is resolved by
-        :meth:`_propagate`. CPD parameters are collected in ``out.params`` for
-        query variables and — in ancestral mode — samples are collected in
-        ``out.samples`` for every required non-evidence variable (i.e. the
-        simulated sub-network, not necessarily the whole graph). A variable
-        should appear in either ``query`` or ``evidence``, not both.
+        A name should appear in either ``query`` or ``evidence``, not both.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
-        all_tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
-        batch_size = all_tensors[0].shape[0] if all_tensors else 1
-        out = InferenceOutput()
-        cache: Dict[str, torch.Tensor] = {}
-        query_names = set(query.keys())
-        evidence_names = set(evidence.keys())
+
+        query_names = set(query)
+        evidence_names = set(evidence)
+        resolve = self.pgm.resolve
+
+        # Queried names grouped by the variable whose CPD produces them. The CPD
+        # turns a name into its slice (whole output for the variable/plate name,
+        # a column for a member), so the engine never slices here.
+        requested: Dict[str, List[str]] = {}
+        for q_name in query_names:
+            requested.setdefault(resolve(q_name).name, []).append(q_name)
+
+        # Individually-observed plate members, grouped by their variable. Built by
+        # walking the (small) evidence set — never the members — so it stays O(#evidence),
+        # not O(plate size). Whole-variable evidence is handled by the clamp instead.
+        observed_members: Dict[str, Dict[str, torch.Tensor]] = {}
+        for e_name in evidence_names:
+            var = resolve(e_name)
+            if e_name != var.name:
+                observed_members.setdefault(var.name, {})[e_name] = evidence[e_name]
+
+        required = self._required_variables(query_names, evidence_names)
+        tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
+        batch_size = tensors[0].shape[0] if tensors else 1
         temperature = self.temperature
         sampled = self.mode == "ancestral"
-        required = self._required_variables(query_names, evidence_names)
 
+        out = InferenceOutput()
+        cache: Dict[str, torch.Tensor] = {}
         for level in self.pgm.levels:
-            active = [v for v in level if v.name in required]
+            active = [var for var in level if var in required]
             if not active:
                 continue
-            results = self.predict_level(
-                active, cache, batch_size, temperature,
-                evidence, query, query_names, evidence_names, layer_kwargs
-            )
-            for name, params, propagated in results:
-                cache[name] = propagated
-                if name in query_names:
-                    out.params[name] = params
-                if sampled and name not in evidence_names:
-                    out.samples[name] = propagated
+            for name, params, value in self.predict_level(
+                active, cache, batch_size, temperature, evidence, query,
+                evidence_names, layer_kwargs, observed_members,
+            ):
+                cache[name] = value
+                if params is None:
+                    continue  # fully-observed variable: clamped, no params emitted
+                cpd = self.pgm.factors[name]
+
+                for q_name in requested.get(name, ()):
+                    out.params[q_name] = cpd.select(params, q_name)
+                if sampled:
+                    out.samples[name] = value
+                    for q_name in requested.get(name, ()):
+                        if q_name != name:
+                            out.samples[q_name] = cpd.select_value(value, q_name)
+
+                # for q_name in requested.get(name, ()):
+                #     out.params[q_name] = cpd.select(params, q_name)
+                #     if sampled:
+                #         if q_name != name:
+                #             out.samples[q_name] = cpd.select_value(value, q_name)
+                # if sampled:
+                #     out.samples[name] = value
 
         return out
 

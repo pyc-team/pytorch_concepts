@@ -50,8 +50,8 @@ def main():
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
     embs = EmbeddingVariable("embs", distribution=Delta, shape=(n_concepts, emb_dims))
-    # Shared concept group: c1..cN, each a Bernoulli of size 1.
-    concepts = ConceptVariable(concept_names, distribution=Bernoulli, size=1)
+    # Shared concept group: one plate variable with named members c1..cN.
+    concepts = ConceptVariable("concepts", members=concept_names, distribution=Bernoulli)
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
     layers = {
@@ -89,13 +89,13 @@ def main():
     input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(input_var.size), parents=[])
     backbone = ParametricCPD(latent_var, parametrization=layers["backbone"], parents=[input_var])
     emb_encoder = ParametricCPD(embs, parametrization=layers["emb_encoder"], parents=[latent_var])
-    # ONE shared CPD for all concepts -> one ParametricCPD facade per member.
-    c_encoder = ParametricCPD(concepts, parametrization=layers["concept_encoder"], parents=[embs], shared_key="concepts")
-    y_predictor = ParametricCPD(tasks, parametrization=layers["task_predictor"], parents=[*concepts, embs])
+    # ONE CPD over the concept plate: the encoder runs once and emits all members.
+    c_encoder = ParametricCPD(concepts, parametrization=layers["concept_encoder"], parents=[embs])
+    y_predictor = ParametricCPD(tasks, parametrization=layers["task_predictor"], parents=[concepts, embs])
 
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, embs, *concepts, tasks],
-        factors=[input_cpd, backbone, emb_encoder, *c_encoder, y_predictor],
+        variables=[input_var, latent_var, embs, concepts, tasks],
+        factors=[input_cpd, backbone, emb_encoder, c_encoder, y_predictor],
     )
 
     # Inference Initialization

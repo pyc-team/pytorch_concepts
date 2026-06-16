@@ -101,6 +101,37 @@ class PyroBaseInference(BaseInference):
         return build_distribution(variable, params)
 
     # ------------------------------------------------------------------
+    # Plate (member) addressing — shared by the Pyro engines, reusing the
+    # CPD's slicing so a plate behaves the same as under the torch engine.
+    # ------------------------------------------------------------------
+    def _gather_parents(self, cpd, cache, data):
+        """Parent values for ``cpd``, slicing member-handle parents out of their
+        plate's (sampled or observed) value — the Pyro counterpart of the torch
+        engine's member-as-parent handling."""
+        parents: Dict[str, torch.Tensor] = {}
+        for p in cpd.parents:
+            src = p.plate.name  # owning plate for a member handle, else p.name
+            value = cache.get(src, data.get(src))
+            if value is None:
+                raise ValueError(
+                    f"{self.name}: parent {p.name!r} of {cpd.variable.name!r} is "
+                    "neither sampled nor in data."
+                )
+            if p.name != src:  # member handle -> slice its column from the plate value
+                value = self.pgm.factors[src].select_value(value, p.name)
+            parents[p.name] = value
+        return parents
+
+    def _expose_members(self, params, query_names):
+        """Add per-member entries for queried plate members, sliced (a view) from
+        their plate's params, so members are addressable by name in the output."""
+        for name in query_names:
+            var = self.pgm.resolve(name)
+            if name != var.name and var.name in params:
+                params[name] = self.pgm.factors[var.name].select(params[var.name], name)
+        return params
+
+    # ------------------------------------------------------------------
     # Stochastic functions (bound to ``self.pgm``)
     # ------------------------------------------------------------------
     def model_fn(
@@ -144,24 +175,10 @@ class PyroBaseInference(BaseInference):
             for level in pgm.levels:
                 for var in level:
                     cpd = pgm.factors[var.name]
-
                     if cpd.is_root:
-                        params = cpd(parent_values={})
-                        params = {
-                            k: v.unsqueeze(0).expand(B, *v.shape) for k, v in params.items()
-                        }
+                        params = cpd.root_params(B)
                     else:
-                        parent_values: Dict[str, torch.Tensor] = {}
-                        for p in cpd.parents:
-                            if p.name in cache:
-                                parent_values[p.name] = cache[p.name]
-                            elif p.name in data:
-                                parent_values[p.name] = data[p.name]
-                            else:
-                                raise ValueError(
-                                    f"model_fn: parent {p.name!r} of {var.name!r} is "
-                                    "neither cached nor in data."
-                                )
+                        parent_values = self._gather_parents(cpd, cache, data)
                         params = cpd(parent_values=parent_values, **layer_kwargs.get(var.name, {}))
 
                     obs = data.get(var.name, None)

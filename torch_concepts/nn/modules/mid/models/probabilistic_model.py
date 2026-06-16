@@ -35,6 +35,9 @@ class ProbabilisticModel(nn.Module, ABC):
         if len(self.variables) != len(variables):
             raise ValueError("Duplicate variable names in `variables`.")
 
+        # Index every addressable name (variables and plate members).
+        self._index_members()
+        
         # Guide modules are stored here so pgm.parameters() includes them.
         # The latent/conditioning contract lives on the inference engine.
         self.guides: nn.ModuleDict = nn.ModuleDict()
@@ -54,3 +57,35 @@ class ProbabilisticModel(nn.Module, ABC):
     def has_guides(self) -> bool:
         """Whether any guide modules have been registered on this PGM."""
         return len(self.guides) > 0
+    
+    # --------------------------------------------------------- addressing
+    def _index_members(self) -> None:
+        """Map every queryable name to its owning variable.
+
+        ``_addressable[name]`` -> the variable whose CPD produces ``name``. A plate
+        contributes its own name plus one entry per member (all pointing to the
+        plate); an ordinary variable contributes just itself. Column selection
+        lives on the CPD (``ParametricCPD.select``).
+        """
+        self._addressable: Dict[str, Variable] = {}
+        for var in self.variables.values():
+            self._addressable[var.name] = var
+            if var.is_plate:
+                for member in var.members:
+                    self._addressable[member] = var
+        # Cached once: validation looks this up on every query, and a plate can
+        # contribute many member names, so we avoid rebuilding the set each call.
+        self._queryable_names: frozenset = frozenset(self._addressable)
+
+    @property
+    def queryable_names(self) -> frozenset:
+        """Names accepted by ``query``/``evidence``: variables plus plate members."""
+        return self._queryable_names
+
+    def resolve(self, name: str) -> Variable:
+        """The owning variable for ``name`` (the plate itself for a member name).
+
+        Column selection lives on the CPD (``ParametricCPD.select``), so this only
+        maps a name to the variable whose CPD produces it.
+        """
+        return self._addressable[name]

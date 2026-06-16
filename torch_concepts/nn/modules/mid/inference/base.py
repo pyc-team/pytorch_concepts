@@ -64,7 +64,9 @@ class BaseInference(nn.Module):
          - batch sizes match.
         """
 
-        all_names = {v.name for v in self.pgm.variables.values()}
+        all_names = getattr(self.pgm, "queryable_names", None)
+        if all_names is None:
+            all_names = {v.name for v in self.pgm.variables.values()}
         unknown_q = set(query.keys()) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")
