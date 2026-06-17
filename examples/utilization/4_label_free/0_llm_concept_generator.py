@@ -10,7 +10,7 @@ Before running, create a free Gemini API key in Google AI Studio and export it:
 
 Run from the repository root with:
 
-    python examples/utilization/4_concept_generation/0_llm_concept_generator.py
+    python -m examples.utilization.4_concept_generation.0_llm_concept_generator
 """
 
 import json

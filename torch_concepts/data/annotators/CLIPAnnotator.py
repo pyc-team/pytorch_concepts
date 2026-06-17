@@ -59,7 +59,7 @@ class CLIPAnnotator(Annotator):
         temperature: float = 1.0,
         bias: float = 0.0,
         threshold: float = 0.5,
-        concept_type: str = "continuous",
+        concept_type: str = "discrete",
         num_workers: int = 0,
     ):
         if output not in {"similarity", "logit", "probability", "binary"}:
@@ -154,10 +154,6 @@ class CLIPAnnotator(Annotator):
             name=name or "CLIPConceptDataset",
         )
 
-    # ---------------------------------------------------------------------
-    # Concept encoding
-    # ---------------------------------------------------------------------
-
     def _prepare_concepts(
         self,
         concepts: Concepts,
@@ -234,10 +230,6 @@ class CLIPAnnotator(Annotator):
 
         return [t.format(concept) for t in template]
 
-    # ---------------------------------------------------------------------
-    # Image handling
-    # ---------------------------------------------------------------------
-
     def _prepare_clip_images(self, images: Sequence[Any]) -> Tensor:
         processed = []
 
@@ -270,10 +262,6 @@ class CLIPAnnotator(Annotator):
             xs.append(x.detach().cpu())
 
         return xs
-
-    # ---------------------------------------------------------------------
-    # Scores and annotations
-    # ---------------------------------------------------------------------
 
     def _postprocess_scores(self, similarities: Tensor) -> Tensor:
         if self.output == "similarity":

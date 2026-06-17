@@ -10,7 +10,7 @@ Install the optional CLIP dependency before running:
 
 Run from the repository root with:
 
-    python examples/utilization/4_label_free/1_clip_concept_annotator.py
+    python -m examples.utilization.4_label_free.1_clip_concept_annotator
 
 The first run downloads the official CUB_200_2011.tgz archive into --data-root.
 """
@@ -146,30 +146,53 @@ def clean_cub_concept_name(name):
     return name.replace("::", " ").replace("_", " ")
 
 
+def cub_prompt(name: str) -> str:
+    name = name.replace("has ", "")
+
+    if name.startswith("bill shape "):
+        value = name.replace("bill shape ", "")
+        value = value.replace("hooked seabird", "hooked seabird-shaped")
+        value = value.replace("all-purpose", "general all-purpose")
+        return f"a photo of a bird with a {value} bill"
+
+    if name.startswith("wing color "):
+        value = name.replace("wing color ", "")
+        return f"a photo of a bird with {value} wings"
+
+    if name.startswith("upperparts color "):
+        value = name.replace("upperparts color ", "")
+        return f"a photo of a bird with {value} upperparts"
+
+    return f"a photo of a bird with {name}"
+
+
 def main():
     args = parse_args()
     cub_root = prepare_cub(args.data_root, download=not args.no_download)
     dataset = Subset(CUBImageDataset(cub_root), range(args.num_samples))
 
-    concepts = [
+    concept_names = [
         clean_cub_concept_name(name)
         for name in np.array(CONCEPT_SEMANTICS)[
             SELECTED_CONCEPTS[: args.num_concepts]
         ]
     ]
 
+    concept_prompts = [cub_prompt(name) for name in concept_names]
+
     annotator = CLIPAnnotator(
         model_name="ViT-B-32",
         pretrained="openai",
-        prompt_template="a photo of {}",
+        prompt_template="{}",
         output="similarity",
     )
 
     concept_dataset = annotator.annotate(
         dataset=dataset,
-        concepts=concepts,
+        concepts=concept_prompts,
+        concept_names=concept_names,
         name="cub_clip_concepts",
-    )
+)
 
     print(concept_dataset)
     print("Concept names:", concept_dataset.concept_names)
