@@ -1,367 +1,394 @@
 """
-Conditional Probability Distribution (CPD) for directed probabilistic graphical models.
-
-This module defines the ParametricCPD class, a ParametricFactor subclass that represents
-conditional probability distributions in Bayesian Networks.  Unlike the base
-ParametricFactor (which only knows about a scope of concepts), a CPD introduces the
-notion of **parents** — giving the factor directed semantics.
+ParametricCPD — Conditional distribution parameterised by a neural network.
 """
-import copy
-import torch
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
-from typing import List, Optional, Tuple, Union
-from itertools import product
 
+from __future__ import annotations
+
+import copy
+from typing import Callable, Dict, List, Optional, Union
+
+import torch
 import torch.nn as nn
 
-from .variable import Variable
-from .....distributions import Delta
+import torch.distributions as dist
+
+from .factor import ParametricFactor
+from .variable import Variable, Delta, PARAM_DIM
 
 
-class ParametricCPD(nn.Module):
+# ---------------------------------------------------------------------------
+# Expected parameter names per distribution family, used to validate and
+# dispatch per-parameter module dicts.
+# ---------------------------------------------------------------------------
+# Maps each distribution family to valid parameter-key sets.
+# For families that accept both ``probs`` and ``logits``, both options are listed.
+# The user's parametrization dict must match EXACTLY ONE of the listed sets.
+_DIST_VALID_PARAM_SETS: Dict[type, List[set]] = {
+    dist.Bernoulli:                [{"probs"}, {"logits"}],
+    dist.RelaxedBernoulli:         [{"probs"}, {"logits"}],
+    dist.Categorical:              [{"probs"}, {"logits"}],
+    dist.OneHotCategorical:        [{"probs"}, {"logits"}],
+    dist.RelaxedOneHotCategorical: [{"probs"}, {"logits"}],
+    dist.Normal:                   [{"loc", "scale"}],
+    dist.MultivariateNormal:       [{"loc", "scale_tril"}],
+    Delta:                         [{"value"}],
+}
+
+# ---------------------------------------------------------------------------
+# Default parameter-name list per distribution (used for the nn.Module shorthand).
+# ---------------------------------------------------------------------------
+# For distributions whose only ambiguity is probs-vs-logits, ``probs`` is the
+# default.  For distributions that require *multiple distinct* parameters (e.g.
+# Normal needs both ``loc`` and ``scale``), the single-module shorthand is
+# rejected at construction time and the user must supply a dict.
+_DIST_DEFAULT_PARAM_SET: Dict[type, List[str]] = {
+    dist.Bernoulli:                ["probs"],
+    dist.RelaxedBernoulli:         ["probs"],
+    dist.Categorical:              ["probs"],
+    dist.OneHotCategorical:        ["probs"],
+    dist.RelaxedOneHotCategorical: ["probs"],
+    dist.Normal:                   ["loc", "scale"],
+    dist.MultivariateNormal:       ["loc", "scale_tril"],
+    Delta:                         ["value"],
+}
+
+
+class ParametricCPD(ParametricFactor):
+    """Conditional distribution parameterised by a neural network
+    :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
+
+    ``parametrization`` is **required** (no default is inferred) and accepts two
+    forms:
+
+    * **Dict** ``{param_name: nn.Module}`` — explicit, works for any distribution.
+    * **Single** ``nn.Module`` — shorthand when the distribution has 
+      one parameter (e.g. Bernoulli → ``probs``, Delta → ``value``). Raises if the
+      distribution requires multiple distinct parameters (e.g. Normal needs both
+      ``loc`` and ``scale``); pass a dict in that case.
+
+    Every module must already emit a value in the parameter's natural domain. 
+    Root CPDs (no parents) use the same interface:
+    pass a :class:`~torch_concepts.nn.LearnablePrior` as the parametrization,
+    which holds a learnable parameter and returns it on ``forward()``.
+
+    Example — root Bernoulli prior (logits parametrized by a LearnablePrior):
+    ```
+        prior = ParametricCPD(variable=z, parametrization={"logits": LearnablePrior(z.size)})
+    ```
+
+    Example — non-root Bernoulli CPD (single-module shorthand):
+    ```
+        cpd = ParametricCPD(
+            variable=c,
+            parametrization=nn.Linear(4, 1),       # expanded to {'probs': ...} automatically
+            parents=[x],
+        )
+    ```
+
+    Passing a list of ``Variable`` instances returns a list of independent CPDs
+    sharing the same parent list; ``parametrization`` may be a single dict /
+    ``nn.Module`` (deep-copied per CPD), or a per-CPD list of dicts.
     """
-    Conditional probability distribution parameterised by a neural network.
 
-    Extends :class:`ParametricFactor` with directed-edge semantics: each CPD
-    has a list of **parent** concept-variables and computes
-    ``P(child | parents)`` via its ``parametrization`` module.
+    def __new__(
+        cls,
+        variable: Union[Variable, List[Variable]],
+        parametrization: Optional[
+            Union[nn.Module, Dict[str, nn.Module], List[Dict[str, nn.Module]]]
+        ] = None,
+        parents: Optional[List[Variable]] = None,
+        aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
+    ):
+        # Single-Variable path: defer to normal __init__. (A variable with named
+        # members — a plate — is still a single Variable and takes this path: one
+        # CPD produces all its members stacked on the last dimension.)
+        if isinstance(variable, Variable):
+            return super().__new__(cls)
 
-    Parameters
-    ----------
-    concepts : Union[str, List[str]]
-        Concept name(s).  When a list is provided, ``__new__`` returns a list
-        of independent ``ParametricCPD`` instances (one per concept).
-    parametrization : Union[nn.Module, List[nn.Module]]
-        Neural network(s) that compute the conditional distribution.
-    parents : List[Union[Variable, str]], optional
-        Parent concept-variables (or their names as strings, resolved later
-        by :class:`ProbabilisticModel`).  Defaults to ``[]``.
-
-    Attributes
-    ----------
-    parents : List[Variable]
-        Parent concept-variables in the directed graphical model.
-
-    See Also
-    --------
-    ParametricFactor : Base (undirected) factor class.
-    ProbabilisticModel : PGM container that resolves parent references.
-    """
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
-    def __new__(cls, 
-                concepts: Union[str, List[str]],
-                parametrization: Union[nn.Module, List[nn.Module]],
-                shared: bool = False,
-                **kwargs):
-        """
-        Create new ParametricCPD instance(s).
-
-        If ``concepts`` is a string, returns a single instance.
-        If ``concepts`` is a list and ``shared=False`` (default), returns a
-        list of instances (one per concept), each with a deep-copied
-        parametrization.
-        If ``concepts`` is a list and ``shared=True``, returns a **single**
-        instance whose parametrization is shared across all concepts.  The
-        parametrization must output concatenated logits for all concepts
-        (i.e. ``(batch, n_concepts * size)``).
-        """
-        if isinstance(concepts, str):
-            if isinstance(parametrization, list):
-                raise ValueError(
-                    "When 'concepts' is a string, 'parametrization' must be a single module, not a list.")
-            return object.__new__(cls)
-
-        # --- shared=True: single instance, no deepcopy ---
-        if shared:
-            if isinstance(parametrization, list):
-                raise ValueError(
-                    "When shared=True, 'parametrization' must be a single module, not a list.")
-            return object.__new__(cls)
-
-        # --- shared=False (default): one deepcopied instance per concept ---
-        n_concepts = len(concepts)
-        if not isinstance(parametrization, list):
-            module_list = [parametrization] * n_concepts
-        else:
-            module_list = parametrization
-
-        if len(module_list) != n_concepts:
-            raise ValueError(
-                f"If concepts is a list of length {n_concepts}, parametrization must either be "
-                f"a single module or a list of length {n_concepts}.")
-
-        instances = []
-        for i in range(n_concepts):
-            instance = object.__new__(cls)
-            instance.__init__(
-                concepts=concepts[i],
-                parametrization=copy.deepcopy(module_list[i]),
-                **kwargs,
+        # List path: broadcast into one independent CPD per variable.
+        if not isinstance(variable, list) or not all(
+            isinstance(v, Variable) for v in variable
+        ):
+            raise TypeError(
+                "ParametricCPD: `variable` must be a Variable or a list of "
+                f"Variables, got {type(variable).__name__}."
             )
-            instances.append(instance)
-        return instances
 
-    def __init__(self, 
-                 concepts: Union[str, List[str]],
-                 parametrization: Union[nn.Module, List[nn.Module]],
-                 parents: List[Union[Variable, str]] = [],
-                 shared: bool = False,
-                 shared_name: Optional[str] = None):
-        super().__init__()
-        self.concepts = concepts
-        self.parametrization = parametrization
-
-        assert isinstance(parents, list), "'parents' must be a list of Variable instances or strings."
-        self.parents = parents
-        self.shared = shared
-        self.shared_name = shared_name
-
-        # FIXME: remove self.concept dependence everywhere
-        if isinstance(self.concepts, str):
-            self.concept = self.concepts
+        n = len(variable)
+        if isinstance(parametrization, list):
+            if len(parametrization) != n:
+                raise ValueError(
+                    f"ParametricCPD: `parametrization` list length "
+                    f"{len(parametrization)} does not match `variable` length {n}."
+                )
+            if not all(isinstance(p, dict) for p in parametrization):
+                raise TypeError(
+                    "ParametricCPD: when `parametrization` is a list, every element "
+                    "must be a dict mapping parameter names to nn.Module instances."
+                )
+            modules = list(parametrization)
+        elif isinstance(parametrization, dict):
+            modules = [copy.deepcopy(parametrization) for _ in range(n)]
+        elif isinstance(parametrization, nn.Module):
+            modules = [copy.deepcopy(parametrization) for _ in range(n)]
         else:
-            self.concept = self.concepts[0]
+            raise TypeError(
+                "ParametricCPD: `parametrization` must be an nn.Module, a dict "
+                "mapping parameter names to nn.Module instances, or a list of such dicts; "
+                f"got {type(parametrization).__name__}."
+            )
 
-        # TODO: use when implementing factors
-        # self.scope = concepts+parents if isinstance(concepts, list) else [concepts]+parents
+        return [
+            cls(v, modules[i], parents=parents, aggregate=aggregate)
+            for i, v in enumerate(variable)
+        ]
 
-    # ------------------------------------------------------------------
-    # Directed-model helpers
-    # ------------------------------------------------------------------
+    def __init__(
+        self,
+        variable: Variable,
+        parametrization: Optional[Union[nn.Module, Dict[str, nn.Module]]] = None,
+        parents: Optional[List[Variable]] = None,
+        aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
+    ):
+        # When __new__ returned a list, __init__ is also invoked once per
+        # element with a singular Variable, so the list-path is a no-op here.
+        if not isinstance(variable, Variable):
+            return  # pragma: no cover
+
+        parents = list(parents) if parents else []
+        for p in parents:
+            if not isinstance(p, Variable):
+                raise TypeError(
+                    f"ParametricCPD({variable.name!r}): every parent "
+                    f"must be a Variable, got {type(p).__name__}."
+                )
+
+        D = variable.distribution
+
+        # --- Expand parametrization shorthands ---
+        if parametrization is None:
+            raise ValueError(
+                f"ParametricCPD({variable.name!r}): `parametrization` is required. "
+                "There is no default for any node (root or non-root); pass an "
+                "nn.Module or a {param_name: nn.Module} dict whose output is already "
+                "in the parameter's domain. For a root prior, pass a LearnablePrior, "
+                "e.g. parametrization={'logits': LearnablePrior(size)}."
+            )
+        elif isinstance(parametrization, nn.Module):
+            default_pnames = next(
+                (pnames for base, pnames in _DIST_DEFAULT_PARAM_SET.items()
+                 if issubclass(D, base)),
+                None,
+            )
+            if default_pnames is None or len(default_pnames) > 1:
+                pnames_str = default_pnames or "unknown"
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): {D.__name__} requires multiple "
+                    f"parameters {pnames_str}; pass a dict mapping each parameter name "
+                    "to its nn.Module."
+                )
+            parametrization = {default_pnames[0]: parametrization}
+        elif not isinstance(parametrization, dict):
+            raise TypeError(
+                f"ParametricCPD({variable.name!r}): `parametrization` must be None, an "
+                "nn.Module, or a dict mapping parameter names to nn.Module instances; "
+                f"got {type(parametrization).__name__}."
+            )
+
+        # --- Validate parameter keys against known distribution families ---
+        valid_sets = next(
+            (sets for base, sets in _DIST_VALID_PARAM_SETS.items() if issubclass(D, base)),
+            None,
+        )
+        got_keys = set(parametrization.keys())
+        if not got_keys:
+            raise ValueError(
+                f"ParametricCPD({variable.name!r}): `parametrization` dict must not be empty."
+            )
+        if valid_sets is not None and not any(got_keys == vs for vs in valid_sets):
+            options = [sorted(vs) for vs in valid_sets]
+            raise ValueError(
+                f"ParametricCPD({variable.name!r}): invalid parametrization keys "
+                f"{sorted(got_keys)} for {D.__name__}. "
+                f"Expected one of: {options}."
+            )
+        for pname, mod in parametrization.items():
+            if not isinstance(mod, nn.Module):
+                raise TypeError(
+                    f"ParametricCPD({variable.name!r}): parametrization[{pname!r}] must be an "
+                    f"nn.Module, got {type(mod).__name__}."
+                )
+
+        # Instantiate any LazyConstructor entries now that the parent (input)
+        # and target (output) variable sizes are known.
+        parametrization = self._instantiate_lazy(parametrization, variable, parents)
+
+        # Store the target variable and parents before super().__init__. These
+        # are plain (non-nn.Module) objects, so assigning them prior to
+        # nn.Module.__init__ is safe, and forward() reads self.variable.
+        self.variable: Variable = variable
+        self.parents: List[Variable] = parents
+
+        super().__init__(
+            parametrization=parametrization,
+            aggregate=aggregate,
+        )
+
+    @staticmethod
+    def _instantiate_lazy(
+        parametrization: Dict[str, nn.Module],
+        variable: Variable,
+        parents: List[Variable],
+    ) -> Dict[str, nn.Module]:
+        """Build any unbuilt :class:`LazyConstructor` entries into concrete modules.
+
+        Returns ``parametrization`` unchanged when there is nothing to build —
+        the common, eagerly-constructed case skips all the work below.
+
+        A :class:`LazyConstructor` defers module creation until the input/output
+        sizes are known; those sizes come from this CPD's variables:
+
+        * ``in_concepts``   — summed size of the ``"concept"`` parents;
+        * ``in_embeddings`` — summed size of the ``"embedding"`` parents;
+        * ``out_concepts``  — the *per-parameter* output size for the parameter
+          this module produces (``variable.param_sizes[param]``), so e.g. a
+          ``MultivariateNormal``'s ``scale_tril`` module is sized to its
+          ``size * (size + 1) // 2`` Cholesky entries, not just ``size``.
+
+        Input parents carry a multi-dimensional ``shape`` (a ``torch.Size``), but
+        the default aggregators flatten every event into a single feature axis
+        before a module sees it, so the relevant scalar is ``Variable.size``
+        (``== math.prod(shape)``).
+        """
+        from ...low.lazy import LazyConstructor
+
+        # Fast path: every module is already a concrete layer — nothing to build.
+        if not any(
+            isinstance(m, LazyConstructor) and m.module is None
+            for m in parametrization.values()
+        ):
+            return parametrization
+
+        in_concepts = sum(p.size for p in parents if p.variable_type == "concept")
+        in_embeddings = sum(p.size for p in parents if p.variable_type == "embedding")
+        out_sizes = variable.param_sizes
+
+        resolved: Dict[str, nn.Module] = {}
+        for pname, module in parametrization.items():
+            if isinstance(module, LazyConstructor) and module.module is None:
+                # build() instantiates the layer and returns the concrete module.
+                module = module.build(
+                    out_concepts=out_sizes.get(pname, variable.size),
+                    in_concepts=in_concepts or None,
+                    in_embeddings=in_embeddings or None,
+                )
+            resolved[pname] = module
+        return resolved
+
     @property
-    def in_features(self) -> int:
-        """Sum of parent variable sizes."""
-        if not self.parents:
-            return 0
-        return sum(p.size for p in self.parents)
+    def is_root(self) -> bool:
+        return len(self.parents) == 0
 
-    _MAX_DISCRETE_BITS = 20  # cap on total discrete parent bits for table construction
+    def forward(
+        self,
+        parent_values: Optional[Dict[str, torch.Tensor]] = None,
+        **layer_kwargs,
+    ):
+        """Compute the distribution parameters by processing the parent values through the
+        nn.Module(s).
 
-    def __repr__(self):
-        parents = [p.name if isinstance(p, Variable) else p for p in self.parents]
-        shared = f", shared={self.shared}" if self.shared else ""
-        return f"{self.__class__.__name__}(concepts={self.concepts!r}, parametrization={self.parametrization.__class__.__name__}, parents={parents}{shared})"
-    
-    def forward(self, **kwargs):
+        Root CPDs are called with no parent values: the parametrization module
+        is called with no arguments and its output is returned under the named
+        parameter dict for ``self.variable.distribution`` (typically a
+        :class:`~torch_concepts.nn.LearnablePrior`).
+
+        Non-root CPDs receive a ``parent_values`` dict mapping each parent name
+        to its tensor value (shape ``(*batch, *parent.shape)``). These tensors are
+        passed to ``self.aggregate`` (default: flatten event dims and concatenate
+        along the last axis) to produce a single input tensor, which is then
+        forwarded to each parameter module independently.
+
+        No activation is applied: each module's output is used as the distribution
+        parameter verbatim, so the module must already emit a value in the
+        parameter's natural domain.
+
+        Returns a ``Dict[str, Tensor]`` ready to pass to the distribution
+        constructor (e.g. ``{"probs": ...}`` for Bernoulli,
+        ``{"loc": ..., "scale": ...}`` for Normal).
         """
-        Compute the factor output by running the parametrization module.
+        if self.is_root:
+            # Root CPD: no parents expected.
+            return {
+                pname: mod()
+                for pname, mod in self.parametrization.items()
+            }
 
-        Parameters
-        ----------
-        **kwargs
-            Keyword arguments passed to the parametrization module.
+        # Compose the Variable → Tensor dict for the parents (ordered by parent list).
+        parent_variable_values = {p: parent_values[p.name] for p in self.parents}
 
-        Returns
-        -------
-        torch.Tensor
-            Output of the parametrization module.
+        # Each parameter module uses its own pre-resolved aggregation function.
+        result = {}
+        for pname, mod in self.parametrization.items():
+            cat = self._aggregators[pname](parent_variable_values)
+            if isinstance(cat, dict):
+                layer_kwargs.update(cat)
+                out = mod(**layer_kwargs)
+            else:
+                out = mod(cat, **layer_kwargs)
+            result[pname] = out
+        return result
+
+    def root_params(self, batch_size: int) -> Dict[str, torch.Tensor]:
+        """Root (parent-less) params broadcast to a batch.
+
+        A root CPD's parametrization produces a single batch-less prior; this runs
+        it and expands each parameter to ``(batch_size, *param_shape)`` so the
+        engine doesn't have to. Only meaningful for root CPDs.
         """
-        return self.parametrization(**kwargs)
-    
-    # def _get_parent_combinations(self) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Enumerate all discrete parent-state combinations for table construction.
+        return {
+            key: value.unsqueeze(0).expand(batch_size, *value.shape)
+            for key, value in self(parent_values={}).items()
+        }
 
-    #     Continuous (Delta / Normal) parents are held at zero; discrete parents
-    #     (Bernoulli, Categorical and their relaxed variants) are exhaustively
-    #     enumerated.
+    # ---- member addressing (a plate produces all members; these slice) ------
+    # ``forward`` runs once and returns the whole stacked output; the methods
+    # below pick out a single member's column span (a view, no copy). They are
+    # the only thing that differs between addressing this CPD by its variable
+    # name vs by one of its members — every inference backend reuses them.
 
-    #     Returns
-    #     -------
-    #     all_full_inputs : torch.Tensor
-    #         Input tensors for the parametrization, one row per combination.
-    #     all_discrete_state_vectors : torch.Tensor
-    #         Corresponding state vectors for the table rows.
+    def select(
+        self, params: Dict[str, torch.Tensor], name: str
+    ) -> Dict[str, torch.Tensor]:
+        """Distribution params for ``name``: the whole output for this CPD's own
+        variable, or a member's column slice."""
+        if name == self.variable.name:
+            return params
+        columns = self.variable.column_of(name)
+        return {key: value[..., columns] for key, value in params.items()}
 
-    #     Raises
-    #     ------
-    #     RuntimeError
-    #         If the total number of discrete parent bits exceeds
-    #         ``_MAX_DISCRETE_BITS`` (default 20), which would require
-    #         enumerating more than ~1 million combinations.
-    #     """
-    #     if not self.parents:
-    #         in_features = self.parametrization.in_features
-    #         placeholder_input = torch.zeros((1, in_features))
-    #         return placeholder_input, torch.empty((1, 0))
+    def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
+        """Realised value for ``name``: the whole value, or a member's column slice."""
+        if name == self.variable.name:
+            return value
+        return value[..., self.variable.column_of(name)]
 
-    #     # --- guard against combinatorial explosion ---
-    #     total_bits = 0
-    #     for p in self.parents:
-    #         if p.distribution in [Bernoulli, RelaxedBernoulli]:
-    #             total_bits += p.size
-    #         elif p.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-    #             total_bits += p.size  # one-hot dims
-    #     if total_bits > self._MAX_DISCRETE_BITS:
-    #         raise RuntimeError(
-    #             f"Total discrete parent bits ({total_bits}) exceeds the "
-    #             f"maximum of {self._MAX_DISCRETE_BITS}. Table construction "
-    #             f"would require 2^{total_bits} rows."
-    #         )
+    def clamp_members(
+        self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Clamp individually-observed members to their observed values.
 
-    #     discrete_combinations_list = []
-    #     discrete_state_vectors_list = []
-    #     continuous_tensors = []
+        Used for *partial observation* of a plate: the CPD has produced the whole
+        stacked ``value``, and this overwrites the columns of the observed members
+        with their observed tensors, leaving the unobserved members at the model's
+        value. ``observed`` maps member name -> observed tensor. Returns a new
+        tensor (the input is not mutated); a no-op when ``observed`` is empty.
+        """
+        if not observed:
+            return value
+        value = value.clone()
+        for member, obs in observed.items():
+            columns = self.variable.column_of(member)
+            slot = value[..., columns]
+            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
+        return value
 
-    #     for parent_var in self.parents:
-    #         if parent_var.distribution in [Bernoulli, RelaxedBernoulli,
-    #                                        Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-    #             out_dim = parent_var.size
-    #             input_combinations = []
-    #             state_combinations = []
-
-    #             if parent_var.distribution in [Bernoulli, RelaxedBernoulli]:
-    #                 input_combinations = list(product([0.0, 1.0], repeat=out_dim))
-    #                 state_combinations = input_combinations
-    #             elif parent_var.distribution in [Categorical, OneHotCategorical, RelaxedOneHotCategorical]:
-    #                 for i in range(out_dim):
-    #                     one_hot = torch.zeros(out_dim)
-    #                     one_hot[i] = 1.0
-    #                     input_combinations.append(one_hot.tolist())
-    #                     state_combinations.append([float(i)])
-
-    #             discrete_combinations_list.append(
-    #                 [torch.tensor(c, dtype=torch.float32).unsqueeze(0) for c in input_combinations])
-    #             discrete_state_vectors_list.append(
-    #                 [torch.tensor(s, dtype=torch.float32).unsqueeze(0) for s in state_combinations])
-
-    #         elif parent_var.distribution is Delta or parent_var.distribution is torch.distributions.Normal:
-    #             fixed_value = torch.zeros(parent_var.size).unsqueeze(0)
-    #             continuous_tensors.append(fixed_value)
-    #         else:
-    #             raise TypeError(
-    #                 f"Unsupported distribution type {parent_var.distribution.__name__} for table generation.")
-
-    #     if not discrete_combinations_list:
-    #         fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
-    #                                   if continuous_tensors else torch.empty((1, 0)))
-    #         return fixed_continuous_input, torch.empty((1, 0))
-
-    #     all_discrete_product = list(product(*discrete_combinations_list))
-    #     all_discrete_states_product = list(product(*discrete_state_vectors_list))
-
-    #     fixed_continuous_input = (torch.cat(continuous_tensors, dim=-1)
-    #                               if continuous_tensors else torch.empty((1, 0)))
-
-    #     all_full_inputs = []
-    #     for discrete_inputs in all_discrete_product:
-    #         discrete_part = torch.cat(list(discrete_inputs), dim=-1)
-    #         all_full_inputs.append(torch.cat([discrete_part, fixed_continuous_input], dim=-1))
-
-    #     all_discrete_state_vectors = []
-    #     for discrete_states in all_discrete_states_product:
-    #         all_discrete_state_vectors.append(torch.cat(list(discrete_states), dim=-1))
-
-    #     return torch.cat(all_full_inputs, dim=0), torch.cat(all_discrete_state_vectors, dim=0)
-
-    # # ------------------------------------------------------------------
-    # # CPT / potential-table construction
-    # # ------------------------------------------------------------------
-
-    # def build_cpt(self) -> torch.Tensor:
-    #     if self.shared:
-    #         raise NotImplementedError(
-    #             "build_cpt() is not supported for shared CPDs. "
-    #             "Shared CPDs output concatenated logits for multiple concepts "
-    #             "and cannot be decomposed into per-variable CPTs."
-    #         )
-    #     if not self.variable:
-    #         raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
-
-    #     all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-
-    #     input_batch = all_full_inputs
-
-    #     if input_batch.shape[-1] != self.parametrization.in_features:
-    #         raise RuntimeError(
-    #             f"Input tensor dimension mismatch for CPT building. "
-    #             f"ParametricCPD module expects {self.parametrization.in_features} features, "
-    #             f"but parent combinations resulted in {input_batch.shape[-1]} features. "
-    #             f"Check Variable definition and ProbabilisticModel resolution."
-    #         )
-
-    #     endogenous = self.parametrization(input=input_batch)
-    #     probabilities = None
-
-    #     if self.variable.distribution is Bernoulli:
-    #         # Traditional P(X=1) output
-    #         p_c1 = torch.sigmoid(endogenous)
-
-    #         # ACHIEVE THE REQUESTED 4x3 STRUCTURE: [Parent States | P(X=1)]
-    #         probabilities = torch.cat([discrete_state_vectors, p_c1], dim=-1)
-
-    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-    #         probabilities = torch.softmax(endogenous, dim=-1)
-
-    #     elif self.variable.distribution is Delta:
-    #         probabilities = endogenous
-
-    #     else:
-    #         raise NotImplementedError(f"CPT for {self.variable.distribution.__name__} not supported.")
-
-    #     return probabilities
-
-    # def build_potential(self) -> torch.Tensor:
-    #     if self.shared:
-    #         raise NotImplementedError(
-    #             "build_potential() is not supported for shared CPDs. "
-    #             "Shared CPDs output concatenated logits for multiple concepts "
-    #             "and cannot be decomposed into per-variable potential tables."
-    #         )
-    #     if not self.variable:
-    #         raise RuntimeError("ParametricCPD not linked to a Variable in ProbabilisticModel.")
-
-    #     # We need the core probability part for potential calculation
-    #     all_full_inputs, discrete_state_vectors = self._get_parent_combinations()
-    #     endogenous = self.parametrization(input=all_full_inputs)
-
-    #     if self.variable.distribution is Bernoulli:
-    #         cpt_core = torch.sigmoid(endogenous)
-    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-    #         cpt_core = torch.softmax(endogenous, dim=-1)
-    #     elif self.variable.distribution is Delta:
-    #         cpt_core = endogenous
-    #     else:
-    #         raise NotImplementedError("Potential table construction not supported for this distribution.")
-
-    #     # --- Potential Table Construction ---
-
-    #     if self.variable.distribution is Bernoulli:
-    #         p_c1 = cpt_core
-    #         p_c0 = 1.0 - cpt_core
-
-    #         child_states_c0 = torch.zeros_like(p_c0)
-    #         child_states_c1 = torch.ones_like(p_c1)
-
-    #         # Rows for X=1: [Parent States | Child State (1) | P(X=1)]
-    #         rows_c1 = torch.cat([discrete_state_vectors, child_states_c1, p_c1], dim=-1)
-    #         # Rows for X=0: [Parent States | Child State (0) | P(X=0)]
-    #         rows_c0 = torch.cat([discrete_state_vectors, child_states_c0, p_c0], dim=-1)
-
-    #         potential_table = torch.cat([rows_c1, rows_c0], dim=0)
-
-    #     elif self.variable.distribution in (Categorical, OneHotCategorical, RelaxedOneHotCategorical):
-    #         n_classes = self.variable.size
-    #         all_rows = []
-    #         for i in range(n_classes):
-    #             child_state_col = torch.full((cpt_core.shape[0], 1), float(i), dtype=torch.float32)
-    #             prob_col = cpt_core[:, i].unsqueeze(-1)
-
-    #             # [Parent States | Child State (i) | P(X=i)]
-    #             rows_ci = torch.cat([discrete_state_vectors, child_state_col, prob_col], dim=-1)
-    #             all_rows.append(rows_ci)
-
-    #         potential_table = torch.cat(all_rows, dim=0)
-
-    #     elif self.variable.distribution is Delta:
-    #         # [Parent States | Child Value]
-    #         child_value = cpt_core
-    #         potential_table = torch.cat([discrete_state_vectors, child_value], dim=-1)
-
-    #     else:
-    #         raise NotImplementedError("Potential table construction not supported for this distribution.")
-
-    #     return potential_table

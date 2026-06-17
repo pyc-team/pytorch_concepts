@@ -5,8 +5,6 @@ import pandas as pd
 import torch
 import logging
 from typing import List, Optional
-import bnlearn as bn
-from pgmpy.sampling import BayesianModelSampling
 
 from ...annotations import Annotations, AxisAnnotation
 
@@ -17,6 +15,19 @@ from ..preprocessing.autoencoder import extract_embs_from_autoencoder
 from ..io import download_url
 
 BUILTIN_DAGS = ['asia', 'alarm', 'andes', 'sachs', 'water']
+
+
+def _import_bnlearn():
+    """Lazily import bnlearn (and pgmpy's sampler), raising a clear error if not installed."""
+    try:
+        import bnlearn as bn
+        from pgmpy.sampling import BayesianModelSampling
+        return bn, BayesianModelSampling
+    except ImportError as exc:
+        raise ImportError(
+            "BnLearnDataset requires the `bnlearn` package (which pulls in pgmpy). "
+            "Install it with: pip install bnlearn"
+        ) from exc
 
 class BnLearnDataset(ConceptDataset):
     """Dataset class for the Asia dataset from bnlearn.
@@ -99,6 +110,7 @@ class BnLearnDataset(ConceptDataset):
             os.unlink(gz_path)
 
     def build(self):
+        bn, BayesianModelSampling = _import_bnlearn()
         self.maybe_download()
         if self.name in BUILTIN_DAGS:
             self.bn_model_dict = bn.import_DAG(self.name)

@@ -47,7 +47,7 @@ def main():
     task_predictor = HyperlinearConceptEmbeddingToConcept(
         in_concepts=n_concepts,
         in_embeddings=exog_dims,
-        out_concepts=n_tasks,
+        hidden_size=latent_dims,
     )
     model = torch.nn.Sequential(encoder, exog_encoder, concept_encoder, task_predictor)
 

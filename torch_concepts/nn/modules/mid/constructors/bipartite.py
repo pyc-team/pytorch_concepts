@@ -5,7 +5,7 @@ import torch
 from torch.nn import Module
 
 from .....annotations import Annotations
-from .concept_graph import ConceptGraph
+from .....concept_graph import ConceptGraph
 from ...low.lazy import LazyConstructor
 from .graph import GraphModel
 from .....data.utils import ensure_list

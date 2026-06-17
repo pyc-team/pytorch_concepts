@@ -4,8 +4,6 @@ defaults:
 batch_size: 512
 
 n_gen: 10000 # number of samples to generate
- 
-seed: ${seed}
 
 backbone: null # input is not structured data, so no backbone by default
 precompute_embs: false 

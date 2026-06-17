@@ -6,8 +6,8 @@ This example demonstrates how to implement a Concept Bottleneck Model (CBM) usin
 the low-level interface of PyC, which provides pure PyTorch syntax.
 
 Key Components:
-- LinearLatentToConcept: Maps latent embeddings (Z) to concept predictions (C)
-- LinearConceptToConcept: Maps concept predictions (C) to task predictions (C)
+- LinearEmbeddingToConcept: Maps latent embeddings (Z) to concept predictions (C)
+- LinearConceptToConcept: Maps concept predictions (C) to task predictions (Y)
 - Intervention API: Allows concept interventions at inference time
 
 This low-level approach gives you full control over:
@@ -34,14 +34,14 @@ def main():
     concept_reg = 0.5
 
     seed_everything(42)
-    
+
     dataset = ToyDataset(dataset='xor', n_gen=n_samples)
     x_train = dataset.input_data
     concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
     task_idx = list(dataset.graph.edge_index[1].unique().numpy())
     c_train = dataset.concepts[:, concept_idx]
     y_train = dataset.concepts[:, task_idx]
-    
+
     # Get dimensions
     n_features = x_train.shape[1]
     concept_dims = c_train.shape[1]

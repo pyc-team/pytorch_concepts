@@ -15,6 +15,7 @@ from torch_concepts.nn.modules.low.dense_layers import (
     Dense,
     MLP,
     ResidualMLP,
+    SelectorEmbeddingEncoder,
 )
 
 
@@ -80,56 +81,52 @@ class TestDense(unittest.TestCase):
 
     def test_initialization(self):
         """Test Dense layer initialization."""
-        layer = Dense(input_size=10, output_size=5)
+        layer = Dense(in_features=10, out_features=5)
         self.assertEqual(layer.affinity.in_features, 10)
         self.assertEqual(layer.affinity.out_features, 5)
 
     def test_forward(self):
         """Test forward pass."""
-        layer = Dense(input_size=10, output_size=5)
+        layer = Dense(in_features=10, out_features=5)
         x = torch.randn(2, 10)
         output = layer(x)
         self.assertEqual(output.shape, (2, 5))
 
     def test_with_dropout(self):
         """Test with dropout."""
-        layer = Dense(input_size=10, output_size=5, dropout=0.5)
-        layer.train()  # Enable dropout
+        layer = Dense(in_features=10, out_features=5, dropout=0.5)
+        layer.train()
         x = torch.randn(100, 10)
         output = layer(x)
         self.assertEqual(output.shape, (100, 5))
 
     def test_without_bias(self):
         """Test without bias."""
-        layer = Dense(input_size=10, output_size=5, bias=False)
+        layer = Dense(in_features=10, out_features=5, bias=False)
         self.assertIsNone(layer.affinity.bias)
 
     def test_different_activations(self):
         """Test with different activation functions."""
         activations = ['relu', 'tanh', 'sigmoid', 'linear']
-
         for act in activations:
-            layer = Dense(input_size=10, output_size=5, activation=act)
+            layer = Dense(in_features=10, out_features=5, activation=act)
             x = torch.randn(2, 10)
             output = layer(x)
             self.assertEqual(output.shape, (2, 5))
 
     def test_reset_parameters(self):
         """Test parameter reset."""
-        layer = Dense(input_size=10, output_size=5)
+        layer = Dense(in_features=10, out_features=5)
         old_weight = layer.affinity.weight.clone()
         layer.reset_parameters()
-        # Parameters should be different after reset
         self.assertFalse(torch.allclose(old_weight, layer.affinity.weight))
 
     def test_gradient_flow(self):
         """Test gradient flow."""
-        layer = Dense(input_size=10, output_size=5)
+        layer = Dense(in_features=10, out_features=5)
         x = torch.randn(2, 10, requires_grad=True)
         output = layer(x)
-        loss = output.sum()
-        loss.backward()
-
+        output.sum().backward()
         self.assertIsNotNone(x.grad)
         self.assertIsNotNone(layer.affinity.weight.grad)
 
@@ -280,6 +277,73 @@ class TestResidualMLP(unittest.TestCase):
         self.assertIsNotNone(x.grad)
         # Gradients should not vanish
         self.assertTrue((x.grad.abs() > 1e-10).any())
+
+
+class TestSelectorEmbeddingEncoder(unittest.TestCase):
+    """Test SelectorEmbeddingEncoder."""
+
+    def test_initialization(self):
+        """Test initialization stores correct attributes."""
+        sel = SelectorEmbeddingEncoder(
+            in_features=64,
+            out_features=32,
+            n_embeddings=5,
+            memory_size=10,
+        )
+        self.assertEqual(sel.out_features, 32)
+        self.assertEqual(sel.memory_size, 10)
+        self.assertEqual(sel.memory.num_embeddings, 5)
+        self.assertEqual(sel.memory.embedding_dim, 10 * 32)
+
+    def test_forward_soft_shape(self):
+        """Test soft-selection output shape."""
+        sel = SelectorEmbeddingEncoder(
+            in_features=64, out_features=32, n_embeddings=5, memory_size=10
+        )
+        x = torch.randn(4, 64)
+        out = sel(x, sampling=False)
+        self.assertEqual(out.shape, (4, 5, 32))
+
+    def test_forward_hard_shape(self):
+        """Test hard (Gumbel-softmax) selection output shape."""
+        sel = SelectorEmbeddingEncoder(
+            in_features=64, out_features=32, n_embeddings=5, memory_size=10
+        )
+        x = torch.randn(4, 64)
+        out = sel(x, sampling=True)
+        self.assertEqual(out.shape, (4, 5, 32))
+
+    def test_temperature_effect(self):
+        """Lower temperature should produce harder distributions."""
+        sel_hot = SelectorEmbeddingEncoder(
+            in_features=16, out_features=8, n_embeddings=3, memory_size=4, temperature=10.0
+        )
+        sel_cold = SelectorEmbeddingEncoder(
+            in_features=16, out_features=8, n_embeddings=3, memory_size=4, temperature=0.1
+        )
+        x = torch.randn(2, 16)
+        # Both should run without error
+        self.assertEqual(sel_hot(x).shape, (2, 3, 8))
+        self.assertEqual(sel_cold(x).shape, (2, 3, 8))
+
+    def test_gradient_flow(self):
+        """Test gradient flow through soft selection."""
+        sel = SelectorEmbeddingEncoder(
+            in_features=16, out_features=8, n_embeddings=3, memory_size=4
+        )
+        x = torch.randn(2, 16, requires_grad=True)
+        out = sel(x, sampling=False)
+        out.sum().backward()
+        self.assertIsNotNone(x.grad)
+        self.assertIsNotNone(sel.memory.weight.grad)
+
+    def test_single_embedding(self):
+        """Test with n_embeddings=1."""
+        sel = SelectorEmbeddingEncoder(
+            in_features=8, out_features=4, n_embeddings=1, memory_size=3
+        )
+        x = torch.randn(2, 8)
+        self.assertEqual(sel(x).shape, (2, 1, 4))
 
 
 class TestLayerComparison(unittest.TestCase):

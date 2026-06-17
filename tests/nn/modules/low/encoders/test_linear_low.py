@@ -1,112 +1,135 @@
-"""
-Comprehensive tests for torch_concepts.nn.modules.low.encoders
-
-Tests all encoder modules (linear, exogenous, selector, stochastic).
-"""
-import unittest
+"""Tests for LinearEmbeddingToConcept."""
+import pytest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
+
+from torch_concepts.nn.modules.low.encoders.linear import LinearEmbeddingToConcept
 
 
-class TestLinearLatentToConcept(unittest.TestCase):
-    """Test LinearLatentToConcept."""
+# ===========================================================================
+# 1. Construction
+# ===========================================================================
 
-    def test_initialization(self):
-        """Test encoder initialization."""
-        encoder = LinearLatentToConcept(
-            in_latent=128,
-            out_concepts=10
-        )
-        self.assertEqual(encoder.in_latent, 128)
-        self.assertEqual(encoder.out_concepts, 10)
-        self.assertIsInstance(encoder.encoder, nn.Linear)
+class TestLinearEmbeddingToConceptConstruction:
+    def test_stores_in_embeddings(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        assert enc.in_embeddings == 16
 
-    def test_forward_shape(self):
-        """Test forward pass output shape."""
-        encoder = LinearLatentToConcept(
-            in_latent=128,
-            out_concepts=10
-        )
-        embeddings = torch.randn(4, 128)
-        output = encoder(embeddings)
-        self.assertEqual(output.shape, (4, 10))
+    def test_stores_out_concepts(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        assert enc.out_concepts == 5
 
-    def test_gradient_flow(self):
-        """Test gradient flow through encoder."""
-        encoder = LinearLatentToConcept(
-            in_latent=64,
-            out_concepts=5
-        )
-        embeddings = torch.randn(2, 64, requires_grad=True)
-        output = encoder(embeddings)
-        loss = output.sum()
-        loss.backward()
-        self.assertIsNotNone(embeddings.grad)
+    def test_encoder_is_linear(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        assert isinstance(enc.encoder, nn.Linear)
 
-    def test_batch_processing(self):
-        """Test different batch sizes."""
-        encoder = LinearLatentToConcept(
-            in_latent=32,
-            out_concepts=5
-        )
-        for batch_size in [1, 4, 8]:
-            embeddings = torch.randn(batch_size, 32)
-            output = encoder(embeddings)
-            self.assertEqual(output.shape, (batch_size, 5))
+    def test_encoder_in_features(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=32, out_concepts=8)
+        assert enc.encoder.in_features == 32
+
+    def test_encoder_out_features(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=32, out_concepts=8)
+        assert enc.encoder.out_features == 8
+
+    def test_in_embeddings_shape_is_int(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        assert enc.in_embeddings_shape == 16
+
+    def test_in_concepts_is_none(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=5)
+        assert enc.in_concepts is None
 
     def test_with_bias_false(self):
-        """Test encoder without bias."""
-        encoder = LinearLatentToConcept(
-            in_latent=32,
-            out_concepts=5,
-            bias=False
-        )
-        embeddings = torch.randn(2, 32)
-        output = encoder(embeddings)
-        self.assertEqual(output.shape, (2, 5))
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=4, bias=False)
+        assert enc.encoder.bias is None
 
 
-class TestLinearExogenousToConcept(unittest.TestCase):
-    """Test LinearExogenousToConcept."""
+# ===========================================================================
+# 2. Forward pass
+# ===========================================================================
 
-    def test_initialization(self):
-        """Test encoder initialization."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=16,
-        )
-        self.assertEqual(encoder.in_exogenous, 16)
+class TestLinearEmbeddingToConceptForward:
+    def test_output_shape(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        x = torch.randn(4, 8)
+        assert enc(x).shape == (4, 3)
 
-    def test_forward_shape(self):
-        """Test forward pass output shape."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=8,
-        )
-        # Input shape: (batch, concepts, in_latent * n_exogenous_per_concept)
-        exog = torch.randn(4, 5, 8)
-        output = encoder(exog)
-        self.assertEqual(output.shape, (4, 5))
+    def test_single_concept(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=10, out_concepts=1)
+        x = torch.randn(3, 10)
+        assert enc(x).shape == (3, 1)
 
-    def test_single_exogenous_per_concept(self):
-        """Test with single exogenous per concept."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=10,
-        )
-        exog = torch.randn(3, 4, 10)
-        output = encoder(exog)
-        self.assertEqual(output.shape, (3, 4))
+    def test_various_batch_sizes(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=32, out_concepts=5)
+        for bs in [1, 4, 8, 16]:
+            out = enc(torch.randn(bs, 32))
+            assert out.shape == (bs, 5)
 
-    def test_gradient_flow(self):
-        """Test gradient flow."""
-        encoder = LinearExogenousToConcept(
-            in_exogenous=8,
-        )
-        exog = torch.randn(2, 3, 8, requires_grad=True)
-        output = encoder(exog)
-        loss = output.sum()
-        loss.backward()
-        self.assertIsNotNone(exog.grad)
+    def test_no_activation_raw_linear(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=4, out_concepts=2)
+        x = torch.randn(2, 4)
+        out = enc(x)
+        # Raw linear output — values can be outside [0,1]
+        assert out.shape == (2, 2)
+
+    def test_output_is_float_tensor(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        out = enc(torch.randn(2, 8))
+        assert out.dtype == torch.float32
 
 
-if __name__ == '__main__':
-    unittest.main()
+# ===========================================================================
+# 3. Gradient flow
+# ===========================================================================
+
+class TestLinearEmbeddingToConceptGradients:
+    def test_gradient_flows_to_input(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        x = torch.randn(2, 8, requires_grad=True)
+        enc(x).sum().backward()
+        assert x.grad is not None
+
+    def test_gradient_flows_to_weights(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        enc(torch.randn(2, 8)).sum().backward()
+        assert enc.encoder.weight.grad is not None
+
+    def test_gradient_is_nonzero(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3)
+        x = torch.randn(2, 8, requires_grad=True)
+        enc(x).sum().backward()
+        assert x.grad.abs().sum() > 0
+
+    def test_no_bias_gradient(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=8, out_concepts=3, bias=False)
+        enc(torch.randn(2, 8)).sum().backward()
+        assert enc.encoder.bias is None
+
+
+# ===========================================================================
+# 4. As part of a pipeline
+# ===========================================================================
+
+class TestLinearEmbeddingInPipeline:
+    def test_pipeline_with_second_layer(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=8)
+        pred = nn.Linear(8, 3)
+        x = torch.randn(4, 16)
+        c = enc(x)
+        y = pred(c)
+        assert y.shape == (4, 3)
+
+    def test_pipeline_gradients_end_to_end(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=16, out_concepts=8)
+        pred = nn.Linear(8, 3)
+        x = torch.randn(4, 16, requires_grad=True)
+        y = pred(torch.relu(enc(x)))
+        y.sum().backward()
+        assert x.grad is not None
+        assert enc.encoder.weight.grad is not None
+
+    def test_large_embedding_to_few_concepts(self):
+        enc = LinearEmbeddingToConcept(in_embeddings=512, out_concepts=10)
+        x = torch.randn(8, 512)
+        out = enc(x)
+        assert out.shape == (8, 10)

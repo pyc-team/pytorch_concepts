@@ -47,8 +47,8 @@ class LinearEmbeddingToConcept(BaseConceptLayer):
     """
     def __init__(
         self,
+        in_embeddings: Union[int, AxisAnnotation],
         out_concepts: Union[int, AxisAnnotation],
-        in_embeddings: Union[int, AxisAnnotation] = None,
         *args,
         **kwargs,
     ):

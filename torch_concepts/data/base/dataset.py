@@ -14,7 +14,7 @@ from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
 
-from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
+from ...concept_graph import ConceptGraph
 from ...annotations import Annotations, AxisAnnotation
 from ..utils import files_exist, parse_tensor, convert_precision
 

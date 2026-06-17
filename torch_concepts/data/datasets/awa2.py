@@ -15,7 +15,6 @@ import shutil
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as transforms
 from PIL import Image
 from typing import List, Mapping, Optional
 import zipfile
@@ -27,6 +26,18 @@ from torch_concepts.data.io import download_url_wget, zip_is_valid
 
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "AWA2Dataset image loading requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -445,10 +456,11 @@ class AWA2Dataset(ConceptDataset):
             x = self.input_data[item]
         else:
             img_path = self.input_data[item]
+            tv = _import_torchvision()
             x = Image.open(img_path)
             x = x.convert('RGB')  # Ensure 3 channels
-            x = transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
-            x = transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
+            x = tv.transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
+            x = tv.transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
         c = self.concepts[item]
         return {'inputs': {'x': x}, 'concepts': {'c': c}}
 

@@ -48,7 +48,7 @@ def main():
         torch.nn.Unflatten(dim=1, unflattened_size=(n_concepts, exogenous_size)),
     )
     # Concept encoder: exogenous -> concepts
-    c_encoder = pyc.nn.ConceptSequential(
+    c_encoder = pyc.nn.Sequential(
         torch.nn.Linear(exogenous_size, 1),
         torch.nn.Flatten(),
         out_concepts=concept_annotations
@@ -104,14 +104,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-

@@ -71,7 +71,9 @@ class HyperlinearConceptEmbeddingToConcept(BaseConceptLayer):
         min_std: float = 1e-6,
         **kwargs,
     ):
-        out_concepts = out_concepts if out_concepts is None else -1
+        # Output size is inferred from the embeddings at forward time, so the
+        # stored value is just a sentinel: default to -1 when not given.
+        out_concepts = out_concepts if out_concepts is not None else -1
         super().__init__(
             in_concepts=in_concepts,
             in_embeddings=in_embeddings,

@@ -1,324 +1,202 @@
-"""
-Comprehensive tests for torch_concepts.nn.modules.low.base
-
-Tests base classes for concept layers:
-- BaseConceptLayer
-- BaseEncoder
-- BasePredictor
-"""
-import unittest
+"""Tests for torch_concepts.nn.modules.low.base.layer."""
+import pytest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer,
-    BaseEncoder,
-    BasePredictor,
-)
+
+from torch_concepts.nn.modules.low.base.layer import BaseConceptLayer
 
 
-class TestBaseConceptLayer(unittest.TestCase):
-    """Test BaseConceptLayer abstract class."""
+# ---------------------------------------------------------------------------
+# Helpers — concrete subclasses for testing
+# ---------------------------------------------------------------------------
 
-    def test_initialization(self):
-        """Test initialization with various feature dimensions."""
-        # Create a concrete subclass
-        class ConcreteLayer(BaseConceptLayer):
-            def forward(self, x):
-                return x
+class _SimpleLayer(BaseConceptLayer):
+    def __init__(self, out_concepts, in_concepts=None, in_embeddings=None):
+        super().__init__(out_concepts=out_concepts,
+                         in_concepts=in_concepts,
+                         in_embeddings=in_embeddings)
+        in_dim = (in_concepts or 0) + (in_embeddings or 0) or 1
+        self.linear = nn.Linear(in_dim, out_concepts if isinstance(out_concepts, int) else 1)
 
-        layer = ConcreteLayer(
-            out_concepts=5,
-            in_concepts=10,
-            in_latent=8,
-            in_exogenous=2
-        )
+    def forward(self, x):
+        return torch.sigmoid(self.linear(x))
 
-        self.assertEqual(layer.out_concepts, 5)
-        self.assertEqual(layer.in_concepts, 10)
-        self.assertEqual(layer.in_latent, 8)
-        self.assertEqual(layer.in_exogenous, 2)
 
-    def test_initialization_minimal(self):
-        """Test initialization with only required arguments."""
-        class ConcreteLayer(BaseConceptLayer):
-            def forward(self, x):
-                return x
+# ===========================================================================
+# 1. Construction
+# ===========================================================================
 
-        layer = ConcreteLayer(out_concepts=5)
+class TestBaseConceptLayerConstruction:
+    def test_out_concepts_stored(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert layer.out_concepts == 5
 
-        self.assertEqual(layer.out_concepts, 5)
-        self.assertIsNone(layer.in_concepts)
-        self.assertIsNone(layer.in_latent)
-        self.assertIsNone(layer.in_exogenous)
+    def test_in_concepts_default_none(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert layer.in_concepts is None
 
-    def test_abstract_forward(self):
-        """Test that forward must be implemented."""
-        # BaseConceptLayer itself should raise NotImplementedError
+    def test_in_embeddings_default_none(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert layer.in_embeddings is None
+
+    def test_all_dims_stored(self):
+        layer = _SimpleLayer(out_concepts=5, in_concepts=10, in_embeddings=8)
+        assert layer.out_concepts == 5
+        assert layer.in_concepts == 10
+        assert layer.in_embeddings == 8
+
+    def test_is_nn_module(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert isinstance(layer, nn.Module)
+
+
+# ===========================================================================
+# 2. Abstract forward
+# ===========================================================================
+
+class TestBaseConceptLayerAbstract:
+    def test_forward_raises_not_implemented(self):
         layer = BaseConceptLayer(out_concepts=5)
-
-        with self.assertRaises(NotImplementedError):
+        with pytest.raises(NotImplementedError):
             layer(torch.randn(2, 5))
 
-    def test_subclass_implementation(self):
-        """Test proper subclass implementation."""
-        class MyLayer(BaseConceptLayer):
-            def __init__(self, out_concepts, in_concepts):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_concepts=in_concepts
-                )
-                self.linear = nn.Linear(in_concepts, out_concepts)
+    def test_subclass_can_implement_forward(self):
+        layer = _SimpleLayer(out_concepts=5, in_concepts=10)
+        out = layer(torch.randn(3, 10))
+        assert out.shape == (3, 5)
 
-            def forward(self, endogenous):
-                return torch.sigmoid(self.linear(endogenous))
-
-        layer = MyLayer(out_concepts=5, in_concepts=10)
-        x = torch.randn(2, 10)
-        output = layer(x)
-
-        self.assertEqual(output.shape, (2, 5))
-        self.assertTrue((output >= 0).all() and (output <= 1).all())
+    def test_output_in_valid_range_for_sigmoid(self):
+        layer = _SimpleLayer(out_concepts=3, in_concepts=4)
+        out = layer(torch.randn(5, 4))
+        assert (out >= 0).all() and (out <= 1).all()
 
 
-class TestBaseEncoder(unittest.TestCase):
-    """Test BaseEncoder abstract class."""
+# ===========================================================================
+# 3. shape attributes
+# ===========================================================================
 
-    def test_initialization(self):
-        """Test encoder initialization."""
-        class ConcreteEncoder(BaseEncoder):
-            def forward(self, x):
-                return x
+class TestBaseConceptLayerShapes:
+    def test_in_concepts_shape_is_int(self):
+        layer = _SimpleLayer(out_concepts=5, in_concepts=10)
+        assert layer.in_concepts_shape == 10
 
-        encoder = ConcreteEncoder(
-            out_concepts=10,
-            in_latent=784
-        )
+    def test_in_embeddings_shape_is_int(self):
+        layer = _SimpleLayer(out_concepts=5, in_embeddings=8)
+        assert layer.in_embeddings_shape == 8
 
-        self.assertEqual(encoder.out_concepts, 10)
-        self.assertEqual(encoder.in_latent, 784)
-        self.assertIsNone(encoder.in_concepts)  # Encoders don't use endogenous
+    def test_out_concepts_shape_is_int(self):
+        layer = _SimpleLayer(out_concepts=7)
+        assert layer.out_concepts_shape == 7
 
-    def test_no_endogenous_input(self):
-        """Test that encoders don't accept endogenous."""
-        class ConcreteEncoder(BaseEncoder):
-            def forward(self, x):
-                return x
+    def test_in_concepts_shape_none_when_not_provided(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert layer.in_concepts_shape is None
 
-        encoder = ConcreteEncoder(
-            out_concepts=10,
-            in_latent=784
-        )
-
-        # in_concepts should always be None for encoders
-        self.assertIsNone(encoder.in_concepts)
-
-    def test_encoder_implementation(self):
-        """Test concrete encoder implementation."""
-        class MyEncoder(BaseEncoder):
-            def __init__(self, out_concepts, in_latent):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_latent=in_latent
-                )
-                self.net = nn.Sequential(
-                    nn.Linear(in_latent, 128),
-                    nn.ReLU(),
-                    nn.Linear(128, out_concepts)
-                )
-
-            def forward(self, latent):
-                return self.net(latent)
-
-        encoder = MyEncoder(out_concepts=10, in_latent=784)
-        x = torch.randn(4, 784)
-        concepts = encoder(x)
-
-        self.assertEqual(concepts.shape, (4, 10))
-
-    def test_with_exogenous_features(self):
-        """Test encoder with exogenous features."""
-        class EncoderWithExogenous(BaseEncoder):
-            def __init__(self, out_concepts, in_latent, in_exogenous):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_latent=in_latent,
-                    in_exogenous=in_exogenous
-                )
-                total_features = in_latent + in_exogenous
-                self.net = nn.Linear(total_features, out_concepts)
-
-            def forward(self, latent, exogenous):
-                combined = torch.cat([latent, exogenous], dim=-1)
-                return self.net(combined)
-
-        encoder = EncoderWithExogenous(
-            out_concepts=5,
-            in_latent=10,
-            in_exogenous=3
-        )
-
-        embedding = torch.randn(2, 10)
-        exogenous = torch.randn(2, 3)
-        output = encoder(embedding, exogenous)
-
-        self.assertEqual(output.shape, (2, 5))
+    def test_in_embeddings_shape_none_when_not_provided(self):
+        layer = _SimpleLayer(out_concepts=5)
+        assert layer.in_embeddings_shape is None
 
 
-class TestBasePredictor(unittest.TestCase):
-    """Test BasePredictor abstract class."""
+# ===========================================================================
+# 4. prune raises NotImplementedError
+# ===========================================================================
 
-    def test_initialization(self):
-        """Test predictor initialization."""
-        class ConcretePredictor(BasePredictor):
-            def forward(self, x):
-                return x
-
-        predictor = ConcretePredictor(
-            out_concepts=3,
-            in_concepts=10
-        )
-
-        self.assertEqual(predictor.out_concepts, 3)
-        self.assertEqual(predictor.in_concepts, 10)
-
-    def test_predictor_implementation(self):
-        """Test concrete predictor implementation."""
-        class MyPredictor(BasePredictor):
-            def __init__(self, out_concepts, in_concepts):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_concepts=in_concepts,
-                )
-                self.linear = nn.Linear(in_concepts, out_concepts)
-
-            def forward(self, concepts):
-                return self.linear(concepts)
-
-        predictor = MyPredictor(out_concepts=3, in_concepts=10)
-        concepts = torch.randn(4, 10)
-        tasks = predictor(concepts)
-
-        self.assertEqual(tasks.shape, (4, 3))
-
-    def test_with_embedding_features(self):
-        """Test predictor with embedding features."""
-        class PredictorWithEmbedding(BasePredictor):
-            def __init__(self, out_concepts, in_concepts, in_latent):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_concepts=in_concepts,
-                    in_latent=in_latent
-                )
-                total_features = in_concepts + in_latent
-                self.linear = nn.Linear(total_features, out_concepts)
-
-            def forward(self, concepts, latent):                # concepts are already activated (probabilities)
-                combined = torch.cat([concepts, latent], dim=-1)
-                return self.linear(combined)
-
-        predictor = PredictorWithEmbedding(
-            out_concepts=3,
-            in_concepts=10,
-            in_latent=8
-        )
-
-        concepts = torch.randn(2, 10)
-        latent = torch.randn(2, 8)
-        output = predictor(concepts, latent)
-
-        self.assertEqual(output.shape, (2, 3))
-
-    def test_numerical_stability(self):
-        """Test that predictor handles extreme inputs."""
-        class SimplePredictor(BasePredictor):
-            def __init__(self, out_concepts, in_concepts):
-                super().__init__(
-                    out_concepts=out_concepts,
-                    in_concepts=in_concepts,
-                )
-                self.linear = nn.Linear(in_concepts, out_concepts)
-
-            def forward(self, concepts):
-                return self.linear(concepts)
-
-        predictor = SimplePredictor(out_concepts=3, in_concepts=5)
-
-        # Test with probability-like inputs
-        endogenous = torch.tensor([[0.0, 0.0, 0.5, 1.0, 1.0]])
-        output = predictor(endogenous)
-
-        # Output should be finite
-        self.assertFalse(torch.isnan(output).any())
-        self.assertFalse(torch.isinf(output).any())
+class TestBaseConceptLayerPrune:
+    def test_prune_raises(self):
+        layer = _SimpleLayer(out_concepts=5, in_concepts=4)
+        with pytest.raises(NotImplementedError):
+            layer.prune(torch.ones(5))
 
 
-class TestLayerIntegration(unittest.TestCase):
-    """Test integration between different base classes."""
+# ===========================================================================
+# 5. Gradient flow
+# ===========================================================================
 
-    def test_encoder_to_predictor_pipeline(self):
-        """Test encoder followed by predictor."""
-        class SimpleEncoder(BaseEncoder):
-            def __init__(self, out_concepts, in_latent):
-                super().__init__(out_concepts, in_latent)
-                self.linear = nn.Linear(in_latent, out_concepts)
-
-            def forward(self, x):
-                return self.linear(x)
-
-        class SimplePredictor(BasePredictor):
-            def __init__(self, out_concepts, in_concepts):
-                super().__init__(out_concepts, in_concepts)
-                self.linear = nn.Linear(in_concepts, out_concepts)
-
-            def forward(self, concepts):
-                return self.linear(concepts)
-
-        # Create pipeline
-        encoder = SimpleEncoder(out_concepts=10, in_latent=784)
-        predictor = SimplePredictor(out_concepts=5, in_concepts=10)
-
-        # Test pipeline
-        x = torch.randn(2, 784)
-        concepts = encoder(x)
-        predictions = predictor(concepts)
-
-        self.assertEqual(concepts.shape, (2, 10))
-        self.assertEqual(predictions.shape, (2, 5))
-
-    def test_gradient_flow_through_pipeline(self):
-        """Test gradient flow through encoder-predictor pipeline."""
-        class SimpleEncoder(BaseEncoder):
-            def __init__(self, out_concepts, in_latent):
-                super().__init__(out_concepts, in_latent)
-                self.linear = nn.Linear(in_latent, out_concepts)
-
-            def forward(self, x):
-                return self.linear(x)
-
-        class SimplePredictor(BasePredictor):
-            def __init__(self, out_concepts, in_concepts):
-                super().__init__(out_concepts, in_concepts)
-                self.linear = nn.Linear(in_concepts, out_concepts)
-
-            def forward(self, concepts):
-                return self.linear(concepts)
-
-        encoder = SimpleEncoder(out_concepts=10, in_latent=20)
-        predictor = SimplePredictor(out_concepts=5, in_concepts=10)
-
-        x = torch.randn(2, 20, requires_grad=True)
-        concepts = encoder(x)
-        predictions = predictor(concepts)
-        loss = predictions.sum()
+class TestBaseConceptLayerGradients:
+    def test_gradient_flows_to_input(self):
+        layer = _SimpleLayer(out_concepts=3, in_concepts=4)
+        x = torch.randn(2, 4, requires_grad=True)
+        loss = layer(x).sum()
         loss.backward()
+        assert x.grad is not None
 
-        # Gradients should flow to input
-        self.assertIsNotNone(x.grad)
-        # Gradients should exist for both modules
-        self.assertIsNotNone(encoder.linear.weight.grad)
-        self.assertIsNotNone(predictor.linear.weight.grad)
+    def test_gradient_flows_to_weights(self):
+        layer = _SimpleLayer(out_concepts=3, in_concepts=4)
+        x = torch.randn(2, 4)
+        loss = layer(x).sum()
+        loss.backward()
+        assert layer.linear.weight.grad is not None
 
 
-if __name__ == '__main__':
-    unittest.main()
+# ===========================================================================
+# 6. Encoder-style subclass (embedding → concept)
+# ===========================================================================
 
+class TestEncoderSubclass:
+    def test_embedding_encoder_forward(self):
+        class EmbEncoder(BaseConceptLayer):
+            def __init__(self, in_emb, out_c):
+                super().__init__(out_concepts=out_c, in_embeddings=in_emb)
+                self.net = nn.Sequential(nn.Linear(in_emb, 64), nn.ReLU(), nn.Linear(64, out_c))
+
+            def forward(self, embeddings):
+                return self.net(embeddings)
+
+        enc = EmbEncoder(in_emb=128, out_c=10)
+        out = enc(torch.randn(4, 128))
+        assert out.shape == (4, 10)
+        assert enc.in_embeddings == 128
+        assert enc.out_concepts == 10
+
+    def test_encoder_has_no_in_concepts(self):
+        class EmbEncoder(BaseConceptLayer):
+            def __init__(self, in_emb, out_c):
+                super().__init__(out_concepts=out_c, in_embeddings=in_emb)
+            def forward(self, x):
+                return x
+
+        enc = EmbEncoder(in_emb=16, out_c=5)
+        assert enc.in_concepts is None
+
+
+# ===========================================================================
+# 7. Predictor-style subclass (concept → label)
+# ===========================================================================
+
+class TestPredictorSubclass:
+    def test_predictor_forward(self):
+        class ConceptPredictor(BaseConceptLayer):
+            def __init__(self, in_c, out_c):
+                super().__init__(out_concepts=out_c, in_concepts=in_c)
+                self.linear = nn.Linear(in_c, out_c)
+
+            def forward(self, concepts):
+                return self.linear(concepts)
+
+        pred = ConceptPredictor(in_c=10, out_c=3)
+        out = pred(torch.randn(4, 10))
+        assert out.shape == (4, 3)
+
+    def test_gradient_pipeline(self):
+        class Enc(BaseConceptLayer):
+            def __init__(self):
+                super().__init__(out_concepts=10, in_embeddings=20)
+                self.l = nn.Linear(20, 10)
+            def forward(self, x):
+                return self.l(x)
+
+        class Pred(BaseConceptLayer):
+            def __init__(self):
+                super().__init__(out_concepts=5, in_concepts=10)
+                self.l = nn.Linear(10, 5)
+            def forward(self, c):
+                return self.l(c)
+
+        enc, pred = Enc(), Pred()
+        x = torch.randn(2, 20, requires_grad=True)
+        c = enc(x)
+        y = pred(c)
+        y.sum().backward()
+        assert x.grad is not None
+        assert enc.l.weight.grad is not None
+        assert pred.l.weight.grad is not None

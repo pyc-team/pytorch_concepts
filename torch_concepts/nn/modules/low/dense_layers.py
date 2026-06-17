@@ -9,7 +9,7 @@ Reference: https://torch-spatiotemporal.readthedocs.io/en/latest/
 
 import torch
 from torch import nn
-
+import torch.nn.functional as F
 
 _torch_activations_dict = {
     'elu': 'ELU',
@@ -76,8 +76,8 @@ class Dense(nn.Module):
     an activation function.
 
     Args:
-        input_size (int): Number of input features.
-        output_size (int): Number of output features.
+        in_features (int): Number of input features.
+        out_features (int): Number of output features.
         activation (str, optional): Activation function to be used.
             (default: :obj:`'relu'`)
         dropout (float, optional): The dropout rate.
@@ -87,13 +87,13 @@ class Dense(nn.Module):
     """
 
     def __init__(self,
-                 input_size: int,
-                 output_size: int,
+                 in_features: int,
+                 out_features: int,
                  activation: str = 'relu',
                  dropout: float = 0.,
                  bias: bool = True):
         super(Dense, self).__init__()
-        self.affinity = nn.Linear(input_size, output_size, bias=bias)
+        self.affinity = nn.Linear(in_features, out_features, bias=bias)
         self.activation = get_layer_activation(activation)()
         self.dropout = nn.Dropout(dropout) if dropout > 0. else nn.Identity()
 
@@ -105,10 +105,10 @@ class Dense(nn.Module):
         """Apply linear transformation, activation, and dropout.
         
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            x (torch.Tensor): Input tensor of shape (..., in_features).
             
         Returns:
-            torch.Tensor: Output tensor of shape (batch_size, output_size).
+            torch.Tensor: Output tensor of shape (..., out_features).
         """
         out = self.activation(self.affinity(x))
         return self.dropout(out)
@@ -129,7 +129,7 @@ class MLP(nn.Module):
 
     def __init__(self,
                  input_size,
-                 hidden_size=64,
+                 hidden_size,
                  output_size=None,
                  n_layers=1,
                  activation='relu',
@@ -137,8 +137,8 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         
         layers = [
-            Dense(input_size=input_size if i == 0 else hidden_size,
-                  output_size=hidden_size,
+            Dense(in_features=input_size if i == 0 else hidden_size,
+                  out_features=hidden_size,
                   activation=activation,
                   dropout=dropout) for i in range(n_layers)
         ]
@@ -160,11 +160,11 @@ class MLP(nn.Module):
         """Forward pass through MLP layers with optional readout.
         
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            x (torch.Tensor): Input tensor of shape (..., input_size).
             
         Returns:
-            torch.Tensor: Output tensor of shape (batch_size, output_size) 
-                if readout is defined, else (batch_size, hidden_size).
+            torch.Tensor: Output tensor of shape (..., output_size) 
+                if readout is defined, else (..., hidden_size).
         """
         out = self.mlp(x)
         if self.readout is not None:
@@ -199,8 +199,8 @@ class ResidualMLP(nn.Module):
 
         self.layers = nn.ModuleList([
             nn.Sequential(
-                Dense(input_size=input_size if i == 0 else hidden_size,
-                      output_size=hidden_size,
+                Dense(in_features=input_size if i == 0 else hidden_size,
+                      out_features=hidden_size,
                       activation=activation,
                       dropout=dropout), nn.Linear(hidden_size, hidden_size))
             for i in range(n_layers)
@@ -226,11 +226,11 @@ class ResidualMLP(nn.Module):
         """Forward pass with residual connections.
         
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, input_size).
+            x (torch.Tensor): Input tensor of shape (..., input_size).
             
         Returns:
-            torch.Tensor: Output tensor of shape (batch_size, output_size) 
-                if readout is defined, else (batch_size, hidden_size).
+            torch.Tensor: Output tensor of shape (..., output_size) 
+                if readout is defined, else (..., hidden_size).
                 
         Note:
             Each layer applies: x = layer(x) + skip(x), where skip is either
@@ -243,182 +243,205 @@ class ResidualMLP(nn.Module):
         return x
 
 
-class SumOp(nn.Module):
-    r"""Sum ``n_terms`` equal-size contributions concatenated along the last dim.
 
-    Aggregation layer that splits its input into ``n_terms`` chunks of size
-    ``input_size`` along the last dimension and returns their elementwise sum.
-    Useful as a fusion node in PGMs or wherever a fixed number of equally
-    shaped tensors need to be combined additively.
+class LinearEmbeddingEncoder(torch.nn.Module):
+    """
+    Linear encoder that transforms embeddings into a set of embeddings.
+
+    Applies a single linear projection from ``in_features`` to
+    ``n_embeddings * out_features``, then unflattens the last dimension to
+    ``(n_embeddings, out_features)``.
+
+    Attributes:
+        out_shape (Tuple[int, int]): Target shape used by ``nn.Unflatten``.
+        encoder (nn.Sequential): ``Linear -> Unflatten`` encoder.
 
     Args:
-        input_size (int): Feature size of each contribution.
-        n_terms (int, optional): Number of contributions to sum. Defaults to 2.
-
-    Shape:
-        - Input: ``(*, n_terms * input_size)``
-        - Output: ``(*, input_size)``
+        in_features (int): Number of input features.
+        out_features (int): Feature dimension of each output embedding.
+        n_embeddings (int, optional): Number of output embeddings.
+            Defaults to ``1``.
 
     Example:
-        >>> layer = SumOp(input_size=4, n_terms=3)
-        >>> x = torch.ones(2, 12)   # three (2, 4) tensors stacked along the last dim
-        >>> out = layer(x)
+        >>> import torch
+        >>> from torch_concepts.nn import LinearEmbeddingEncoder
+        >>>
+        >>> encoder = LinearEmbeddingEncoder(
+        ...     in_features=128,
+        ...     out_features=16,
+        ...     n_embeddings=5,
+        ... )
+        >>> embeddings = torch.randn(4, 128)
+        >>> out = encoder(embeddings)
         >>> out.shape
-        torch.Size([2, 4])
-        >>> out
-        tensor([[3., 3., 3., 3.],
-                [3., 3., 3., 3.]])
+        torch.Size([4, 5, 16])
+
+    References:
+        Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
+        Accuracy-Explainability Trade-Off", NeurIPS 2022.
+        https://arxiv.org/abs/2209.09056
     """
-
-    def __init__(self, input_size: int, n_terms: int = 2):
-        super().__init__()
-        if n_terms < 1:
-            raise ValueError(f"n_terms must be >= 1, got {n_terms}.")
-        self.input_size = input_size
-        self.n_terms = n_terms
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        expected = self.n_terms * self.input_size
-        if input.shape[-1] != expected:
-            raise ValueError(
-                f"Expected {self.n_terms} contributions of size {self.input_size} "
-                f"(total {expected}), got last dim {input.shape[-1]}."
-            )
-        if self.n_terms == 1:
-            return input
-        return input.unflatten(-1, (self.n_terms, self.input_size)).sum(-2)
-
-
-class ResidualCorrectionOp(nn.Module):
-    r"""Correction term :math:`\varepsilon` for an additive reconstruction.
-
-    Given a ``target`` tensor and ``n_terms`` reconstruction tensors whose
-    sum approximates ``target``, computes a correction :math:`\varepsilon`
-    such that ``target ≈ sum(parts) + epsilon`` with explicit control over
-    the autograd flow.
-
-    Two orthogonal mechanisms are combined:
-
-    1.  A *target-residual* contribution selected by ``residual_mode``.
-        The mode names describe what happens to the parts' gradient at
-        the output of the downstream sum ``h_bar = sum(parts) + epsilon``:
-
-        - ``"block_parts"``:
-          :math:`\varepsilon \mathrel{+}= \text{target} - \sum_i p_i`.
-          Each part appears with coefficient :math:`-1` inside
-          :math:`\varepsilon` and :math:`+1` outside (in the downstream
-          sum).  The two cancel, so the gradient w.r.t. each part is
-          blocked — gradient flows only through ``target``.
-        - ``"keep_parts"``:
-          :math:`\varepsilon \mathrel{+}= \text{target} - \sum_i p_i.\mathrm{detach}()`.
-          Detaching the parts inside the residual keeps their gradient
-          alive outside, so the downstream sum's gradient w.r.t. each
-          part is :math:`+1` (the natural reconstruction grad).
-        - ``"off"``: no target-residual contribution.  ``target`` is
-          still consumed by :meth:`forward` (used for shape/dtype) so
-          the layer can plug into a fixed-parents PGM without changes.
-
-    2.  Optional *stop-gradient* contributions for selected parts.  For
-        each index ``i`` in ``stop_grad_parts`` the term
-        :math:`p_i.\mathrm{detach}() - p_i` is added to :math:`\varepsilon`.
-        This adds zero to the value but cancels the gradient through
-        :math:`p_i` in the downstream sum.
-
-    Args:
-        input_size (int): Feature size of ``target`` and each part.
-        n_terms (int): Number of reconstruction parts.
-        residual_mode (str): ``"block_parts"``, ``"keep_parts"``, or
-            ``"off"``.  Defaults to ``"block_parts"``.
-        stop_grad_parts (sequence of int, optional): Indices into the
-            parts list that should receive a stop-gradient contribution.
-            Defaults to no stop-grad parts.
-
-    Shape:
-        - Input ``input``: ``(*, (n_terms + 1) * input_size)`` — the
-          concatenation of ``[target, *parts]`` along the last dim.
-        - Output: ``(*, input_size)``.
-
-    Behavior table (``n_terms=2``).  ``h_bar = sum(parts) + epsilon``:
-
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``residual_mode`` | ``stop_grad_parts``| grad ``part[0]``| grad ``part[1]``| value of ``h_bar``                    |
-    +===================+====================+=================+=================+=======================================+
-    | ``"block_parts"`` | ``()``             | 0               | 0               | ``target``                            |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``"keep_parts"``  | ``()``             | 1               | 1               | ``target``                            |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``"keep_parts"``  | ``(1,)``           | 1               | 0               | ``target``                            |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``"keep_parts"``  | ``(0,)``           | 0               | 1               | ``target``                            |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``"off"``         | ``()``             | 1               | 1               | ``part[0] + part[1]`` (target unused) |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-    | ``"off"``         | ``(1,)``           | 1               | 0               | ``part[0] + part[1].detach()``        |
-    +-------------------+--------------------+-----------------+-----------------+---------------------------------------+
-
-    For ``n_terms=1`` the table collapses to the rows whose
-    ``stop_grad_parts`` is ``()`` (``"block_parts"`` → grad=0,
-    ``"keep_parts"`` → grad=1, ``"off"`` → grad=1 with ``h_bar = part``).
-
-    Example:
-        >>> # ResNet-style residual: y = part + (target - part) == target
-        >>> layer = ResidualCorrectionOp(input_size=4, n_terms=1, residual_mode="block_parts")
-        >>> target = torch.randn(2, 4)
-        >>> part = torch.randn(2, 4, requires_grad=True)
-        >>> epsilon = layer(torch.cat([target, part], dim=-1))
-        >>> y = part + epsilon
-        >>> torch.allclose(y, target)
-        True
-    """
-
-    _RESIDUAL_MODES = ("block_parts", "keep_parts", "off")
 
     def __init__(
         self,
-        input_size: int,
-        n_terms: int,
-        residual_mode: str = "block_parts",
-        stop_grad_parts=None,
+        in_features: int,
+        out_features: int,
+        n_embeddings: int = 1,
     ):
+        """
+        Initialize the linear embedding encoder.
+
+        Args:
+            in_features: Number of input features.
+            out_features: Dimension of each output embedding.
+            n_embeddings: Number of output embeddings.
+        """
         super().__init__()
-        if n_terms < 1:
-            raise ValueError(f"n_terms must be >= 1, got {n_terms}.")
-        if residual_mode not in self._RESIDUAL_MODES:
-            raise ValueError(
-                f"residual_mode must be one of {self._RESIDUAL_MODES}, got {residual_mode!r}."
-            )
-        self.input_size = input_size
-        self.n_terms = n_terms
-        self.residual_mode = residual_mode
-        self.stop_grad_parts = tuple(stop_grad_parts) if stop_grad_parts else ()
-        for idx in self.stop_grad_parts:
-            if not 0 <= idx < n_terms:
-                raise ValueError(
-                    f"stop_grad_parts index {idx} out of range [0, {n_terms})."
-                )
 
-    def compute(self, target: torch.Tensor, *parts: torch.Tensor) -> torch.Tensor:
-        """Compute :math:`\\varepsilon` from ``target`` and positional ``parts``."""
-        if len(parts) != self.n_terms:
-            raise ValueError(
-                f"Expected {self.n_terms} parts, got {len(parts)}."
-            )
-        if self.residual_mode == "block_parts":
-            epsilon = target - sum(parts)
-        elif self.residual_mode == "keep_parts":
-            epsilon = target - sum(p.detach() for p in parts)
-        else:  # "off"
-            epsilon = torch.zeros_like(target)
-        for idx in self.stop_grad_parts:
-            epsilon = epsilon + (parts[idx].detach() - parts[idx])
-        return epsilon
+        self.out_shape = (n_embeddings, out_features)
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        expected = (self.n_terms + 1) * self.input_size
-        if input.shape[-1] != expected:
-            raise ValueError(
-                f"Expected target + {self.n_terms} parts of size {self.input_size} "
-                f"(total {expected}), got last dim {input.shape[-1]}."
-            )
-        chunks = input.split(self.input_size, dim=-1)
-        return self.compute(chunks[0], *chunks[1:])
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(
+                in_features,
+                n_embeddings * out_features
+            ),
+            torch.nn.Unflatten(-1, self.out_shape)
+        )
+
+    def forward(self, x: torch.Tensor):
+        """
+        Encode into a set of embeddings.
+
+        Args:
+            x: Input tensor of shape ``(..., in_features)``.
+
+        Returns:
+            torch.Tensor: Embeddings of shape ``(..., n_embeddings, out_features)``.
+        """
+        return self.encoder(x)
+
+
+
+class SelectorEmbeddingEncoder(torch.nn.Module):
+    """
+    Memory-based selector for embeddings with attention mechanism.
+
+    This module maintains a learnable memory bank of embeddings and uses an
+    attention mechanism to select relevant embeddings based on input. It
+    supports both soft (weighted) and hard (Gumbel-softmax) selection.
+
+    Attributes:
+        temperature (float): Temperature for softmax/Gumbel-softmax.
+        memory_size (int): Number of memory slots.
+        out_features (int): Feature dimension of each output embedding.
+        memory (nn.Embedding): Learnable memory bank.
+        selector (nn.Sequential): Attention network for memory selection.
+
+    Args:
+        in_features: Number of input features.
+        out_features: Feature dimension of each output embedding.
+        n_embeddings: Number of output embeddings. Defaults to ``1``.
+        memory_size: Number of memory slots. Defaults to ``2``.
+        temperature: Temperature parameter for selection. Defaults to ``1.0``.
+        *args: Additional arguments for the linear layer.
+        **kwargs: Additional keyword arguments for the linear layer.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import SelectorEmbeddingEncoder
+        >>>
+        >>> # Create memory selector
+        >>> selector = SelectorEmbeddingEncoder(
+        ...     in_features=64,
+        ...     out_features=32,
+        ...     n_embeddings=5,
+        ...     memory_size=10,
+        ...     temperature=0.5
+        ... )
+        >>>
+        >>> # Forward pass with soft selection
+        >>> embeddings = torch.randn(4, 64)  # batch_size=4
+        >>> selected = selector(embeddings, sampling=False)
+        >>> print(selected.shape)
+        torch.Size([4, 5, 32])
+        >>>
+        >>> # Forward pass with hard selection (Gumbel-softmax)
+        >>> selected_hard = selector(embeddings, sampling=True)
+        >>> print(selected_hard.shape)
+        torch.Size([4, 5, 32])
+    """
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        n_embeddings: int = 1,
+        memory_size: int = 2,
+        temperature: float = 1.0,
+        *args,
+        **kwargs,
+    ):
+        """
+        Initialize the memory selector.
+
+        Args:
+            in_features: Number of input features.
+            out_features: Feature dimension of each output embedding.
+            n_embeddings: Number of output embeddings. Defaults to ``1``.
+            memory_size: Number of memory slots. Defaults to ``2``.
+            temperature: Temperature for selection. Defaults to ``1.0``.
+            *args: Additional arguments for the linear layer.
+            **kwargs: Additional keyword arguments for the linear layer.
+        """
+        super().__init__()
+        self.temperature = temperature
+        self.memory_size = memory_size
+        self.out_features = out_features
+        self._selector_out_shape = (n_embeddings, memory_size)
+        self._selector_out_dim = torch.tensor(self._selector_out_shape).prod().item()
+
+        # init memory of embeddings [n_embeddings, memory_size * out_features]
+        self.memory = torch.nn.Embedding(n_embeddings, memory_size * out_features)
+
+        # init selector [B, n_embeddings]
+        self.selector = torch.nn.Sequential(
+            torch.nn.Linear(in_features, out_features),
+            torch.nn.LeakyReLU(),
+            torch.nn.Linear(
+                out_features,
+                self._selector_out_dim,
+                *args,
+                **kwargs,
+            ),
+            torch.nn.Unflatten(-1, self._selector_out_shape),
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        sampling: bool = False,
+    ) -> torch.Tensor:
+        """
+        Select memory embeddings based on input.
+
+        Computes attention weights over memory slots and returns a weighted
+        combination of memory embeddings. Can use soft attention or hard
+        selection via Gumbel-softmax.
+
+        Args:
+            x: Input tensor of shape ``(..., in_features)``.
+            sampling: If True, use Gumbel-softmax for hard selection;
+                     if False, use soft attention (default: False).
+
+        Returns:
+            torch.Tensor: Selected embeddings of shape
+                         ``(..., n_embeddings, out_features)``.
+        """
+        memory = self.memory.weight.view(-1, self.memory_size, self.out_features)
+        mixing_coeff = self.selector(x)
+        if sampling:
+            mixing_probs = F.gumbel_softmax(mixing_coeff, dim=1, tau=self.temperature, hard=True)
+        else:
+            mixing_probs = torch.softmax(mixing_coeff / self.temperature, dim=1)
+
+        embeddings = torch.einsum("btm,tme->bte", mixing_probs, memory) # [Batch x Task x Memory] x [Task x Memory x Emb] -> [Batch x Task x Emb]
+        return embeddings

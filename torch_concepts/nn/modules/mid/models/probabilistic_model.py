@@ -1,259 +1,91 @@
 """
-Probabilistic Model implementation for concept-based architectures.
-
-This module provides :class:`ProbabilisticModel` — a unified factor-graph
-container that holds variables and parametric factors.  When the factors list
-contains :class:`ParametricCPD` instances, the model automatically resolves
-parent references and lazy constructors, acting as a Bayesian Network.  When
-the factors are plain :class:`ParametricFactor` instances, the model stores
-them without directed-graph semantics.
+Abstract base class for probabilistic graphical models.
 """
 
-from torch import nn
-from torch.distributions import Distribution
-from typing import List, Dict, Optional, Type, Union
+from __future__ import annotations
 
-from .variable import Variable, ExogenousVariable, ConceptVariable
-from .factor import ParametricFactor
-from .cpd import ParametricCPD
+from abc import ABC, abstractmethod
+from typing import Dict, List
+
+import torch.nn as nn
+
+from .variable import Variable
 
 
-# ---------------------------------------------------------------------------
-# Unified PGM container
-# ---------------------------------------------------------------------------
+class ProbabilisticModel(nn.Module, ABC):
+    """Abstract base class for probabilistic graphical models.
 
-class ProbabilisticModel(nn.Module):
-    """
-    Unified factor-graph container for concept-based probabilistic models.
-
-    Stores a set of :class:`Variable` nodes and :class:`ParametricFactor`
-    (or :class:`ParametricCPD`) factors.  The model inspects the factor types
-    at construction time:
-
-    * If all factors are :class:`ParametricCPD` — the model behaves as a
-      Bayesian Network (resolving lazy constructors, string parent references,
-      and providing CPT / potential-table helpers).
-    * If all factors are plain :class:`ParametricFactor` — the model stores
-      them without directed-graph semantics.
-    * Mixing both types raises a :class:`TypeError`.
+    Provides the minimal shared contract for all PGM implementations.
+    Subclasses are responsible for defining the graph structure 
+    and must implement :meth:`forward`.
 
     Parameters
     ----------
-    variables : List[Variable]
-        All concept-variables in the model.
-    factors : List[ParametricFactor]
-        The factors (either all :class:`ParametricCPD` or all plain
-        :class:`ParametricFactor`).
-
-    Attributes
-    ----------
-    variables : List[Variable]
-        Stored variable list.
-    factors : nn.ModuleDict
-        Concept-name → factor mapping (registers parameters).
-    concept_to_variable : Dict[str, Variable]
-        Concept-name → :class:`Variable` lookup.
-
-    Raises
-    ------
-    TypeError
-        If the factors list mixes :class:`ParametricCPD` and plain
-        :class:`ParametricFactor` instances.
+    variables : list of Variable
+        All random variables in the model. Names must be unique. Stored as the
+        ``variables`` mapping ``{name: Variable}`` (the name is taken from each
+        ``Variable.name``, so no name needs to be passed separately).
     """
 
-    def __init__(self, 
-                 variables: List[Variable],
-                 factors: Union[List[ParametricFactor], List[ParametricCPD]]):
+    def __init__(self, variables: List[Variable]) -> None:
         super().__init__()
-        has_cpds = any(isinstance(f, ParametricCPD) for f in factors)
-        has_plain = any(not isinstance(f, ParametricCPD) for f in factors)
-        if has_cpds and has_plain:
-            raise TypeError(
-                "All factors must be the same type: either all ParametricCPD "
-                "or all ParametricFactor, not a mix of both."
-            )
-        self._is_directed = not has_plain
-        self.variables = variables
-        self.factors = nn.ModuleDict()
-        self.concept_to_variable: Dict[str, Variable] = {}
-        # Maps secondary concept names to the primary concept name of a shared CPD.
-        self._shared_cpd_map: Dict[str, str] = {}
-        self._initialize_model(factors)
 
-    # ---- properties --------------------------------------------------------
+        variables = list(variables)
+        self.variables: Dict[str, Variable] = {v.name: v for v in variables}
+        if len(self.variables) != len(variables):
+            raise ValueError("Duplicate variable names in `variables`.")
+
+        # Index every addressable name (variables and plate members).
+        self._index_members()
+        
+        # Guide modules are stored here so pgm.parameters() includes them.
+        # The latent/conditioning contract lives on the inference engine.
+        self.guides: nn.ModuleDict = nn.ModuleDict()
 
     @property
-    def parametric_cpds(self) -> nn.ModuleDict:
-        """Alias for ``self.factors`` (useful when the model is directed)."""
-        return self.factors
+    @abstractmethod
+    def factors(self) -> nn.ModuleDict:
+        """Mapping ``{name: factor module}``, enabling ``model.factors[name]``.
 
-    # ---- initialisation ----------------------------------------------------
-
-    def _initialize_model(self, input_factors: Union[List[ParametricFactor], List[ParametricCPD]]):
-        """Build concept→variable mapping and register factors."""
-        self.concept_to_variable = {var.concept: var for var in self.variables}
-
-        if self._is_directed:
-            self._initialize_directed(input_factors)
-        else:
-            raise NotImplementedError("Undirected models with plain " \
-            "ParametricFactor are not yet supported.")
-            # for factor in input_factors:
-            #     if getattr(factor, 'shared', False):
-            #         self._register_shared_factor(factor)
-            #     else:
-            #         concept = factor.concept
-            #         if concept in self.concept_to_variable:
-            #             factor.variable = self.concept_to_variable[concept]
-            #         self.factors[str(concept)] = factor
-
-    def _register_shared_cpd(self, factor):
-        """Register a shared CPD under its shared_name (if provided) or primary
-        concept and map the remaining concept names as lightweight string redirects."""
-        shared_name = getattr(factor, 'shared_name', None)
-        key = shared_name if shared_name else factor.concept
-        factor.variable = self.concept_to_variable.get(factor.concept)
-        self.factors[str(key)] = factor
-        for name in factor.concepts:
-            if name != key:
-                self._shared_cpd_map[name] = key
-
-    def _initialize_directed(self, input_factors: Union[List[ParametricFactor], List[ParametricCPD]]):
-        """Directed-model initialisation: lazy constructors + parent resolution."""
-        from ...low.lazy import LazyConstructor
-
-        for cpd in input_factors:
-            if getattr(cpd, 'shared', False):
-                # Shared CPD: register once, map secondary concept names.
-                if isinstance(cpd.parametrization, LazyConstructor):
-                    raise NotImplementedError(
-                        "LazyConstructor is not supported with shared=True CPDs.")
-                self._register_shared_cpd(cpd)
-                continue
-            
-            concept = cpd.concepts
-            assert isinstance(concept, str)
-
-            if concept in self.concept_to_variable:
-                cpd.variable = self.concept_to_variable[concept]
-
-            if isinstance(cpd.parametrization, LazyConstructor):
-                parent_vars = self._resolve_parent_refs(cpd.parents)
-                in_concepts = in_exogenous = in_latent = 0
-                for pv in parent_vars:
-                    if isinstance(pv, ExogenousVariable):
-                        in_exogenous = pv.size
-                    elif isinstance(pv, ConceptVariable):
-                        in_concepts += pv.size
-                    else:
-                        in_latent += pv.size
-
-                out_concepts = (1 if isinstance(cpd.variable, ExogenousVariable)
-                                else self.concept_to_variable[concept].size)
-
-                initialized_layer = cpd.parametrization.build(
-                    in_latent=in_latent,
-                    in_concepts=in_concepts,
-                    in_exogenous=in_exogenous,
-                    out_concepts=out_concepts,
-                )
-                new_cpd = ParametricCPD(
-                    concepts=concept,
-                    parametrization=initialized_layer,
-                    parents=cpd.parents,
-                )
-                new_cpd.variable = cpd.variable
-                cpd = new_cpd
-
-            self.factors[str(concept)] = cpd
-
-        # resolve string parent references to Variable objects
-        for concept, cpd in self.factors.items():
-            cpd.parents = self._resolve_parent_refs(cpd.parents)
-
-    def _resolve_parent_refs(self, parents: list) -> List[Variable]:
-        """Resolve a mixed list of Variable / str references to Variables."""
-        resolved = []
-        for ref in parents:
-            if isinstance(ref, str):
-                if ref not in self.concept_to_variable:
-                    raise ValueError(f"Parent concept '{ref}' not found in any variable.")
-                resolved.append(self.concept_to_variable[ref])
-            elif isinstance(ref, Variable):
-                resolved.append(ref)
-            elif hasattr(ref, 'concept'):
-                resolved.append(self.concept_to_variable[ref.concept])
-            else:
-                raise TypeError(f"Invalid parent reference type: {type(ref)}")
-        # deduplicate while preserving order
-        return list({id(p): p for p in resolved}.values())
-
-    # ---- queries -----------------------------------------------------------
-
-    def get_by_distribution(self, distribution_class: Type[Distribution]) -> List[Variable]:
-        """Return all variables with a given distribution type."""
-        return [var for var in self.variables if var.distribution is distribution_class]
-
-    def get_module_of_concept(self, concept_name: str) -> Optional[ParametricFactor]:
-        """Return the factor for *concept_name*, or ``None``.
-
-        For shared CPDs, secondary concept names are transparently redirected
-        to the primary factor.
+        The subclass defines the name->factor correspondence. For a
+        :class:`BayesianNetwork` the key is a child variable's name and the
+        value is the :class:`ParametricCPD` parametrizing that child.
         """
-        if str(concept_name) in self.factors:
-            return self.factors[str(concept_name)]
-        if concept_name in self._shared_cpd_map:
-            return self.factors[str(self._shared_cpd_map[concept_name])]
-        return None
+        raise NotImplementedError
 
-    def get_variable_parents(self, concept_name: str) -> List[Variable]:
-        """Return the parent variables of a concept (empty if none / undirected)."""
-        cpd = self.get_module_of_concept(concept_name)
-        return cpd.parents if cpd is not None and hasattr(cpd, 'parents') else []
+    @property
+    def has_guides(self) -> bool:
+        """Whether any guide modules have been registered on this PGM."""
+        return len(self.guides) > 0
+    
+    # --------------------------------------------------------- addressing
+    def _index_members(self) -> None:
+        """Map every queryable name to its owning variable.
 
-    # ---- CPT / potential-table helpers (directed models) -------------------
+        ``_addressable[name]`` -> the variable whose CPD produces ``name``. A plate
+        contributes its own name plus one entry per member (all pointing to the
+        plate); an ordinary variable contributes just itself. Column selection
+        lives on the CPD (``ParametricCPD.select``).
+        """
+        self._addressable: Dict[str, Variable] = {}
+        for var in self.variables.values():
+            self._addressable[var.name] = var
+            if var.is_plate:
+                for member in var.members:
+                    self._addressable[member] = var
+        # Cached once: validation looks this up on every query, and a plate can
+        # contribute many member names, so we avoid rebuilding the set each call.
+        self._queryable_names: frozenset = frozenset(self._addressable)
 
-    def _make_temp_parametric_cpd(self, concept: str, module: nn.Module) -> ParametricCPD:
-        """Create a temporary ParametricCPD for table-building helpers."""
-        if isinstance(module, ParametricCPD):
-            parametrization = module.parametrization
-        else:
-            parametrization = module
-        f = ParametricCPD(concepts=concept, parametrization=parametrization)
-        f.variable = self.concept_to_variable[concept]
-        stored = self.factors[str(concept)] if str(concept) in self.factors else None
-        f.parents = stored.parents if stored is not None else []
-        return f
+    @property
+    def queryable_names(self) -> frozenset:
+        """Names accepted by ``query``/``evidence``: variables plus plate members."""
+        return self._queryable_names
 
-    # def build_potentials(self):
-    #     """Build potential tables for all concepts.
-        
-    #     Raises:
-    #         NotImplementedError: If the model contains shared CPDs.
-    #     """
-    #     self._reject_shared_cpds("build_potentials")
-    #     return {
-    #         concept: self._make_temp_parametric_cpd(concept, module).build_potential()
-    #         for concept, module in self.factors.items()
-    #     }
+    def resolve(self, name: str) -> Variable:
+        """The owning variable for ``name`` (the plate itself for a member name).
 
-    # def build_cpts(self):
-    #     """Build Conditional Probability Tables for all concepts.
-        
-    #     Raises:
-    #         NotImplementedError: If the model contains shared CPDs.
-    #     """
-    #     self._reject_shared_cpds("build_cpts")
-    #     return {
-    #         concept: self._make_temp_parametric_cpd(concept, module).build_cpt()
-    #         for concept, module in self.factors.items()
-    #     }
-
-    # def _reject_shared_cpds(self, method_name: str) -> None:
-    #     """Raise if any factor is a shared CPD."""
-    #     if self._shared_cpd_map:
-    #         raise NotImplementedError(
-    #             f"{method_name}() does not support shared CPDs. "
-    #             f"Secondary concepts {list(self._shared_cpd_map.keys())} "
-    #             f"would be silently omitted."
-    #         )
+        Column selection lives on the CPD (``ParametricCPD.select``), so this only
+        maps a name to the variable whose CPD produces it.
+        """
+        return self._addressable[name]

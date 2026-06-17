@@ -6,7 +6,7 @@ Tests mid-level modules (base, constructors, inference, models).
 import unittest
 import torch.nn as nn
 from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn.modules.mid.base.model import BaseConstructor
+from torch_concepts.nn.modules.mid.constructors.model import BaseConstructor
 
 
 class TestBaseConstructor(unittest.TestCase):

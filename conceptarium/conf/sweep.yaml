@@ -10,8 +10,8 @@ hydra:
     params:
       seed: 42
       dataset.seed: 0
-      datset.generation_seed: 0
-      dataset: dag_asia, dag_sachs, dag_insurance
+      dataset.generation_seed: 0
+      dataset: dag_asia #, dag_sachs, dag_insurance
       model: cbm, cem, c2bm
       model.train_inference._target_:
         torch_concepts.nn.DeterministicInference,
@@ -47,7 +47,7 @@ trainer:
   logger: null # null / wandb
   log_model: false  # whether to save checkpoint on wandb
   save_top_k: 1.    # whether to save checkpoint locally
-  max_epochs: 2000
+  max_epochs: 5
   patience: 20
 
 matmul_precision: medium
