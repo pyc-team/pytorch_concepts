@@ -6,11 +6,11 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
-    ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior, Sequential
+    ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior, Sequential, RandomPolicy, DoIntervention, \
+    intervention, InterventionModule
 
 
 def main():
-
     seed_everything(42)
 
     latent_dims = 10
@@ -25,41 +25,45 @@ def main():
     c_train = dataset.concepts[:, concept_idx]
     y_train = dataset.concepts[:, task_idx]
 
-    y_train = torch.cat([y_train, 1-y_train], dim=1)
+    y_train = torch.cat([y_train, 1 - y_train], dim=1)
 
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    concepts = ConceptVariable(['c1', 'c2'], distribution=Bernoulli)
+    concepts = ConceptVariable("concepts", members=['c1', 'c2'], distribution=Bernoulli)
     tasks = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
     # ParametricCPD setup
-    input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(x_train.shape[1]), parents=[]) # learnable prior parametrization is automatically set
-    
-    backbone = ParametricCPD(latent_var, parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU()), parents=[input_var])
-    
+    input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(x_train.shape[1]),
+                              parents=[])  # learnable prior parametrization is automatically set
+
+    backbone = ParametricCPD(latent_var,
+                             parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims),
+                                                                 torch.nn.LeakyReLU()), parents=[input_var])
+
     c_encoder = ParametricCPD(
-        concepts, 
-        parametrization=Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=1), torch.nn.Sigmoid()), 
-        parents=[latent_var]
+        concepts,
+        parents=[latent_var],
+        parametrization=Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=2),
+                                   torch.nn.Sigmoid()),
     )
-    
+
     y_predictor = ParametricCPD(
-        tasks, 
-        parametrization=Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2), torch.nn.Softmax(dim=-1)), 
-        parents=[*concepts]
+        tasks,
+        parents=[concepts],
+        parametrization=Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2), torch.nn.Softmax(dim=-1)),
     )
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, *concepts, tasks],
-        factors=[input_cpd, backbone, *c_encoder, y_predictor]
+        variables=[input_var, latent_var, concepts, tasks],
+        factors=[input_cpd, backbone, c_encoder, y_predictor]
     )
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model)
     evidence = {'input': x_train}
-    query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
+    query_concepts = {"concepts": c_train, "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCELoss()
@@ -69,10 +73,10 @@ def main():
 
         # generate concept and task predictions
         cy_pred = inference_engine.query(
-            query = query_concepts,
-            evidence = evidence
+            query=query_concepts,
+            evidence=evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['probs'], cy_pred.params['c2']['probs']], dim=1)
+        c_pred = cy_pred.params['concepts']['probs']
         y_pred = cy_pred.params['xor']['probs']
 
         # compute loss
@@ -86,22 +90,45 @@ def main():
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.5)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+            print(
+                f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
-    # print("=== Interventions ===")
-    # print(cy_pred.logits[:5])
+    print("=== Interventions ===")
+    print(cy_pred.params['concepts']['probs'][:3])
 
-    # int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
-    # int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
-    # with intervention(policies=int_policy_c,
-    #                   strategies=int_strategy_c,
-    #                   target_concepts=["c1", "c2"],
-    #                   quantiles=1):
-    #     # intervention affect the layer output 
-    #     # -> the parametrization of the distribution 
-    #     # -> the logits for discrete variables
-    #     cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
-    #     print(cy_pred.logits[:5])
+    int_policy_c = RandomPolicy(scale=100)
+    int_strategy_c = DoIntervention(constants=-10)
+    c_encoder.parametrization["probs"] = InterventionModule(
+        c_encoder.parametrization["probs"],
+        intervention_strategy=int_strategy_c,
+        intervention_policy=int_policy_c,
+        out_concepts_to_intervene_on=[1]
+    )
+    cy_pred = inference_engine.query(
+        query=query_concepts,
+        evidence=evidence
+    )
+    print(cy_pred.params['concepts']['probs'][:3])
+
+    with intervention(
+            concept_model,
+            intervention_strategy=int_strategy_c,
+            intervention_policy=int_policy_c,
+            variable_to_intervene_on="concepts",
+            parameter_to_intervene_on="probs",
+            members_to_intervene_on=["c1"]
+    ):
+        cy_pred = inference_engine.query(
+            query=query_concepts,
+            evidence=evidence
+        )
+        print(cy_pred.params['concepts']['probs'][:3])
+
+    cy_pred = inference_engine.query(
+        query=query_concepts,
+        evidence=evidence
+    )
+    print(cy_pred.params['concepts']['probs'][:3])
 
     return
 

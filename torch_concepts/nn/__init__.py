@@ -80,8 +80,10 @@ from .modules.mid.inference.torch.importance_sampling.mutilated_network import M
 from .modules.mid.inference.pyro.variational import VariationalInference
 from .modules.mid.inference.pyro.importance import PyroImportanceSampling
 
+from .modules.mid.intervention import intervention
+
 # Base intervention
-from .modules.low.intervention.intervention import intervention, BaseInterventionModule, InterventionModule
+from .modules.low.intervention.intervention import BaseInterventionModule, InterventionModule
 
 # Intervention strategies
 from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
