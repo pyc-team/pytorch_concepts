@@ -68,11 +68,15 @@ class ProbabilisticModel(nn.Module, ABC):
         lives on the CPD (``ParametricCPD.select``).
         """
         self._addressable: Dict[str, Variable] = {}
+        self.members_to_idx: Dict[str, Dict[str, int]] = {}
         for var in self.variables.values():
             self._addressable[var.name] = var
             if var.is_plate:
-                for member in var.members:
+                self.members_to_idx[var.name] = dict()
+                for var_idx, member in enumerate(var.members):
                     self._addressable[member] = var
+                    self.members_to_idx[var.name][member] = var_idx
+
         # Cached once: validation looks this up on every query, and a plate can
         # contribute many member names, so we avoid rebuilding the set each call.
         self._queryable_names: frozenset = frozenset(self._addressable)
