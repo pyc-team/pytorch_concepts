@@ -44,6 +44,33 @@ class CLIPAnnotator(Annotator):
 
     Concepts may also be provided directly as embeddings of shape
     ``(n_concepts, embedding_dim)``.
+    
+    Parameters
+    ----------
+    model_name : str, optional
+        The name of the CLIP model to use. Default is "ViT-B-32".
+    pretrained : str, optional
+        The pretrained weights to use. Default is "openai".
+    batch_size : int, optional
+        The batch size for processing the dataset. Default is 64.
+    device : str or torch.device, optional
+        The device to run the model on. Default is "cuda" if available, else "cpu".
+    input_getter : callable, optional
+        A function to extract the input (image) from a dataset sample. Default is ``default_input_getter``.
+    input_transform : callable, optional
+        A function to transform the input (image) before passing it to the model. Default is None, which uses the CLIP preprocessing.
+    prompt_template : str, sequence of str, or callable, optional
+        A template or function to generate prompts for the concepts. Default is "a photo of {}".
+    output : str, optional
+        The type of output to return. One of "similarity", "logit", "probability", or "binary". Default is "similarity".
+    temperature : float, optional
+        The temperature for scaling logits. Default is 1.0.
+    bias : float, optional
+        The bias for scaling logits. Default is 0.0.
+    threshold : float, optional
+        The threshold for converting probabilities to binary outputs. Default is 0.5.
+    num_workers : int, optional
+        The number of worker processes for data loading. Default is 0 (no additional workers).
     """
 
     def __init__(
@@ -59,7 +86,6 @@ class CLIPAnnotator(Annotator):
         temperature: float = 1.0,
         bias: float = 0.0,
         threshold: float = 0.5,
-        concept_type: str = "discrete",
         num_workers: int = 0,
     ):
         if output not in {"similarity", "logit", "probability", "binary"}:
@@ -67,9 +93,6 @@ class CLIPAnnotator(Annotator):
                 "output must be one of: "
                 "'similarity', 'logit', 'probability', 'binary'."
             )
-
-        if concept_type not in {"continuous", "discrete"}:
-            raise ValueError("concept_type must be either 'continuous' or 'discrete'.")
 
         try:
             import open_clip
@@ -92,7 +115,6 @@ class CLIPAnnotator(Annotator):
         self.temperature = temperature
         self.bias = bias
         self.threshold = threshold
-        self.concept_type = concept_type
         self.num_workers = num_workers
 
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
@@ -281,12 +303,5 @@ class CLIPAnnotator(Annotator):
 
     def _make_annotations(self, concept_names: Sequence[str]) -> Annotations:
         return Annotations({
-            1: AxisAnnotation(
-                labels=list(concept_names),
-                cardinalities=None,
-                metadata={
-                    name: {"type": self.concept_type}
-                    for name in concept_names
-                },
-            )
+            1: AxisAnnotation(labels=list(concept_names))
         })

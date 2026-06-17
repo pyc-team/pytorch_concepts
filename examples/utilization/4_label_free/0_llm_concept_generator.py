@@ -10,7 +10,7 @@ Before running, create a free Gemini API key in Google AI Studio and export it:
 
 Run from the repository root with:
 
-    python -m examples.utilization.4_concept_generation.0_llm_concept_generator
+    python -m examples.utilization.4_label_free.0_llm_concept_generator
 """
 
 import json
@@ -89,7 +89,6 @@ def gemini_llm(prompt, **kwargs) -> str:
 def main():
     generator = LLMConceptGenerator(
         llm=gemini_llm,
-        prompt=PROMPT,
         llm_kwargs={
             "temperature": 0.2,
         },
@@ -97,6 +96,7 @@ def main():
 
     concepts = generator.generate(
         class_names=["cat", "dog", "horse"],
+        prompt=PROMPT,
         num_concepts=10,
     )
 

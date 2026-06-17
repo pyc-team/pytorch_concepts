@@ -7,18 +7,31 @@ from torch_concepts.data.base.concept_generator import LLM, ConceptGenerator, Pa
 
 
 class LLMConceptGenerator(ConceptGenerator):
-    """Generate concepts using an arbitrary LLM/VLM and arbitrary prompt."""
+    """Generate concepts using an arbitrary LLM/VLM and arbitrary prompt.
+    
+    Parameters
+    ----------
+    llm : LLM
+        A callable that takes a prompt and returns the LLM's output.
+        It should accept the prompt as a string and return the output as a string.
+    parser : Parser, optional
+        A callable that takes the LLM's output and returns a list of concept strings.
+        If not provided, a default parser is used that handles common output formats.
+    postprocessor : Postprocessor, optional
+        A callable that takes a list of concept strings and returns a cleaned and deduplicated list.
+        If not provided, a default postprocessor is used that strips whitespace, removes duplicates, and normalizes the concepts.
+    llm_kwargs : dict, optional
+        Additional keyword arguments to pass to the LLM callable.
+    """
 
     def __init__(
         self,
         llm: LLM,
-        prompt: Prompt | None = None,
         parser: Parser | None = None,
         postprocessor: Postprocessor | None = None,
         llm_kwargs: dict[str, Any] | None = None,
     ):
         self.llm = llm
-        self.prompt = prompt
         self.parser = parser or default_concept_parser
         self.postprocessor = postprocessor or default_concept_postprocessor
         self.llm_kwargs = llm_kwargs or {}
@@ -32,17 +45,24 @@ class LLMConceptGenerator(ConceptGenerator):
     ) -> List[str]:
         """Generate concepts using the LLM and prompt.
         
-        Args:
-            dataset: Optional dataset to provide context for generation.
-            class_names: Optional list of class names to provide context for generation.
-            prompt: Optional prompt to use for generation. If not provided, uses the prompt from the constructor.
-            **kwargs: Additional keyword arguments to pass to the prompt renderer.
+        Parameters
+        ----------
+        dataset : Dataset, optional
+            The dataset to provide context for generating concepts. Can be None if not needed.
+        class_names : List[str], optional
+            A list of class names to provide context for generating concepts. Can be None if not needed.
+        prompt : Prompt, optional
+            A string or callable that generates the prompt for the LLM.
+            If a string, it can contain placeholders for formatting.
+            If a callable, it should accept the dataset and class_names as arguments and return a string.
+        **kwargs : Any
+            Additional keyword arguments to pass to the prompt renderer.
             
-        Returns:
+        Returns
+        -------
+        List[str]
             A list of generated concept strings.
         """
-        
-        prompt = prompt or self.prompt
 
         if prompt is None:
             raise ValueError(
