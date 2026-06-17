@@ -1,6 +1,4 @@
-"""
-Tests for SelectorEmbeddingEncoder (formerly SelectorLatentToExogenous).
-"""
+"""Tests for SelectorEmbeddingEncoder."""
 import unittest
 import torch
 import torch.nn as nn
