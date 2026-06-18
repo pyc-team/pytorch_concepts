@@ -19,7 +19,6 @@ from torch_concepts.nn import (
     LinearEmbeddingToConcept,
     UniformPolicy,
     GroundTruthIntervention,
-    intervention,
     PositiveWeightsIntervention,
     DistributionIntervention,
     DoIntervention,
@@ -104,40 +103,40 @@ def main():
     print(c_pred[:5])
 
     # Context manager example
-    with intervention(
+    concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
         GroundTruthIntervention(ground_truth=c_train),
         UniformPolicy(),
         out_concepts_to_intervene_on=["c1"]
-    ) as concept_encoder_intervened:
-        c_pred_intervened = concept_encoder_intervened(embedding)
-        print("\n\n## Ground Truth Intervention Example (intervene on c1):")
-        print(c_pred_intervened[:5])
+    )
+    c_pred_intervened = concept_encoder_intervened(embedding)
+    print("\n\n## Ground Truth Intervention Example (intervene on c1):")
+    print(c_pred_intervened[:5])
 
     # Module intervention example (intervene on the module parameters instead of the outputs)
-    with intervention(
+    concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
         PositiveWeightsIntervention(),
         UniformPolicy(),
         out_concepts_to_intervene_on=["c2"]
-    ) as concept_encoder_intervened:
-        c_pred_intervened = concept_encoder_intervened(embedding)
-        print("\n\n## Module Intervention Example (Positive Weights Intervention on c2):")
-        print(c_pred_intervened[:5])
+    )
+    c_pred_intervened = concept_encoder_intervened(embedding)
+    print("\n\n## Module Intervention Example (Positive Weights Intervention on c2):")
+    print(c_pred_intervened[:5])
 
     # Do Intervention example (set concepts to constant value)
-    with intervention(
+    concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
         DoIntervention(constants=[-100., 50]),
         UniformPolicy(),
         out_concepts_to_intervene_on=["c1", "c2"]
-    ) as concept_encoder_intervened:
-        c_pred_intervened = concept_encoder_intervened(embedding)
-        print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
-        print(c_pred_intervened[:5])
+    )
+    c_pred_intervened = concept_encoder_intervened(embedding)
+    print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
+    print(c_pred_intervened[:5])
 
     # Distribution Intervention example (sample concepts from distribution)
-    with intervention(
+    concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
         DistributionIntervention(dist=[
             torch.distributions.Normal(loc=-100, scale=1),
@@ -145,10 +144,10 @@ def main():
         ]),
         UniformPolicy(),
         out_concepts_to_intervene_on=["c1", "c2"]
-    ) as concept_encoder_intervened:
-        c_pred_intervened = concept_encoder_intervened(embedding)
-        print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
-        print(c_pred_intervened[:5])
+    )
+    c_pred_intervened = concept_encoder_intervened(embedding)
+    print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
+    print(c_pred_intervened[:5])
 
 
     # Example of using a custom build_context function to combine gradients from both the task predictor and
