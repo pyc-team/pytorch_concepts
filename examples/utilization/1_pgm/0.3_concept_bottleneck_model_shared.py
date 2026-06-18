@@ -7,7 +7,8 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
-    ParametricCPD, BayesianNetwork, AncestralInference, LearnablePrior, Sequential
+    ParametricCPD, BayesianNetwork, AncestralInference, LearnablePrior, Sequential, \
+    RandomPolicy, DoIntervention, intervention, InterventionModule
 
 
 def main():
@@ -96,16 +97,44 @@ def main():
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
-    # print("=== Interventions ===")
-    # print(cy_pred.logits[:5])
+    print("=== Interventions ===")
+    print(cy_pred.params['concepts']['probs'][:3])
 
-    # int_policy_c = RandomPolicy(out_concepts=concept_model.concept_to_variable["c1"].size, scale=100)
-    # int_strategy_c = DoIntervention(model=concept_model.parametric_cpds, constants=-10)
-    # with intervention(policies=int_policy_c,
-    #                   strategies=int_strategy_c,
-    #                   target_concepts=["c1", "c2"]):
-    #     cy_pred = inference_engine.query(query_concepts, evidence=initial_input, return_logits=True)
-    #     print(cy_pred.logits[:5])
+    int_policy_c = RandomPolicy(scale=100)
+    int_strategy_c = DoIntervention(constants=1)
+    c_encoder.parametrization["probs"] = InterventionModule(
+        c_encoder.parametrization["probs"],
+        intervention_strategy=int_strategy_c,
+        intervention_policy=int_policy_c,
+        out_concepts_to_intervene_on=[1]
+    )
+    cy_pred = inference_engine.query(
+        query=query_concepts,
+        evidence=evidence
+    )
+    print(cy_pred.params['concepts']['probs'][:3])
+
+    with intervention(
+            concept_model,
+            intervention_strategy=int_strategy_c,
+            intervention_policy=int_policy_c,
+            variable_to_intervene_on="concepts",
+            parameter_to_intervene_on="probs",
+            members_to_intervene_on=["c1"]
+    ):
+        cy_pred = inference_engine.query(
+            query=query_concepts,
+            evidence=evidence
+        )
+        print(cy_pred.params['concepts']['probs'][:3])
+
+    cy_pred = inference_engine.query(
+        query=query_concepts,
+        evidence=evidence
+    )
+    print(cy_pred.params['concepts']['probs'][:3])
+
+
 
     return
 

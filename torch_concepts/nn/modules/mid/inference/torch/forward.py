@@ -84,6 +84,7 @@ class ForwardInference(TorchBaseInference):
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
         parallelize_levels: bool = False,
+        activate_before_propagation: bool = True,
     ):
         super().__init__(pgm)
         if mode not in {"deterministic", "ancestral"}:
@@ -92,9 +93,18 @@ class ForwardInference(TorchBaseInference):
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
         self.mode = mode
         self.p_int = float(p_int)
+        # When True (deterministic mode only), the propagated parameter is passed
+        # through its default activation before being fed to child CPDs. The
+        # parameters reported in the inference output stay the raw (non-activated)
+        # values produced by the CPD.
+        self.activate_before_propagation = bool(activate_before_propagation)
         # When True, variables in the same topological level (conditionally
         # independent given the previous levels) are evaluated concurrently.
         self.parallelize_levels = bool(parallelize_levels)
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
         self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
         self._step = 0
         self.register_buffer(
@@ -105,6 +115,17 @@ class ForwardInference(TorchBaseInference):
         # signature. The DAG is immutable, so a given signature always yields
         # the same set — for a training loop the signature is constant.
         self._required_cache: Dict[Tuple[frozenset, frozenset], set] = {}
+
+    def __repr__(self) -> str:
+        return self._format_repr(
+            mode=self.mode,
+            p_int=self.p_int,
+            initial_temperature=self.initial_temperature,
+            annealing=self.annealing,
+            annealing_rate=self.annealing_rate,
+            parallelize_levels=self.parallelize_levels,
+            activate_before_propagation=self.activate_before_propagation,
+        )
 
     @property
     def temperature(self) -> torch.Tensor:
@@ -349,7 +370,9 @@ class ForwardInference(TorchBaseInference):
         temperature: torch.Tensor,
     ) -> torch.Tensor:
         if self.mode == "deterministic":
-            value = propagated_value(variable.distribution, params)
+            value = propagated_value(
+                variable.distribution, params, activate=self.activate_before_propagation,
+            )
         else:
             value = sample_from(variable, params, temperature)
         # Reshape the realization to the variable's event shape. Samples are then

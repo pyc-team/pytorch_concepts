@@ -140,6 +140,10 @@ class ImportanceSampling(TorchBaseInference):
         self.proposal = proposal
         self.n_samples = int(n_samples)
         self.warn_low_ess = float(warn_low_ess)
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
 
         self._schedule = make_temperature_schedule(
             initial_temperature, annealing, annealing_rate
@@ -147,6 +151,16 @@ class ImportanceSampling(TorchBaseInference):
         self._step = 0
         self.register_buffer(
             "_temperature", torch.tensor(float(self._schedule(self._step)))
+        )
+
+    def __repr__(self) -> str:
+        return self._format_repr(
+            proposal=self.proposal,
+            n_samples=self.n_samples,
+            initial_temperature=self.initial_temperature,
+            annealing=self.annealing,
+            annealing_rate=self.annealing_rate,
+            warn_low_ess=self.warn_low_ess,
         )
 
     @property

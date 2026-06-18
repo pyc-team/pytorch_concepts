@@ -89,6 +89,12 @@ class RejectionSampling(TorchBaseInference):
         self.n_samples = int(n_samples)
         self.warn_low_acceptance = float(warn_low_acceptance)
 
+    def __repr__(self) -> str:
+        return self._format_repr(
+            n_samples=self.n_samples,
+            warn_low_acceptance=self.warn_low_acceptance,
+        )
+
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
