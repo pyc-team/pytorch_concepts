@@ -106,3 +106,28 @@ class BaseInference(nn.Module):
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
         return self.query(query=query, evidence=evidence)
+
+    def _format_repr(self, **fields) -> str:
+        """Render ``EngineName(param=value, ...)`` for the given inference
+        parameters.
+
+        The wrapped :class:`ProbabilisticModel` is intentionally excluded — only
+        the engine's own configuration is shown. ``nn.Module`` values are
+        rendered by their class name and (non-string) callables by their
+        ``__name__`` so the PGM is never recursively printed.
+        """
+        items = []
+        for key, val in fields.items():
+            if isinstance(val, nn.Module):
+                rendered = type(val).__name__
+            elif callable(val) and not isinstance(val, str):
+                rendered = getattr(val, "__name__", repr(val))
+            else:
+                rendered = repr(val)
+            items.append(f"{key}={rendered}")
+        return f"{type(self).__name__}({', '.join(items)})"
+
+    def __repr__(self) -> str:
+        # Concrete engines override this to surface their own parameters; the
+        # base fallback shows just the engine name (no parameters, no PGM).
+        return self._format_repr()

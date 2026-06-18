@@ -146,6 +146,13 @@ class PyroImportanceSampling(PyroBaseInference):
         # engine does not clobber a VariationalInference guide on the same PGM.
         self.proposal: nn.ModuleDict = self._build_proposal(pgm, proposal or {})
 
+    def __repr__(self) -> str:
+        return self._format_repr(
+            proposal=sorted(self.proposal.keys()),
+            n_samples=self.n_samples,
+            warn_low_ess=self.warn_low_ess,
+        )
+
     # ------------------------------------------------------------------
     @classmethod
     def _build_proposal(

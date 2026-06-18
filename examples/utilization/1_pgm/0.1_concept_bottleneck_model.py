@@ -46,7 +46,7 @@ def main():
     
     y_predictor = ParametricCPD(
         tasks, 
-        parametrization=Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2), torch.nn.Softmax(dim=-1)), 
+        parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2), torch.nn.Softmax(dim=-1))}, 
         parents=[*concepts]
     )
 
@@ -73,7 +73,7 @@ def main():
             evidence = evidence
         )
         c_pred = torch.cat([cy_pred.params['c1']['logits'], cy_pred.params['c2']['logits']], dim=1)
-        y_pred = cy_pred.params['xor']['probs']
+        y_pred = cy_pred.params['xor']['logits']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -84,8 +84,8 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     # print("=== Interventions ===")

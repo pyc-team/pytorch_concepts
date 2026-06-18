@@ -84,6 +84,10 @@ class VariationalInference(PyroBaseInference):
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
         self._warned_latent_evidence = False
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
         self._schedule = make_temperature_schedule(
             initial_temperature, annealing, annealing_rate
         )
@@ -112,6 +116,16 @@ class VariationalInference(PyroBaseInference):
             f"{self.name} Warning:\nContract — pass all variables in `query`: observed "
             "variables with tensor values, latent variables absent or set to None. "
             "`evidence` is still accepted and merged (`query` values take priority)."
+        )
+
+    def __repr__(self) -> str:
+        return self._format_repr(
+            latents=list(self._latent_names),
+            n_samples=self.n_samples,
+            max_plate_nesting=self.max_plate_nesting,
+            initial_temperature=self.initial_temperature,
+            annealing=self.annealing,
+            annealing_rate=self.annealing_rate,
         )
 
     # ------------------------------------------------------------------
