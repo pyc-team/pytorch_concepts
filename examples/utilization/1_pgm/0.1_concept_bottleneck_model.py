@@ -40,7 +40,7 @@ def main():
     
     c_encoder = ParametricCPD(
         concepts, 
-        parametrization=Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=1), torch.nn.Sigmoid()), 
+        parametrization={'logits': Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=1))}, 
         parents=[latent_var]
     )
     
@@ -57,12 +57,12 @@ def main():
     )
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model)
+    inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
     evidence = {'input': x_train}
     query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -72,7 +72,7 @@ def main():
             query = query_concepts,
             evidence = evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['probs'], cy_pred.params['c2']['probs']], dim=1)
+        c_pred = torch.cat([cy_pred.params['c1']['logits'], cy_pred.params['c2']['logits']], dim=1)
         y_pred = cy_pred.params['xor']['probs']
 
         # compute loss
