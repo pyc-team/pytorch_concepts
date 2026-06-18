@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 from functools import partial
 
 import torch
+import torch.nn as nn
 import torch.distributions as dist
 
 from .....distributions.delta import Delta
@@ -38,11 +39,38 @@ _DEFAULT_DISTRIBUTIONS = {
     'categorical': dist.RelaxedOneHotCategorical,
     'continuous': dist.Normal,
 }
+
 _DEFAULT_DIST_KWARGS = {
     dist.RelaxedBernoulli: {'temperature': 0.5},
     dist.RelaxedOneHotCategorical: {'temperature': 0.5},
 }
 
+def _activate_scale_tril(x: torch.Tensor) -> torch.Tensor:
+    """Activate a Cholesky factor ``scale_tril`` of shape ``(..., n, n)``.
+
+    Softplus is applied to the main-diagonal entries (so they stay strictly
+    positive, keeping the factor a valid lower-triangular Cholesky factor of a
+    positive-definite covariance); off-diagonal entries pass through unchanged.
+    """
+    diag = torch.diagonal(x, dim1=-2, dim2=-1)
+    return x - torch.diag_embed(diag) + torch.diag_embed(nn.functional.softplus(diag))
+
+
+# Per-parameter activation mapping a raw network output to a valid distribution
+# parameter, keyed by distribution family and then by the parameter name the
+# CPD produced. "Already-valid" parameters (probs, loc, value) are identity;
+# the maps only do work for raw parameters (logits -> sigmoid/softmax,
+# scale -> softplus, scale_tril -> softplus on the diagonal).
+DEFAULT_ACTIVATIONS = {
+    Delta:                         {"value": lambda x: x},
+    dist.Bernoulli:                {"probs": lambda x: x, "logits": torch.sigmoid},
+    dist.RelaxedBernoulli:         {"probs": lambda x: x, "logits": torch.sigmoid},
+    dist.Categorical:              {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.OneHotCategorical:        {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.RelaxedOneHotCategorical: {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.Normal:                   {"loc": lambda x: x, "scale": nn.functional.softplus},
+    dist.MultivariateNormal:       {"loc": lambda x: x, "scale_tril": _activate_scale_tril},
+}
 
 def _broadcast(value, n: int, name: str):
     """Return a list of length ``n``: broadcast scalar or check list length.

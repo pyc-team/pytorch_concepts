@@ -17,6 +17,13 @@ class IndependentInference(DeterministicInference):
     downstream predictors during training.
 
     Equivalent to ``DeterministicInference(..., p_int=1.0)``.
+
+    ``activate_before_propagation`` is mandatory and forwarded to
+    :class:`DeterministicInference`.
     """
-    def __init__(self, pgm: BayesianNetwork):
-        super().__init__(pgm, p_int=1.0)
+    def __init__(self, pgm: BayesianNetwork, activate_before_propagation: bool):
+        super().__init__(
+            pgm,
+            activate_before_propagation=activate_before_propagation,
+            p_int=1.0,
+        )

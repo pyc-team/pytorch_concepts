@@ -16,7 +16,7 @@ from typing import Dict, Optional
 import torch
 import torch.distributions as dist
 
-from ...models.variable import Variable
+from ...models.variable import Variable, DEFAULT_ACTIVATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -75,25 +75,41 @@ def build_relaxed_distribution(
     return build_distribution(variable, params)
 
 
+def _activate(distribution: type, param_name: str, value: torch.Tensor) -> torch.Tensor:
+    """Apply the default activation for ``(distribution, param_name)``.
+
+    Looks the activation up in
+    :data:`~torch_concepts.nn.modules.mid.models.variable.DEFAULT_ACTIVATIONS`,
+    matching the distribution family by ``issubclass`` (so relaxed/exact
+    variants resolve to the same entry). Falls back to identity when no entry
+    exists for the family or parameter.
+    """
+    for base_cls, activations in DEFAULT_ACTIVATIONS.items():
+        if issubclass(distribution, base_cls) and param_name in activations:
+            return activations[param_name](value)
+    return value
+
+
 def propagated_value(
-    distribution: type, params: Dict[str, torch.Tensor]
+    distribution: type, params: Dict[str, torch.Tensor], activate: bool = False,
 ) -> torch.Tensor:
     """Return the canonical deterministic value for a parameter dict.
 
-    For discrete families parametrized with ``logits``, converts to
-    probabilities (sigmoid / softmax) so chained parent values are always
-    in probability space, consistent with the ``probs`` path.
+    When ``activate`` is ``True`` the selected parameter is mapped through its
+    default activation (see :data:`DEFAULT_ACTIVATIONS`) before being returned,
+    so that e.g. a CPD producing ``logits`` propagates probabilities to its
+    children. When ``False`` the raw parameter is returned unchanged.
     """
     if distribution.__name__ == "Delta" and "value" in params:
-        return params["value"]
+        return _activate(distribution, "value", params["value"]) if activate else params["value"]
     for base_cls, param_name in _PRIMARY_PARAM.items():
         if issubclass(distribution, base_cls):
             # primary path, the user provided the primary parameter (e.g. "probs" for Bernoulli)
             if param_name in params:
-                return params[param_name]
+                return _activate(distribution, param_name, params[param_name]) if activate else params[param_name]
             # fallback path, the user provided "logits" instead of the primary parameter (e.g. "logits" for Bernoulli)
             if "logits" in params:
-                return params["logits"]
+                return _activate(distribution, "logits", params["logits"]) if activate else params["logits"]
     raise ValueError(f"Unsupported distribution {distribution!r}")
 
 

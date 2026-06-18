@@ -84,6 +84,7 @@ class ForwardInference(TorchBaseInference):
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
         parallelize_levels: bool = False,
+        activate_before_propagation: bool = False,
     ):
         super().__init__(pgm)
         if mode not in {"deterministic", "ancestral"}:
@@ -92,6 +93,11 @@ class ForwardInference(TorchBaseInference):
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
         self.mode = mode
         self.p_int = float(p_int)
+        # When True (deterministic mode only), the propagated parameter is passed
+        # through its default activation before being fed to child CPDs. The
+        # parameters reported in the inference output stay the raw (non-activated)
+        # values produced by the CPD.
+        self.activate_before_propagation = bool(activate_before_propagation)
         # When True, variables in the same topological level (conditionally
         # independent given the previous levels) are evaluated concurrently.
         self.parallelize_levels = bool(parallelize_levels)
@@ -349,7 +355,9 @@ class ForwardInference(TorchBaseInference):
         temperature: torch.Tensor,
     ) -> torch.Tensor:
         if self.mode == "deterministic":
-            value = propagated_value(variable.distribution, params)
+            value = propagated_value(
+                variable.distribution, params, activate=self.activate_before_propagation,
+            )
         else:
             value = sample_from(variable, params, temperature)
         # Reshape the realization to the variable's event shape. Samples are then
