@@ -28,8 +28,9 @@ _PRIMARY_PARAM: Dict[type, str] = {
     dist.Categorical: "probs",
     dist.Normal: "loc",
     dist.MultivariateNormal: "loc",
+    dist.RelaxedOneHotCategorical: "probs",
+    dist.RelaxedBernoulli: "probs",
 }
-
 
 # ---------------------------------------------------------------------------
 # Public helpers
