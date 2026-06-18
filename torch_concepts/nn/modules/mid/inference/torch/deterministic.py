@@ -19,7 +19,7 @@ class DeterministicInference(ForwardInference):
         Teacher-forcing probability used when a query variable has a known
         ground-truth value.  Defaults to ``1.0`` (always teacher-force).
     activate_before_propagation : bool
-        Mandatory. When ``True``, each variable's propagated parameter is passed
+        When ``True``, each variable's propagated parameter is passed
         through its default activation (see
         :data:`~torch_concepts.nn.modules.mid.models.variable.DEFAULT_ACTIVATIONS`)
         before being fed to child CPDs — e.g. a CPD producing ``logits``
@@ -37,7 +37,7 @@ class DeterministicInference(ForwardInference):
     def __init__(
             self,
             pgm: BayesianNetwork,
-            activate_before_propagation: True,
+            activate_before_propagation: bool = True,
             p_int: float = 0.,
             parallelize_levels: bool = False,
     ):
