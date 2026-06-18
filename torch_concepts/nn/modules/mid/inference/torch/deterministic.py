@@ -37,7 +37,7 @@ class DeterministicInference(ForwardInference):
     def __init__(
             self,
             pgm: BayesianNetwork,
-            activate_before_propagation: bool,
+            activate_before_propagation: True,
             p_int: float = 0.,
             parallelize_levels: bool = False,
     ):

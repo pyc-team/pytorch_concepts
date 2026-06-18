@@ -84,7 +84,7 @@ class ForwardInference(TorchBaseInference):
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
         parallelize_levels: bool = False,
-        activate_before_propagation: bool = False,
+        activate_before_propagation: bool = True,
     ):
         super().__init__(pgm)
         if mode not in {"deterministic", "ancestral"}:

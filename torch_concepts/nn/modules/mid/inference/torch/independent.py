@@ -21,7 +21,7 @@ class IndependentInference(DeterministicInference):
     ``activate_before_propagation`` is mandatory and forwarded to
     :class:`DeterministicInference`.
     """
-    def __init__(self, pgm: BayesianNetwork, activate_before_propagation: bool):
+    def __init__(self, pgm: BayesianNetwork, activate_before_propagation: True):
         super().__init__(
             pgm,
             activate_before_propagation=activate_before_propagation,
