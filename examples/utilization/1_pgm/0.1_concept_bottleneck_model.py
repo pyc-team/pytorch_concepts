@@ -6,8 +6,7 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
-    ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior, Sequential, RandomPolicy, DoIntervention, \
-    intervention, InterventionModule
+    ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior, Sequential
 
 
 def main():
@@ -30,7 +29,7 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    concepts = ConceptVariable("concepts", members=['c1', 'c2'], distribution=Bernoulli)
+    concepts = ConceptVariable(["c1","c2"], distribution=Bernoulli)
     tasks = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
     # ParametricCPD setup
@@ -49,20 +48,20 @@ def main():
 
     y_predictor = ParametricCPD(
         tasks, 
-        parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2), torch.nn.Softmax(dim=-1))}, 
+        parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2))}, 
         parents=[*concepts]
     )
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, concepts, tasks],
-        factors=[input_cpd, backbone, c_encoder, y_predictor]
+        variables=[input_var, latent_var, *concepts, tasks],
+        factors=[input_cpd, backbone, *c_encoder, y_predictor]
     )
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
     evidence = {'input': x_train}
-    query_concepts = {"concepts": c_train, "xor": y_train}
+    query_concepts = {"c1": c_train[:,0], "c2": c_train[:,1], "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -90,43 +89,6 @@ def main():
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
-
-    print("=== Interventions ===")
-    print(cy_pred.params['concepts']['probs'][:3])
-
-    int_policy_c = RandomPolicy(scale=100)
-    int_strategy_c = DoIntervention(constants=-10)
-    c_encoder.parametrization["probs"] = InterventionModule(
-        c_encoder.parametrization["probs"],
-        intervention_strategy=int_strategy_c,
-        intervention_policy=int_policy_c,
-        out_concepts_to_intervene_on=[1]
-    )
-    cy_pred = inference_engine.query(
-        query=query_concepts,
-        evidence=evidence
-    )
-    print(cy_pred.params['concepts']['probs'][:3])
-
-    with intervention(
-            concept_model,
-            intervention_strategy=int_strategy_c,
-            intervention_policy=int_policy_c,
-            variable_to_intervene_on="concepts",
-            parameter_to_intervene_on="probs",
-            members_to_intervene_on=["c1"]
-    ):
-        cy_pred = inference_engine.query(
-            query=query_concepts,
-            evidence=evidence
-        )
-        print(cy_pred.params['concepts']['probs'][:3])
-
-    cy_pred = inference_engine.query(
-        query=query_concepts,
-        evidence=evidence
-    )
-    print(cy_pred.params['concepts']['probs'][:3])
 
     return
 
