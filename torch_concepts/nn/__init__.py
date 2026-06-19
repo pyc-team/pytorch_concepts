@@ -51,7 +51,7 @@ from .modules.outputs import ModelOutput, InferenceOutput
 
 # Models (high-level)
 # from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
-# from .modules.high.models.cbm import ConceptBottleneckModel
+from .modules.high.models.cbm import ConceptBottleneckModel
 # from .modules.high.models.cem import ConceptEmbeddingModel
 # from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
@@ -106,7 +106,6 @@ __all__ = [
     "BaseConceptInterventionStrategy",
     "BaseModuleInterventionStrategy",
     "BaseInterventionPolicy",
-    "BaseConstructor",
     "BaseInterventionModule",
 
     # LazyConstructor
@@ -150,10 +149,10 @@ __all__ = [
     "ModelOutput",
     "InferenceOutput",
 
-    # # Models (high-level)
+    # Models (high-level)
     # "BlackBox",
     # "BlackBoxTaskOnly",
-    # "ConceptBottleneckModel",
+    "ConceptBottleneckModel",
     # "ConceptEmbeddingModel",
     # "CausallyReliableConceptBottleneckModel",
 

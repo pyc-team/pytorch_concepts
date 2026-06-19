@@ -39,20 +39,11 @@ class InferenceOutput:
     samples: Dict[str, torch.Tensor] = field(default_factory=dict)
     probabilities: Optional[torch.Tensor] = None
 
-    # TODO: remove
-    @property
-    def model_params(self) -> Dict[str, ParamDict]:
-        """Backwards-compatibility alias for ``params``."""
-        return self.params
-
 
 
 @dataclass
 class ModelOutput:
     """Structured output from a high-level model's ``forward()`` method.
-
-    Which prediction fields are populated mirrors the ``return_*``
-    parameters passed to ``forward()``.
 
     Attributes
     ----------
@@ -72,10 +63,4 @@ class ModelOutput:
     samples: Dict[str, torch.Tensor] = field(default_factory=dict)
     probabilities: Optional[torch.Tensor] = None
     target: Optional[torch.Tensor] = None # TODO: to be updated
-    extras: Optional[Dict[str, torch.Tensor]] = None # TODO: to be updated
-
-    # TODO: remove
-    @property
-    def model_params(self) -> Dict[str, ParamDict]:
-        """Backwards-compatibility alias for ``params``."""
-        return self.params
+    extra: Optional[Dict[str, torch.Tensor]] = None # TODO: to be updated

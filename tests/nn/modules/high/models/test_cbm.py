@@ -17,6 +17,7 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.nn.modules.low.dense_layers import MLP
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
 
@@ -56,7 +57,7 @@ class TestCBMInitialization(unittest.TestCase):
             task_names=['task1']
         )
         
-        self.assertIsInstance(model.model, nn.Module)
+        self.assertIsInstance(model.pgm, nn.Module)
         self.assertTrue(hasattr(model, 'inference'))
         self.assertEqual(model.concept_names, ['color', 'shape', 'size', 'task1'])
         # Defaults should have been filled in
@@ -83,45 +84,29 @@ class TestCBMInitialization(unittest.TestCase):
         self.assertEqual(meta['size']['distribution'], RelaxedBernoulli)
         self.assertEqual(meta['task1']['distribution'], RelaxedBernoulli)
     
-    def test_init_with_variable_activations_param(self):
-        """Test initialization passing variable_activations to the model constructor."""
-        custom_acts = {
-            'color': lambda x: x,
-            'shape': lambda x: x,
-            'size': torch.sigmoid,
-            'task1': torch.sigmoid,
-        }
-        model = ConceptBottleneckModel(
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task1'],
-            variable_activations=custom_acts,
-        )
-        
-        meta = model.concept_annotations.metadata
-        self.assertEqual(meta['size']['activation'], torch.sigmoid)
-    
     def test_init_with_backbone(self):
-        """Test initialization with custom backbone."""
-        backbone = DummyBackbone()
+        """Test initialization with custom backbone (raw input -> latent)."""
+        backbone = DummyBackbone(out_features=8)
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             backbone=backbone,
+            latent_size=8,
             task_names=['task1']
         )
-        
-        self.assertIsNotNone(model.backbone)
-    
-    def test_init_with_latent_encoder(self):
-        """Test initialization with latent encoder config."""
+
+        self.assertIs(model.backbone, backbone)
+
+    def test_init_with_mlp_backbone(self):
+        """Test initialization with an MLP backbone resolving latent_size."""
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task1'],
-            latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 2}
+            backbone=MLP(input_size=8, hidden_size=16, n_layers=2),
+            latent_size=16,
         )
-        
+
         self.assertEqual(model.latent_size, 16)
 
 
@@ -178,15 +163,16 @@ class TestCBMForward(unittest.TestCase):
         self.assertEqual(out.probs.shape[1], 3)
     
     def test_forward_with_backbone(self):
-        """Test forward pass with backbone."""
+        """Test forward pass with backbone (raw input -> latent inside the PGM)."""
         backbone = DummyBackbone(out_features=8)
         model = ConceptBottleneckModel(
-            input_size=8,
+            input_size=100,  # raw input dim (the PGM 'input' node)
             annotations=self.ann,
             backbone=backbone,
+            latent_size=8,   # backbone output dim (the PGM 'latent' node)
             task_names=['task1']
         )
-        
+
         x = torch.randn(2, 100)  # Raw input size (before backbone)
         query = ['color', 'shape']
         out = model(query=query, x=x)
@@ -363,7 +349,7 @@ class TestCBMFactory(unittest.TestCase):
     
     def test_factory_independent_mode(self):
         """Using a different train_inference raises ValueError."""
-        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        from torch_concepts.nn import IndependentInference
         with self.assertRaises(ValueError):
             ConceptBottleneckModel(
                 lightning=True,
@@ -423,12 +409,12 @@ class TestCBMUnifiedForward(unittest.TestCase):
             task_names=['task']
         )
         
-        # Test that evidence dict can be provided along with x
-        # Evidence is merged with input latent
-        evidence = {'extra_key': torch.randn(4, 1)}  # Additional evidence
-        out = model(x=self.x, query=['c1', 'c2', 'task'], evidence=evidence)
+        # A concept may be supplied as evidence alongside x; the queried
+        # variables are returned (here c2 and task).
+        evidence = {'c1': torch.randint(0, 2, (4, 1)).float()}
+        out = model(x=self.x, query=['c2', 'task'], evidence=evidence)
         
-        self.assertEqual(out.probs.shape, (4, 3))
+        self.assertEqual(out.probs.shape, (4, 2))
     
     def test_forward_same_output_all_modes(self):
         """Test Lightning and pure PyTorch modes produce same forward output shape."""
@@ -477,7 +463,7 @@ class TestTrainingModes(unittest.TestCase):
     
     def test_independent_mode_works(self):
         """Using a different train_inference raises ValueError."""
-        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        from torch_concepts.nn import IndependentInference
         with self.assertRaises(ValueError):
             ConceptBottleneckModel(lightning=True, train_inference=IndependentInference, **self.kwargs)
 
@@ -531,7 +517,7 @@ class TestLearnerIntegration(unittest.TestCase):
     
     def test_independent_training_step(self):
         """Using a different train_inference raises ValueError."""
-        from torch_concepts.nn.modules.mid.inference import IndependentInference
+        from torch_concepts.nn import IndependentInference
         with self.assertRaises(ValueError):
             self._make_model(lightning=True, train_inference=IndependentInference)
     

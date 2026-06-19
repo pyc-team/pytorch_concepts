@@ -15,7 +15,7 @@ import torch
 from torch import nn
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, MLP
 from torch_concepts.data import ToyDataset
 
 from torchmetrics.classification import BinaryAccuracy
@@ -64,7 +64,8 @@ def main():
         input_size=n_features,
         annotations=concept_annotations,
         task_names=task_names,
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1}
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,  # Output size of the backbone
     )
     
     print(f"Model created successfully!")
@@ -84,12 +85,12 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        out = model(x=x_batch, query=query)
+        out = model(query=query, input=x_batch)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output out shape: {out.probs.shape}")
-    print(f"Expected output dim: {n_concepts + n_tasks}")
-
+    print(f"Output C1 shape: {out.params['C1']['logits'].shape}")
+    print(f"Output C2 shape: {out.params['C2']['logits'].shape}")
+    print(f"Output xor shape: {out.params['xor']['logits'].shape}")
 
     # Test forward pass
     print("\n" + "=" * 60)
@@ -97,7 +98,7 @@ def main():
     print("=" * 60)
 
     n_epochs = 500
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.02)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = nn.BCEWithLogitsLoss()
 
     model.train()
@@ -108,14 +109,11 @@ def main():
         target = torch.cat([c_train, y_train], dim=1)
 
         # Forward pass - query all variables (concepts + tasks)
-        out = model(
-            x=x_train, 
-            query=query,
-            return_logits=True,
-        )
+        out = model(query=query, input=x_train)
         
         # Compute loss on all outputs
-        loss = loss_fn(out.logits, target)
+        logits = torch.cat([out.params[name]['logits'] for name in query], dim=1)
+        loss = loss_fn(logits, target)
         
         loss.backward()
         optimizer.step()
@@ -132,9 +130,9 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        out = model(x=x_train, query=query)
-        c_pred = out.probs[:, :n_concepts]
-        y_pred = out.probs[:, n_concepts:]
+        out = model(query=query, input=x_train)
+        c_pred = torch.cat([out.params[name]['logits'] for name in concept_names], dim=1)
+        y_pred = torch.cat([out.params[name]['logits'] for name in task_names], dim=1)
         
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()

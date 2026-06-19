@@ -25,25 +25,22 @@ torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete impl
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Any, Optional, Mapping, Dict
+from typing import List, Optional, Mapping, Dict, Union
 import functools
 import torch
 import torch.nn as nn
 
 from .....annotations import Annotations
-from ...low.dense_layers import MLP
 from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations, add_activation_to_annotations, add_default_properties
+from .....utils import add_distribution_to_annotations, add_default_properties
 from ...utils import with_training_mode
 from ...outputs import ModelOutput
-
-from .....concept_graph import ConceptGraph
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
 
-    Provides common functionality for models that use backbones for feature extraction, 
-    and encoders for latent representations. All concrete model implementations 
+    Provides common functionality for models that use backbones for feature extraction,
+    and encoders for latent representations. All concrete model implementations
     should inherit from this class.
 
     BaseModel supports two usage modes controlled by the `lightning` parameter:
@@ -90,20 +87,17 @@ class BaseModel(nn.Module, ABC):
         graph structure, and each model enforces its own.
         Defaults to None.
     backbone : BackboneType, optional
-        Feature extraction module (e.g., ResNet, ViT) applied before latent encoder.
-        Can be nn.Module or callable. If None, assumes inputs are pre-computed features.
+        Module mapping the raw input (``input_size``) to the ``latent``
+        representation (``latent_size``). It runs *inside* the PGM as the
+        ``latent | input`` CPD. Can be any ``nn.Module`` (e.g. ResNet, ViT, MLP).
+        If None, defaults to ``nn.Identity`` (``latent`` equals the raw input).
         Defaults to None.
-    latent_encoder : nn.Module, optional
-        Custom encoder mapping backbone outputs to latent space. If provided,
-        latent_encoder_kwargs are passed to this constructor. If None and
-        latent_encoder_kwargs provided, uses MLP. Defaults to None.
-    latent_encoder_kwargs : Dict, optional
-        Arguments for latent encoder construction. Common keys:
-        - 'hidden_size' (int): Latent dimension
-        - 'n_layers' (int): Number of hidden layers
-        - 'activation' (str): Activation function name
-        If None, uses nn.Identity (no encoding). Defaults to None.
-    
+    latent_size : int, optional
+        Dimensionality of the ``latent`` variable (the backbone's output, and the
+        input to the concept encoders). Required when a ``backbone`` is provided
+        (cannot be inferred automatically). Defaults to ``input_size`` when no
+        backbone is used.
+
     Lightning Training Parameters (only used when lightning=True)
     -------------------------------------------------------------
     loss : nn.Module, optional
@@ -126,16 +120,23 @@ class BaseModel(nn.Module, ABC):
 
     Attributes
     ----------
+    supported_concept_types : frozenset
+        Class-level declaration of which concept types this model supports.
+        An empty set means no restriction. Concrete models set this to e.g.
+        ``frozenset({"binary", "categorical"})``. The recognised strings are the
+        keys of :attr:`~torch_concepts.annotations.AxisAnnotation.type_groups`:
+        ``"binary"``, ``"categorical"``, ``"continuous"``.
     concept_annotations : AxisAnnotation
         Axis-1 annotations with distribution metadata for each concept.
     concept_names : List[str]
         List of concept variable names from annotations.
-    backbone : BackboneType or None
-        Feature extraction module (None if using pre-computed features).
-    latent_encoder : nn.Module
-        Encoder transforming backbone outputs to latent representations.
+    backbone : BackboneType
+        Module mapping the raw input to the ``latent`` variable (``nn.Identity`` if
+        none was provided). Runs inside the PGM as the ``latent | input`` CPD.
+    input_size : int
+        Dimensionality of the raw input (the PGM's ``input`` node).
     latent_size : int
-        Dimensionality of latent encoder output (input to concept encoders).
+        Dimensionality of the ``latent`` variable (input to the concept encoders).
 
     Notes
     -----
@@ -234,6 +235,8 @@ class BaseModel(nn.Module, ABC):
     torch_concepts.annotations.Annotations : Concept annotation container
     """
 
+    supported_concept_types: frozenset = frozenset()
+
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
         
@@ -261,50 +264,73 @@ class BaseModel(nn.Module, ABC):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
-        variable_activations: Optional[Mapping] = None,
-        graph: ConceptGraph = None,
         backbone: Optional[BackboneType] = None,
-        latent_encoder: Optional[nn.Module] = None,
-        latent_encoder_kwargs: Optional[Dict] = None,
+        latent_size: Optional[int] = None,
         lightning: bool = False,  # Consumed by __new__, included for signature
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
 
-        self.graph = graph
+        self._setup_annotations(annotations, variable_distributions)
+        self._setup_backbone(backbone, input_size, latent_size)
 
-        if annotations is not None:
-            annotations = annotations.get_axis_annotation(1)
+    def _setup_annotations(
+        self,
+        annotations: Optional[Annotations],
+        variable_distributions: Optional[Mapping],
+    ) -> None:
+        """Resolve concept annotations and store :attr:`concept_annotations`/:attr:`concept_names`.
 
-            # 1. If distributions/activations are explicitly passed, override annotations
-            if variable_distributions is not None:
-                annotations = add_distribution_to_annotations(annotations, variable_distributions)
-            if variable_activations is not None:
-                annotations = add_activation_to_annotations(annotations, variable_activations)
+        Writes any explicitly passed ``variable_distributions`` into the axis-1
+        annotations, fills in default distributions for concepts still missing one,
+        and rejects concept types this model cannot handle. Activations are NOT
+        stored: they are derived from each variable's distribution when the model
+        builds its parametrization.
+        """
+        if annotations is None:
+            return
 
-            # 2. Fill in defaults for any concepts still missing distribution/activation
-            # this also serves as a validation step to ensure all concepts have necessary metadata
-            self.concept_annotations = add_default_properties(annotations)
+        annotations = annotations.get_axis_annotation(1)
 
-            self.concept_names = self.concept_annotations.labels
+        # 1. If distributions are explicitly passed, write them into annotations.
+        if variable_distributions is not None:
+            annotations = add_distribution_to_annotations(annotations, variable_distributions)
 
-        self._backbone = backbone
+        # 2. Fill in default distributions for any concepts still missing one.
+        # This also validates that every concept has the metadata we need.
+        self.concept_annotations = add_default_properties(annotations)
+        self.concept_names = self.concept_annotations.labels
 
-        if latent_encoder is not None:
-            self._latent_encoder = latent_encoder(
-                input_size,
-                **(latent_encoder_kwargs or {})
-            )
-        elif latent_encoder_kwargs is not None:
-            # assume an MLP encoder if latent_encoder_kwargs provided but no latent_encoder
-            self._latent_encoder = MLP(
-                input_size=input_size,
-                **latent_encoder_kwargs
-            )
+        # 3. Reject annotations that contain concept types this model cannot handle.
+        self._validate_concept_types()
+
+    def _setup_backbone(
+        self,
+        backbone: Optional[BackboneType],
+        input_size: int,
+        latent_size: Optional[int],
+    ) -> None:
+        """Store the backbone (raw input → latent) and resolve the sizes.
+
+        The backbone maps whatever the dataloader provides (``input_size``) to the
+        ``latent`` representation (``latent_size``); it runs *inside* the PGM as the
+        ``latent | input`` CPD. When no backbone is given it defaults to
+        ``nn.Identity`` (so :attr:`backbone` is always callable) and ``latent_size``
+        falls back to ``input_size``. A custom backbone requires an explicit
+        ``latent_size`` since its output dimensionality cannot be inferred.
+        """
+        self.input_size = input_size
+        if backbone is not None:
+            if latent_size is None:
+                raise ValueError(
+                    "Pass `latent_size` when providing a `backbone` — the output "
+                    "dimensionality cannot be inferred automatically."
+                )
+            self._backbone = backbone
+            self.latent_size = latent_size
         else:
-            self._latent_encoder = nn.Identity()
-
-        self.latent_size = latent_encoder_kwargs.get('hidden_size') if latent_encoder_kwargs else input_size
+            self._backbone = nn.Identity()
+            self.latent_size = latent_size or input_size
 
     @property
     def inference(self):
@@ -324,6 +350,32 @@ class BaseModel(nn.Module, ABC):
         if self.training and self.train_inference is not None:
             return self.train_inference
         return self.eval_inference
+
+    def _validate_concept_types(self) -> None:
+        """Raise if the annotations contain concept types this model does not support.
+
+        Does nothing when :attr:`supported_concept_types` is empty (no restriction).
+        Uses :attr:`~torch_concepts.annotations.AxisAnnotation.type_groups` to
+        determine each concept's type (``"binary"``, ``"categorical"``,
+        ``"continuous"``).
+        """
+        if not self.supported_concept_types:
+            return
+        groups = self.concept_annotations.type_groups
+        unsupported = [
+            (type_name, group["labels"])
+            for type_name, group in groups.items()
+            if group["labels"] and type_name not in self.supported_concept_types
+        ]
+        if unsupported:
+            details = "; ".join(
+                f"{t}: {names}" for t, names in unsupported
+            )
+            raise ValueError(
+                f"{type(self).__name__} only supports "
+                f"{sorted(self.supported_concept_types)} concept types, but the "
+                f"annotations contain: {details}."
+            )
 
     @staticmethod
     def _resolve_train_inference(inference, train_inference):
@@ -366,53 +418,70 @@ class BaseModel(nn.Module, ABC):
             )
         return train_inference if train_inference is not None else inference
 
-    def _finalize(self):
-        if not hasattr(self, 'model') or self.model is None:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.model in __init__"
-            )
-        if not hasattr(self, 'eval_inference') or self.eval_inference is None:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.eval_inference in __init__"
-            )
-        if self._lightning_enabled and not hasattr(self, 'train_inference'):
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.train_inference in __init__ when lightning=True"
-            )
+    def setup_inference(
+        self,
+        inference,
+        inference_kwargs=None,
+        train_inference=None,
+        train_inference_kwargs=None,
+    ):
+        """Instantiate and store the eval/train inference engines.
+
+        Centralises the wiring that every concrete model previously duplicated:
+        build ``eval_inference`` from ``inference`` and resolve ``train_inference``
+        (falling back to the same class as ``inference``). The concrete ("last")
+        child supplies the inference classes; this wraps them around the model's
+        ``probabilistic_model``.
+
+        Parameters
+        ----------
+        inference : type
+            Evaluation inference engine class.
+        inference_kwargs : dict, optional
+            Keyword arguments forwarded to the evaluation engine.
+        train_inference : type, optional
+            Training inference engine class. Defaults to ``inference``.
+        train_inference_kwargs : dict, optional
+            Keyword arguments forwarded to the training engine.
+        """
+        self.eval_inference = inference(
+            self.pgm,
+            **(inference_kwargs or {}),
+        )
+        train_inference_cls = self._resolve_train_inference(inference, train_inference)
+        self.train_inference = train_inference_cls(
+            self.pgm,
+            **(train_inference_kwargs or {}),
+        )
 
     def __repr__(self):
-        backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
-        latent_encoder_name = self._latent_encoder.__class__.__name__ if self._latent_encoder is not None else "None"
-        return f"{self.__class__.__name__}(backbone={backbone_name}, latent_encoder={latent_encoder_name})"
+        backbone_name = self.backbone.__class__.__name__
+        fields = f"backbone={backbone_name}"
+        if getattr(self, "input_size", None) is not None:
+            fields += f", input_size={self.input_size}"
+        if getattr(self, "latent_size", None) is not None:
+            fields += f", latent_size={self.latent_size}"
+        if getattr(self, "concept_annotations", None) is not None:
+            fields += f", n_concepts={len(self.concept_annotations.labels)}"
+        if getattr(self, "plate", None) is not None:
+            fields += f", plate={self.plate}"
+        return f"{self.__class__.__name__}({fields})"
 
     @property
     def backbone(self) -> BackboneType:
-        """The backbone feature extractor.
+        """The backbone mapping raw input to the latent representation.
 
-        Returns the backbone module used for feature extraction from raw inputs.
-        If None, the model expects pre-computed features as inputs.
+        Maps whatever the dataloader provides (``input_size``) to the ``latent``
+        variable (``latent_size``); inside the PGM it is the ``latent | input`` CPD.
+        Defaults to ``nn.Identity`` when no backbone was provided, so it is always
+        callable.
 
         Returns
         -------
-        BackboneType or None
-            Backbone module (e.g., ResNet, ViT) or None if using pre-computed features.
+        BackboneType
+            Backbone module (e.g., ResNet, ViT, MLP) or ``nn.Identity``.
         """
         return self._backbone
-
-    @property
-    def latent_encoder(self) -> nn.Module:
-        """The encoder mapping backbone output to latent space.
-
-        Returns the latent encoder module that transforms backbone features
-        (or raw inputs if no backbone) into latent representations used by
-        concept encoders.
-
-        Returns
-        -------
-        nn.Module
-            Latent encoder network (MLP, custom module, or nn.Identity if no encoding).
-        """
-        return self._latent_encoder
 
     # TODO: add decoder?
     # @property
@@ -426,63 +495,86 @@ class BaseModel(nn.Module, ABC):
 
     def forward(
         self,
-        query: List[str],
-        x: torch.Tensor = None,
-        evidence: Dict[str, torch.Tensor] = None,
-        *inference_args,
-        **inference_kwargs
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
+        evidence: Optional[Dict[str, torch.Tensor]] = None,
+        input: Optional[torch.Tensor] = None,
+        **inference_kwargs,
     ) -> ModelOutput:
-        """Unified forward pass for all inferences.
+        """Unified forward pass for all inference engines.
 
         The active inference engine is selected automatically based on
-        ``self.training`` (toggled by ``.train()`` / ``.eval()``).
-        
+        ``self.training`` (toggled by ``.train()`` / ``.eval()``). The engine's
+        per-variable parameters are assembled into convenient ``probs``/``logits``
+        tensors whose columns follow the order of ``query``.
+
         Parameters
         ----------
         query : List[str]
             Concept names to query.
-        x : torch.Tensor, optional
-            Raw input tensor. Shape: (batch_size, input_size).
-            If provided, backbone and latent encoder are applied.
         evidence : Dict[str, torch.Tensor], optional
-            Evidence dict mapping names to tensors. Defaults to empty dict.
-            Names should match variable names in the PGM.
-        *inference_args
-            Positional arguments passed to the inference engine's query method.
-        **inference_kwargs
-            Keyword arguments passed to the inference engine's query method.
-            Includes ``return_logits``, ``return_probs``, ``return_joint``.
-        
+            Evidence dict mapping variable names to observed tensors.
+        input : torch.Tensor, optional
+            Raw input tensor; placed into ``evidence['input']`` so the backbone
+            CPD inside the PGM can consume it.
+
         Returns
         -------
         ModelOutput
-            Structured output with ``.logits`` and/or ``.probs``
-            populated according to ``return_logits``/``return_probs``
-            in inference_kwargs.
+            ``params``/``samples`` from the engine.
         """
         if evidence is None:
             evidence = {}
-        
-        # If x is provided, process x through backbone and latent encoder
-        # and add the resulting latent representation as the 'input' of the PGM
-        # TODO: handle backbone kwargs when present
-        if x is not None:
-            features = self.maybe_apply_backbone(x)
-            latent = self.latent_encoder(features)
-            evidence['input'] = latent
-        
+        if input is not None:
+            evidence['input'] = input
+
         result = self.inference.query(
-            query, 
+            query=query,
             evidence=evidence,
-            *inference_args, 
-            **inference_kwargs
+            **inference_kwargs,
         )
-        
+
         return ModelOutput(
-            logits=result.logits,
-            probs=result.probs,
-            joint=result.joint,
+            params=result.params,
+            guide_params=result.guide_params,
+            samples=result.samples,
+            probabilities=result.probabilities,
+            # target=None,  # TODO: to be updated
+            # extra=None,  # TODO: to be updated
         )
+
+    def _assemble_predictions(self, query, result, return_logits, return_probs):
+        """Concatenate per-variable probabilities (and logits) in query order.
+
+        Each queried variable contributes its ``probs`` parameter (shape
+        ``(batch, cardinality)``). Logits are recovered from the probabilities:
+        a logit transform for binary variables and a log transform for
+        categorical ones (so ``BCEWithLogitsLoss`` / softmax-cross-entropy behave
+        as expected).
+        """
+        if not (return_logits or return_probs):
+            return None, None
+
+        eps = 1e-6
+        probs_cols, logits_cols = [], []
+        axis = getattr(self, "concept_annotations", None)
+        for name in query:
+            param_dict = result.params[name]
+            p = param_dict.get("probs")
+            if p is None:
+                # Fall back to the first available parameter (e.g. logits).
+                p = next(iter(param_dict.values()))
+            if return_probs:
+                probs_cols.append(p)
+            if return_logits:
+                cardinality = (
+                    int(axis.cardinalities[axis.get_index(name)]) if axis is not None else p.shape[-1]
+                )
+                clamped = p.clamp(eps, 1.0 - eps)
+                logits_cols.append(torch.logit(clamped) if cardinality == 1 else torch.log(clamped))
+
+        probs = torch.cat(probs_cols, dim=-1) if return_probs else None
+        logits = torch.cat(logits_cols, dim=-1) if return_logits else None
+        return probs, logits
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Prepare ground truth labels for loss/metrics.
@@ -501,37 +593,3 @@ class BaseModel(nn.Module, ABC):
             Transformed target tensor.
         """
         return target
-
-    # ------------------------------------------------------------------
-    # Features extraction helpers
-    # ------------------------------------------------------------------
-
-    def maybe_apply_backbone(
-        self,
-        x: torch.Tensor,
-        backbone_kwargs: Optional[Mapping[str, Any]] = None,
-    ) -> torch.Tensor:
-        """Apply the backbone to ``x`` unless features are pre-computed.
-
-        Args:
-            x (torch.Tensor): Raw input tensor or already computed embeddings.
-            backbone_kwargs (Any): Extra keyword arguments forwarded to the
-                backbone callable when it is invoked.
-
-        Returns:
-            torch.Tensor: Feature embeddings.
-
-        Raises:
-            TypeError: If backbone is not None and not callable.
-        """
-
-        if self.backbone is None:
-            return x
-
-        if not callable(self.backbone):
-            raise TypeError(
-                "The provided backbone is not callable. Received "
-                f"instance of type {type(self.backbone).__name__}."
-            )
-
-        return self.backbone(x, **backbone_kwargs if backbone_kwargs else {})

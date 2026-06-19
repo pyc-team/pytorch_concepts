@@ -428,7 +428,7 @@ class ConceptGraph:
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+            >>> from torch_concepts import ConceptGraph
             >>> adj = torch.tensor([[0., 1., 0.],
             ...                     [0., 0., 1.],
             ...                     [0., 0., 0.]])
@@ -561,7 +561,7 @@ def dense_to_sparse(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import dense_to_sparse
+        >>> from torch_concepts.concept_graph import dense_to_sparse
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -602,7 +602,7 @@ def to_networkx_graph(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import to_networkx_graph
+        >>> from torch_concepts.concept_graph import to_networkx_graph
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -655,7 +655,7 @@ def get_root_nodes(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_root_nodes
+        >>> from torch_concepts.concept_graph import get_root_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -688,7 +688,7 @@ def get_leaf_nodes(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_leaf_nodes
+        >>> from torch_concepts.concept_graph import get_leaf_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -726,7 +726,7 @@ def topological_sort(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import topological_sort
+        >>> from torch_concepts.concept_graph import topological_sort
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -763,7 +763,7 @@ def get_predecessors(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_predecessors
+        >>> from torch_concepts.concept_graph import get_predecessors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -804,7 +804,7 @@ def get_successors(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_successors
+        >>> from torch_concepts.concept_graph import get_successors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])

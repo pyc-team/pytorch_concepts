@@ -429,31 +429,32 @@ def add_activation_to_annotations(
 def add_default_properties(
         annotations: Union[Annotations, AxisAnnotation],
     ) -> Union[Annotations, AxisAnnotation]:
-    """Fill in default distributions and activations for concepts that lack them.
+    """Fill in default distributions for concepts that lack them.
 
     For each concept missing a ``'distribution'``, assigns a default based on
     the concept's type group (binary/categorical/continuous) using
     :data:`~torch_concepts.nn.modules.mid.models.variable._DEFAULT_DISTRIBUTIONS`.
 
-    For each concept missing an ``'activation'`` (but having a ``'distribution'``),
-    assigns a default using
-    :data:`~torch_concepts.nn.modules.mid.models.variable._DEFAULT_ACTIVATIONS`.
+    Activations are *not* stored in annotations: they are derived from each
+    variable's distribution when a model builds its parametrization (see the
+    constructors in ``torch_concepts.nn.modules.high.base``). Annotations
+    carry only the concept type and distribution.
 
-    If no default can be determined for a concept, a ``ValueError`` is raised
-    asking the user to add the property to the annotation object explicitly
-    (e.g. via :func:`add_property_to_annotations`).
+    If no default distribution can be determined for a concept, a ``ValueError``
+    is raised asking the user to add the property to the annotation object
+    explicitly (e.g. via :func:`add_property_to_annotations`).
 
     Args:
         annotations: Annotations or AxisAnnotation with per-concept metadata.
 
     Returns:
-        Updated annotations with defaults filled in.
+        Updated annotations with default distributions filled in.
 
     Raises:
-        ValueError: If a concept is missing a distribution or activation and
-            no default exists for its type group / distribution class.
+        ValueError: If a concept is missing a distribution and no default exists
+            for its type group.
     """
-    from .nn.modules.mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_ACTIVATIONS, _DEFAULT_DIST_KWARGS
+    from .nn.modules.mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_DIST_KWARGS
 
     if isinstance(annotations, Annotations):
         axis_annotation = annotations.get_axis_annotation(1)
@@ -479,21 +480,6 @@ def add_default_properties(
                     f"(concept '{label}'). Please add a 'distribution' to the "
                     f"annotation metadata, e.g. via "
                     f"add_property_to_annotations()."
-                )
-
-    # --- Default activations ---
-    for label in axis_annotation.labels:
-        meta = axis_annotation.metadata[label]
-        if 'activation' not in meta:
-            dist = meta.get('distribution')
-            if dist is not None and dist in _DEFAULT_ACTIVATIONS:
-                meta['activation'] = _DEFAULT_ACTIVATIONS[dist]
-            elif dist is not None:
-                raise ValueError(
-                    f"No default activation for distribution "
-                    f"{dist.__name__} of concept '{label}'. "
-                    f"Please add an 'activation' to the annotation metadata, "
-                    f"e.g. via add_property_to_annotations()."
                 )
 
     if isinstance(annotations, Annotations):
