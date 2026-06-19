@@ -173,8 +173,9 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
         concept_vars = {}      # name -> ConceptVariable
 
         for name in self.graph_order:
-            card = int(axis.cardinalities[axis.get_index(name)])
-            distribution = axis.metadata[name]["distribution"]
+            concept = axis.concept(name)
+            card = concept.cardinality
+            distribution = concept.distribution
             param = _param_name(distribution)
             activation = _activation_for(distribution)
             parents_names = list(self.graph.get_predecessors(name))
@@ -186,7 +187,7 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
             base_distribution = _RELAXED_TO_BASE.get(distribution, distribution)
             var_dist_kwargs = (
                 None if base_distribution is not distribution
-                else axis.metadata[name].get("dist_kwargs")
+                else concept.dist_kwargs
             )
             concept_var = ConceptVariable(
                 name, distribution=base_distribution, size=card, dist_kwargs=var_dist_kwargs,
@@ -223,15 +224,10 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                     )
             else:
                 parent_cvars = [concept_vars[p] for p in parents_names]
-                # Build the parents' annotation explicitly with the first-class
-                # ``types`` field populated from metadata: predictors such as the
-                # CEM mixer read ``in_concepts.types`` / ``.cardinalities``, and
-                # ``subset`` does not derive ``types`` from per-concept metadata.
-                parents_ann = AxisAnnotation(
-                    labels=list(parents_names),
-                    cardinalities=[int(axis.cardinalities[axis.get_index(p)]) for p in parents_names],
-                    types=[axis.metadata[p].get("type", "discrete") for p in parents_names],
-                )
+                # Parents' annotation for predictors such as the CEM mixer, which
+                # read ``in_concepts.types`` / ``.cardinalities``. ``subset`` now
+                # materialises the resolved per-concept ``types``.
+                parents_ann = axis.subset(parents_names)
 
                 if self.internal_embeddings:
                     emb_var = EmbeddingVariable(

@@ -158,6 +158,71 @@ class DirectedGraphModel(GraphModel, ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement `_build_individual_model`."
         )
+    
+    #: Distribution parameter used for discrete variables — ``"logits"`` or
+    #: ``"probs"``. Concrete models may override; defaults to ``"logits"`` so the
+    #: layer output is fed raw and activated by the distribution downstream.
+    param_for_discrete_var: str = "logits"
+
+    def _flexible_parametrization(self, variable, first, second=None):
+        """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
+
+        The dict's keys are the distribution's parameter names — taken from
+        :data:`~torch_concepts.nn.modules.mid.models.variable.PARAM_DIM` and exposed
+        per-variable as ``variable.param_sizes``:
+
+        * **Discrete** families (Bernoulli / Categorical and their relaxed variants)
+          use a single parameter, ``"probs"`` or ``"logits"`` as set by
+          :attr:`param_for_discrete_var`, parametrized by ``first``.
+        * **Delta** uses the single ``"value"`` parameter, parametrized by ``first``.
+        * **Continuous** families (Normal, MultivariateNormal) need two parameters:
+          the location (``"loc"``) from ``first`` and a scale parameter (``"scale"``
+          or ``"scale_tril"``) whose output size depends on univariate vs
+          multivariate — read from ``variable.param_sizes``. ``second`` is a
+          partially-initialized layer (a callable missing only its output size) to
+          be completed with that size.
+
+        Parameters
+        ----------
+        variable : Variable
+            The child variable whose CPD parametrization is being built.
+        first : nn.Module
+            Layer producing the primary parameter (logits / probs / value / loc).
+        second : callable, optional
+            Partially-initialized layer for a continuous variable's scale parameter,
+            completed with the scale output size. Unused for discrete / Delta.
+
+        Raises
+        ------
+        NotImplementedError
+            For continuous variables — the variance/scale layer is not chosen yet.
+        ValueError
+            If the variable's distribution is unsupported.
+        """
+        param_sizes = variable.param_sizes  # {param_name: output_size}, from PARAM_DIM
+        names = set(param_sizes)
+
+        if names == {"value"}:
+            return {"value": first}
+        if names == {"probs", "logits"}:
+            return {self.param_for_discrete_var: first}
+        if "loc" in names:
+            # Continuous: location from ``first``; the scale parameter
+            # (``scale`` for Normal, ``scale_tril`` for MultivariateNormal) needs a
+            # layer whose output size comes from PARAM_DIM via ``param_sizes``.
+            scale_param = (names - {"loc"}).pop()
+            scale_size = param_sizes[scale_param]
+            raise NotImplementedError(
+                f"_flexible_parametrization: continuous variable {variable.name!r} "
+                f"({variable.distribution.__name__}) needs a '{scale_param}' layer of "
+                f"output size {scale_size}; the variance/scale layer is not chosen "
+                f"yet. Once decided, complete `second` to that output size and return "
+                f"{{'loc': first, '{scale_param}': <completed second>}}."
+            )
+        raise ValueError(
+            f"_flexible_parametrization: unsupported distribution "
+            f"{variable.distribution.__name__} for variable {variable.name!r}."
+        )
 
     @staticmethod
     def plate_compatible_levels(

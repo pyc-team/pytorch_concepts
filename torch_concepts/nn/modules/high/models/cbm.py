@@ -6,6 +6,7 @@ provided: :meth:`_build_plate_model` (``plate=True``, default) groups each
 bipartite level into a single plate variable; :meth:`_build_individual_model`
 (``plate=False``) creates one variable per concept/task.
 """
+from functools import partial
 from typing import List, Optional, Union
 
 import torch
@@ -60,6 +61,7 @@ class ConceptBottleneckModel(BipartiteModel):
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
+    param_for_discrete_var = "logits"
 
     def __init__(
         self,
@@ -128,38 +130,44 @@ class ConceptBottleneckModel(BipartiteModel):
 
         input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
+        concept0 = axis.concept(self.intermediate_concept_names[0])
+        task0 = axis.concept(self.task_names[0])
         concepts = ConceptVariable(
             names="concepts",
             members=self.intermediate_concept_names,
-            distribution=axis.metadata[self.intermediate_concept_names[0]]['distribution'],
-            size=int(axis.cardinalities[axis.get_index(self.intermediate_concept_names[0])]),
+            distribution=concept0.distribution,
+            size=concept0.cardinality,
         )
         tasks = ConceptVariable(
             names="tasks",
             members=self.task_names,
-            distribution=axis.metadata[self.task_names[0]]['distribution'],
-            size=int(axis.cardinalities[axis.get_index(self.task_names[0])]),
+            distribution=task0.distribution,
+            size=task0.cardinality,
         )
 
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
-            parametrization={
-                "logits": LinearEmbeddingToConcept(
+            parametrization=self._flexible_parametrization(
+                variable=concepts,
+                first=LinearEmbeddingToConcept(
                     in_embeddings=self.latent_size,
                     out_concepts=concepts.size,
-                )
-            }
+                ),
+                second=None # will be partial(...)
+            )
         )
         predictors = ParametricCPD(
             variable=tasks,
             parents=[concepts],
-            parametrization={
-                "logits": LinearConceptToConcept(
+            parametrization=self._flexible_parametrization(
+                variable=tasks,
+                first=LinearConceptToConcept(
                     in_concepts=concepts.size,
                     out_concepts=tasks.size,
-                )
-            }
+                ),
+                second=None # will be partial(...)
+            )
         )
 
         return BayesianNetwork(
@@ -173,37 +181,42 @@ class ConceptBottleneckModel(BipartiteModel):
         
         input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
+        intermediate = [axis.concept(name) for name in self.intermediate_concept_names]
+        task_concepts = [axis.concept(name) for name in self.task_names]
         concepts = ConceptVariable(
             names=self.intermediate_concept_names,
-            distribution=[axis.metadata[name]['distribution'] for name in self.intermediate_concept_names],
-            size=[int(axis.cardinalities[axis.get_index(name)]) for name in self.intermediate_concept_names],
+            distribution=[c.distribution for c in intermediate],
+            size=[c.cardinality for c in intermediate],
         )
         tasks = ConceptVariable(
             names=self.task_names,
-            distribution=[axis.metadata[name]['distribution'] for name in self.task_names],
-            size=[int(axis.cardinalities[axis.get_index(name)]) for name in self.task_names],
+            distribution=[t.distribution for t in task_concepts],
+            size=[t.cardinality for t in task_concepts],
         )
 
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
-            parametrization=[{
-                "logits": LinearEmbeddingToConcept(
+            parametrization=[self._flexible_parametrization(
+                variable=c,
+                first=LinearEmbeddingToConcept(
                     in_embeddings=self.latent_size,
-                    out_concepts=int(axis.cardinalities[axis.get_index(name)])
-                )
-            } for name in self.intermediate_concept_names],
+                    out_concepts=c.cardinality,
+                ),
+                second=partial(...)
+            ) for c in intermediate],
         )
-
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts],
-            parametrization=[{
-                "logits": LinearConceptToConcept(
+            parametrization=[self._flexible_parametrization(
+                variable=t,
+                first=LinearConceptToConcept(
                     in_concepts=sum(c.size for c in concepts),
-                    out_concepts=int(axis.cardinalities[axis.get_index(name)])
-                )
-            } for name in self.task_names],
+                    out_concepts=t.cardinality,
+                ),
+                second=partial(...)
+            ) for t in task_concepts],
         )
 
         return BayesianNetwork(
