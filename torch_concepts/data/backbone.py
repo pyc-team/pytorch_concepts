@@ -133,6 +133,7 @@ def _load_torchvision_model(
     - VGG (vgg11, vgg13, vgg16, vgg19)
     - EfficientNet (efficientnet_b0 through efficientnet_b7)
     - DenseNet (densenet121, densenet161, densenet169, densenet201)
+    - Inception (inception_v3)
 
     Parameters
     ----------
@@ -154,8 +155,13 @@ def _load_torchvision_model(
     """
     from torchvision.models import get_model, get_model_weights
 
+
     weights = get_model_weights(name).DEFAULT
     full_model = get_model(name, weights=weights)
+
+    if name.lower() == "inception_v3":
+        full_model.aux_logits = False  # Disable auxiliary classifier for feature extraction
+        full_model.AuxLogits = None  # Remove auxiliary classifier
 
     name_lower = name.lower()
     if 'resnet' in name_lower:
@@ -166,6 +172,9 @@ def _load_torchvision_model(
         model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
     elif 'densenet' in name_lower:
         model = nn.Sequential(full_model.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+    elif 'inception' in name_lower:
+        full_model.fc = nn.Identity()
+        model = full_model
     else:
         raise ValueError(f"Unsupported torchvision backbone: {name}")
 
@@ -285,9 +294,14 @@ class Backbone(nn.Module):
             self._to_tensor = transforms.ToTensor()
             # Compute output size with dummy forward pass
             with torch.no_grad():
-                dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
-                dummy_output = self._model(dummy_input)
-                self._out_features = dummy_output.shape[-1]
+                if self.name.lower() == "inception_v3":
+                    dummy_input = torch.zeros(1, 3, 299, 299, device=self._device)
+                    dummy_output = self._model(dummy_input)
+                    self._out_features = dummy_output.shape[-1]
+                else:
+                    dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
+                    dummy_output = self._model(dummy_input)
+                    self._out_features = dummy_output.shape[-1]
 
     @property
     def device(self) -> torch.device:
@@ -372,6 +386,7 @@ class Backbone(nn.Module):
             Input data. Format depends on model type:
 
             - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
+                                except for Inception which requires (B, C, H, W) with H=W=299.
             - **HuggingFace**: List of PIL Images or list of strings when input_type="text"
 
         Returns
@@ -412,15 +427,20 @@ class Backbone(nn.Module):
             outputs = self._model(**inputs)
             return outputs.last_hidden_state[:, 0, :]  # CLS token
         else:
-            if isinstance(x, list):
-                x = torch.stack([self._to_tensor(img) for img in x])
-            x = x.to(self._device)
-            # Handle single image (3D tensor) by adding batch dimension
-            squeeze_output = False
-            if x.dim() == 3:
-                x = x.unsqueeze(0)
-                squeeze_output = True
-            x = self._processor(x)
+            if self.name.lower() == "inception_v3":
+                if isinstance(x, list):
+                    x = torch.stack([self._processor(img) for img in x]).to(self._device)
+                    squeeze_output = False
+            else:
+                if isinstance(x, list):
+                    x = torch.stack([self._to_tensor(img) for img in x])
+                x = x.to(self._device)
+                # Handle single image (3D tensor) by adding batch dimension
+                squeeze_output = False
+                if x.dim() == 3:
+                    x = x.unsqueeze(0)
+                    squeeze_output = True
+                x = self._processor(x)
             out = self._model(x)
             if squeeze_output:
                 out = out.squeeze(0)
