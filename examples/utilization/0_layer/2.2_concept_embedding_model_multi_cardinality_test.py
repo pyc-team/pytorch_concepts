@@ -15,10 +15,10 @@ import torch
 import warnings
 from torch.nn import ModuleDict
 
-from torch_concepts import seed_everything
+from torch_concepts import seed_everything, AxisAnnotation
 from torch_concepts.data import BnLearnDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, MixConceptEmbeddingToConcept
-from torch_concepts.nn import LinearEmbeddingEncoder, MLP
+from torch_concepts.nn import MLP
 
 
 def mixed_concept_loss(logits, targets, cardinalities):
@@ -77,6 +77,14 @@ def main():
     concept_cardinalities = [axis.cardinalities[i] for i in concept_idx]
     n_concepts_expanded = sum(concept_cardinalities)  # one column per cardinality class
 
+    # Annotation describing the concept axis (all insurance nodes are discrete).
+    # The mixer reads the per-concept cardinalities and types from it.
+    concept_annotations = AxisAnnotation(
+        labels=[axis.labels[i] for i in concept_idx],
+        cardinalities=concept_cardinalities,
+        types=['discrete'] * len(concept_idx),
+    )
+
     n_task_classes = axis.cardinalities[task_idx]     # 4
 
     c_train = c_raw[:, concept_idx]         # (n_samples, 26) integer class indices
@@ -105,10 +113,9 @@ def main():
         ),
         # mix concept activations with embeddings -> task prediction
         "task_predictor": MixConceptEmbeddingToConcept(
-            in_concepts=n_concepts_expanded,
+            in_concepts=concept_annotations,
             in_embeddings=embedding_size,
             out_concepts=n_task_classes,
-            cardinalities=concept_cardinalities,
         ),
     })
 

@@ -3,12 +3,15 @@ Linear encoder modules for concept prediction from embeddings.
 
 These modules provide encoder layers that transform embeddings into concept representations.
 """
+from typing import Union
+
 import torch
 
-from ..base.layer import BaseEncoder
+from torch_concepts import AxisAnnotation
+from ..base.layer import BaseConceptLayer
 
 
-class LinearEmbeddingToConcept(BaseEncoder):
+class LinearEmbeddingToConcept(BaseConceptLayer):
     """
     Encoder that predicts concept representations from embeddings.
 
@@ -44,8 +47,8 @@ class LinearEmbeddingToConcept(BaseEncoder):
     """
     def __init__(
         self,
-        in_embeddings: int,
-        out_concepts: int,
+        in_embeddings: Union[int, AxisAnnotation],
+        out_concepts: Union[int, AxisAnnotation],
         *args,
         **kwargs,
     ):
@@ -64,8 +67,8 @@ class LinearEmbeddingToConcept(BaseEncoder):
         )
         # (..., in_embeddings) -> (..., out_concepts)
         self.encoder = torch.nn.Linear(
-            in_embeddings,
-            out_concepts,
+            self.in_embeddings_shape,
+            self.out_concepts_shape,
             *args,
             **kwargs,
         )
@@ -84,6 +87,3 @@ class LinearEmbeddingToConcept(BaseEncoder):
             torch.Tensor: Concept representations of shape (..., out_concepts).
         """
         return self.encoder(embeddings)
-
-# Alias for backward compatibility
-LinearLatentToConcept = LinearEmbeddingToConcept    

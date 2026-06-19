@@ -1,97 +1,94 @@
-import torch
-from torch.distributions import RelaxedBernoulli, Normal
+"""Structural equation model (SEM) over a small causal graph.
 
-from torch_concepts import ConceptVariable, LatentVariable
-from torch_concepts.nn import ParametricCPD, ProbabilisticModel, AncestralSamplingInference, \
-    CallableConceptToConcept, UniformPolicy, DoIntervention, intervention
-from torch_concepts.nn.functional import cace_score
+Causal structure (the classic genotype / smoking / tar / cancer SCM, with
+genotype a common cause of both smoking and tar)::
+
+    input ──► genotype ──► smoking
+                  │            │
+                  └────────────┴──► tar ──► cancer
+
+Each variable is a Bernoulli concept. The mechanisms are deterministic
+structural equations expressed with :class:`CallableConceptToConcept`
+(``use_bias=False`` so the equation is exact), except ``genotype`` which is a
+learnable Sigmoid-linear of the exogenous ``input`` noise.
+
+:class:`AncestralInference` draws a reparameterised (straight-through) sample
+per variable in topological order, so ``out.samples`` holds a hard 0/1
+realisation of every node.
+"""
+
+import torch
+from torch.distributions import Bernoulli
+
+from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
+from torch_concepts.distributions import Delta
+from torch_concepts.nn import ParametricCPD, BayesianNetwork, AncestralInference, \
+    CallableConceptToConcept, LearnablePrior
 
 
 def main():
+    seed_everything(42)
     n_samples = 1000
 
-    # Variable setup
-    latent_var = LatentVariable("input", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    genotype_var = ConceptVariable("genotype", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    smoking_var = ConceptVariable("smoking", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    tar_var = ConceptVariable("tar", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
-    cancer_var = ConceptVariable("cancer", distribution=RelaxedBernoulli, dist_kwargs={'temperature': 1.0})
+    # Variable setup: an exogenous noise root + four binary concepts.
+    input_var = EmbeddingVariable("input", distribution=Delta, size=1)
+    genotype_var = ConceptVariable("genotype", distribution=Bernoulli)
+    smoking_var = ConceptVariable("smoking", distribution=Bernoulli)
+    tar_var = ConceptVariable("tar", distribution=Bernoulli)
+    cancer_var = ConceptVariable("cancer", distribution=Bernoulli)
 
-    # ParametricCPD setup
-    input_cpd = ParametricCPD("input", parametrization=torch.nn.Sigmoid())
-    genotype_cpd = ParametricCPD("genotype",
-                                 parametrization=torch.nn.Sequential(torch.nn.Linear(1, 1),
-                                                                     torch.nn.Sigmoid()),
-                                 parents=["input"])
-    smoking_cpd = ParametricCPD("smoking",
-                                parametrization=CallableConceptToConcept(lambda x: (x>0.5).float(), use_bias=False),
-                                parents=["genotype"])
-    tar_cpd = ParametricCPD("tar",
-                            parametrization=CallableConceptToConcept(lambda x: torch.logical_or(x[:, 0]>0.5, x[:, 1]>0.5).float().unsqueeze(-1),
-                                                       use_bias=False),
-                            parents=["genotype", "smoking"])
-    cancer_cpd = ParametricCPD("cancer",
-                               parametrization=CallableConceptToConcept(lambda x: x, use_bias=False),
-                               parents=["tar"])
-    concept_model = ProbabilisticModel(variables=[latent_var, genotype_var, smoking_var, tar_var, cancer_var],
-                                       factors=[input_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd])
+    # One structural equation (parametrization module) per variable.
+    layers = {
+        # genotype: learnable predisposition driven by the exogenous noise.
+        "genotype": torch.nn.Sequential(torch.nn.Linear(1, 1), torch.nn.Sigmoid()),
+        # smoking := 1[genotype].
+        "smoking": CallableConceptToConcept(lambda g: (g > 0.5).float(), use_bias=False),
+        # tar := genotype OR smoking. Parents are concatenated along the last
+        # dim, so the callable receives a (batch, 2) tensor.
+        "tar": CallableConceptToConcept(
+            lambda gs: torch.logical_or(gs[:, 0] > 0.5, gs[:, 1] > 0.5).float().unsqueeze(-1),
+            use_bias=False),
+        # cancer := tar.
+        "cancer": CallableConceptToConcept(lambda t: t, use_bias=False),
+    }
 
-    # Inference Initialization
-    inference_engine = AncestralSamplingInference(concept_model, log_probs=False)
+    # ParametricCPD setup — wire each structural equation to its variable.
+    input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(input_var.size), parents=[])
+    genotype_cpd = ParametricCPD(genotype_var, parametrization=layers['genotype'], parents=[input_var])
+    smoking_cpd = ParametricCPD(smoking_var, parametrization=layers['smoking'], parents=[genotype_var])
+    tar_cpd = ParametricCPD(tar_var, parametrization=layers['tar'], parents=[genotype_var, smoking_var])
+    cancer_cpd = ParametricCPD(cancer_var, parametrization=layers['cancer'], parents=[tar_var])
+
+    concept_model = BayesianNetwork(
+        variables=[input_var, genotype_var, smoking_var, tar_var, cancer_var],
+        factors=[input_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd],
+    )
+
+    # Inference: ancestral sampling through the structural equations.
+    inference_engine = AncestralInference(concept_model)
     initial_input = {'input': torch.randn((n_samples, 1))}
     query_concepts = ["genotype", "smoking", "tar", "cancer"]
 
     results = inference_engine.query(query_concepts, evidence=initial_input)
 
-    print("Genotype Predictions (first 5 samples):")
-    print(results.probs[:, 0][:5])
-    print("Smoking Predictions (first 5 samples):")
-    print(results.probs[:, 1][:5])
-    print("Tar Predictions (first 5 samples):")
-    print(results.probs[:, 2][:5])
-    print("Cancer Predictions (first 5 samples):")
-    print(results.probs[:, 3][:5])
+    for name in query_concepts:
+        samples = results.samples[name]
+        print(f"{name.capitalize()} samples (first 5): {samples[:5].flatten().tolist()}")
+        print(f"  P({name}=1) ≈ {samples.mean().item():.3f}")
 
-    # Original predictions (observational)
-    original_results = inference_engine.query(
-        ["genotype", "smoking", "tar", "cancer"],
-        evidence=initial_input,
-    )
-
-    # Intervention: Force smoking to 0 (prevent smoking)
-    smoking_strategy_0 = DoIntervention(
-        model=concept_model.parametric_cpds,
-        constants=0.0
-    )
-    with intervention(
-            policies=UniformPolicy(out_concepts=1),
-            strategies=smoking_strategy_0,
-            target_concepts=["smoking"]
-    ):
-        intervened_results = inference_engine.query(
-            ["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input,
-        )
-        cancer_do_smoking_0 = intervened_results.probs[:, 3]
-
-    # Intervention: Force smoking to 1 (promote smoking)
-    smoking_strategy_1 = DoIntervention(
-        model=concept_model.parametric_cpds,
-        constants=1.0
-    )
-    with intervention(
-            policies=UniformPolicy(out_concepts=1),
-            strategies=smoking_strategy_1,
-            target_concepts=["smoking"]
-    ):
-        intervened_results = inference_engine.query(
-            ["genotype", "smoking", "tar", "cancer"],
-            evidence=initial_input,
-        )
-        cancer_do_smoking_1 = intervened_results.probs[:, 3]
-
-    ace_cancer_do_smoking = cace_score(cancer_do_smoking_0, cancer_do_smoking_1)
-    print(f"ACE of smoking on cancer: {ace_cancer_do_smoking:.3f}")
+    # === Interventions / CACE (TODO: not yet wired for the mid-level API) ===
+    # The do-operator and causal effect estimation will be added once the
+    # intervention machinery is available for BayesianNetwork. Sketch:
+    #
+    # # Force smoking to 0, then to 1, and compare the cancer distribution.
+    # with intervention(strategies=DoIntervention(constants=0.0),
+    #                   target_concepts=["smoking"]):
+    #     cancer_do_0 = inference_engine.query(["cancer"], evidence=initial_input).samples["cancer"]
+    # with intervention(strategies=DoIntervention(constants=1.0),
+    #                   target_concepts=["smoking"]):
+    #     cancer_do_1 = inference_engine.query(["cancer"], evidence=initial_input).samples["cancer"]
+    # ace = cace_score(cancer_do_0, cancer_do_1)
+    # print(f"ACE of smoking on cancer: {ace:.3f}")
 
     return
 

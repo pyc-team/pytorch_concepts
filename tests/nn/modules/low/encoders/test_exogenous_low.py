@@ -1,6 +1,4 @@
-"""
-Tests for LinearEmbeddingEncoder (formerly LinearLatentToExogenous).
-"""
+"""Tests for LinearEmbeddingEncoder."""
 import unittest
 import torch
 from torch_concepts.nn.modules.low.dense_layers import LinearEmbeddingEncoder

@@ -6,7 +6,6 @@ import pandas as pd
 import logging
 from typing import List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
-from torchvision import datasets, transforms
 from tqdm import tqdm
 
 from ..base.dataset import ConceptDataset
@@ -16,6 +15,19 @@ logger = logging.getLogger(__name__)
 
 CONCEPT_NAMES = ['first_digit', 'second_digit']
 TASK_NAMES = ['result']
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "MNISTArithmeticDataset requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
+
 
 def _generate_arithmetic_data(
     img_dir: str,
@@ -44,13 +56,14 @@ def _generate_arithmetic_data(
     random.seed(seed)
     np.random.seed(seed)
 
-    mnist = datasets.MNIST(root=mnist_root, train=train, download=False, transform=None)
+    tv = _import_torchvision()
+    mnist = tv.datasets.MNIST(root=mnist_root, train=train, download=False, transform=None)
 
-    # Note: MNIST digits are 28x28. 
+    # Note: MNIST digits are 28x28.
     # The composite canvas is (84x28) before resizing to (img_size, img_size).
-    resize_transform = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.Grayscale(num_output_channels=3),
+    resize_transform = tv.transforms.Compose([
+        tv.transforms.Resize((img_size, img_size)),
+        tv.transforms.Grayscale(num_output_channels=3),
     ])
 
     # REDUCED FONT SIZE: 20-24 is ideal for a 28x28 pixel block.
@@ -173,6 +186,7 @@ class MNISTArithmeticDataset(ConceptDataset):
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
     ):
+        
         self.num_train_samples = num_train_samples
         self.num_test_samples = num_test_samples
         self.val_size = val_size
@@ -217,8 +231,9 @@ class MNISTArithmeticDataset(ConceptDataset):
 
     def download(self):
         """setup MNIST root and trigger MNIST download."""
-        datasets.MNIST(root=self.root, train=True, download=True)
-        datasets.MNIST(root=self.root, train=False, download=True)
+        tv = _import_torchvision()
+        tv.datasets.MNIST(root=self.root, train=True, download=True)
+        tv.datasets.MNIST(root=self.root, train=False, download=True)
 
         # remove zipped raw files to save space
         for fname in self.raw_filenames:

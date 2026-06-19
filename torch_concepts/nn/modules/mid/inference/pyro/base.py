@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-import pyro
-import pyro.distributions as pyro_dist
 import torch
 import torch.distributions as td
 
@@ -29,6 +27,20 @@ from ...models.variable import Delta
 from ..base import BaseInference
 from ..utils import build_distribution, reshape_value_to_event
 from .utils import dist_to_params, trace_to_params
+
+
+def _import_pyro():
+    """Lazily import Pyro, raising a clear error if it is not installed."""
+    try:
+        import pyro
+        import pyro.distributions as pyro_dist
+        import pyro.poutine as poutine
+        return pyro, pyro_dist, poutine
+    except ImportError as exc:
+        raise ImportError(
+            "Pyro-based inference requires the `pyro-ppl` package. "
+            "Install it with: pip install pyro-ppl"
+        ) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -68,6 +80,7 @@ class PyroBaseInference(BaseInference):
         # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
         # (*batch,) and the ``pyro.plate("batch", ...)`` dim lines up. The
         # variable's declared shape is restored on the sampled realization.
+        _, pyro_dist, _ = _import_pyro()
         D = variable.distribution
         if issubclass(D, td.Bernoulli):
             d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
@@ -86,6 +99,37 @@ class PyroBaseInference(BaseInference):
             return pyro_dist.Delta(v, event_dim=1)
         # Fallback for any other family: try the exact torch distribution.
         return build_distribution(variable, params)
+
+    # ------------------------------------------------------------------
+    # Plate (member) addressing — shared by the Pyro engines, reusing the
+    # CPD's slicing so a plate behaves the same as under the torch engine.
+    # ------------------------------------------------------------------
+    def _gather_parents(self, cpd, cache, data):
+        """Parent values for ``cpd``, slicing member-handle parents out of their
+        plate's (sampled or observed) value — the Pyro counterpart of the torch
+        engine's member-as-parent handling."""
+        parents: Dict[str, torch.Tensor] = {}
+        for p in cpd.parents:
+            src = p.plate.name  # owning plate for a member handle, else p.name
+            value = cache.get(src, data.get(src))
+            if value is None:
+                raise ValueError(
+                    f"{self.name}: parent {p.name!r} of {cpd.variable.name!r} is "
+                    "neither sampled nor in data."
+                )
+            if p.name != src:  # member handle -> slice its column from the plate value
+                value = self.pgm.factors[src].select_value(value, p.name)
+            parents[p.name] = value
+        return parents
+
+    def _expose_members(self, params, query_names):
+        """Add per-member entries for queried plate members, sliced (a view) from
+        their plate's params, so members are addressable by name in the output."""
+        for name in query_names:
+            var = self.pgm.resolve(name)
+            if name != var.name and var.name in params:
+                params[name] = self.pgm.factors[var.name].select(params[var.name], name)
+        return params
 
     # ------------------------------------------------------------------
     # Stochastic functions (bound to ``self.pgm``)
@@ -112,6 +156,7 @@ class PyroBaseInference(BaseInference):
         every call so SVI updates flow back into the original PGM's
         ``nn.Parameter`` tensors (no parameter duplication).
         """
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         pyro.module("pgm", pgm)
 
@@ -129,25 +174,11 @@ class PyroBaseInference(BaseInference):
         with pyro.plate("batch", B, dim=-1):
             for level in pgm.levels:
                 for var in level:
-                    cpd = pgm.name_to_factor(var.name)
-
+                    cpd = pgm.factors[var.name]
                     if cpd.is_root:
-                        params = cpd(parent_values={})
-                        params = {
-                            k: v.unsqueeze(0).expand(B, *v.shape) for k, v in params.items()
-                        }
+                        params = cpd.root_params(B)
                     else:
-                        parent_values: Dict[str, torch.Tensor] = {}
-                        for p in cpd.parents:
-                            if p.name in cache:
-                                parent_values[p.name] = cache[p.name]
-                            elif p.name in data:
-                                parent_values[p.name] = data[p.name]
-                            else:
-                                raise ValueError(
-                                    f"model_fn: parent {p.name!r} of {var.name!r} is "
-                                    "neither cached nor in data."
-                                )
+                        parent_values = self._gather_parents(cpd, cache, data)
                         params = cpd(parent_values=parent_values, **layer_kwargs.get(var.name, {}))
 
                     obs = data.get(var.name, None)
@@ -183,6 +214,7 @@ class PyroBaseInference(BaseInference):
         ``pyro.module`` on every call so SVI updates flow back into the
         original guide CPDs' ``nn.Parameter`` tensors.
         """
+        pyro, _, _ = _import_pyro()
         pgm = self.pgm
         pyro.module("pgm_guides", pgm.guides)
         B = next(iter(data.values())).shape[0] if data else 1

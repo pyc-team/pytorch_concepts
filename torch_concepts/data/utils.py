@@ -12,9 +12,20 @@ from typing import Any, List, Sequence, Union
 import torch
 import random
 from torch import Tensor
-from torchvision.transforms import v2
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "affine_transform requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 
 def ensure_list(value: Any) -> List:
@@ -189,6 +200,7 @@ def affine_transform(images, degrees, scales, batch_size=512):
     Returns:
         Tensor: Transformed images with same shape as input.
     """
+    v2 = _import_torchvision().transforms.v2
     if degrees is None:
         logger.warning("Degrees for affine transformation of images not provided, setting to 0.")
         degrees = torch.zeros(images.shape[0], device=images.device)

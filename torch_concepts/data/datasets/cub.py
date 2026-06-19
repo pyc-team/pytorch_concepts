@@ -15,7 +15,6 @@ import pickle
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as transforms
 
 from collections import defaultdict
 from PIL import Image
@@ -28,6 +27,18 @@ from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "CUBDataset image loading requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -915,9 +926,10 @@ class CUBDataset(ConceptDataset):
             x = self.input_data[item]
         else:
             img_path = self.input_data[item]
+            tv = _import_torchvision()
             x = Image.open(img_path).convert('RGB')
-            x = transforms.Resize((self.image_size, self.image_size))(x)
-            x = transforms.ToTensor()(x)
+            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+            x = tv.transforms.ToTensor()(x)
         c = self.concepts[item]
         return {'inputs': {'x': x}, 'concepts': {'c': c}}
 

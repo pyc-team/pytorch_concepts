@@ -1,628 +1,359 @@
-"""Comprehensive tests for the shared CPD feature.
+"""Tests for plate variables.
 
-Tests cover three layers:
-  1. ParametricCPD construction with shared=True
-  2. ProbabilisticModel registration & lookup of shared factors
-  3. ForwardInference execution, slicing, and concatenation
+Plate variables are created via `ConceptVariable('name', members=['m1', 'm2', ...], ...)`.
+These tests cover the full plate lifecycle: construction, forward pass,
+member slicing, and plate-aware inference.
 """
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, OneHotCategorical
+import torch.distributions as dist
 
-from torch_concepts import ConceptVariable, LatentVariable
-from torch_concepts.distributions import Delta
-from torch_concepts.nn import (
-    DeterministicInference,
-    LinearConceptToConcept,
-    LinearLatentToConcept,
-)
+from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
-
-
-# ======================================================================
-# Fixtures
-# ======================================================================
-
-LATENT_DIM = 8
-N_CONCEPTS = 5
-N_CLASSES = 3
-CONCEPT_NAMES = [f"c{i}" for i in range(N_CONCEPTS)]
-BATCH = 4
-
-
-def _make_encoder():
-    return LinearLatentToConcept(in_latent=LATENT_DIM, out_concepts=N_CONCEPTS)
-
-
-def _make_task_head():
-    return LinearConceptToConcept(in_concepts=N_CONCEPTS, out_concepts=N_CLASSES)
-
-
-def _build_shared_pgm(encoder, task_head):
-    """PGM with a single shared CPD for all concepts."""
-    input_var = LatentVariable("input", distribution=Delta, size=LATENT_DIM)
-    concept_vars = ConceptVariable(CONCEPT_NAMES, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=N_CLASSES)
-
-    cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-    cpd_concepts = ParametricCPD(
-        CONCEPT_NAMES, parametrization=encoder, parents=["input"], shared=True,
-    )
-    cpd_task = ParametricCPD("task", parametrization=task_head, parents=CONCEPT_NAMES)
-
-    return ProbabilisticModel(
-        variables=[input_var] + concept_vars + [task_var],
-        factors=[cpd_input, cpd_concepts, cpd_task],
-    )
-
-
-def _build_single_pgm(encoder, task_head):
-    """Equivalent PGM with one CPD per concept (shared=False).
-
-    Copies weights row-by-row from the shared encoder so outputs match.
-    """
-    input_var = LatentVariable("input", distribution=Delta, size=LATENT_DIM)
-    concept_vars = ConceptVariable(CONCEPT_NAMES, distribution=Bernoulli)
-    task_var = ConceptVariable("task", distribution=OneHotCategorical, size=N_CLASSES)
-
-    cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-
-    concept_cpds = []
-    for i, name in enumerate(CONCEPT_NAMES):
-        single_enc = LinearLatentToConcept(in_latent=LATENT_DIM, out_concepts=1)
-        with torch.no_grad():
-            single_enc.encoder.weight.copy_(encoder.encoder.weight[i : i + 1])
-            single_enc.encoder.bias.copy_(encoder.encoder.bias[i : i + 1])
-        concept_cpds.append(
-            ParametricCPD(name, parametrization=single_enc, parents=["input"])
-        )
-
-    cpd_task = ParametricCPD("task", parametrization=task_head, parents=CONCEPT_NAMES)
-
-    return ProbabilisticModel(
-        variables=[input_var] + concept_vars + [task_var],
-        factors=[cpd_input] + concept_cpds + [cpd_task],
-    )
-
-
-# ======================================================================
-# 1. ParametricCPD construction
-# ======================================================================
-
-class TestParametricCPDSharedConstruction:
-    """Test ParametricCPD with shared=True construction semantics."""
-
-    def test_shared_returns_single_instance(self):
-        cpd = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input"], shared=True,
-        )
-        assert isinstance(cpd, ParametricCPD)
-        assert not isinstance(cpd, list)
-
-    def test_shared_false_returns_list(self):
-        cpds = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input"], shared=False,
-        )
-        assert isinstance(cpds, list)
-        assert len(cpds) == N_CONCEPTS
-
-    def test_shared_stores_all_concepts(self):
-        cpd = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input"], shared=True,
-        )
-        assert cpd.concepts == CONCEPT_NAMES
-        assert cpd.concept == CONCEPT_NAMES[0]
-
-    def test_shared_flag_stored(self):
-        cpd = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input"], shared=True,
-        )
-        assert cpd.shared is True
-
-    def test_non_shared_flag_stored(self):
-        cpds = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input"], shared=False,
-        )
-        for c in cpds:
-            assert c.shared is False
-
-    def test_shared_no_deepcopy(self):
-        """Shared CPD should reference the original module, not a copy."""
-        module = nn.Linear(8, 5)
-        cpd = ParametricCPD(
-            CONCEPT_NAMES, parametrization=module,
-            parents=["input"], shared=True,
-        )
-        assert cpd.parametrization is module
-
-    def test_non_shared_deepcopies(self):
-        """Non-shared CPDs should each have their own copy."""
-        module = nn.Linear(8, 5)
-        cpds = ParametricCPD(
-            CONCEPT_NAMES, parametrization=module,
-            parents=["input"], shared=False,
-        )
-        ids = {id(c.parametrization) for c in cpds}
-        assert len(ids) == N_CONCEPTS  # all distinct copies
-
-    def test_shared_rejects_module_list(self):
-        with pytest.raises(ValueError, match="single module"):
-            ParametricCPD(
-                CONCEPT_NAMES,
-                parametrization=[nn.Linear(8, 1) for _ in CONCEPT_NAMES],
-                parents=["input"],
-                shared=True,
-            )
-
-    def test_shared_preserves_parents(self):
-        cpd = ParametricCPD(
-            CONCEPT_NAMES, parametrization=nn.Linear(8, 5),
-            parents=["input", "extra"], shared=True,
-        )
-        parent_names = [p if isinstance(p, str) else p.concept for p in cpd.parents]
-        assert parent_names == ["input", "extra"]
-
-
-# ======================================================================
-# 2. ProbabilisticModel registration & lookup
-# ======================================================================
-
-class TestProbabilisticModelSharedRegistration:
-    """Test ProbabilisticModel with shared CPDs."""
-
-    @pytest.fixture
-    def pgm(self):
-        return _build_shared_pgm(_make_encoder(), _make_task_head())
-
-    def test_shared_cpd_map_populated(self, pgm):
-        assert pgm._shared_cpd_map == {
-            "c1": "c0", "c2": "c0", "c3": "c0", "c4": "c0",
-        }
-
-    def test_single_pgm_has_empty_shared_map(self):
-        pgm = _build_single_pgm(_make_encoder(), _make_task_head())
-        assert pgm._shared_cpd_map == {}
-
-    def test_primary_registered_in_factors(self, pgm):
-        assert "c0" in pgm.factors
-
-    def test_secondary_not_in_factors(self, pgm):
-        for name in CONCEPT_NAMES[1:]:
-            assert name not in pgm.factors
-
-    def test_get_module_primary(self, pgm):
-        cpd = pgm.get_module_of_concept("c0")
-        assert cpd is not None
-        assert cpd.shared is True
-
-    def test_get_module_secondary_redirects(self, pgm):
-        primary_cpd = pgm.get_module_of_concept("c0")
-        for name in CONCEPT_NAMES[1:]:
-            assert pgm.get_module_of_concept(name) is primary_cpd
-
-    def test_all_variables_present(self, pgm):
-        var_names = {v.concept for v in pgm.variables}
-        expected = {"input"} | set(CONCEPT_NAMES) | {"task"}
-        assert var_names == expected
-
-    def test_factor_count(self, pgm):
-        # input + shared_concepts (1 entry) + task = 3
-        assert len(pgm.factors) == 3
-
-
-# ======================================================================
-# 3. Inference: shared vs single equivalence
-# ======================================================================
-
-class TestSharedCPDInferenceEquivalence:
-    """Verify shared CPD produces identical output to individual CPDs."""
-
-    @pytest.fixture
-    def models(self):
-        encoder = _make_encoder()
-        task_head = _make_task_head()
-        pgm_shared = _build_shared_pgm(encoder, task_head)
-        pgm_single = _build_single_pgm(encoder, task_head)
-        return pgm_shared, pgm_single
-
-    @pytest.fixture
-    def x(self):
-        torch.manual_seed(42)
-        return torch.randn(BATCH, LATENT_DIM)
-
-    def test_full_query_equivalence(self, models, x):
-        pgm_shared, pgm_single = models
-        inf_shared = DeterministicInference(pgm_shared)
-        inf_single = DeterministicInference(pgm_single)
-
-        query = CONCEPT_NAMES + ["task"]
-        r_shared = inf_shared.query(query, evidence={"input": x}, debug=True)
-        r_single = inf_single.query(query, evidence={"input": x}, debug=True)
-
-        assert torch.allclose(r_shared.probs, r_single.probs, atol=1e-6)
-
-    def test_concept_only_query(self, models, x):
-        pgm_shared, pgm_single = models
-        inf_shared = DeterministicInference(pgm_shared)
-        inf_single = DeterministicInference(pgm_single)
-
-        r_shared = inf_shared.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
-        r_single = inf_single.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
-
-        assert torch.allclose(r_shared.probs, r_single.probs, atol=1e-6)
-
-
-# ======================================================================
-# 4. Subset queries
-# ======================================================================
-
-class TestSharedCPDSubsetQuery:
-    """Test querying subsets of shared concepts."""
-
-    @pytest.fixture
-    def inf(self):
-        pgm = _build_shared_pgm(_make_encoder(), _make_task_head())
-        return DeterministicInference(pgm)
-
-    @pytest.fixture
-    def x(self):
-        torch.manual_seed(0)
-        return torch.randn(BATCH, LATENT_DIM)
-
-    def test_single_concept_query(self, inf, x):
-        result = inf.query(["c2"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 1)
-
-    def test_subset_query(self, inf, x):
-        result = inf.query(["c1", "c3"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 2)
-
-    def test_reordered_query(self, inf, x):
-        """Querying in reversed order should return correct values."""
-        fwd = inf.query(CONCEPT_NAMES, evidence={"input": x}, debug=True)
-        rev = inf.query(list(reversed(CONCEPT_NAMES)), evidence={"input": x}, debug=True)
-        assert torch.allclose(fwd.probs, rev.probs.flip(-1), atol=1e-6)
-
-    def test_subset_matches_full(self, inf, x):
-        full = inf.query(CONCEPT_NAMES + ["task"], evidence={"input": x}, debug=True)
-        subset = inf.query(["c1", "c3"], evidence={"input": x}, debug=True)
-        # c1 is index 1, c3 is index 3 in full output
-        assert torch.allclose(subset.probs[:, 0:1], full.probs[:, 1:2], atol=1e-6)
-        assert torch.allclose(subset.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
-
-    def test_task_only_query(self, inf, x):
-        """Querying only the task still works (shared concepts computed as ancestors)."""
-        result = inf.query(["task"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, N_CLASSES)
-
-
-# ======================================================================
-# 5. Mixed shared and individual CPDs at the same level
-# ======================================================================
-
-class TestMixedSharedAndIndividualCPDs:
-    """Test a PGM with both shared and individual CPDs at the same level."""
-
-    @pytest.fixture
-    def setup(self):
-        torch.manual_seed(99)
-        shared_names = ["s0", "s1", "s2"]
-        indiv_names = ["a", "b"]
-        all_names = shared_names + indiv_names
-
-        input_var = LatentVariable("input", distribution=Delta, size=8)
-        shared_vars = ConceptVariable(shared_names, distribution=Bernoulli)
-        indiv_vars = ConceptVariable(indiv_names, distribution=Bernoulli)
-        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=3)
-
-        cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-        cpd_shared = ParametricCPD(
-            shared_names, parametrization=LinearLatentToConcept(8, 3),
-            parents=["input"], shared=True,
-        )
-        cpd_a = ParametricCPD("a", parametrization=LinearLatentToConcept(8, 1), parents=["input"])
-        cpd_b = ParametricCPD("b", parametrization=LinearLatentToConcept(8, 1), parents=["input"])
-        cpd_task = ParametricCPD(
-            "task", parametrization=LinearConceptToConcept(5, 3), parents=all_names,
-        )
-
-        pgm = ProbabilisticModel(
-            variables=[input_var] + shared_vars + indiv_vars + [task_var],
-            factors=[cpd_input, cpd_shared, cpd_a, cpd_b, cpd_task],
-        )
-        inf = DeterministicInference(pgm)
-        x = torch.randn(BATCH, 8)
-        return inf, pgm, x, shared_names, indiv_names, all_names
-
-    def test_shared_map_only_shared(self, setup):
-        inf, pgm, x, shared_names, indiv_names, _ = setup
-        assert set(pgm._shared_cpd_map.keys()) == {"s1", "s2"}
-        assert all(v == "s0" for v in pgm._shared_cpd_map.values())
-
-    def test_individual_not_in_shared_map(self, setup):
-        _, pgm, _, _, indiv_names, _ = setup
-        for name in indiv_names:
-            assert name not in pgm._shared_cpd_map
-
-    def test_full_query(self, setup):
-        inf, _, x, _, _, all_names = setup
-        result = inf.query(all_names + ["task"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 5 + 3)  # 5 concepts (3 shared + 2 indiv) + 3 task classes
-
-    def test_shared_only_query(self, setup):
-        inf, _, x, shared_names, _, _ = setup
-        result = inf.query(shared_names, evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 3)
-
-    def test_individual_only_query(self, setup):
-        inf, _, x, _, indiv_names, _ = setup
-        result = inf.query(indiv_names, evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 2)
-
-    def test_cross_query(self, setup):
-        """Query mixing shared and individual concepts."""
-        inf, _, x, _, _, all_names = setup
-        full = inf.query(all_names, evidence={"input": x}, debug=True)
-        mixed = inf.query(["s0", "a", "s2"], evidence={"input": x}, debug=True)
-        # s0 = col 0, a = col 3, s2 = col 2 in full
-        assert torch.allclose(mixed.probs[:, 0:1], full.probs[:, 0:1], atol=1e-6)
-        assert torch.allclose(mixed.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
-        assert torch.allclose(mixed.probs[:, 2:3], full.probs[:, 2:3], atol=1e-6)
-
-    def test_task_query_uses_all_parents(self, setup):
-        """Task depends on all 5 concepts; querying task alone should work."""
-        inf, _, x, _, _, _ = setup
-        result = inf.query(["task"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 3)
-
-
-# ======================================================================
-# 6. Gradient flow
-# ======================================================================
-
-class TestSharedCPDGradientFlow:
-    """Verify gradients flow through shared CPD correctly."""
-
-    def test_gradient_reaches_shared_encoder(self):
-        encoder = _make_encoder()
-        task_head = _make_task_head()
-        pgm = _build_shared_pgm(encoder, task_head)
-        inf = DeterministicInference(pgm)
-
-        x = torch.randn(BATCH, LATENT_DIM)
-        result = inf.query(CONCEPT_NAMES + ["task"], evidence={"input": x}, debug=True)
-        loss = result.probs.sum()
-        loss.backward()
-
-        assert encoder.encoder.weight.grad is not None
-        assert encoder.encoder.weight.grad.abs().sum() > 0
-
-    def test_gradient_same_as_single(self):
-        """Gradients through shared CPD match those through individual CPDs."""
-        torch.manual_seed(7)
-        encoder = _make_encoder()
-        task_head = _make_task_head()
-
-        pgm_shared = _build_shared_pgm(encoder, task_head)
-        pgm_single = _build_single_pgm(encoder, task_head)
-
-        inf_shared = DeterministicInference(pgm_shared)
-        inf_single = DeterministicInference(pgm_single)
-
-        x = torch.randn(BATCH, LATENT_DIM)
-        query = CONCEPT_NAMES + ["task"]
-
-        r_shared = inf_shared.query(query, evidence={"input": x}, debug=True)
-        r_single = inf_single.query(query, evidence={"input": x}, debug=True)
-
-        r_shared.probs.sum().backward()
-        r_single.probs.sum().backward()
-
-        # Task head is the same object in both PGMs, so gradients accumulate.
-        # Compare encoder gradients: shared encoder grad vs sum of individual encoder grads.
-        shared_grad = encoder.encoder.weight.grad.clone()
-
-        individual_grads = []
-        for cpd_name in CONCEPT_NAMES:
-            cpd = pgm_single.get_module_of_concept(cpd_name)
-            individual_grads.append(cpd.parametrization.encoder.weight.grad.clone())
-        stacked = torch.cat(individual_grads, dim=0)
-
-        assert torch.allclose(shared_grad, stacked, atol=1e-5)
-
-
-# ======================================================================
-# 7. Multiple shared groups
-# ======================================================================
-
-class TestMultipleSharedGroups:
-    """Test PGM with two separate shared CPD groups."""
-
-    @pytest.fixture
-    def setup(self):
-        torch.manual_seed(11)
-        group_a = ["a0", "a1", "a2"]
-        group_b = ["b0", "b1"]
-        all_concepts = group_a + group_b
-
-        input_var = LatentVariable("input", distribution=Delta, size=8)
-        vars_a = ConceptVariable(group_a, distribution=Bernoulli)
-        vars_b = ConceptVariable(group_b, distribution=Bernoulli)
-        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=3)
-
-        cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-        cpd_a = ParametricCPD(
-            group_a, parametrization=LinearLatentToConcept(8, 3),
-            parents=["input"], shared=True,
-        )
-        cpd_b = ParametricCPD(
-            group_b, parametrization=LinearLatentToConcept(8, 2),
-            parents=["input"], shared=True,
-        )
-        cpd_task = ParametricCPD(
-            "task", parametrization=LinearConceptToConcept(5, 3), parents=all_concepts,
-        )
-
-        pgm = ProbabilisticModel(
-            variables=[input_var] + vars_a + vars_b + [task_var],
-            factors=[cpd_input, cpd_a, cpd_b, cpd_task],
-        )
-        inf = DeterministicInference(pgm)
-        x = torch.randn(BATCH, 8)
-        return inf, pgm, x, group_a, group_b, all_concepts
-
-    def test_two_primaries_in_map(self, setup):
-        _, pgm, _, group_a, group_b, _ = setup
-        assert pgm._shared_cpd_map == {
-            "a1": "a0", "a2": "a0",
-            "b1": "b0",
-        }
-
-    def test_separate_cpd_instances(self, setup):
-        _, pgm, _, _, _, _ = setup
-        cpd_a = pgm.get_module_of_concept("a0")
-        cpd_b = pgm.get_module_of_concept("b0")
-        assert cpd_a is not cpd_b
-
-    def test_full_query(self, setup):
-        inf, _, x, _, _, all_concepts = setup
-        result = inf.query(all_concepts + ["task"], evidence={"input": x}, debug=True)
-        assert result.probs.shape == (BATCH, 5 + 3)
-
-    def test_cross_group_query(self, setup):
-        inf, _, x, _, _, all_concepts = setup
-        full = inf.query(all_concepts, evidence={"input": x}, debug=True)
-        cross = inf.query(["a2", "b0"], evidence={"input": x}, debug=True)
-        assert torch.allclose(cross.probs[:, 0:1], full.probs[:, 2:3], atol=1e-6)
-        assert torch.allclose(cross.probs[:, 1:2], full.probs[:, 3:4], atol=1e-6)
-
-
-# ======================================================================
-# 8. Categorical shared concepts (size > 1 per concept)
-# ======================================================================
-
-class TestSharedCPDCategoricalConcepts:
-    """Test shared CPD where each concept has size > 1 (Categorical)."""
-
-    @pytest.fixture
-    def setup(self):
-        torch.manual_seed(77)
-        names = ["color", "shape"]  # each has 3 classes
-        input_var = LatentVariable("input", distribution=Delta, size=8)
-        concept_vars = ConceptVariable(names, distribution=OneHotCategorical, size=3)
-        task_var = ConceptVariable("task", distribution=OneHotCategorical, size=2)
-
-        encoder = nn.Linear(8, 6)  # 3 + 3 = 6
-        cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-        cpd_concepts = ParametricCPD(
-            names, parametrization=encoder, parents=["input"], shared=True,
-        )
-        cpd_task = ParametricCPD(
-            "task", parametrization=LinearConceptToConcept(6, 2), parents=names,
-        )
-
-        pgm = ProbabilisticModel(
-            variables=[input_var] + concept_vars + [task_var],
-            factors=[cpd_input, cpd_concepts, cpd_task],
-        )
-        inf = DeterministicInference(pgm)
-        x = torch.randn(BATCH, 8)
-        return inf, pgm, x, names, encoder
-
-    def test_output_shape(self, setup):
-        inf, _, x, names, _ = setup
-        result = inf.query(names + ["task"], evidence={"input": x}, debug=True)
-        # color(3) + shape(3) + task(2) = 8
-        assert result.probs.shape == (BATCH, 8)
-
-    def test_slicing_categorical(self, setup):
-        inf, _, x, names, encoder = setup
-        full = inf.query(names, evidence={"input": x}, debug=True)
-        color_only = inf.query(["color"], evidence={"input": x}, debug=True)
-        shape_only = inf.query(["shape"], evidence={"input": x}, debug=True)
-        # color is first 3 cols, shape is next 3
-        assert torch.allclose(color_only.probs, full.probs[:, :3], atol=1e-6)
-        assert torch.allclose(shape_only.probs, full.probs[:, 3:6], atol=1e-6)
-
-
-# ======================================================================
-# 9. Parallel execution (non-debug mode)
-# ======================================================================
-
-class TestSharedCPDParallelExecution:
-    """Test that shared CPDs work in non-debug (parallel) mode."""
-
-    def test_parallel_matches_sequential(self):
-        torch.manual_seed(33)
-        encoder = _make_encoder()
-        task_head = _make_task_head()
-        pgm = _build_shared_pgm(encoder, task_head)
-        inf = DeterministicInference(pgm)
-
-        x = torch.randn(BATCH, LATENT_DIM)
-        query = CONCEPT_NAMES + ["task"]
-
-        r_debug = inf.query(query, evidence={"input": x}, debug=True)
-        r_parallel = inf.query(query, evidence={"input": x}, debug=False)
-
-        assert torch.allclose(r_debug.probs, r_parallel.probs, atol=1e-6)
-
-
-# ======================================================================
-# 10. Edge cases
-# ======================================================================
-
-class TestSharedCPDEdgeCases:
-    """Edge cases for shared CPD."""
-
-    def test_single_concept_shared_true(self):
-        """shared=True with a single-element list should work like shared=False."""
-        cpd = ParametricCPD(
-            ["only"], parametrization=nn.Linear(8, 1),
-            parents=["input"], shared=True,
-        )
-        assert isinstance(cpd, ParametricCPD)
-        assert cpd.shared is True
-        assert cpd.concepts == ["only"]
-
-    def test_single_concept_shared_in_pgm(self):
-        """A single-concept shared CPD in a full PGM."""
-        input_var = LatentVariable("input", distribution=Delta, size=8)
-        concept_var = ConceptVariable(["x"], distribution=Bernoulli)
-        cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-        cpd_x = ParametricCPD(
-            ["x"], parametrization=nn.Linear(8, 1), parents=["input"], shared=True,
-        )
-        pgm = ProbabilisticModel(
-            variables=[input_var] + concept_var,
-            factors=[cpd_input, cpd_x],
-        )
-        inf = DeterministicInference(pgm)
-        result = inf.query(["x"], evidence={"input": torch.randn(2, 8)}, debug=True)
-        assert result.probs.shape == (2, 1)
-
-    def test_integer_concept_names(self):
-        """Shared CPD with integer concept names (requires str() conversion)."""
-        names = [0, 1, 2]
-        input_var = LatentVariable("input", distribution=Delta, size=4)
-        concept_vars = ConceptVariable(names, distribution=Bernoulli)
-
-        cpd_input = ParametricCPD("input", parametrization=nn.Identity())
-        cpd = ParametricCPD(
-            names, parametrization=nn.Linear(4, 3), parents=["input"], shared=True,
-        )
-
-        pgm = ProbabilisticModel(
-            variables=[input_var] + concept_vars,
-            factors=[cpd_input, cpd],
-        )
-        inf = DeterministicInference(pgm)
-        result = inf.query(names, evidence={"input": torch.randn(2, 4)}, debug=True)
-        assert result.probs.shape == (2, 3)
+from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
+from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralInference
+from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
+from torch_concepts.distributions import Delta
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _plate2(name="g"):
+    return ConceptVariable(name, members=["m1", "m2"], distribution=dist.Bernoulli)
+
+
+def _plate3(name="g"):
+    return ConceptVariable(name, members=["c1", "c2", "c3"], distribution=dist.Bernoulli)
+
+
+def _root_model_with_plate(plate):
+    cpd = ParametricCPD(variable=plate, parametrization={"probs": LearnablePrior(plate.size)})
+    return BayesianNetwork(variables=[plate], factors=[cpd])
+
+
+# ===========================================================================
+# 1. Plate variable construction
+# ===========================================================================
+
+class TestPlateVariableConstruction:
+    def test_is_plate_flag(self):
+        g = _plate2()
+        assert g.is_plate is True
+
+    def test_members_list(self):
+        g = _plate2()
+        assert g.members == ["m1", "m2"]
+
+    def test_name(self):
+        g = _plate2("concepts")
+        assert g.name == "concepts"
+
+    def test_member_size_default_one(self):
+        g = _plate2()
+        assert g.member_size == 1
+
+    def test_total_size_equals_n_times_member_size(self):
+        g = _plate3()
+        assert g.size == 3 * g.member_size
+
+    def test_plate_size_three_members_size_three_total(self):
+        g = _plate3()
+        assert g.size == 3
+
+    def test_not_plate_for_normal_variable(self):
+        v = ConceptVariable("v", distribution=dist.Bernoulli, size=1)
+        assert v.is_plate is False
+
+    def test_distribution_bernoulli(self):
+        g = _plate2()
+        assert g.distribution is dist.Bernoulli
+
+    def test_mvn_plate_not_allowed(self):
+        with pytest.raises(ValueError):
+            ConceptVariable("g", members=["a", "b"], distribution=dist.MultivariateNormal)
+
+
+# ===========================================================================
+# 2. Plate member addressing
+# ===========================================================================
+
+class TestPlateAddressing:
+    def test_column_of_returns_slice(self):
+        g = _plate2()
+        sl = g.column_of("m1")
+        assert isinstance(sl, slice)
+
+    def test_column_of_m1_starts_at_0(self):
+        g = _plate2()
+        sl = g.column_of("m1")
+        assert sl.start == 0
+
+    def test_column_of_m2_starts_at_1(self):
+        g = _plate2()
+        sl = g.column_of("m2")
+        assert sl.start == 1
+
+    def test_column_of_unknown_raises(self):
+        g = _plate2()
+        with pytest.raises((KeyError, ValueError)):
+            g.column_of("unknown")
+
+    def test_member_returns_handle(self):
+        g = _plate2()
+        h = g.member("m1")
+        assert h.name == "m1"
+
+    def test_member_handle_plate_backref(self):
+        g = _plate2()
+        h = g.member("m1")
+        assert h._plate is g
+
+    def test_member_size_from_handle(self):
+        g = ConceptVariable("g", members=["c1", "c2"], distribution=dist.Bernoulli, size=2)
+        sl = g.column_of("c1")
+        assert sl.stop - sl.start == 2
+
+    def test_actual_tensor_slicing(self):
+        g = _plate3()
+        B = 4
+        full = torch.rand(B, 3)
+        sl_c2 = g.column_of("c2")
+        sliced = full[:, sl_c2]
+        assert sliced.shape == (B, 1)
+        assert (sliced == full[:, 1:2]).all()
+
+
+# ===========================================================================
+# 3. CPD with plate variable
+# ===========================================================================
+
+class TestPlateCPD:
+    def test_root_plate_cpd_construction(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        assert cpd.variable is g
+
+    def test_root_plate_cpd_is_root(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        assert cpd.is_root is True
+
+    def test_root_plate_cpd_forward(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 5
+        out = cpd.root_params(B)
+        assert out["probs"].shape == (B, 2)
+
+    def test_nonroot_plate_cpd_forward(self):
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = _plate3()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 3), nn.Sigmoid())}, parents=[x])
+        B = 3
+        out = cpd(parent_values={"x": torch.randn(B, 4)})
+        assert out["probs"].shape == (B, 3)
+
+    def test_cpd_select_plate_name(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 4
+        params = cpd.root_params(B)
+        selected = cpd.select(params, "g")
+        assert selected["probs"].shape == (B, 2)
+
+    def test_cpd_select_member_name(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 4
+        params = cpd.root_params(B)
+        selected = cpd.select(params, "m1")
+        assert selected["probs"].shape == (B, 1)
+
+    def test_cpd_select_both_members_different(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 2
+        params = cpd.root_params(B)
+        m1 = cpd.select(params, "m1")["probs"]
+        m2 = cpd.select(params, "m2")["probs"]
+        assert m1.shape == (B, 1)
+        assert m2.shape == (B, 1)
+        # Together they reconstruct the full tensor
+        assert torch.allclose(torch.cat([m1, m2], dim=1), params["probs"])
+
+
+# ===========================================================================
+# 4. clamp_members
+# ===========================================================================
+
+class TestClampMembers:
+    def test_empty_observed_no_op(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 3
+        value = torch.rand(B, 2)
+        clamped = cpd.clamp_members(value, {})
+        assert torch.equal(clamped, value)
+
+    def test_clamp_m1_replaces_column(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 3
+        value = torch.zeros(B, 2)
+        obs_m1 = torch.ones(B, 1)
+        clamped = cpd.clamp_members(value, {"m1": obs_m1})
+        assert (clamped[:, 0:1] == 1.0).all()
+        assert (clamped[:, 1:2] == 0.0).all()
+
+    def test_clamp_m2_replaces_column(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 3
+        value = torch.zeros(B, 2)
+        obs_m2 = torch.ones(B, 1)
+        clamped = cpd.clamp_members(value, {"m2": obs_m2})
+        assert (clamped[:, 1:2] == 1.0).all()
+        assert (clamped[:, 0:1] == 0.0).all()
+
+    def test_clamp_both_members(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 2
+        value = torch.zeros(B, 2)
+        clamped = cpd.clamp_members(value, {
+            "m1": torch.ones(B, 1),
+            "m2": torch.full((B, 1), 0.5),
+        })
+        assert (clamped[:, 0:1] == 1.0).all()
+        assert (clamped[:, 1:2] == 0.5).all()
+
+    def test_clamp_does_not_mutate_original(self):
+        g = _plate2()
+        cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
+        B = 2
+        value = torch.zeros(B, 2)
+        value_copy = value.clone()
+        cpd.clamp_members(value, {"m1": torch.ones(B, 1)})
+        assert torch.equal(value, value_copy)
+
+
+# ===========================================================================
+# 5. BayesianNetwork with plate
+# ===========================================================================
+
+class TestBayesianNetworkPlate:
+    def test_plate_variable_in_variables_dict(self):
+        g = _plate2()
+        m = _root_model_with_plate(g)
+        assert "g" in m.variables
+
+    def test_plate_factor_in_factors_dict(self):
+        g = _plate2()
+        m = _root_model_with_plate(g)
+        assert "g" in m.factors
+
+    def test_queryable_names_includes_members(self):
+        g = _plate2()
+        m = _root_model_with_plate(g)
+        assert "m1" in m.queryable_names
+        assert "m2" in m.queryable_names
+
+    def test_resolve_member_returns_plate_variable(self):
+        g = _plate2()
+        m = _root_model_with_plate(g)
+        assert m.resolve("m1") is g
+        assert m.resolve("m2") is g
+
+    def test_plate_as_parent(self):
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = _plate2()
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+        cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        cpd_c = ParametricCPD(variable=c, parametrization=nn.Sequential(nn.Linear(2, 1), nn.Sigmoid()), parents=[g])
+        m = BayesianNetwork(variables=[x, g, c], factors=[cpd_x, cpd_g, cpd_c])
+        assert m is not None
+
+    def test_member_as_parent(self):
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = _plate2()
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+        cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        m1_handle = g.member("m1")
+        cpd_c = ParametricCPD(variable=c, parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid()), parents=[m1_handle])
+        m = BayesianNetwork(variables=[x, g, c], factors=[cpd_x, cpd_g, cpd_c])
+        assert m is not None
+
+
+# ===========================================================================
+# 6. Inference with plate variables
+# ===========================================================================
+
+class TestInferenceWithPlate:
+    def _make_model(self):
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = _plate3()
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+        cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 3), nn.Sigmoid())}, parents=[x])
+        return BayesianNetwork(variables=[x, g], factors=[cpd_x, cpd_g])
+
+    def test_deterministic_query_plate_name(self):
+        m = self._make_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        B = 3
+        out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4)})
+        assert out.params["g"]["probs"].shape == (B, 3)
+
+    def test_deterministic_query_member_c1(self):
+        m = self._make_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        B = 3
+        out = eng.query(query=["c1"], evidence={"x": torch.randn(B, 4)})
+        assert out.params["c1"]["probs"].shape == (B, 1)
+
+    def test_deterministic_query_all_members(self):
+        m = self._make_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        B = 3
+        out = eng.query(query=["c1", "c2", "c3"], evidence={"x": torch.randn(B, 4)})
+        for name in ["c1", "c2", "c3"]:
+            assert name in out.params
+            assert out.params[name]["probs"].shape == (B, 1)
+
+    def test_ancestral_samples_plate(self):
+        m = self._make_model()
+        eng = AncestralInference(m)
+        B = 2
+        out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4)})
+        assert "g" in out.samples
+        assert out.samples["g"].shape == (B, 3)
+
+    def test_ancestral_samples_member(self):
+        m = self._make_model()
+        eng = AncestralInference(m)
+        B = 2
+        out = eng.query(query=["c1"], evidence={"x": torch.randn(B, 4)})
+        assert "c1" in out.samples
+
+    def test_member_evidence_partial_plate(self):
+        m = self._make_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        B = 2
+        c1_obs = torch.ones(B, 1)
+        out = eng.query(query=["c2", "c3"], evidence={"x": torch.randn(B, 4), "c1": c1_obs})
+        assert "c2" in out.params
+        assert "c3" in out.params
+
+    def test_whole_plate_evidence_skips_cpd(self):
+        m = self._make_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        B = 2
+        g_obs = torch.rand(B, 3)
+        out = eng.query(query=[], evidence={"x": torch.randn(B, 4), "g": g_obs})
+        # g is evidence; no params for it
+        assert "g" not in out.params

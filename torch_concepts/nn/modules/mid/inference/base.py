@@ -35,11 +35,11 @@ class BaseInference(nn.Module):
 
         roots_needing_input: List[str] = [
             v.name
-            for v in pgm.variables
-            if pgm.name_to_factor(v.name).is_root
+            for v in pgm.variables.values()
+            if pgm.factors[v.name].is_root
             and any(
                 len(inspect.signature(mod.forward).parameters) > 0
-                for mod in pgm.name_to_factor(v.name).parametrization.values()
+                for mod in pgm.factors[v.name].parametrization.values()
             )
         ]
         if roots_needing_input:
@@ -64,7 +64,9 @@ class BaseInference(nn.Module):
          - batch sizes match.
         """
 
-        all_names = {v.name for v in self.pgm.variables}
+        all_names = getattr(self.pgm, "queryable_names", None)
+        if all_names is None:
+            all_names = {v.name for v in self.pgm.variables.values()}
         unknown_q = set(query.keys()) - all_names
         if unknown_q:
             raise ValueError(f"{self.name}: unknown query names {sorted(unknown_q)}.")
@@ -104,3 +106,28 @@ class BaseInference(nn.Module):
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
         return self.query(query=query, evidence=evidence)
+
+    def _format_repr(self, **fields) -> str:
+        """Render ``EngineName(param=value, ...)`` for the given inference
+        parameters.
+
+        The wrapped :class:`ProbabilisticModel` is intentionally excluded — only
+        the engine's own configuration is shown. ``nn.Module`` values are
+        rendered by their class name and (non-string) callables by their
+        ``__name__`` so the PGM is never recursively printed.
+        """
+        items = []
+        for key, val in fields.items():
+            if isinstance(val, nn.Module):
+                rendered = type(val).__name__
+            elif callable(val) and not isinstance(val, str):
+                rendered = getattr(val, "__name__", repr(val))
+            else:
+                rendered = repr(val)
+            items.append(f"{key}={rendered}")
+        return f"{type(self).__name__}({', '.join(items)})"
+
+    def __repr__(self) -> str:
+        # Concrete engines override this to surface their own parameters; the
+        # base fallback shows just the engine name (no parameters, no PGM).
+        return self._format_repr()

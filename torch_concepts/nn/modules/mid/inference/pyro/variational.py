@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 from typing import Callable, Dict, List, Optional, Union
 
-import pyro.poutine as poutine
 import torch
 import torch.nn as nn
 
@@ -21,7 +20,7 @@ from ...models.bayesian_network import BayesianNetwork
 from ...models.cpd import ParametricCPD
 from ..utils import make_temperature_schedule
 from ....outputs import InferenceOutput
-from .base import PyroBaseInference, trace_to_params
+from .base import PyroBaseInference, trace_to_params, _import_pyro
 
 
 _YELLOW_START = "\033[33m"
@@ -85,6 +84,10 @@ class VariationalInference(PyroBaseInference):
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
         self._warned_latent_evidence = False
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
         self._schedule = make_temperature_schedule(
             initial_temperature, annealing, annealing_rate
         )
@@ -115,6 +118,16 @@ class VariationalInference(PyroBaseInference):
             "`evidence` is still accepted and merged (`query` values take priority)."
         )
 
+    def __repr__(self) -> str:
+        return self._format_repr(
+            latents=list(self._latent_names),
+            n_samples=self.n_samples,
+            max_plate_nesting=self.max_plate_nesting,
+            initial_temperature=self.initial_temperature,
+            annealing=self.annealing,
+            annealing_rate=self.annealing_rate,
+        )
+
     # ------------------------------------------------------------------
     @classmethod
     def _build_guides(
@@ -133,7 +146,7 @@ class VariationalInference(PyroBaseInference):
                 f"got {type(latents).__name__}."
             )
 
-        all_var_names = {v.name for v in pgm.variables}
+        all_var_names = {v.name for v in pgm.variables.values()}
         latent_set = set(latents.keys())
 
         for lat_name, cpd in latents.items():
@@ -162,7 +175,7 @@ class VariationalInference(PyroBaseInference):
                         f"{cls.__name__}: guide for {lat_name!r} cannot "
                         f"condition on latent variable {p.name!r}."
                     )
-                if pgm.name_to_variable(p.name) is not p:
+                if pgm.variables[p.name] is not p:
                     raise ValueError(
                         f"{cls.__name__}: guide for {lat_name!r}: parent "
                         f"{p.name!r} is a different Variable instance than the one "
@@ -221,7 +234,7 @@ class VariationalInference(PyroBaseInference):
         aligned = {}
         for name, pdict in params.items():
             cpd = (self.pgm.guides[name] if use_guides and name in self.pgm.guides
-                   else self.pgm.name_to_factor(name) if not use_guides else None)
+                   else self.pgm.factors[name] if not use_guides else None)
             if cpd is None:
                 aligned[name] = pdict
                 continue
@@ -245,6 +258,7 @@ class VariationalInference(PyroBaseInference):
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
         """Run variational inference and return model and guide parameters."""
+        _, _, poutine = _import_pyro()
         if query is None:
             query = {}
         if evidence is None:
@@ -266,7 +280,7 @@ class VariationalInference(PyroBaseInference):
 
         non_latent_missing = [
             v.name
-            for v in self.pgm.variables
+            for v in self.pgm.variables.values()
             if v.name not in self._latent_names and v.name not in data
         ]
         if non_latent_missing:
@@ -293,7 +307,8 @@ class VariationalInference(PyroBaseInference):
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
-        return InferenceOutput(
-            params=self._align_param_keys(trace_to_params(model_tr), use_guides=False),
-            guide_params=guide_params,
+        model_params = self._expose_members(
+            self._align_param_keys(trace_to_params(model_tr), use_guides=False),
+            set(query),
         )
+        return InferenceOutput(params=model_params, guide_params=guide_params)

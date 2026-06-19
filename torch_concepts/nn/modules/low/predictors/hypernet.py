@@ -1,11 +1,15 @@
+from optparse import Option
+from typing import Union, Optional
+
 import torch
 
-from ..base.layer import BasePredictor
+from torch_concepts import AxisAnnotation
+from ..base.layer import BaseConceptLayer
 from ..dense_layers import MLP
 from ....functional import prune_linear_layer
 
 
-class HyperlinearConceptEmbeddingToConcept(BasePredictor):
+class HyperlinearConceptEmbeddingToConcept(BaseConceptLayer):
     """
     Hypernetwork-based linear predictor for concept-based models.
 
@@ -56,8 +60,9 @@ class HyperlinearConceptEmbeddingToConcept(BasePredictor):
     """
     def __init__(
         self,
-        in_concepts: int,
+        in_concepts: Union[int, AxisAnnotation],
         in_embeddings: int,
+        out_concepts: Optional[Union[int, AxisAnnotation]] = None,
         hidden_size: int = 32,
         activation='relu',
         use_bias : bool = True,
@@ -66,10 +71,13 @@ class HyperlinearConceptEmbeddingToConcept(BasePredictor):
         min_std: float = 1e-6,
         **kwargs,
     ):
+        # Output size is inferred from the embeddings at forward time, so the
+        # stored value is just a sentinel: default to -1 when not given.
+        out_concepts = out_concepts if out_concepts is not None else -1
         super().__init__(
             in_concepts=in_concepts,
             in_embeddings=in_embeddings,
-            out_concepts=-1, # determined by the number of embeddings
+            out_concepts=out_concepts,
         )
         self.hidden_size = hidden_size
         self.use_bias = use_bias

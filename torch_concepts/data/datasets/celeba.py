@@ -6,16 +6,25 @@ import numpy as np
 import logging
 from typing import List, Optional, Union
 from tqdm import tqdm
-from torchvision.transforms import Compose
-from torchvision.datasets.utils import download_file_from_google_drive, extract_archive, check_integrity
 from torch_concepts import Annotations, AxisAnnotation
 from torch_concepts.data.base import ConceptDataset
-import torchvision.transforms as T
 from glob import glob
 import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "CelebADataset download/extraction requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 
 # CelebA file list from torchvision - Google Drive file IDs, MD5 hashes, and filenames
@@ -113,10 +122,11 @@ class CelebADataset(ConceptDataset):
                 continue
                 
             logger.info(f"Downloading {filename} from Google Drive to {celeba_folder}...")
-            download_file_from_google_drive(
-                file_id, 
-                celeba_folder, 
-                filename, 
+            tv = _import_torchvision()
+            tv.datasets.utils.download_file_from_google_drive(
+                file_id,
+                celeba_folder,
+                filename,
                 md5
             )
         
@@ -139,7 +149,8 @@ class CelebADataset(ConceptDataset):
             return
             
         logger.info("Extracting img_align_celeba.zip...")
-        extract_archive(archive_path)
+        tv = _import_torchvision()
+        tv.datasets.utils.extract_archive(archive_path)
         logger.info(f"CelebA images extracted to {celeba_folder}")
 
     def maybe_download(self):
