@@ -1,27 +1,24 @@
 from abc import ABC, abstractmethod
-from typing import Any, List
+from typing import Any
 
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from torch_concepts.data.base.dataset import ConceptDataset
-
-
-Concepts = List[Any] | Tensor
+from torch_concepts import AxisAnnotation
 
 
 class Annotator(ABC):
     """Base class for assigning concepts to dataset samples.
 
     An annotator maps:
-        dataset, concepts -> ConceptDataset
+        dataset + AxisAnnotation -> Tensor
     """
 
     @abstractmethod
     def annotate(
         self,
         dataset: Dataset,
-        concepts: Concepts,
+        concepts: AxisAnnotation,
         **kwargs: Any,
-    ) -> ConceptDataset:
+    ) -> Tensor:
         pass
