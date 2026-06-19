@@ -5,6 +5,7 @@ from torch.distributions import Bernoulli, OneHotCategorical
 
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
+from torch.distributions import RelaxedBernoulli
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
     ParametricCPD, BayesianNetwork, AncestralInference, LearnablePrior, Sequential
@@ -31,7 +32,7 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    concepts = ConceptVariable(['c1', 'c2'], distribution=Bernoulli)
+    concepts = ConceptVariable(['c1', 'c2'], distribution=RelaxedBernoulli)
     tasks = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
     # ParametricCPD setup
