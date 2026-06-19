@@ -12,7 +12,55 @@ import torch
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Dict, List, Tuple, Union, Optional, Any, Sequence
+from typing import Dict, List, Tuple, Type, Union, Optional, Any, Sequence
+
+
+@dataclass(frozen=True)
+class Concept:
+    """Read-only, per-concept view over a single column of an :class:`AxisAnnotation`.
+
+    Groups one concept's properties into a single named object so callers can write
+    ``axis.concept('color').cardinality`` instead of the index-dance
+    ``int(axis.cardinalities[axis.get_index('color')])``. It is a *view*: the values
+    are read from the owning ``AxisAnnotation``'s parallel lists at construction
+    time (no duplicated storage), so the lists remain the canonical representation.
+
+    Attributes:
+        name (str): Concept label.
+        index (int): Concept-level index within the axis.
+        cardinality (int): Number of states (1 for binary/continuous scalars).
+        type (Optional[str]): Concept type, e.g. ``'discrete'`` / ``'continuous'``.
+        distribution (Optional[type]): Distribution class (e.g. ``Bernoulli``), or
+            ``None`` if not yet assigned.
+        dist_kwargs (Optional[dict]): Distribution kwargs (still read from metadata).
+        states (Optional[List[str]]): State labels for this concept.
+        slice (slice): Column span of this concept in the flattened (logit) tensor.
+        metadata (dict): Raw per-concept metadata (escape hatch for extra keys).
+    """
+    name: str
+    index: int
+    cardinality: int
+    type: Optional[str]
+    distribution: Optional[Type]
+    dist_kwargs: Optional[dict]
+    states: Optional[List[str]]
+    slice: slice
+    metadata: dict = field(default_factory=dict)
+
+    @property
+    def is_continuous(self) -> bool:
+        """Whether this concept is continuous (``type == 'continuous'``)."""
+        return self.type == 'continuous'
+
+    @property
+    def is_binary(self) -> bool:
+        """Whether this concept is a single binary value (discrete, cardinality 1)."""
+        return not self.is_continuous and self.cardinality == 1
+
+    @property
+    def is_categorical(self) -> bool:
+        """Whether this concept is a multi-state discrete (categorical) variable."""
+        return not self.is_continuous and self.cardinality > 1
 
 
 @dataclass
@@ -75,11 +123,15 @@ class AxisAnnotation:
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
     types: Optional[List[str]] = field(default=None)  # e.g., 'discrete' or 'continuous' # TODO: make consistent
+    distributions: Optional[List[Type]] = field(default=None)  # distribution class per concept
     metadata: Optional[Dict[str, Dict]] = field(default=None)
 
     def __setattr__(self, key, value):
-        # Allow first assignment or initialization
-        if key == 'metadata':
+        # `metadata` and `distributions` may change after construction — a
+        # concept's distribution can be swapped between experiments — so they are
+        # freely reassignable. The structural fields (labels, states,
+        # cardinalities, types) remain write-once.
+        if key in ('metadata', 'distributions'):
             super().__setattr__(key, value)
             return
         if key in self.__dict__ and self.__dict__[key] is not None:
@@ -129,6 +181,18 @@ class AxisAnnotation:
             raise ValueError(
                 f"Provided cardinalities {self.cardinalities} don't match "
                 f"inferred cardinalities {inferred_cardinalities} from states"
+            )
+
+        # Validate optional per-concept lists line up with the labels.
+        if self.types is not None and len(self.types) != len(self.labels):
+            raise ValueError(
+                f"Number of types ({len(self.types)}) must match "
+                f"number of labels ({len(self.labels)})"
+            )
+        if self.distributions is not None and len(self.distributions) != len(self.labels):
+            raise ValueError(
+                f"Number of distributions ({len(self.distributions)}) must match "
+                f"number of labels ({len(self.labels)})"
             )
 
         # Determine is_nested from cardinalities
@@ -187,16 +251,17 @@ class AxisAnnotation:
         """Return number of labels in this axis."""
         return len(self.labels)
 
-    def __getitem__(self, idx: int) -> Union[str, Dict[str, Union[str, Tuple[str, ...]]]]:
+    def __getitem__(self, key: Union[int, str]) -> Union[str, "Concept"]:
         """
-        Get label or states at index.
-        For non-nested: returns labels[idx] (str)
-        For nested: returns dict {'label': label, 'states': state_tuple}
+        Index by position or by name.
+        - ``axis[int]`` returns the label at that index (``str``).
+        - ``axis[str]`` returns the :class:`Concept` view for that label.
         """
-        if not (0 <= idx < len(self.labels)):
-            raise IndexError(f"Index {idx} out of range")
-
-        return self.labels[idx]
+        if isinstance(key, str):
+            return self.concept(key)
+        if not (0 <= key < len(self.labels)):
+            raise IndexError(f"Index {key} out of range")
+        return self.labels[key]
 
     @cached_property
     def label_to_index(self) -> Dict[str, int]:
@@ -325,32 +390,72 @@ class AxisAnnotation:
         
         for i, label in enumerate(self.labels):
             card = self.cardinalities[i]
+            concept_type = self._type_of(i)
 
-            # Prefer the first-class `types` field, then metadata, then infer
-            if self.types is not None:
-                concept_type = self.types[i]
-            elif self.metadata and label in self.metadata:
-                concept_type = self.metadata[label].get('type', 'discrete')
-            else:
-                concept_type = 'discrete'  # Default assumption
-            
             # Classify into binary/categorical/continuous
             if concept_type == 'continuous':
                 group_key = 'continuous'
-            elif concept_type == 'discrete' and card == 1:
+            elif card == 1:
                 group_key = 'binary'
             else:  # discrete with card > 1
                 group_key = 'categorical'
-            
+
             # Store at concept level
             groups[group_key]['labels'].append(label)
             groups[group_key]['concept_idx'].append(i)
-            
+
             # Store at logit level (all positions for this concept)
             groups[group_key]['logits_idx'].extend(range(cum[i], cum[i+1]))
-        
+
         return groups
-    
+
+    def _type_of(self, index: int) -> str:
+        """Resolve a concept's type by index.
+
+        Prefers the first-class ``types`` field, falls back to
+        ``metadata[label]['type']``, then defaults to ``'discrete'``.
+        """
+        if self.types is not None:
+            return self.types[index]
+        label = self.labels[index]
+        if self.metadata and label in self.metadata:
+            return self.metadata[label].get('type', 'discrete')
+        return 'discrete'
+
+    def concept(self, name: str) -> "Concept":
+        """Return a read-only :class:`Concept` view for ``name``.
+
+        Groups the concept's per-column properties (cardinality, type,
+        distribution, states, logit slice) into one object, so callers can write
+        ``axis.concept('color').cardinality`` instead of the index-dance over the
+        parallel lists. Built fresh on each call so it always reflects the current
+        (mutable) ``distributions`` / ``metadata``.
+        """
+        i = self.get_index(name)
+        meta = (self.metadata.get(name, {}) if self.metadata else {}) or {}
+        return Concept(
+            name=name,
+            index=i,
+            cardinality=int(self.cardinalities[i]),
+            type=self._type_of(i),
+            distribution=self.distributions[i] if self.distributions is not None else None,
+            dist_kwargs=meta.get('dist_kwargs'),
+            states=self.states[i] if self.states is not None else None,
+            slice=self.concept_slices[name],
+            metadata=meta,
+        )
+
+    @property
+    def concepts(self) -> List["Concept"]:
+        """All concepts as :class:`Concept` views, in axis order.
+
+        Views are read from the canonical parallel lists (no duplicated storage);
+        useful for one-pass iteration, e.g.
+        ``[c.distribution for c in axis.concepts]``. Not cached, so it reflects the
+        current (mutable) ``distributions`` / ``metadata``.
+        """
+        return [self.concept(name) for name in self.labels]
+
     def slice_tensor(self, tensor: torch.Tensor, concepts: List[str]) -> torch.Tensor:
         """Extract and concatenate columns for specified concepts.
         
@@ -468,6 +573,7 @@ class AxisAnnotation:
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
             'types': list(self.types) if self.types else None,
+            'distributions': list(self.distributions) if self.distributions else None,
             'metadata': self.metadata,
         }
         return result
@@ -497,6 +603,7 @@ class AxisAnnotation:
             states=states,
             cardinalities=cardinalities,
             types=data.get('types'),
+            distributions=data.get('distributions'),
             metadata=data.get('metadata'),
         )
 
@@ -527,7 +634,13 @@ class AxisAnnotation:
             new_states = None
             new_cards = None
 
-        new_types = [self.types[i] for i in idxs] if self.types is not None else None
+        # Materialise the *resolved* type per kept concept (field → metadata →
+        # default) so the subset is self-describing even when the source carried
+        # types only in metadata.
+        new_types = [self._type_of(i) for i in idxs]
+        new_distributions = (
+            [self.distributions[i] for i in idxs] if self.distributions is not None else None
+        )
 
         # 3) slice metadata (if present)
         new_metadata = None
@@ -540,6 +653,7 @@ class AxisAnnotation:
             states=new_states,
             cardinalities=new_cards,
             types=new_types,
+            distributions=new_distributions,
             metadata=new_metadata,
         )
 
@@ -557,6 +671,16 @@ class AxisAnnotation:
                 for l in right_only
             ]
             new_types = left_types + right_only_types
+        # merge distributions: left + right-only (left-wins for overlap)
+        new_distributions = None
+        if self.distributions is not None or other.distributions is not None:
+            left_dists = self.distributions or [None] * len(self.labels)
+            right_dists = other.distributions or [None] * len(other.labels)
+            right_only_dists = [
+                right_dists[other.labels.index(l)]
+                for l in right_only
+            ]
+            new_distributions = left_dists + right_only_dists
         # merge metadata left-wins
         meta = None
         if self.metadata or other.metadata:
@@ -566,7 +690,10 @@ class AxisAnnotation:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return AxisAnnotation(labels=labels, states=None, cardinalities=None, types=new_types, metadata=meta)
+        return AxisAnnotation(
+            labels=labels, states=None, cardinalities=None,
+            types=new_types, distributions=new_distributions, metadata=meta,
+        )
 
 
 class Annotations:

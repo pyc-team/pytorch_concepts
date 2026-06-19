@@ -8,7 +8,6 @@ seeding for reproducibility, and numerical stability checks.
 import importlib
 import os
 from collections import Counter
-from copy import deepcopy
 from typing import Dict, Union, List, Mapping, Optional
 import torch, math
 import logging
@@ -316,20 +315,22 @@ def add_property_to_annotations(
         values: Union[GroupConfig, Mapping[str, object]],
         property_name: str,
     ) -> Union[Annotations, AxisAnnotation]:
-    """Add a metadata property (e.g. 'distribution' or 'activation') to annotations.
+    """Add a per-concept property to annotations, in place.
 
-    Accepts either a ``GroupConfig`` (keyed by type group: binary/categorical/continuous)
-    or a ``Mapping`` (keyed by concept name).
+    ``'distribution'`` is written to the first-class :attr:`AxisAnnotation.distributions`
+    field; any distribution kwargs go to ``metadata[name]['dist_kwargs']``. Other
+    properties (e.g. ``'activation'``) are written to ``metadata[name][property_name]``.
+
     Accepts either a ``GroupConfig`` (keyed by type group: binary/categorical/continuous)
     or a ``Mapping`` (keyed by concept name).
 
     Args:
-        annotations: Annotations or AxisAnnotation to update.
+        annotations: Annotations or AxisAnnotation to update (mutated in place).
         values: A ``GroupConfig`` or ``Mapping`` providing the property value per concept.
-        property_name: Metadata key to write (e.g. ``'distribution'``, ``'activation'``).
+        property_name: Property to write (e.g. ``'distribution'``, ``'activation'``).
 
     Returns:
-        Updated annotations with the property added to each concept's metadata.
+        The same annotations, with the property added.
     """
     if isinstance(annotations, Annotations):
         axis_annotation = annotations.get_axis_annotation(1)
@@ -338,12 +339,14 @@ def add_property_to_annotations(
     else:
         raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
 
-    new_metadata = deepcopy(axis_annotation.metadata)
+    labels = list(axis_annotation.labels)
     cardinalities = axis_annotation.cardinalities
+    metadata = axis_annotation.metadata if axis_annotation.metadata is not None else {l: {} for l in labels}
 
-    if isinstance(values, GroupConfig):
-        for (concept_name, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
-            group = _get_type_group(metadata, cardinality)
+    def _resolve(concept_name: str, index: int):
+        """Return ``(value, kwargs_or_None)`` for one concept."""
+        if isinstance(values, GroupConfig):
+            group = _get_type_group({'type': axis_annotation._type_of(index)}, cardinalities[index])
             try:
                 entry = values[group]
             except KeyError:
@@ -351,37 +354,42 @@ def add_property_to_annotations(
                     f"No {property_name} config for type group '{group}' "
                     f"(concept '{concept_name}'). "
                 )
-
-            # entry is either a bare class/value or [class, {kwargs}]
-            kwargs_key = 'dist_kwargs' if property_name == 'distribution' else f'{property_name}_kwargs'
             if isinstance(entry, (list, tuple)):
-                new_metadata[concept_name][property_name] = entry[0]
-                if len(entry) > 1 and isinstance(entry[1], dict):
-                    new_metadata[concept_name][kwargs_key] = dict(entry[1])
-            else:
-                new_metadata[concept_name][property_name] = entry
-    elif isinstance(values, Mapping):
-        for concept_name in axis_annotation.metadata.keys():
+                kwargs = dict(entry[1]) if len(entry) > 1 and isinstance(entry[1], dict) else None
+                return entry[0], kwargs
+            return entry, None
+        if isinstance(values, Mapping):
             value = values.get(concept_name, None)
             if value is None:
                 raise ValueError(f"No {property_name} config found for concept '{concept_name}'.")
-            new_metadata[concept_name][property_name] = value
-    else:
+            return value, None
         raise ValueError(f"{property_name} must be a GroupConfig or a Mapping.")
 
-    axis_annotation.metadata = new_metadata
-    if isinstance(annotations, Annotations):
-        annotations[1] = axis_annotation
-        return annotations
+    if property_name == 'distribution':
+        distributions = []
+        for i, concept_name in enumerate(labels):
+            dist, kwargs = _resolve(concept_name, i)
+            distributions.append(dist)
+            if kwargs is not None:
+                metadata.setdefault(concept_name, {})['dist_kwargs'] = kwargs
+        axis_annotation.distributions = distributions
     else:
-        return axis_annotation
+        kwargs_key = f'{property_name}_kwargs'
+        for i, concept_name in enumerate(labels):
+            value, kwargs = _resolve(concept_name, i)
+            metadata.setdefault(concept_name, {})[property_name] = value
+            if kwargs is not None:
+                metadata[concept_name][kwargs_key] = kwargs
+
+    axis_annotation.metadata = metadata
+    return annotations
 
 
 def add_distribution_to_annotations(
         annotations: Union[Annotations, AxisAnnotation],
         distributions: Union[GroupConfig, Mapping[str, object]],
     ) -> Union[Annotations, AxisAnnotation]:
-    """Add distribution classes to annotation metadata.
+    """Add distribution classes to the annotation's ``distributions`` field (in place).
 
     Args:
         annotations: Annotations or AxisAnnotation to update.
@@ -391,7 +399,7 @@ def add_distribution_to_annotations(
             classes.
 
     Returns:
-        Updated annotations with ``'distribution'`` added to each concept's metadata.
+        The same annotations, with the ``distributions`` field set.
 
     Example:
         >>> from torch.distributions import Bernoulli, OneHotCategorical
@@ -463,30 +471,34 @@ def add_default_properties(
     else:
         raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
 
+    labels = list(axis_annotation.labels)
     cardinalities = axis_annotation.cardinalities
+    distributions = (
+        list(axis_annotation.distributions)
+        if axis_annotation.distributions is not None
+        else [None] * len(labels)
+    )
+    metadata = axis_annotation.metadata if axis_annotation.metadata is not None else {l: {} for l in labels}
 
-    # --- Default distributions ---
-    for (label, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
-        if 'distribution' not in metadata:
-            group = _get_type_group(metadata, cardinality)
-            if group in _DEFAULT_DISTRIBUTIONS:
-                dist = _DEFAULT_DISTRIBUTIONS[group]
-                metadata['distribution'] = dist
-                if 'dist_kwargs' not in metadata and dist in _DEFAULT_DIST_KWARGS:
-                    metadata['dist_kwargs'] = dict(_DEFAULT_DIST_KWARGS[dist])
-            else:
-                raise ValueError(
-                    f"No default distribution for type group '{group}' "
-                    f"(concept '{label}'). Please add a 'distribution' to the "
-                    f"annotation metadata, e.g. via "
-                    f"add_property_to_annotations()."
-                )
+    # --- Default distributions (fill only the concepts still missing one) ---
+    for i, label in enumerate(labels):
+        if distributions[i] is not None:
+            continue
+        group = _get_type_group({'type': axis_annotation._type_of(i)}, cardinalities[i])
+        if group not in _DEFAULT_DISTRIBUTIONS:
+            raise ValueError(
+                f"No default distribution for type group '{group}' "
+                f"(concept '{label}'). Please add a distribution to the "
+                f"annotation explicitly, e.g. via add_distribution_to_annotations()."
+            )
+        dist = _DEFAULT_DISTRIBUTIONS[group]
+        distributions[i] = dist
+        if dist in _DEFAULT_DIST_KWARGS and 'dist_kwargs' not in metadata.get(label, {}):
+            metadata.setdefault(label, {})['dist_kwargs'] = dict(_DEFAULT_DIST_KWARGS[dist])
 
-    if isinstance(annotations, Annotations):
-        annotations[1] = axis_annotation
-        return annotations
-    else:
-        return axis_annotation
+    axis_annotation.distributions = distributions
+    axis_annotation.metadata = metadata
+    return annotations
 
 
 def get_from_string(class_path: str):
