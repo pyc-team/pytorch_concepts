@@ -410,14 +410,14 @@ class AWA2Dataset(ConceptDataset):
         class_states = [CLASS_NAMES]
         states = binary_states + class_states
         cardinalities = [1] * len(CONCEPT_SEMANTICS) + [N_CLASSES]
-        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        types = ['binary'] * len(CONCEPT_SEMANTICS) + ['categorical']
 
         annotations = Annotations({
             1: AxisAnnotation(
                 labels=concept_names,
                 states=states,
                 cardinalities=cardinalities,
-                metadata=concept_metadata,
+                types=types,
             )
         })
 

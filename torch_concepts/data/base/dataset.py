@@ -87,32 +87,22 @@ class ConceptDataset(Dataset):
         if annotations is None and concepts is not None:
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
+            n = concepts.shape[1]
             annotations = Annotations({
-                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(concepts.shape[1])],
-                                      cardinalities=None, # assume binary
-                                      metadata={f"concept_{i}": {'type': 'discrete', # assume discrete (bernoulli)
-                                                                } for i in range(concepts.shape[1])})
+                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(n)],
+                                      cardinalities=[1] * n,  # assume binary
+                                      types=['binary'] * n)
                                       })
         # assert first axis is annotated axis for concepts
         if 1 not in annotations.annotated_axes:
             raise ValueError("Concept annotations must include axis 1 for concepts. " \
             "Axis 0 is always assumed to be the batch dimension")
-
-        # sanity check
         axis_annotation = annotations[1]
-        if axis_annotation.metadata is not None:
-            assert all('type' in v  for v in axis_annotation.metadata.values()), \
-                "Concept metadata must contain 'type' for each concept."
-            assert all(v['type'] in ['discrete', 'continuous'] for v in axis_annotation.metadata.values()), \
-                "Concept metadata 'type' must be either 'discrete' or 'continuous'."
-
         if axis_annotation.cardinalities is not None:
             concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
             concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
-            
-        # NOTE: both 'discrete' and 'continuous' concept types are supported.
 
         # set concept annotations
         # this defines self.annotations property
@@ -364,19 +354,23 @@ class ConceptDataset(Dataset):
             # Reduce states
             reduced_states = tuple(axis_annotation.states[i] for i in indices)
 
+            # Reduce types
+            reduced_types = tuple(axis_annotation.types[i] for i in indices)
+
             # Reduce metadata if present
             if axis_annotation.metadata is not None:
-                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
+                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
                                    for i in range(len(indices))}
             else:
                 reduced_metadata = None
-            
+
             # Create reduced annotations
             self._annotations = Annotations({
                 1: AxisAnnotation(
                     labels=reduced_labels,
                     cardinalities=reduced_cardinalities,
                     states=reduced_states,
+                    types=reduced_types,
                     metadata=reduced_metadata
                 )
             })

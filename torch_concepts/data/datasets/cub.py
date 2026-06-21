@@ -876,14 +876,14 @@ class CUBDataset(ConceptDataset):
         binary_states = [['0'] for _ in SELECTED_CONCEPT_NAMES]
         states = binary_states + [CLASS_NAMES]
         cardinalities = [1] * len(SELECTED_CONCEPT_NAMES) + [N_CLASSES]
-        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        types = ['binary'] * len(SELECTED_CONCEPT_NAMES) + ['categorical']
 
         annotations = Annotations({
             1: AxisAnnotation(
                 labels=concept_names,
                 states=states,
                 cardinalities=cardinalities,
-                metadata=concept_metadata,
+                types=types,
             )
         })
 
