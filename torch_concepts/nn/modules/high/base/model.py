@@ -503,9 +503,11 @@ class BaseModel(nn.Module, ABC):
         """Unified forward pass for all inference engines.
 
         The active inference engine is selected automatically based on
-        ``self.training`` (toggled by ``.train()`` / ``.eval()``). The engine's
-        per-variable parameters are assembled into convenient ``probs``/``logits``
-        tensors whose columns follow the order of ``query``.
+        ``self.training`` (toggled by ``.train()`` / ``.eval()``). The result is
+        returned as raw per-variable parameters under ``ModelOutput.params``:
+        ``out.params[name]`` is the queried variable's parameter dict (e.g.
+        ``{'logits': ...}`` or ``{'value': ...}``). Callers assemble the columns
+        they need, e.g. ``torch.cat([out.params[n]['logits'] for n in query], -1)``.
 
         Parameters
         ----------
@@ -520,7 +522,7 @@ class BaseModel(nn.Module, ABC):
         Returns
         -------
         ModelOutput
-            ``params``/``samples`` from the engine.
+            ``params``/``samples``/``probabilities`` from the engine.
         """
         if evidence is None:
             evidence = {}
@@ -538,43 +540,7 @@ class BaseModel(nn.Module, ABC):
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
-            # target=None,  # TODO: to be updated
-            # extra=None,  # TODO: to be updated
         )
-
-    def _assemble_predictions(self, query, result, return_logits, return_probs):
-        """Concatenate per-variable probabilities (and logits) in query order.
-
-        Each queried variable contributes its ``probs`` parameter (shape
-        ``(batch, cardinality)``). Logits are recovered from the probabilities:
-        a logit transform for binary variables and a log transform for
-        categorical ones (so ``BCEWithLogitsLoss`` / softmax-cross-entropy behave
-        as expected).
-        """
-        if not (return_logits or return_probs):
-            return None, None
-
-        eps = 1e-6
-        probs_cols, logits_cols = [], []
-        axis = getattr(self, "concept_annotations", None)
-        for name in query:
-            param_dict = result.params[name]
-            p = param_dict.get("probs")
-            if p is None:
-                # Fall back to the first available parameter (e.g. logits).
-                p = next(iter(param_dict.values()))
-            if return_probs:
-                probs_cols.append(p)
-            if return_logits:
-                cardinality = (
-                    int(axis.cardinalities[axis.get_index(name)]) if axis is not None else p.shape[-1]
-                )
-                clamped = p.clamp(eps, 1.0 - eps)
-                logits_cols.append(torch.logit(clamped) if cardinality == 1 else torch.log(clamped))
-
-        probs = torch.cat(probs_cols, dim=-1) if return_probs else None
-        logits = torch.cat(logits_cols, dim=-1) if return_logits else None
-        return probs, logits
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Prepare ground truth labels for loss/metrics.
