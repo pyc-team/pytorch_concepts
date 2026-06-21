@@ -18,7 +18,7 @@ class BlackBox(BaseModel):
 
     This model implements a standard neural network architecture for concept-based tasks,
     without explicit concept bottleneck or interpretable intermediate representations.
-    It uses a backbone for feature extraction and a latent encoder for concepts prediction.
+    It uses a backbone mapping the raw input to the latent representation, then a linear head.
 
     Args:
         input_size (int): Dimensionality of input features.
@@ -54,32 +54,30 @@ class BlackBox(BaseModel):
         **kwargs
     ) -> ModelOutput:
         """Forward pass through the BlackBox model.
-        
+
         Parameters
         ----------
         x : torch.Tensor
             Input tensor.
         query : List[str], optional
-            Concept names to query. If provided, only the columns
-            corresponding to the queried concepts are returned.
+            Concept names to return. Defaults to all concepts.
         evidence : torch.Tensor, optional
             Evidence tensor (ignored for BlackBox).
         **kwargs
             Additional arguments (ignored).
-        
+
         Returns
         -------
         ModelOutput
-            Structured output with ``.logits``.
+            ``params[name]['logits']`` per queried concept (uniform with the
+            PGM-based models).
         """
-        features = self.maybe_apply_backbone(x)
-        endogenous = self.latent_encoder(features)
-        output = self.linear(endogenous)
+        output = self.linear(self.backbone(x))
 
-        if query is not None:
-            output = self.concept_annotations.slice_tensor(output, query)
-
-        return ModelOutput(logits=output)
+        axis = self.concept_annotations
+        names = query if query is not None else axis.labels
+        params = {name: {"logits": output[:, axis.concept_slices[name]]} for name in names}
+        return ModelOutput(params=params)
 
 
 class BlackBoxTaskOnly(BaseModel):
@@ -88,7 +86,7 @@ class BlackBoxTaskOnly(BaseModel):
 
     This model implements a standard neural network architecture for predicting tasks only,
     without explicit concept bottleneck or interpretable intermediate representations.
-    It uses a backbone for feature extraction and a latent encoder for concepts prediction.
+    It uses a backbone mapping the raw input to the latent representation, then a linear head.
 
     Args:
         input_size (int): Dimensionality of input features.
@@ -158,28 +156,29 @@ class BlackBoxTaskOnly(BaseModel):
                 **kwargs
         ) -> ModelOutput:
         """Forward pass through the BlackBoxTaskOnly model.
-        
+
         Parameters
         ----------
         x : torch.Tensor
             Input tensor.
         query : List[str], optional
-            Concept names to query (ignored).
-            Always returns predictions for specified task_names.
+            Ignored; predictions are always returned for ``task_names``.
         evidence : torch.Tensor, optional
             Evidence tensor (ignored).
         **kwargs
             Additional arguments (ignored).
-        
+
         Returns
         -------
         ModelOutput
-            Structured output with ``.logits`` containing task predictions.
+            ``params[name]['logits']`` per task (uniform with the PGM-based models).
         """
-        features = self.maybe_apply_backbone(x)
-        endogenous = self.latent_encoder(features)
-        output = self.linear(endogenous)
-        return ModelOutput(logits=output)
+        output = self.linear(self.backbone(x))
+
+        # The linear head spans the task sub-annotation; slice it per task.
+        slices = self.task_annotations.concept_slices
+        params = {name: {"logits": output[:, slices[name]]} for name in self.task_names}
+        return ModelOutput(params=params)
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Slice target to task-only columns.
