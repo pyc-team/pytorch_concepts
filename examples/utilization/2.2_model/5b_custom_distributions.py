@@ -1,31 +1,21 @@
 """
-Example: Custom Distributions and Activations in Annotations
+Example: ConceptBottleneckModel with custom `variable_distributions`
 
-This example demonstrates how to add custom distributions and activation
-functions to annotations before passing them to the model.
-
-By default, the model uses Bernoulli for binary concepts and Categorical
-for categorical concepts. Here we override the defaults with
-RelaxedBernoulli (with a temperature parameter) and a custom activation.
-
-The two utility functions are:
-- ``add_distribution_to_annotations``: add distribution classes per concept
-- ``add_activation_to_annotations``: add activation functions per concept
+This mirrors example 5 (manual PyTorch training of a CBM on the all-binary
+``asia`` dataset) but, instead of letting the model fill in default
+distributions, passes an explicit ``variable_distributions`` dict to the
+constructor: a ``{concept_name: distribution_class}`` mapping that overrides the
+distribution used for each concept (here ``RelaxedBernoulli`` for every binary
+concept). The dict must cover every concept on the annotation axis.
 """
 
 import torch
-from functools import partial
 from torch import nn
 from torch.distributions import RelaxedBernoulli
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data import ToyDataset
-from torch_concepts.nn.modules.utils import GroupConfig
-from torch_concepts.utils import (
-    add_distribution_to_annotations,
-    add_activation_to_annotations,
-)
+from torch_concepts.nn import ConceptBottleneckModel, MLP
+from torch_concepts.data import BnLearnDataset
 
 from torchmetrics.classification import BinaryAccuracy
 
@@ -34,99 +24,80 @@ def main():
 
     seed_everything(42)
 
-    # Generate toy data
+    # ------------------------------------------------------------------
+    # Step 1: dataset (asia is all-binary)
+    # ------------------------------------------------------------------
     print("=" * 60)
-    print("Step 1: Generate toy XOR dataset")
+    print("Step 1: Initialize the dataset")
     print("=" * 60)
 
-    n_samples = 1000
-    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
+    dataset = BnLearnDataset(name="asia", n_gen=2000, seed=42)
+    annotations = dataset.annotations
+    n_features = dataset.n_features[-1]
+
+    task_names = ["dysp"]
+    concept_names = [n for n in dataset.concept_names if n not in task_names]
+    query = concept_names + task_names
+
     x_train = dataset.input_data
-    c_train = dataset.concepts[:, :2]
-    y_train = dataset.concepts[:, 2:]
-    concept_names = dataset.concept_names[:2]
-    task_names = dataset.concept_names[2:]
+    c_train = dataset.concepts[:, :len(concept_names)]
+    y_train = dataset.concepts[:, len(concept_names):]
 
-    n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_tasks = y_train.shape[1]
-
-    print(f"Input features: {n_features}")
-    print(f"Concepts: {n_concepts} - {concept_names}")
-    print(f"Tasks: {n_tasks} - {task_names}")
-    print(f"Training samples: {n_samples}")
-
-    concept_annotations = dataset.annotations
-
-    # Add custom distributions to annotations
-    # Here we use RelaxedBernoulli instead of the default Bernoulli
+    # ------------------------------------------------------------------
+    # Step 2: model with an explicit per-concept distribution dict
+    # ------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Step 2: Add custom distributions and activations")
+    print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    all_names = concept_names + task_names
-
-    # Custom distributions: RelaxedBernoulli for all concepts and tasks
-    concept_annotations = add_distribution_to_annotations(
-        annotations=concept_annotations, 
-        distributions=GroupConfig(binary = (RelaxedBernoulli, {'temperature': 0.5}))
-    )
-    print(f"Added RelaxedBernoulli distribution for: {all_names}")
-
-    # Custom activations: sigmoid for all concepts and tasks
-    concept_annotations = add_activation_to_annotations(
-        annotations=concept_annotations, 
-        activations={name: torch.sigmoid for name in all_names}
-    )
-    print(f"Added sigmoid activation for: {all_names}")
-
-    # Verify the annotations metadata
-    axis_ann = concept_annotations.get_axis_annotation(1)
-    for name in all_names:
-        meta = axis_ann.metadata[name]
-        print(f"  {name}: distribution={meta['distribution'].__name__}, "
-              f"activation={meta['activation'].__name__}")
-
-    # Init model
-    print("\n" + "=" * 60)
-    print("Step 3: Initialize ConceptBottleneckModel")
-    print("=" * 60)
+    # {concept_name: distribution_class} for every concept on the axis (concepts
+    # + tasks). Overrides the model's default.
+    variable_distributions = {name: RelaxedBernoulli for name in dataset.concept_names}
+    print(f"variable_distributions: {{name: RelaxedBernoulli}} for {dataset.concept_names}")
 
     model = ConceptBottleneckModel(
         input_size=n_features,
-        annotations=concept_annotations,
+        annotations=annotations,
         task_names=task_names,
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1}
+        variable_distributions=variable_distributions,
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,  # output size of the backbone
     )
+    print(f"Model: {type(model).__name__} | latent_size: {model.latent_size}")
+    print(f"dysp distribution from annotations: {model.concept_annotations.concept('dysp').distribution.__name__}")
+    print(f"dysp distribution from pgm variable: {model.pgm.variables['tasks'].distribution.__name__}")
 
-    print(f"Model created successfully!")
-    print(f"Model type: {type(model).__name__}")
-    print(f"Encoder output features: {model.latent_size}")
-
-    # Training loop
+    # ------------------------------------------------------------------
+    # Step 3: training loop with torch loss
+    # ------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Step 4: Training loop")
+    print("Step 3: Training loop")
     print("=" * 60)
 
     n_epochs = 500
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.02)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = nn.BCEWithLogitsLoss()
-    query = list(concept_names) + list(task_names)
+    target = torch.cat([c_train, y_train], dim=1).float()
 
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
-        target = torch.cat([c_train, y_train], dim=1)
-        out = model(x=x_train, query=query, return_logits=True)
-        loss = loss_fn(out.logits, target)
+
+        # Forward pass - query all variables (concepts + tasks).
+        out = model(query=query, input=x_train)
+        logits = torch.cat([out.params[name]["logits"] for name in query], dim=1)
+
+        loss = loss_fn(logits, target)
         loss.backward()
         optimizer.step()
-        if epoch % 100 == 0:
-            print(f"Epoch {epoch}: Loss {loss:.4f}")
+        if epoch % 50 == 0:
+            print(f"Epoch {epoch:3d}: loss {loss:.4f}")
 
-    # Evaluate
+    # ------------------------------------------------------------------
+    # Step 4: evaluation
+    # ------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Step 5: Evaluation")
+    print("Step 4: Evaluation")
     print("=" * 60)
 
     concept_acc_fn = BinaryAccuracy()
@@ -134,15 +105,12 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        out = model(x=x_train, query=query)
-        c_pred = out.probs[:, :n_concepts]
-        y_pred = out.probs[:, n_concepts:]
+        out = model(query=query, input=x_train)
+        c_pred = torch.cat([out.params[name]["logits"] for name in concept_names], dim=1)
+        y_pred = torch.cat([out.params[name]["logits"] for name in task_names], dim=1)
 
-        concept_acc = concept_acc_fn(c_pred, c_train.int()).item()
-        task_acc = task_acc_fn(y_pred, y_train.int()).item()
-
-        print(f"Concept accuracy: {concept_acc:.4f}")
-        print(f"Task accuracy: {task_acc:.4f}")
+        print(f"Concept accuracy: {concept_acc_fn(c_pred, c_train.int()).item():.4f}")
+        print(f"Task accuracy:    {task_acc_fn(y_pred, y_train.int()).item():.4f}")
 
 
 if __name__ == "__main__":

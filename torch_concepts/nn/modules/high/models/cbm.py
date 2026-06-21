@@ -6,7 +6,6 @@ provided: :meth:`_build_plate_model` (``plate=True``, default) groups each
 bipartite level into a single plate variable; :meth:`_build_individual_model`
 (``plate=False``) creates one variable per concept/task.
 """
-from functools import partial
 from typing import List, Optional, Union
 
 import torch
@@ -198,25 +197,25 @@ class ConceptBottleneckModel(BipartiteModel):
             variable=concepts,
             parents=[latent_var],
             parametrization=[self._flexible_parametrization(
-                variable=c,
+                variable=concept,
                 first=LinearEmbeddingToConcept(
                     in_embeddings=self.latent_size,
-                    out_concepts=c.cardinality,
+                    out_concepts=concept.size,
                 ),
-                second=partial(...)
-            ) for c in intermediate],
+                second=None  # will be partial(...)
+            ) for concept in concepts],
         )
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts],
             parametrization=[self._flexible_parametrization(
-                variable=t,
+                variable=task,
                 first=LinearConceptToConcept(
                     in_concepts=sum(c.size for c in concepts),
-                    out_concepts=t.cardinality,
+                    out_concepts=task.size,
                 ),
-                second=partial(...)
-            ) for t in task_concepts],
+                second=None  # will be partial(...)
+            ) for task in tasks],
         )
 
         return BayesianNetwork(

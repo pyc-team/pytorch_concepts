@@ -53,7 +53,8 @@ from .modules.outputs import ModelOutput, InferenceOutput
 # from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
-# from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
+from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 # Models (mid-level)
 from .modules.mid.models.factor import ParametricFactor
@@ -154,7 +155,8 @@ __all__ = [
     # "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
-    # "CausallyReliableConceptBottleneckModel",
+    "GraphConceptBottleneckModel",
+    "CausallyReliableConceptBottleneckModel",
 
     # Models (mid-level)
     "ParametricFactor",

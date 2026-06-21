@@ -17,7 +17,6 @@ References
 Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
 Accuracy-Explainability Trade-Off", NeurIPS 2022. https://arxiv.org/abs/2209.09056
 """
-from functools import partial
 from typing import List, Optional, Union
 
 import torch
@@ -77,7 +76,7 @@ class ConceptEmbeddingModel(BipartiteModel):
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
-        embedding_size: int = 16,
+        embedding_size: int = 8,
         plate: Optional[bool] = None,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
@@ -280,37 +279,42 @@ class ConceptEmbeddingModel(BipartiteModel):
                 )
             } for c in intermediate],
         )
-        c_encoders = ParametricCPD(  # (batch, card, emb_size) -> (batch, card)
-            variable=concepts,
-            parents=[embeddings],
-            parametrization=[self._flexible_parametrization(
-                variable=c,
-                first=Sequential(
-                    LinearEmbeddingToConcept(
-                        in_embeddings=self.embedding_size, 
-                        out_concepts=1
+        # One CPD per concept: each concept is decoded from its *own* embedding
+        # (batch, card, emb_size) -> (batch, card).
+        c_encoders = [
+            ParametricCPD(
+                variable=concept,
+                parents=[embedding],
+                parametrization=self._flexible_parametrization(
+                    variable=concept,
+                    first=Sequential(
+                        LinearEmbeddingToConcept(
+                            in_embeddings=self.embedding_size,
+                            out_concepts=1
+                        ),
+                        nn.Flatten(start_dim=1),
                     ),
-                    nn.Flatten(start_dim=1),
+                    # flexible_parametrization will add a second CPD for variance, if needed
+                    # TODO: to be updated once a layer producing variance is implemented
+                    second=None  # will be partial(...)
                 ),
-                # flexible_parametrization will add a second CPD for variance, if needed
-                # TODO: to be updated once a layer producing variance is implemented
-                second=partial(...)
-            ) for c in intermediate],
-        )
+            )
+            for concept, embedding in zip(concepts, embeddings)
+        ]
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts, *embeddings],
             parametrization=[self._flexible_parametrization(
-                variable=t,
+                variable=task,
                 first=MixConceptEmbeddingToConcept(  # (batch, sum(card)) & (batch, sum(card), emb_size) -> (batch, card)
                     in_concepts=self.axis_concepts,
                     in_embeddings=self.embedding_size,
-                    out_concepts=t.cardinality,
+                    out_concepts=task.size,
                 ),
                 # flexible_parametrization will add a second CPD for variance, if needed
                 # TODO: to be updated once a layer producing variance is implemented
-                second=partial(...)
-            ) for t in task_concepts],
+                second=None  # will be partial(...)
+            ) for task in tasks],
             aggregate=mix_parents,
         )
 

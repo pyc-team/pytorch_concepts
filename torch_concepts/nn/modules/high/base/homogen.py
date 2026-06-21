@@ -3,44 +3,40 @@
 ``HomogenGraphModel`` is the abstract base where a generic concept *graph* is
 assembled into a :class:`~torch_concepts.nn.BayesianNetwork`. It is *homogeneous*
 in the sense that every node is parametrized the same way: a single ``encoder``
-builds root concepts from the input and a single ``predictor`` builds internal
-concepts from their parents. Graph models like ``C2BM`` extend this and implement
-the :meth:`build_encoder` / :meth:`build_predictor` hooks (and, optionally,
-embedding behaviour) — they do not re-implement the assembly or the inference
+builds root concepts and a single ``predictor`` builds internal concepts from
+their parents. Concrete graph models (e.g. ``C2BM``, a graph CBM) extend this and
+implement only :meth:`build_encoder` / :meth:`build_predictor` (and, optionally,
+the embedding switches) — they do not re-implement the assembly or inference
 wiring.
 
 This is the *heavy* assembler, kept only to simplify building arbitrary-DAG
-models. The simple bipartite models (CBM, CEM) do **not** use it: they extend
+models. The bipartite models (CBM, CEM) do **not** use it: they extend
 :class:`~torch_concepts.nn.modules.high.base.bipartite.BipartiteModel` and build
-their probabilistic model explicitly, so reading those classes shows exactly the
-mid-level elements they assemble.
+their probabilistic model explicitly.
 
 Embeddings
 ----------
 Two class-level switches control concept embeddings (Concept Embedding Model
 style):
 
-* ``source_embeddings`` — root concepts are encoded from a per-concept embedding
-  (produced from the input) rather than directly from the input.
+* ``source_embeddings`` — root concepts are decoded from a per-concept embedding
+  (produced from the latent) rather than directly from the latent.
 * ``internal_embeddings`` — internal concepts get their *own* embedding that the
   predictor consumes (hypernetwork-style, used by the causal models).
 
-Activations are derived from each variable's distribution (not from
-annotations): Bernoulli-family → sigmoid, Categorical-family → softmax. A model
-that wants different activations overrides :meth:`build_encoder` /
-:meth:`build_predictor` to supply its own parametrization.
+Each concept variable is declared with its annotation distribution; the encoders
+/ predictors emit raw scores stored as ``logits`` (see ``param_for_discrete_var``)
+and the distribution activates them downstream — exactly as in CBM/CEM.
 """
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import torch
-import torch.distributions as dist
 import torch.nn as nn
 
 from .....annotations import AxisAnnotation
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
-from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ..base.graph import DirectedGraphModel
@@ -49,73 +45,18 @@ from ...mid.models.cpd import ParametricCPD
 from ...mid.models.bayesian_network import BayesianNetwork
 
 
-# Distribution families and how their natural parameter is produced. Annotations
-# carry only the distribution; the activation is fixed here per family.
-_SIGMOID_DISTS = {dist.Bernoulli, dist.RelaxedBernoulli}
-_SOFTMAX_DISTS = {
-    dist.Categorical,
-    dist.OneHotCategorical,
-    dist.RelaxedOneHotCategorical,
-}
-
-# Annotations may declare a *relaxed* (Concrete / Gumbel-Softmax) family to signal
-# that the variable should be relaxed for gradient flow. The PGM ``Variable`` is
-# declared with the corresponding *base* family: the torch inference backend
-# relaxes it internally (with its own temperature) for sampling, and the
-# deterministic path reads the base family's primary parameter. This mirrors the
-# canonical mid-level examples, which declare ``Bernoulli`` / ``OneHotCategorical``.
-_RELAXED_TO_BASE = {
-    dist.RelaxedBernoulli: dist.Bernoulli,
-    dist.RelaxedOneHotCategorical: dist.OneHotCategorical,
-}
-
-
-def _param_name(distribution) -> str:
-    """Natural parameter key for ``distribution`` (the constructors emit this)."""
-    if distribution in _SIGMOID_DISTS or distribution in _SOFTMAX_DISTS:
-        return "probs"
-    if distribution is Delta:
-        return "value"
-    if distribution is dist.Normal:
-        return "loc"
-    return "probs"
-
-
-def _activation_for(distribution) -> nn.Module:
-    """Activation module mapping a layer's output into ``distribution``'s param domain."""
-    if distribution in _SIGMOID_DISTS:
-        return nn.Sigmoid()
-    if distribution in _SOFTMAX_DISTS:
-        return nn.Softmax(dim=-1)
-    return nn.Identity()
-
-
-def _mix_aggregate(concepts, embeddings):
-    """Aggregate parents for a concept+embedding predictor (CEM/hypernet style).
-
-    Concept values are concatenated along the feature axis; per-concept
-    embeddings are stacked along a concept axis (dim=1), yielding tensors shaped
-    ``(batch, sum_cardinalities)`` and ``(batch, n_concepts, embedding_size)``.
-    """
-    return {
-        "concepts": torch.cat(list(concepts.values()), dim=-1),
-        "embeddings": torch.cat(list(embeddings.values()), dim=1),
-    }
-
-
 class HomogenGraphModel(DirectedGraphModel, ABC):
     """Abstract directed model that assembles a homogeneous Bayesian network.
 
     Subclasses implement :meth:`build_encoder` and :meth:`build_predictor` and,
-    optionally, set the embedding switches / :attr:`embedding_size`. The
-    :meth:`_assemble` template (called by the concrete model's ``__init__`` once
-    config and ``latent_size`` are known) resolves the graph, builds the
-    probabilistic model and wires the inference engines.
+    optionally, set the embedding switches / :attr:`embedding_size`. The concrete
+    model's ``__init__`` then mirrors CBM/CEM: build ``self.pgm`` via
+    :meth:`_build_individual_model` and call ``setup_inference``.
     """
 
-    #: Root concepts are encoded from a per-concept embedding (not the raw input).
+    #: Root concepts are decoded from a per-concept embedding (not the raw latent).
     source_embeddings: bool = False
-    #: Internal concepts get their own embedding consumed by the predictor (hypernet).
+    #: Internal concepts get their own embedding consumed by the predictor.
     internal_embeddings: bool = False
     #: Per-concept embedding width (set by subclasses that use embeddings).
     embedding_size: Optional[int] = None
@@ -124,30 +65,34 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
     # Hooks for subclasses
     # ------------------------------------------------------------------
     @abstractmethod
-    def build_encoder(self, out_concepts: int, in_embeddings: int) -> nn.Module:
-        """Build the layer encoding a root concept from its input/embedding.
+    def build_encoder(
+        self, 
+        in_embeddings: int, 
+        out_concepts: int
+    ) -> nn.Module:
+        """Build the layer encoding a root concept from its latent/embedding.
 
         ``in_embeddings`` is the latent size when ``source_embeddings`` is False,
-        otherwise the per-concept ``embedding_size``.
+        otherwise the per-concept ``embedding_size`` (with ``out_concepts=1``: one
+        score per state embedding).
         """
 
     @abstractmethod
     def build_predictor(
         self,
-        out_concepts: int,
         in_concepts: AxisAnnotation,
         in_embeddings: Optional[int],
+        out_concepts: Optional[int],
     ) -> nn.Module:
         """Build the layer predicting an internal concept from its parents.
 
         ``in_concepts`` is the annotation of the parent concepts (so layers that
-        need cardinalities/types, e.g. the CEM mixer, can read them).
-        ``in_embeddings`` is the embedding width when the predictor consumes
-        embeddings, else ``None``.
+        need cardinalities/types can read them). ``in_embeddings`` is the embedding
+        width when the predictor consumes embeddings, else ``None``.
         """
 
     def build_embedding_encoder(self, n_embeddings: int) -> nn.Module:
-        """Build the input → embeddings layer (``n_embeddings`` of ``embedding_size``)."""
+        """Build the latent → embeddings layer (``n_embeddings`` of ``embedding_size``)."""
         return LinearEmbeddingEncoder(
             in_features=self.latent_size,
             out_features=self.embedding_size,
@@ -155,113 +100,130 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
         )
 
     # ------------------------------------------------------------------
-    # Assembly (lifecycle inherited from DirectedGraphModel._assemble)
+    # Shared helpers
     # ------------------------------------------------------------------
-    def _build_probabilistic_model(self) -> BayesianNetwork:
-        """Build the Bayesian network from the graph + the build hooks."""
-        axis = self.concept_annotations
+    def _input_latent_block(self):
+        """Raw input → latent block shared by both building paths.
 
-        input_var = EmbeddingVariable("input", distribution=Delta, size=self.latent_size)
+        Returns ``(input_var, latent_var, [input_cpd, latent_cpd])``: the raw
+        ``input`` enters the PGM as evidence and the backbone runs *inside* the
+        PGM as the ``latent | input`` CPD.
+        """
+        input_var = EmbeddingVariable("input", distribution=Delta, size=self.input_size)
+        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
             input_var,
-            parametrization=LearnablePrior(self.latent_size),
             parents=[],
+            parametrization=LearnablePrior(self.input_size),
         )
-        variables = [input_var]
-        factors = [input_cpd]
+        latent_cpd = ParametricCPD(
+            latent_var,
+            parents=[input_var],
+            parametrization=self.backbone,
+        )
+        return input_var, latent_var, input_cpd, latent_cpd
 
-        concept_vars = {}      # name -> ConceptVariable
+    # ------------------------------------------------------------------
+    # Building path
+    # ------------------------------------------------------------------
+    def _build_individual_model(self) -> BayesianNetwork:
+        """Build one concept variable per node, wired along the DAG via the hooks.
 
+        Root concepts are encoded from the latent (or a per-concept embedding when
+        ``source_embeddings``); internal concepts are predicted from their parents
+        (mixed with an embedding when ``internal_embeddings``). The two layer
+        choices are deferred to :meth:`build_encoder` / :meth:`build_predictor`.
+        """
+        axis = self.concept_annotations
+
+        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
+        variables = [input_var, latent_var]
+        factors = [input_cpd, latent_cpd]
+
+        # Aggregate parents for an embedding-conditioned predictor: parent
+        # activations concatenated on the feature axis, embedding stacked on dim 1.
+        def mix_parents(concepts, embeddings):
+            return {
+                "concepts": torch.cat(list(concepts.values()), dim=-1),
+                "embeddings": torch.cat(list(embeddings.values()), dim=1),
+            }
+
+        concept_vars = {}  # name -> ConceptVariable (topological order: parents exist first)
         for name in self.graph_order:
             concept = axis.concept(name)
-            card = concept.cardinality
-            distribution = concept.distribution
-            param = _param_name(distribution)
-            activation = _activation_for(distribution)
-            parents_names = list(self.graph.get_predecessors(name))
-            is_root = len(parents_names) == 0
-
-            # Declare the PGM variable with the base family; the relaxed-only
-            # ``temperature`` kwarg (if any) is dropped since the inference backend
-            # supplies its own temperature when relaxing for sampling.
-            base_distribution = _RELAXED_TO_BASE.get(distribution, distribution)
-            var_dist_kwargs = (
-                None if base_distribution is not distribution
-                else concept.dist_kwargs
-            )
+            parents = list(self.graph.get_predecessors(name))
+            is_root = not parents
             concept_var = ConceptVariable(
-                name, distribution=base_distribution, size=card, dist_kwargs=var_dist_kwargs,
+                names=name, 
+                distribution=concept.distribution, 
+                size=concept.cardinality
             )
 
-            if is_root:
-                if self.source_embeddings:
-                    # One embedding per concept *state* (CEM-style), shaped
-                    # (cardinality, embedding_size).
-                    emb_var = EmbeddingVariable(
-                        f"{name}__emb", distribution=Delta, shape=(card, self.embedding_size),
-                    )
-                    emb_cpd = ParametricCPD(
-                        emb_var,
-                        parametrization={"value": self.build_embedding_encoder(card)},
-                        parents=[input_var],
-                    )
-                    variables.append(emb_var)
-                    factors.append(emb_cpd)
+            # Optional per-concept embedding (produced from the latent).
+            embedding = None
+            if self.source_embeddings if is_root else self.internal_embeddings:
+                embedding = EmbeddingVariable(
+                    f"{name}__embedding", 
+                    distribution=Delta, 
+                    shape=(concept.cardinality, self.embedding_size),
+                )
+                factors.append(ParametricCPD(
+                    variable=embedding,
+                    parents=[latent_var],
+                    parametrization={"value": self.build_embedding_encoder(concept.cardinality)},
+                ))
+                variables.append(embedding)
 
-                    # Encode one score per state embedding: (batch, card, emb) ->
-                    # (batch, card, 1) -> (batch, card), then apply the activation
-                    # over the cardinality axis.
-                    encoder = self.build_encoder(out_concepts=1, in_embeddings=self.embedding_size)
-                    param_module = Sequential(encoder, nn.Flatten(start_dim=1), activation)
-                    cpd = ParametricCPD(
-                        concept_var, parametrization={param: param_module}, parents=[emb_var],
-                    )
-                else:
-                    encoder = self.build_encoder(out_concepts=card, in_embeddings=self.latent_size)
-                    param_module = Sequential(encoder, activation)
-                    cpd = ParametricCPD(
-                        concept_var, parametrization={param: param_module}, parents=[input_var],
-                    )
+            if is_root and embedding is not None:
+                # Decode one score per state embedding -> (batch, card).
+                concept_cpd = ParametricCPD(
+                    variable=concept_var,
+                    parents=[embedding],
+                    parametrization=self._flexible_parametrization(
+                        variable=concept_var, 
+                        first=Sequential(
+                            self.build_encoder(
+                                in_embeddings=self.embedding_size,
+                                out_concepts=1
+                            ),
+                            nn.Flatten(start_dim=1),
+                        ), 
+                        second=None
+                    ),
+                )
+            elif is_root:
+                concept_cpd = ParametricCPD(
+                    variable=concept_var,
+                    parents=[latent_var],
+                    parametrization=self._flexible_parametrization(
+                        variable=concept_var, 
+                        first=self.build_encoder(
+                            in_embeddings=self.latent_size,
+                            out_concepts=concept.cardinality
+                        ), 
+                        second=None
+                    ),
+                )
             else:
-                parent_cvars = [concept_vars[p] for p in parents_names]
-                # Parents' annotation for predictors such as the CEM mixer, which
-                # read ``in_concepts.types`` / ``.cardinalities``. ``subset`` now
-                # materialises the resolved per-concept ``types``.
-                parents_ann = axis.subset(parents_names)
-
-                if self.internal_embeddings:
-                    emb_var = EmbeddingVariable(
-                        f"{name}__emb", distribution=Delta, shape=(card, self.embedding_size),
-                    )
-                    emb_cpd = ParametricCPD(
-                        emb_var,
-                        parametrization={"value": self.build_embedding_encoder(card)},
-                        parents=[input_var],
-                    )
-                    variables.append(emb_var)
-                    factors.append(emb_cpd)
-
-                    predictor = self.build_predictor(
-                        out_concepts=card, in_concepts=parents_ann, in_embeddings=self.embedding_size,
-                    )
-                    param_module = Sequential(predictor, activation)
-                    cpd = ParametricCPD(
-                        concept_var,
-                        parametrization={param: param_module},
-                        parents=[*parent_cvars, emb_var],
-                        aggregate=_mix_aggregate,
-                    )
-                else:
-                    predictor = self.build_predictor(
-                        out_concepts=card, in_concepts=parents_ann, in_embeddings=None,
-                    )
-                    param_module = Sequential(predictor, activation)
-                    cpd = ParametricCPD(
-                        concept_var, parametrization={param: param_module}, parents=parent_cvars,
-                    )
+                parent_vars = [concept_vars[p] for p in parents]
+                in_concepts = axis.subset(parents)
+                concept_cpd = ParametricCPD(
+                    variable=concept_var,
+                    parents=[*parent_vars, embedding] if embedding is not None else parent_vars,
+                    parametrization=self._flexible_parametrization(
+                        variable=concept_var, 
+                        first=self.build_predictor(
+                            in_concepts=in_concepts,
+                            in_embeddings=self.embedding_size if embedding is not None else None,
+                            out_concepts=concept.cardinality
+                        ), 
+                        second=None
+                    ),
+                    aggregate=mix_parents if embedding is not None else None,
+                )
 
             concept_vars[name] = concept_var
-            variables.append(concept_var)
-            factors.append(cpd)
+            variables += [concept_var]
+            factors += [concept_cpd]
 
         return BayesianNetwork(variables=variables, factors=factors)
