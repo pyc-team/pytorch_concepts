@@ -113,10 +113,10 @@ class TestBaseModelInitialization:
         )
         
         assert model.concept_names == ['c1', 'c2', 'task']
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == RelaxedBernoulli
-    
+        ann = model.concept_annotations
+        assert ann.distributions is not None
+        assert ann.concept('c1').distribution == Bernoulli
+
     def test_init_with_variable_distributions_dict(
         self, annotations_without_distributions
     ):
@@ -132,12 +132,12 @@ class TestBaseModelInitialization:
         )
         
         assert model.concept_names == ['c1', 'c2', 'task']
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == RelaxedBernoulli
+        ann = model.concept_annotations
+        assert ann.distributions is not None
+        assert ann.concept('c1').distribution == RelaxedBernoulli
         assert model.latent_size == 10  # No encoder, uses input_size
-        assert meta['c2']['distribution'] == RelaxedBernoulli
-        assert meta['task']['distribution'] == Bernoulli
+        assert ann.concept('c2').distribution == RelaxedBernoulli
+        assert ann.concept('task').distribution == Bernoulli
     
     def test_init_with_variable_distributions_groupconfig(
         self, mixed_annotations
@@ -153,10 +153,10 @@ class TestBaseModelInitialization:
         )
         
         assert model.concept_names == ['binary_c', 'cat_c']
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['binary_c']['distribution'] == RelaxedBernoulli
-        assert meta['cat_c']['distribution'] == OneHotCategorical
+        ann = model.concept_annotations
+        assert ann.distributions is not None
+        assert ann.concept('binary_c').distribution == RelaxedBernoulli
+        assert ann.concept('cat_c').distribution == OneHotCategorical
     
     def test_init_without_distributions_uses_defaults(self, annotations_without_distributions):
         """Test that missing distributions are filled with defaults (Bernoulli for binary discrete)."""
@@ -164,11 +164,11 @@ class TestBaseModelInitialization:
             input_size=10,
             annotations=annotations_without_distributions
         )
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == RelaxedBernoulli
-        assert meta['c2']['distribution'] == RelaxedBernoulli
-        assert meta['task']['distribution'] == RelaxedBernoulli
+        ann = model.concept_annotations
+        assert ann.distributions is not None
+        assert ann.concept('c1').distribution == Bernoulli
+        assert ann.concept('c2').distribution == Bernoulli
+        assert ann.concept('task').distribution == Bernoulli
     
     def test_init_with_backbone_class(self, annotations_with_distributions):
         """Test initialization with a custom backbone instance."""
@@ -410,7 +410,7 @@ class TestBaseModelProperties:
         
         assert hasattr(model, 'concept_annotations')
         assert isinstance(model.concept_annotations, AxisAnnotation)
-        assert model.concept_annotations.has_metadata('distribution')
+        assert model.concept_annotations.distributions is not None
     
     def test_latent_size_property_with_backbone(self, annotations_with_distributions):
         """Test latent_size attribute with backbone."""

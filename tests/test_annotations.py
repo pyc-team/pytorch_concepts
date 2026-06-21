@@ -8,7 +8,8 @@ This test suite covers:
 import unittest
 import warnings
 import pytest
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch.distributions import Bernoulli, OneHotCategorical, Normal
+from torch_concepts.annotations import AxisAnnotation, Annotations, Concept
 
 
 class TestAxisAnnotation(unittest.TestCase):
@@ -1524,6 +1525,130 @@ class TestAxisAnnotationCachedUtilities(unittest.TestCase):
         
         slices = axis.concept_slices
         self.assertEqual(len(slices), n)
+
+
+class TestAxisAnnotationDistributions(unittest.TestCase):
+    """Tests for the first-class `distributions` field."""
+
+    def _axis(self, **overrides):
+        kwargs = dict(
+            labels=['size', 'color', 'temp'],
+            cardinalities=[1, 3, 1],
+            types=['discrete', 'discrete', 'continuous'],
+            distributions=[Bernoulli, OneHotCategorical, Normal],
+        )
+        kwargs.update(overrides)
+        return AxisAnnotation(**kwargs)
+
+    def test_distributions_stored(self):
+        axis = self._axis()
+        self.assertEqual(axis.distributions, [Bernoulli, OneHotCategorical, Normal])
+
+    def test_distributions_default_none(self):
+        axis = AxisAnnotation(labels=['a', 'b'], cardinalities=[1, 1])
+        self.assertIsNone(axis.distributions)
+
+    def test_distributions_length_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            AxisAnnotation(
+                labels=['a', 'b'], cardinalities=[1, 1],
+                distributions=[Bernoulli],  # too short
+            )
+
+    def test_distributions_mutable(self):
+        # Distributions can change between experiments, so the field is not
+        # write-once and the Concept view must reflect the change.
+        axis = self._axis()
+        axis.distributions = [Normal, Normal, Normal]
+        self.assertEqual(axis.distributions, [Normal, Normal, Normal])
+        self.assertIs(axis.concept('size').distribution, Normal)
+
+    def test_distributions_single_entry_mutable(self):
+        axis = self._axis()
+        axis.distributions[0] = Normal
+        self.assertIs(axis.concept('size').distribution, Normal)
+
+    def test_to_dict_from_dict_roundtrip(self):
+        axis = self._axis()
+        restored = AxisAnnotation.from_dict(axis.to_dict())
+        self.assertEqual(restored.distributions, [Bernoulli, OneHotCategorical, Normal])
+        self.assertEqual(restored.types, ['discrete', 'discrete', 'continuous'])
+
+    def test_to_dict_none_distributions(self):
+        axis = AxisAnnotation(labels=['a'], cardinalities=[1])
+        self.assertIsNone(axis.to_dict()['distributions'])
+
+    def test_subset_carries_distributions(self):
+        axis = self._axis()
+        sub = axis.subset(['temp', 'size'])
+        self.assertEqual(sub.labels, ['temp', 'size'])
+        self.assertEqual(sub.distributions, [Normal, Bernoulli])
+
+    def test_union_with_merges_distributions(self):
+        left = AxisAnnotation(labels=['a'], cardinalities=[1], distributions=[Bernoulli])
+        right = AxisAnnotation(labels=['b'], cardinalities=[1], distributions=[Normal])
+        merged = left.union_with(right)
+        self.assertEqual(merged.labels, ['a', 'b'])
+        self.assertEqual(merged.distributions, [Bernoulli, Normal])
+
+
+class TestConceptView(unittest.TestCase):
+    """Tests for the per-concept `Concept` view."""
+
+    def setUp(self):
+        self.axis = AxisAnnotation(
+            labels=['size', 'color', 'temp'],
+            cardinalities=[1, 3, 1],
+            types=['discrete', 'discrete', 'continuous'],
+            distributions=[Bernoulli, OneHotCategorical, Normal],
+        )
+
+    def test_concept_basic_fields(self):
+        c = self.axis.concept('color')
+        self.assertIsInstance(c, Concept)
+        self.assertEqual(c.name, 'color')
+        self.assertEqual(c.index, 1)
+        self.assertEqual(c.cardinality, 3)
+        self.assertEqual(c.type, 'discrete')
+        self.assertIs(c.distribution, OneHotCategorical)
+        self.assertEqual(c.slice, slice(1, 4))
+
+    def test_concept_type_predicates(self):
+        self.assertTrue(self.axis.concept('size').is_binary)
+        self.assertFalse(self.axis.concept('size').is_categorical)
+        self.assertTrue(self.axis.concept('color').is_categorical)
+        self.assertTrue(self.axis.concept('temp').is_continuous)
+
+    def test_concepts_property_order(self):
+        names = [c.name for c in self.axis.concepts]
+        self.assertEqual(names, ['size', 'color', 'temp'])
+
+    def test_getitem_str_returns_concept(self):
+        self.assertIsInstance(self.axis['color'], Concept)
+        self.assertEqual(self.axis['color'].cardinality, 3)
+
+    def test_getitem_int_returns_label(self):
+        self.assertEqual(self.axis[0], 'size')
+
+    def test_distribution_none_when_unset(self):
+        axis = AxisAnnotation(labels=['a'], cardinalities=[1])
+        self.assertIsNone(axis.concept('a').distribution)
+
+    def test_type_resolved_from_metadata_fallback(self):
+        # No `types` field, type lives in metadata -> view resolves it.
+        axis = AxisAnnotation(
+            labels=['a', 'b'], cardinalities=[1, 1],
+            metadata={'a': {'type': 'continuous'}, 'b': {'type': 'discrete'}},
+        )
+        self.assertTrue(axis.concept('a').is_continuous)
+        self.assertTrue(axis.concept('b').is_binary)
+
+    def test_dist_kwargs_from_metadata(self):
+        axis = AxisAnnotation(
+            labels=['a'], cardinalities=[1],
+            metadata={'a': {'type': 'discrete', 'dist_kwargs': {'temperature': 0.5}}},
+        )
+        self.assertEqual(axis.concept('a').dist_kwargs, {'temperature': 0.5})
 
 
 if __name__ == '__main__':

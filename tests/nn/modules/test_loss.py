@@ -416,7 +416,7 @@ class TestLossConfiguration(unittest.TestCase):
 # DepthWeightedConceptLoss tests
 # ======================================================================
 
-from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+from torch_concepts import ConceptGraph
 
 
 class TestDepthWeightedConceptLoss(unittest.TestCase):
@@ -1113,7 +1113,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
 
     def setUp(self):
         from torch.distributions import Bernoulli
-        from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+        from torch_concepts import ConceptGraph
         axis = AxisAnnotation(
             labels=['A', 'B'],
             cardinalities=[1, 1],
@@ -1250,7 +1250,7 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
 
     def test_composite_binary_with_regularizer(self):
         from torch.distributions import Bernoulli
-        from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+        from torch_concepts import ConceptGraph
         axis = AxisAnnotation(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
