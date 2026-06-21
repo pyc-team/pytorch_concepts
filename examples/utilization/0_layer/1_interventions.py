@@ -102,7 +102,9 @@ def main():
     print("\nConcept predictions before intervention (first 5):")
     print(c_pred[:5])
 
-    # Context manager example
+    # Ground Truth Intervention example (intervene on the layer outputs)
+    # FIXME: this replace the layer output with the ground truth values for the specified concepts
+    # regardeless of whether the parametrization is done via 'logits' or 'probs'. 
     concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
         GroundTruthIntervention(ground_truth=c_train),
@@ -146,7 +148,7 @@ def main():
         out_concepts_to_intervene_on=["c1", "c2"]
     )
     c_pred_intervened = concept_encoder_intervened(embedding)
-    print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
+    print("\n\n## Distribution Intervention Example with resampling (set concepts to -100 and 50):")
     print(c_pred_intervened[:5])
 
 

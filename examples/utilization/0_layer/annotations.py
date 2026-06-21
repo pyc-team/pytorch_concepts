@@ -56,7 +56,7 @@ def main():
     tensor["smoking"]  
 
     # slice by concept type
-    tensor.split_by_type()['binary']  
+    tensor.split_by_type('binary')  
 
     return
 

@@ -14,48 +14,19 @@ Concept/task split:
 import torch
 import warnings
 from torch.nn import ModuleDict
+import torch.nn.functional as F
 
-from torch_concepts import seed_everything, AxisAnnotation
+from torch_concepts import seed_everything, AxisAnnotation, AnnotatedTensor
 from torch_concepts.data import BnLearnDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, MixConceptEmbeddingToConcept
 from torch_concepts.nn import MLP
-
-
-def mixed_concept_loss(logits, targets, cardinalities):
-    """Per-group BCE (binary) or CE (categorical) over mixed-cardinality concepts."""
-    loss = 0.
-    pos = 0
-    for i, card in enumerate(cardinalities):
-        if card == 1:
-            loss += torch.nn.functional.binary_cross_entropy_with_logits(
-                logits[:, pos], targets[:, i].float()
-            )
-        else:
-            loss += torch.nn.functional.cross_entropy(
-                logits[:, pos:pos + card], targets[:, i].long()
-            )
-        pos += card
-    return loss / len(cardinalities)
-
-
-def mixed_concept_accuracy(logits, targets, cardinalities):
-    """Mean per-concept accuracy over groups of mixed cardinality."""
-    correct, pos = 0, 0
-    for i, card in enumerate(cardinalities):
-        if card == 1:
-            pred = (logits[:, pos] > 0).long()
-        else:
-            pred = logits[:, pos:pos + card].argmax(dim=1)
-        correct += (pred == targets[:, i].long()).float().mean().item()
-        pos += card
-    return correct / len(cardinalities)
 
 
 def main():
     latent_dims = 128
     n_epochs = 1000
     n_samples = 10000
-    concept_reg = 1.0
+    concept_reg = 0.2
     embedding_size = 4
     task_node = 'PropCost'  # leaf node, cardinality=4
 
@@ -77,12 +48,11 @@ def main():
     concept_cardinalities = [axis.cardinalities[i] for i in concept_idx]
     n_concepts_expanded = sum(concept_cardinalities)  # one column per cardinality class
 
-    # Annotation describing the concept axis (all insurance nodes are discrete).
-    # The mixer reads the per-concept cardinalities and types from it.
+    # Annotation describing concepts' semantics.
     concept_annotations = AxisAnnotation(
         labels=[axis.labels[i] for i in concept_idx],
         cardinalities=concept_cardinalities,
-        types=['discrete'] * len(concept_idx),
+        types=['binary' if c == 1 else 'categorical' for c in concept_cardinalities],
     )
 
     n_task_classes = axis.cardinalities[task_idx]     # 4
@@ -131,9 +101,24 @@ def main():
         y_pred = model["task_predictor"](concepts=c_pred, embeddings=embeddings)  # (batch, n_task_classes)
 
         # per-group concept loss + task cross-entropy
-        concept_loss = mixed_concept_loss(c_pred, c_train, concept_cardinalities)
-        task_loss = torch.nn.functional.cross_entropy(y_pred, y_train)
-        loss = concept_loss + concept_reg * task_loss
+        c_pred = AnnotatedTensor(c_pred, annotation=concept_annotations)
+        splitted = c_pred.split_by_type()
+        binary, categorical = splitted['binary'], splitted['categorical']
+        bin_g = concept_annotations.type_groups['binary']
+        cat_g = concept_annotations.type_groups['categorical']
+        cat_ann = categorical.annotation
+        cum = cat_ann.cumulative_cardinalities
+
+        binary_loss = F.binary_cross_entropy_with_logits(
+            binary.tensor,
+            c_train[:, bin_g['concept_idx']].float()
+        )
+        categorical_loss = sum(
+            F.cross_entropy(categorical.tensor[:, cum[i]:cum[i+1]], c_train[:, cat_g['concept_idx'][i]].long())
+            for i in range(len(cat_ann.labels))
+        )
+        task_loss = F.cross_entropy(y_pred, y_train)
+        loss = binary_loss + categorical_loss + concept_reg * task_loss
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -141,9 +126,12 @@ def main():
 
         if epoch % 100 == 0:
             task_acc = (y_pred.detach().argmax(dim=1) == y_train).float().mean().item()
-            concept_acc = mixed_concept_accuracy(c_pred.detach(), c_train, concept_cardinalities)
-            print(f"Epoch {epoch}: Loss {loss.item():.3f} | "
-                  f"Task Acc: {task_acc:.2f} | Concept Acc: {concept_acc:.2f}")
+            bin_acc = ((binary.tensor.detach().sigmoid() > 0.5).float() == c_train[:, bin_g['concept_idx']].float()).float().mean().item()
+            cat_acc = sum(
+                (categorical.tensor.detach()[:, cum[i]:cum[i+1]].argmax(dim=1) == c_train[:, cat_g['concept_idx'][i]].long()).float().mean().item()
+                for i in range(len(cat_ann.labels))
+            ) / len(cat_ann.labels)
+            print(f"Epoch {epoch}: Loss {loss.item():.4f} | Task Acc: {task_acc:.4f} | Binary C. Acc: {bin_acc:.4f} | Categorical C. Acc: {cat_acc:.4f}")
 
     return
 

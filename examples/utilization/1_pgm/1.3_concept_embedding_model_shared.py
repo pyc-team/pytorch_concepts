@@ -77,7 +77,7 @@ def main():
         # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
         "task_predictor": Sequential(
             MixConceptEmbeddingToConcept(
-                in_concepts=pyc.AxisAnnotation.empty(n_concepts, types=['discrete'] * n_concepts),
+                in_concepts=pyc.AxisAnnotation.empty(n_concepts, types=['binary'] * n_concepts),
                 in_embeddings=emb_dims,
                 out_concepts=1,
             ),
