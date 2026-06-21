@@ -286,30 +286,6 @@ def _check_tensors(tensors):
             raise ValueError("All tensors must have the same requires_grad setting.")
 
 
-def _get_type_group(metadata: Dict, cardinality: int) -> str:
-    """Classify a concept into 'binary', 'categorical', or 'continuous' based on metadata type and cardinality.
-    
-    Args:
-        metadata: Per-concept metadata dict (must contain 'type' key).
-        cardinality: Cardinality of the concept.
-
-    Returns:
-        One of 'binary', 'categorical', or 'continuous'.
-
-    Raises:
-        ValueError: If the combination of type and cardinality is not recognized.
-    """
-    concept_type = metadata.get('type', 'discrete')
-    if concept_type == 'discrete' and cardinality == 1:
-        return 'binary'
-    elif concept_type == 'discrete' and cardinality > 1:
-        return 'categorical'
-    elif concept_type == 'continuous':
-        return 'continuous'
-    else:
-        raise ValueError(f"Unrecognized type/cardinality combination: type={concept_type!r}, cardinality={cardinality}")
-
-
 def add_property_to_annotations(
         annotations: Union[Annotations, AxisAnnotation],
         values: Union[GroupConfig, Mapping[str, object]],
@@ -340,13 +316,12 @@ def add_property_to_annotations(
         raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
 
     labels = list(axis_annotation.labels)
-    cardinalities = axis_annotation.cardinalities
     metadata = axis_annotation.metadata if axis_annotation.metadata is not None else {l: {} for l in labels}
 
     def _resolve(concept_name: str, index: int):
         """Return ``(value, kwargs_or_None)`` for one concept."""
         if isinstance(values, GroupConfig):
-            group = _get_type_group({'type': axis_annotation._type_of(index)}, cardinalities[index])
+            group = axis_annotation.types[index]
             try:
                 entry = values[group]
             except KeyError:
@@ -484,7 +459,7 @@ def add_default_properties(
     for i, label in enumerate(labels):
         if distributions[i] is not None:
             continue
-        group = _get_type_group({'type': axis_annotation._type_of(i)}, cardinalities[i])
+        group = axis_annotation.types[i]
         if group not in _DEFAULT_DISTRIBUTIONS:
             raise ValueError(
                 f"No default distribution for type group '{group}' "

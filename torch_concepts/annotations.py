@@ -15,6 +15,10 @@ from functools import cached_property
 from typing import Dict, List, Tuple, Type, Union, Optional, Any, Sequence
 
 
+#: The canonical concept-type vocabulary. A concept is exactly one of these.
+_CONCEPT_TYPES = ('binary', 'categorical', 'continuous')
+
+
 @dataclass(frozen=True)
 class Concept:
     """Read-only, per-concept view over a single column of an :class:`AxisAnnotation`.
@@ -29,7 +33,7 @@ class Concept:
         name (str): Concept label.
         index (int): Concept-level index within the axis.
         cardinality (int): Number of states (1 for binary/continuous scalars).
-        type (Optional[str]): Concept type, e.g. ``'discrete'`` / ``'continuous'``.
+        type (str): Concept type, one of ``'binary'`` / ``'categorical'`` / ``'continuous'``.
         distribution (Optional[type]): Distribution class (e.g. ``Bernoulli``), or
             ``None`` if not yet assigned.
         dist_kwargs (Optional[dict]): Distribution kwargs (still read from metadata).
@@ -40,7 +44,7 @@ class Concept:
     name: str
     index: int
     cardinality: int
-    type: Optional[str]
+    type: str
     distribution: Optional[Type]
     dist_kwargs: Optional[dict]
     states: Optional[List[str]]
@@ -49,18 +53,18 @@ class Concept:
 
     @property
     def is_continuous(self) -> bool:
-        """Whether this concept is continuous (``type == 'continuous'``)."""
+        """Whether this concept is continuous."""
         return self.type == 'continuous'
 
     @property
     def is_binary(self) -> bool:
-        """Whether this concept is a single binary value (discrete, cardinality 1)."""
-        return not self.is_continuous and self.cardinality == 1
+        """Whether this concept is a single binary value (cardinality 1)."""
+        return self.type == 'binary'
 
     @property
     def is_categorical(self) -> bool:
-        """Whether this concept is a multi-state discrete (categorical) variable."""
-        return not self.is_continuous and self.cardinality > 1
+        """Whether this concept is a multi-state (categorical) variable."""
+        return self.type == 'categorical'
 
 
 @dataclass
@@ -122,7 +126,7 @@ class AxisAnnotation:
     labels: List[str]
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
-    types: Optional[List[str]] = field(default=None)  # e.g., 'discrete' or 'continuous' # TODO: make consistent
+    types: Optional[List[str]] = field(default=None)  # 'binary' | 'categorical' | 'continuous'
     distributions: Optional[List[Type]] = field(default=None)  # distribution class per concept
     metadata: Optional[Dict[str, Dict]] = field(default=None)
 
@@ -189,6 +193,33 @@ class AxisAnnotation:
                 f"Number of types ({len(self.types)}) must match "
                 f"number of labels ({len(self.labels)})"
             )
+
+        # Canonicalise the concept type. It is one of 'binary' / 'categorical' /
+        # 'continuous'. When omitted, default discrete concepts from cardinality
+        # (binary if card==1 else categorical); 'continuous' must be declared
+        # explicitly (it cannot be inferred). Then enforce the type<->cardinality
+        # invariant so the two never drift.
+        if self.types is None:
+            resolved_types = [
+                'binary' if card == 1 else 'categorical' for card in self.cardinalities
+            ]
+        else:
+            resolved_types = list(self.types)
+        for label, t, card in zip(self.labels, resolved_types, self.cardinalities):
+            if t not in _CONCEPT_TYPES:
+                raise ValueError(
+                    f"Concept {label!r}: type must be one of {_CONCEPT_TYPES}, got {t!r}."
+                )
+            if t == 'binary' and card != 1:
+                raise ValueError(
+                    f"Concept {label!r}: 'binary' requires cardinality 1, got {card}."
+                )
+            if t == 'categorical' and card <= 1:
+                raise ValueError(
+                    f"Concept {label!r}: 'categorical' requires cardinality > 1, got {card}."
+                )
+        object.__setattr__(self, 'types', resolved_types)
+
         if self.distributions is not None and len(self.distributions) != len(self.labels):
             raise ValueError(
                 f"Number of distributions ({len(self.distributions)}) must match "
@@ -196,7 +227,6 @@ class AxisAnnotation:
             )
 
         # Determine is_nested from cardinalities
-        # FIXME: should we consider nested also mix of scalars and bernoulli?
         is_nested = any(card > 1 for card in self.cardinalities)
 
         object.__setattr__(self, 'is_nested', is_nested)
@@ -338,24 +368,20 @@ class AxisAnnotation:
     
     @cached_property
     def labels_by_type(self) -> Dict[str, List[str]]:
-        """Precomputed mapping from type name to the ordered list of labels of that type.
+        """Mapping from concept type to the ordered list of labels of that type.
 
-        Returns ``{}`` when ``types`` is ``None``.
+        Only non-empty types are included. Derived from :attr:`type_groups` so the
+        grouping logic lives in one place.
 
         Example:
             >>> axis = AxisAnnotation(
             ...     labels=['a', 'b', 'c'],
-            ...     types=['discrete', 'continuous', 'discrete'],
+            ...     cardinalities=[1, 1, 3],
             ... )
             >>> axis.labels_by_type
-            {'discrete': ['a', 'c'], 'continuous': ['b']}
+            {'binary': ['a', 'b'], 'categorical': ['c']}
         """
-        if self.types is None:
-            return {}
-        groups: Dict[str, List[str]] = {}
-        for label, t in zip(self.labels, self.types):
-            groups.setdefault(t, []).append(label)
-        return groups
+        return {t: g['labels'] for t, g in self.type_groups.items() if g['labels']}
 
     @cached_property
     def type_groups(self) -> Dict[str, Dict[str, List]]:
@@ -371,56 +397,23 @@ class AxisAnnotation:
             >>> axis = AxisAnnotation(
             ...     labels=['size', 'color', 'temp'],
             ...     cardinalities=[1, 3, 1],
-            ...     metadata={
-            ...         'size': {'type': 'discrete'},
-            ...         'color': {'type': 'discrete'},
-            ...         'temp': {'type': 'continuous'}
-            ...     }
+            ...     types=['binary', 'categorical', 'continuous'],
             ... )
             >>> axis.type_groups['binary']['labels']  # ['size']
             >>> axis.type_groups['categorical']['logits_idx']  # [1, 2, 3]
         """
         cum = self.cumulative_cardinalities
-        
-        groups = {
-            'binary': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-            'categorical': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-            'continuous': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-        }
-        
+
+        groups = {t: {'labels': [], 'concept_idx': [], 'logits_idx': []}
+                  for t in _CONCEPT_TYPES}
+
         for i, label in enumerate(self.labels):
-            card = self.cardinalities[i]
-            concept_type = self._type_of(i)
-
-            # Classify into binary/categorical/continuous
-            if concept_type == 'continuous':
-                group_key = 'continuous'
-            elif card == 1:
-                group_key = 'binary'
-            else:  # discrete with card > 1
-                group_key = 'categorical'
-
-            # Store at concept level
-            groups[group_key]['labels'].append(label)
-            groups[group_key]['concept_idx'].append(i)
-
-            # Store at logit level (all positions for this concept)
-            groups[group_key]['logits_idx'].extend(range(cum[i], cum[i+1]))
+            group = groups[self.types[i]]
+            group['labels'].append(label)
+            group['concept_idx'].append(i)
+            group['logits_idx'].extend(range(cum[i], cum[i + 1]))
 
         return groups
-
-    def _type_of(self, index: int) -> str:
-        """Resolve a concept's type by index.
-
-        Prefers the first-class ``types`` field, falls back to
-        ``metadata[label]['type']``, then defaults to ``'discrete'``.
-        """
-        if self.types is not None:
-            return self.types[index]
-        label = self.labels[index]
-        if self.metadata and label in self.metadata:
-            return self.metadata[label].get('type', 'discrete')
-        return 'discrete'
 
     def concept(self, name: str) -> "Concept":
         """Return a read-only :class:`Concept` view for ``name``.
@@ -437,7 +430,7 @@ class AxisAnnotation:
             name=name,
             index=i,
             cardinality=int(self.cardinalities[i]),
-            type=self._type_of(i),
+            type=self.types[i],
             distribution=self.distributions[i] if self.distributions is not None else None,
             dist_kwargs=meta.get('dist_kwargs'),
             states=self.states[i] if self.states is not None else None,
@@ -634,10 +627,7 @@ class AxisAnnotation:
             new_states = None
             new_cards = None
 
-        # Materialise the *resolved* type per kept concept (field → metadata →
-        # default) so the subset is self-describing even when the source carried
-        # types only in metadata.
-        new_types = [self._type_of(i) for i in idxs]
+        new_types = [self.types[i] for i in idxs]
         new_distributions = (
             [self.distributions[i] for i in idxs] if self.distributions is not None else None
         )
@@ -661,26 +651,25 @@ class AxisAnnotation:
         left = list(self.labels)
         right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
-        # merge types: left types + right-only types (left-wins for overlap)
-        new_types = None
-        if self.types is not None or other.types is not None:
-            left_types = self.types or ['discrete'] * len(self.labels)
-            right_types = other.types or ['discrete'] * len(other.labels)
-            right_only_types = [
-                right_types[other.labels.index(l)]
-                for l in right_only
+
+        def _merge(left_values, right_values):
+            """Left values + right-only values (left wins for overlapping labels)."""
+            return list(left_values) + [
+                right_values[other.labels.index(l)] for l in right_only
             ]
-            new_types = left_types + right_only_types
-        # merge distributions: left + right-only (left-wins for overlap)
+
+        # ``states`` / ``types`` are always populated after construction, so we
+        # carry them through directly (cardinalities re-infer from states). This
+        # keeps categorical concepts' cardinalities intact through a union.
+        new_states = _merge(self.states, other.states)
+        new_types = _merge(self.types, other.types)
+
         new_distributions = None
         if self.distributions is not None or other.distributions is not None:
-            left_dists = self.distributions or [None] * len(self.labels)
-            right_dists = other.distributions or [None] * len(other.labels)
-            right_only_dists = [
-                right_dists[other.labels.index(l)]
-                for l in right_only
-            ]
-            new_distributions = left_dists + right_only_dists
+            new_distributions = _merge(
+                self.distributions or [None] * len(self.labels),
+                other.distributions or [None] * len(other.labels),
+            )
         # merge metadata left-wins
         meta = None
         if self.metadata or other.metadata:
@@ -691,7 +680,7 @@ class AxisAnnotation:
                     if k not in meta:
                         meta[k] = v
         return AxisAnnotation(
-            labels=labels, states=None, cardinalities=None,
+            labels=labels, states=new_states, cardinalities=None,
             types=new_types, distributions=new_distributions, metadata=meta,
         )
 

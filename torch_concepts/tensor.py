@@ -6,7 +6,7 @@ This module provides :class:`AnnotatedTensor`, a lightweight wrapper around a
 for its second axis (axis 1), enabling label-based column slicing and
 annotation-preserving tensor operations.
 """
-from typing import Union, Dict
+from typing import Optional, Union, Dict
 
 import torch
 
@@ -204,38 +204,33 @@ class AnnotatedTensor:
     # Type-based splitting                                                 #
     # ------------------------------------------------------------------ #
 
-    def split_by_type(self) -> Dict[str, 'AnnotatedTensor']:
+    def split_by_type(
+        self, 
+        concept_type: Optional[str] = None
+    ) -> Union['AnnotatedTensor', Dict[str, 'AnnotatedTensor']]:
         """
-        Split this tensor into a dictionary of :class:`AnnotatedTensor` instances,
-        one per unique type in the annotation's ``types`` field.
-
-        The keys of the returned dict are the raw type strings (e.g.
-        ``'discrete'``, ``'continuous'``); each value is an
-        :class:`AnnotatedTensor` containing only the columns that belong to
-        that type, with a correspondingly subsetted :class:`AxisAnnotation`.
-
-        Raises:
-            ValueError: If ``annotation.types`` is ``None`` (types are required
-                for splitting).
+        If ``concept_type`` is given, return the sub-tensor of concepts of ``concept_type``.
+        
+        If ``concept_type`` is ``None``, split this tensor into a 
+        dictionary of :class:`AnnotatedTensor` instances, one per concept type present.
+        The keys are the type strings ``'binary'`` / ``'categorical'`` /
+        ``'continuous'`` (only the non-empty ones); each value is an
+        :class:`AnnotatedTensor` containing only the columns of that type, with a
+        correspondingly subsetted :class:`AxisAnnotation`.
 
         Example:
-            >>> ann = AxisAnnotation(
-            ...     labels=['a', 'b', 'c'],
-            ...     types=['discrete', 'continuous', 'discrete'],
-            ... )
-            >>> t = AnnotatedTensor(torch.rand(4, 3), ann)
+            >>> ann = AxisAnnotation(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
+            >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
             >>> d = t.split_by_type()
-            >>> d['discrete'].annotation.labels    # ['a', 'c']
-            >>> d['continuous'].annotation.labels  # ['b']
+            >>> d['binary'].annotation.labels       # ['a', 'c']
+            >>> d['categorical'].annotation.labels  # ['b']
         """
-        if self._annotation.types is None:
-            raise ValueError(
-                "split_by_type() requires annotation.types to be set. "
-                "Pass types=['discrete', 'continuous', ...] when constructing "
-                "the AxisAnnotation, or use AxisAnnotation.empty(n, types=...)."
-            )
-
-        return {t: self[labels] for t, labels in self._annotation.labels_by_type.items()}
+        if concept_type is None:
+            return {
+                t: self[labels]
+                for t, labels in self._annotation.labels_by_type.items()
+            }
+        return self[self._annotation.labels_by_type.get(concept_type, [])]
 
     # ------------------------------------------------------------------ #
     # torch.* function protocol                                            #

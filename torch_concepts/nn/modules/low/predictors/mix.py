@@ -82,7 +82,7 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
         )
         # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
         self.cardinalities_expanded = torch.tensor(in_concepts.cardinalities)
-        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) == 'discrete')
+        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) != 'continuous')
         cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
         start_positions = cumsum - self.cardinalities_expanded
         bernoulli_mask = self.cardinalities_expanded == 1 & self.binary_mask
