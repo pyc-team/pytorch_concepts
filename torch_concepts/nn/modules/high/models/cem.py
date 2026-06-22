@@ -22,6 +22,8 @@ from typing import List, Optional, Union
 import torch
 import torch.nn as nn
 
+from torch.distributions import Bernoulli, OneHotCategorical, Normal
+
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
@@ -33,7 +35,7 @@ from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.models.bayesian_network import BayesianNetwork
 from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable
+from ...mid.models.variable import ConceptVariable, EmbeddingVariable, _DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
 
@@ -71,13 +73,20 @@ class ConceptEmbeddingModel(BipartiteModel):
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
     param_for_discrete_var = "logits"
 
+    # Per-type distribution policy: how this model models each concept type.
+    variable_distributions = {
+        'binary': Bernoulli,
+        'categorical': OneHotCategorical,
+        'continuous': Normal,
+    }
+    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+
     def __init__(
         self,
         input_size: int,
         annotations: Annotations,
         task_names: Union[List[str], str],
         embedding_size: int = 8,
-        plate: Optional[bool] = None,
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -98,12 +107,12 @@ class ConceptEmbeddingModel(BipartiteModel):
         self.axis_concepts = self.concept_annotations.subset(self.intermediate_concept_names)
         self.axis_tasks = self.concept_annotations.subset(self.task_names)
 
-        if plate is None:
-            plate = all(self.plate_compatible_levels(self.concept_annotations, self.graph))
-        self.plate = plate
-        if self.plate:
+        if all(self.plate):
+            # if all graph levels are plate-compatible
+            # build the model with one plate variable per bipartite level (concepts, tasks)
             self.pgm = self._build_plate_model()
         else:
+            # build the model with one variable per concept and one per task
             self.pgm = self._build_individual_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
@@ -170,13 +179,15 @@ class ConceptEmbeddingModel(BipartiteModel):
         concepts = ConceptVariable(
             names="concepts",
             members=self.intermediate_concept_names,
-            distribution=concept0.distribution,
+            distribution=self.distribution_of(concept0.name),
+            dist_kwargs=self.dist_kwargs_of(concept0.name),
             size=concept_card,
         )
         tasks = ConceptVariable(
             names="tasks",
             members=self.task_names,
-            distribution=task0.distribution,
+            distribution=self.distribution_of(task0.name),
+            dist_kwargs=self.dist_kwargs_of(task0.name),
             size=task_card,
         )
         
@@ -251,12 +262,14 @@ class ConceptEmbeddingModel(BipartiteModel):
         )
         concepts = ConceptVariable(
             names=self.intermediate_concept_names,
-            distribution=[c.distribution for c in intermediate],
+            distribution=[self.distribution_of(c.name) for c in intermediate],
+            dist_kwargs=[self.dist_kwargs_of(c.name) for c in intermediate],
             size=[c.cardinality for c in intermediate]
         )
         tasks = ConceptVariable(
             names=self.task_names,
-            distribution=[t.distribution for t in task_concepts],
+            distribution=[self.distribution_of(t.name) for t in task_concepts],
+            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
             size=[t.cardinality for t in task_concepts]
         )
 

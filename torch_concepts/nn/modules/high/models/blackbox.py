@@ -6,7 +6,7 @@ from .....data.utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
 from ...loss import ConceptLoss
-from ...outputs import ModelOutput
+from ...outputs import ModelOutput, logits_from_params
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
@@ -77,7 +77,11 @@ class BlackBox(BaseModel):
         axis = self.concept_annotations
         names = query if query is not None else axis.labels
         params = {name: {"logits": output[:, axis.concept_slices[name]]} for name in names}
-        return ModelOutput(params=params)
+        out = ModelOutput(params=params)
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        out.logits = logits_from_params(params, keys=list(names))
+        return out
 
 
 class BlackBoxTaskOnly(BaseModel):
@@ -178,7 +182,11 @@ class BlackBoxTaskOnly(BaseModel):
         # The linear head spans the task sub-annotation; slice it per task.
         slices = self.task_annotations.concept_slices
         params = {name: {"logits": output[:, slices[name]]} for name in self.task_names}
-        return ModelOutput(params=params)
+        out = ModelOutput(params=params)
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        out.logits = logits_from_params(params, keys=list(self.task_names))
+        return out
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Slice target to task-only columns.

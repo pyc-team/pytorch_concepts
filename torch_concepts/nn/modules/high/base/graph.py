@@ -126,6 +126,11 @@ class DirectedGraphModel(GraphModel, ABC):
     the concrete model.
     """
 
+    def __init__(self, *args, graph: Optional[ConceptGraph] = None, **kwargs):
+        super().__init__(*args, graph=graph, **kwargs)
+        self.plate = self.plate_compatible_levels(self.concept_annotations, self.graph)
+
+
     def _validate_graph(self, graph: ConceptGraph) -> None:
         super()._validate_graph(graph)
         assert graph.is_directed_acyclic(), (

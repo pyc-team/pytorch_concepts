@@ -21,8 +21,6 @@ Dataset: XOR toy dataset with 2 binary concepts and 1 binary task
 import torch
 
 import torch_concepts as pyc
-from torch.distributions import Bernoulli, OneHotCategorical, Normal
-from torch_concepts import Annotations, AxisAnnotation
 
 
 def main():
@@ -33,8 +31,7 @@ def main():
         1: pyc.AxisAnnotation(
             labels=["smoking", "genotype", "tar", "cancer"],
             cardinalities=[1, 3, 1, 1],
-            types=["binary", "categorical", "continuous", "binary"],
-            distributions=[Bernoulli, OneHotCategorical, Normal, Bernoulli]
+            types=["binary", "categorical", "continuous", "binary"]
         )
     })
 

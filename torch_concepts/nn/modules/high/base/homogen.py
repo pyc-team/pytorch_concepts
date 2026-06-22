@@ -154,8 +154,9 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
             parents = list(self.graph.get_predecessors(name))
             is_root = not parents
             concept_var = ConceptVariable(
-                names=name, 
-                distribution=concept.distribution, 
+                names=name,
+                distribution=self.distribution_of(name),
+                dist_kwargs=self.dist_kwargs_of(name),
                 size=concept.cardinality
             )
 

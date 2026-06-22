@@ -25,16 +25,17 @@ torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete impl
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Mapping, Dict, Union
+from typing import List, Optional, Mapping, Dict, Type, Union
 import functools
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .....annotations import Annotations
 from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations, add_default_properties
 from ...utils import with_training_mode
-from ...outputs import ModelOutput
+from ...outputs import ModelOutput, logits_from_params
+from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_DIST_KWARGS
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -68,17 +69,18 @@ class BaseModel(nn.Module, ABC):
         If True, adds Lightning training capabilities (BaseLearner mixin).
         If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
-        Dictionary mapping concept names to torch.distributions classes (e.g.,
-        ``{'c1': Bernoulli, 'c2': OneHotCategorical}``). If None, default distributions
-        are used (e.g., ``Bernoulli`` for binary, ``OneHotCategorical`` for categorical concepts).
-        If provided, distributions are added to annotations internally. 
-        Can also be a GroupConfig object. Defaults to None.
-    variable_activations : Mapping, optional
-        Dictionary mapping concept names to activation functions (e.g.,
-        ``{'c1': torch.sigmoid, 'c2': torch.softmax}``). If None, default activations
-        are used (e.g., ``torch.sigmoid`` for binary, ``torch.softmax`` for categorical concepts).
-        If provided, activations are added to annotations internally. 
-        Can also be a GroupConfig object. Defaults to None.
+        Per-instance override of the model's per-*type* distribution policy,
+        mapping concept *types* (``'binary'`` / ``'categorical'`` /
+        ``'continuous'``) to ``torch.distributions`` classes
+        (e.g. ``{'binary': RelaxedBernoulli}``). Merged over the class-level
+        :attr:`variable_distributions` default. Distributions are model state —
+        they are NOT stored on the annotation. Defaults to None.
+    variable_dist_kwargs : Mapping, optional
+        Per-instance override of the per-*distribution* keyword arguments,
+        mapping a ``torch.distributions`` class to its kwargs
+        (e.g. ``{RelaxedBernoulli: {'temperature': 0.7}}`` to change the relaxation
+        temperature). Merged over the class-level :attr:`variable_dist_kwargs`
+        default. Defaults to None.
     graph : ConceptGraph, optional
         Directed acyclic graph (DAG) specifying causal or dependency relationships
         between concepts. Nodes correspond to concept names in annotations; edges
@@ -140,15 +142,13 @@ class BaseModel(nn.Module, ABC):
 
     Notes
     -----
-    - **Concept Distributions and Activations**: The model needs to know which
-      distribution and activation to use for each concept. These can be provided 
-      in three ways:
-
-      1. In annotations metadata before model init
-      2. Via the `variable_distributions` and `variable_activations` parameters
-      3. If missing, the model will fill in defaults
-      If no default can be determined, a ``ValueError`` is raised.
-
+    - **Concept Distributions**: Distributions are model state, not annotation
+      state. Each model has a per-*type* policy (the class attributes
+      :attr:`variable_distributions` / :attr:`variable_dist_kwargs`) mapping a
+      concept's type (binary/categorical/continuous) to a distribution class;
+      a subclass overrides these to change how it models a type, and a caller
+      can override per instance with the ``variable_distributions`` argument.
+      Activations are derived from the distribution at inference time (not stored).
     - Subclasses must implement ``forward()``.
     - For Lightning training, set lightning=True. The BaseLearner mixin is
       automatically added via ``__new__``.
@@ -157,64 +157,36 @@ class BaseModel(nn.Module, ABC):
 
     Examples
     --------
-    Distributions and activations should be in annotations metadata. If not
-    provided, defaults are used (Bernoulli for binary, OneHotCategorical for
-    categorical concepts):
-    
+    The model picks a distribution for each concept from its type; override a
+    whole type with ``variable_distributions``:
+
     >>> import torch
     >>> import torch.nn as nn
-    >>> from torch.distributions import Bernoulli
+    >>> from torch.distributions import Bernoulli, RelaxedBernoulli
     >>> from torch_concepts.nn import ConceptBottleneckModel
     >>> from torch_concepts.annotations import AxisAnnotation, Annotations
-    >>> from torch_concepts.utils import add_distribution_to_annotations
-    >>> 
-    >>> # Option 1: Explicit distributions in annotations metadata
+    >>>
     >>> ann = Annotations({
     ...     1: AxisAnnotation(
     ...         labels=['c1', 'c2', 'task'],
     ...         cardinalities=[1, 1, 1],
-    ...         metadata={
-    ...             'c1': {'type': 'discrete', 'distribution': Bernoulli},
-    ...             'c2': {'type': 'discrete', 'distribution': Bernoulli},
-    ...             'task': {'type': 'discrete', 'distribution': Bernoulli}
-    ...         }
+    ...         types=['binary', 'binary', 'binary'],
     ...     )
     ... })
+    >>>
+    >>> # Option 1: let the model pick distributions from each concept's type
     >>> model = ConceptBottleneckModel(
-    ...     input_size=10,
-    ...     annotations=ann, # distributions provided in metadata
-    ...     task_names=['task']
+    ...     input_size=10, annotations=ann, task_names=['task']
     ... )
-    >>> 
-    >>> # Option 2: Add distributions via utility before model init
-    >>> ann_no_dist = Annotations({
-    ...     1: AxisAnnotation(
-    ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1],
-    ...         metadata={
-    ...             'c1': {'type': 'discrete'},
-    ...             'c2': {'type': 'discrete'},
-    ...             'task': {'type': 'discrete'}
-    ...         }
-    ...     )
-    ... })
-    >>> distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
-    >>> ann_no_dist = add_distribution_to_annotations(
-    ...     ann_no_dist, distributions
-    ... )
+    >>> model.variable_distributions['binary'] is Bernoulli
+    True
+    >>>
+    >>> # Option 2: override how this model models a whole type
     >>> model = ConceptBottleneckModel(
-    ...     input_size=10,
-    ...     annotations=ann_no_dist,
-    ...     task_names=['task']
+    ...     input_size=10, annotations=ann, task_names=['task'],
+    ...     variable_distributions={'binary': RelaxedBernoulli},
     ... )
-    >>> 
-    >>> # Option 3: Let the model use defaults (Bernoulli for binary discrete)
-    >>> model = ConceptBottleneckModel(
-    ...     input_size=10,
-    ...     annotations=ann_no_dist,
-    ...     task_names=['task']
-    ... )
-    >>> 
+    >>>
     >>> # Manual training loop
     >>> optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
     >>> loss_fn = nn.BCEWithLogitsLoss()
@@ -236,6 +208,15 @@ class BaseModel(nn.Module, ABC):
     """
 
     supported_concept_types: frozenset = frozenset()
+
+    #: Per-*type* distribution policy: which distribution this model uses for each
+    #: concept type (``'binary'`` / ``'categorical'`` / ``'continuous'``).
+    #: Distributions are a model concern; a subclass
+    #: overrides this to change how it models a type, and a caller can override it
+    #: per instance with the ``variable_distributions`` constructor arg.
+    variable_distributions: Dict[str, Type] = dict(_DEFAULT_DISTRIBUTIONS)
+    #: Default keyword arguments per distribution class (e.g. relaxation temperature).
+    variable_dist_kwargs: Dict[Type, dict] = dict(_DEFAULT_DIST_KWARGS)
 
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
@@ -264,6 +245,7 @@ class BaseModel(nn.Module, ABC):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
+        variable_dist_kwargs: Optional[Mapping] = None,
         backbone: Optional[BackboneType] = None,
         latent_size: Optional[int] = None,
         lightning: bool = False,  # Consumed by __new__, included for signature
@@ -271,38 +253,40 @@ class BaseModel(nn.Module, ABC):
     ) -> None:
         super().__init__(**kwargs)
 
-        self._setup_annotations(annotations, variable_distributions)
+        # Per-instance overrides of the model's distribution policy: the per-type
+        # distribution and the per-distribution kwargs (e.g. relaxation temperature).
+        if variable_distributions is not None:
+            self.variable_distributions = {**self.variable_distributions, **variable_distributions}
+        if variable_dist_kwargs is not None:
+            self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
+
+        self._setup_annotations(annotations)
         self._setup_backbone(backbone, input_size, latent_size)
 
-    def _setup_annotations(
-        self,
-        annotations: Optional[Annotations],
-        variable_distributions: Optional[Mapping],
-    ) -> None:
+    def _setup_annotations(self, annotations: Optional[Annotations]) -> None:
         """Resolve concept annotations and store :attr:`concept_annotations`/:attr:`concept_names`.
 
-        Writes any explicitly passed ``variable_distributions`` into the axis-1
-        annotations, fills in default distributions for concepts still missing one,
-        and rejects concept types this model cannot handle. Activations are NOT
-        stored: they are derived from each variable's distribution when the model
-        builds its parametrization.
+        The annotation carries only structural information (labels, types,
+        cardinalities); the distribution per concept is a model concern, resolved
+        from the per-type policy :attr:`variable_distributions`. Rejects concept
+        types this model cannot handle.
         """
         if annotations is None:
             return
 
-        annotations = annotations.get_axis_annotation(1)
-
-        # 1. If distributions are explicitly passed, write them into annotations.
-        if variable_distributions is not None:
-            annotations = add_distribution_to_annotations(annotations, variable_distributions)
-
-        # 2. Fill in default distributions for any concepts still missing one.
-        # This also validates that every concept has the metadata we need.
-        self.concept_annotations = add_default_properties(annotations)
+        self.concept_annotations = annotations.get_axis_annotation(1)
         self.concept_names = self.concept_annotations.labels
 
-        # 3. Reject annotations that contain concept types this model cannot handle.
+        # Reject annotations that contain concept types this model cannot handle.
         self._validate_concept_types()
+
+    def distribution_of(self, name: str) -> Type:
+        """Distribution class this model uses for concept ``name`` (by its type)."""
+        return self.variable_distributions[self.concept_annotations.concept(name).type]
+
+    def dist_kwargs_of(self, name: str) -> dict:
+        """Distribution keyword arguments this model uses for concept ``name``."""
+        return dict(self.variable_dist_kwargs.get(self.distribution_of(name), {}))
 
     def _setup_backbone(
         self,
@@ -381,10 +365,12 @@ class BaseModel(nn.Module, ABC):
     def _resolve_train_inference(inference, train_inference):
         """Validate and resolve the train_inference class.
 
-        If ``train_inference`` is ``None`` it falls back to ``inference``.
-        If it is explicitly set to a *different* class, a ``ValueError`` is
-        raised because mixing inference engines for training and evaluation
-        is not supported.
+        If ``train_inference`` is ``None`` it falls back to ``inference``. The
+        training and evaluation engines must belong to the *same family*: the two
+        classes must be identical or one a subclass of the other (e.g.
+        :class:`IndependentInference`, a :class:`DeterministicInference` with
+        ``p_int=1``, is a valid training engine for a ``DeterministicInference``
+        evaluator). Otherwise a ``ValueError`` is raised.
 
         Parameters
         ----------
@@ -397,25 +383,31 @@ class BaseModel(nn.Module, ABC):
         Returns
         -------
         type
-            Resolved training inference class (always ``inference`` or the
-            same class as ``inference``).
+            Resolved training inference class.
 
         Raises
         ------
         ValueError
-            If ``train_inference`` is explicitly set to a different class than
-            ``inference``.
+            If ``train_inference`` is not in the same class family as ``inference``.
         """
-        
+
         def _unwrap(fn):
             return fn.func if isinstance(fn, functools.partial) else fn
 
-        if train_inference is not None and _unwrap(train_inference) is not _unwrap(inference):
-            raise ValueError(
-                f"train_inference ({_unwrap(train_inference).__name__}) must be the same "
-                f"class as inference ({_unwrap(inference).__name__}). Different inference "
-                "engines for training and evaluation are not yet supported."
+        if train_inference is not None:
+            train_cls, eval_cls = _unwrap(train_inference), _unwrap(inference)
+            same_family = (
+                train_cls is eval_cls
+                or issubclass(train_cls, eval_cls)
+                or issubclass(eval_cls, train_cls)
             )
+            if not same_family:
+                raise ValueError(
+                    f"train_inference ({train_cls.__name__}) must be the same class as "
+                    f"inference ({eval_cls.__name__}) or a subclass of it. Mixing unrelated "
+                    "inference engines for training and evaluation is not yet fully stable hence"
+                    "not supported."
+                )
         return train_inference if train_inference is not None else inference
 
     def setup_inference(
@@ -535,12 +527,56 @@ class BaseModel(nn.Module, ABC):
             **inference_kwargs,
         )
 
-        return ModelOutput(
+        out = ModelOutput(
             params=result.params,
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
         )
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        out.logits = logits_from_params(result.params)
+        return out
+
+    @functools.cached_property
+    def _query_plan(self):
+        """Per-concept-variable assembly recipe, computed once (the PGM structure
+        is fixed after construction).
+
+        Returns a list ``[(variable_name, [(gt_col_index, cardinality), ...]), ...]``
+        over the concept variables only — a plate contributes one entry whose member
+        list has all its members, an individual concept contributes a single-member
+        entry. :meth:`build_query` applies this without re-deriving structure or
+        touching non-concept variables, keeping per-query cost at ``O(n_query)``.
+        """
+        axis = self.concept_annotations
+        return [
+            (var.name, [(axis.get_index(m), axis.concept(m).cardinality) for m in var.members])
+            for var in self.pgm.variables.values()
+            if var.variable_type == "concept"
+        ]
+
+    def build_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Build the full-observation query that fills every concept's tensor.
+
+        Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
+        columns in ``concept_annotations.labels`` order) to
+        ``{concept_variable_name: tensor}`` for every concept variable in the PGM.
+        The query is keyed by the *variable* name (so the inference engine teacher-
+        forces it via ``query.get(variable.name)`` — uniformly for plate and
+        individual layouts), and each tensor is assembled from the variable's members:
+        a categorical member (``cardinality > 1``) is one-hot encoded, a binary /
+        scalar member is taken as-is. Evidence (the raw input) is supplied separately.
+        """
+        query = {}
+        for name, members in self._query_plan:
+            cols = [
+                ground_truth[:, i].float().unsqueeze(-1) if card == 1
+                else F.one_hot(ground_truth[:, i].long(), card).float()
+                for i, card in members
+            ]
+            query[name] = torch.cat(cols, dim=-1)
+        return query
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Prepare ground truth labels for loss/metrics.

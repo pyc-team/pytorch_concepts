@@ -16,12 +16,15 @@ https://arxiv.org/abs/2503.04363
 """
 from typing import Optional
 
+from torch.distributions import Bernoulli, OneHotCategorical
+
 from .....annotations import Annotations, AxisAnnotation
 from .....concept_graph import ConceptGraph
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
+from ...mid.models.variable import _DEFAULT_DIST_KWARGS
 from ..base.homogen import HomogenGraphModel
 
 
@@ -58,6 +61,13 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
     param_for_discrete_var = "logits"
     source_embeddings = True
     internal_embeddings = True
+
+    # Per-type distribution policy: how this model models each concept type.
+    variable_distributions = {
+        'binary': Bernoulli,
+        'categorical': OneHotCategorical,
+    }
+    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,

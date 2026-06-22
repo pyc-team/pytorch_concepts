@@ -287,7 +287,7 @@ class ConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         
@@ -397,15 +397,20 @@ class WeightedConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
         task_input = input[:, self.input_t_idx]
         task_target = target[:, self.target_t_idx]
-        
-        c_loss = self.concept_loss(ModelOutput(logits=concept_input, target=concept_target, extras=extra or None))
-        t_loss = self.task_loss(ModelOutput(logits=task_input, target=task_target, extras=extra or None))
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        c_sub = ModelOutput(target=concept_target, extra=extra or None)
+        c_sub.logits = concept_input
+        t_sub = ModelOutput(target=task_target, extra=extra or None)
+        t_sub.logits = task_input
+        c_loss = self.concept_loss(c_sub)
+        t_loss = self.task_loss(t_sub)
         
         return c_loss * self.concept_weight + t_loss * self.task_weight
 
@@ -572,16 +577,18 @@ class DepthWeightedConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         for i, d in enumerate(self._depth_levels):
             sub_input = input[:, self._input_idx[i]]
             sub_target = target[:, self._target_idx[i]]
             sub_loss = getattr(self, f"loss_depth_{d}")
-            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(
-                ModelOutput(logits=sub_input, target=sub_target, extras=extra or None)
-            )
+            sub_out = ModelOutput(target=sub_target, extra=extra or None)
+
+            # FIXME: update ModelOutput to generalize beyond logits
+            sub_out.logits = sub_input
+            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(sub_out)
         return total_loss
 
 
