@@ -34,9 +34,6 @@ class Concept:
         index (int): Concept-level index within the axis.
         cardinality (int): Number of states (1 for binary/continuous scalars).
         type (str): Concept type, one of ``'binary'`` / ``'categorical'`` / ``'continuous'``.
-        distribution (Optional[type]): Distribution class (e.g. ``Bernoulli``), or
-            ``None`` if not yet assigned.
-        dist_kwargs (Optional[dict]): Distribution kwargs (still read from metadata).
         states (Optional[List[str]]): State labels for this concept.
         slice (slice): Column span of this concept in the flattened (logit) tensor.
         metadata (dict): Raw per-concept metadata (escape hatch for extra keys).
@@ -45,8 +42,6 @@ class Concept:
     index: int
     cardinality: int
     type: str
-    distribution: Optional[Type]
-    dist_kwargs: Optional[dict]
     states: Optional[List[str]]
     slice: slice
     metadata: dict = field(default_factory=dict)
@@ -127,15 +122,20 @@ class AxisAnnotation:
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
     types: Optional[List[str]] = field(default=None)  # 'binary' | 'categorical' | 'continuous'
-    distributions: Optional[List[Type]] = field(default=None)  # distribution class per concept
     metadata: Optional[Dict[str, Dict]] = field(default=None)
+    # Concept-space annotation: each concept occupies a single integer-coded
+    # column regardless of its type (so all cardinalities are 1). This describes
+    # a ground-truth concept tensor, not the model's logit space. When True the
+    # ``categorical requires cardinality > 1`` invariant is relaxed (a categorical
+    # concept's column holds an integer class index). Build one from a normal
+    # (logit-space) annotation via :meth:`to_concept_space`.
+    concept_space: bool = field(default=False)
 
     def __setattr__(self, key, value):
-        # `metadata` and `distributions` may change after construction — a
-        # concept's distribution can be swapped between experiments — so they are
+        # `metadata` may change after construction, so it is
         # freely reassignable. The structural fields (labels, states,
         # cardinalities, types) remain write-once.
-        if key in ('metadata', 'distributions'):
+        if key == 'metadata':
             super().__setattr__(key, value)
             return
         if key in self.__dict__ and self.__dict__[key] is not None:
@@ -214,17 +214,14 @@ class AxisAnnotation:
                 raise ValueError(
                     f"Concept {label!r}: 'binary' requires cardinality 1, got {card}."
                 )
-            if t == 'categorical' and card <= 1:
+            # In concept-space every concept is a single integer-coded column, so a
+            # categorical concept legitimately has cardinality 1 (the column holds a
+            # class index); only enforce the >1 invariant in logit-space annotations.
+            if t == 'categorical' and card <= 1 and not self.concept_space:
                 raise ValueError(
                     f"Concept {label!r}: 'categorical' requires cardinality > 1, got {card}."
                 )
         object.__setattr__(self, 'types', resolved_types)
-
-        if self.distributions is not None and len(self.distributions) != len(self.labels):
-            raise ValueError(
-                f"Number of distributions ({len(self.distributions)}) must match "
-                f"number of labels ({len(self.labels)})"
-            )
 
         # Determine is_nested from cardinalities
         is_nested = any(card > 1 for card in self.cardinalities)
@@ -351,7 +348,7 @@ class AxisAnnotation:
         for c in self.cardinalities:
             cum.append(cum[-1] + c)
         return cum
-    
+
     @cached_property
     def concept_slices(self) -> Dict[str, slice]:
         """Precomputed mapping from concept name to slice in flattened tensor.
@@ -418,11 +415,10 @@ class AxisAnnotation:
     def concept(self, name: str) -> "Concept":
         """Return a read-only :class:`Concept` view for ``name``.
 
-        Groups the concept's per-column properties (cardinality, type,
-        distribution, states, logit slice) into one object, so callers can write
-        ``axis.concept('color').cardinality`` instead of the index-dance over the
-        parallel lists. Built fresh on each call so it always reflects the current
-        (mutable) ``distributions`` / ``metadata``.
+        Groups the concept's per-column properties (cardinality, type, states, logit slice) 
+        into one object, so callers can write ``axis.concept('color').cardinality`` instead of 
+        the index-dance over the parallel lists. 
+        Built fresh on each call so it always reflects the current (mutable) ``metadata``.
         """
         i = self.get_index(name)
         meta = (self.metadata.get(name, {}) if self.metadata else {}) or {}
@@ -431,8 +427,6 @@ class AxisAnnotation:
             index=i,
             cardinality=int(self.cardinalities[i]),
             type=self.types[i],
-            distribution=self.distributions[i] if self.distributions is not None else None,
-            dist_kwargs=meta.get('dist_kwargs'),
             states=self.states[i] if self.states is not None else None,
             slice=self.concept_slices[name],
             metadata=meta,
@@ -443,9 +437,8 @@ class AxisAnnotation:
         """All concepts as :class:`Concept` views, in axis order.
 
         Views are read from the canonical parallel lists (no duplicated storage);
-        useful for one-pass iteration, e.g.
-        ``[c.distribution for c in axis.concepts]``. Not cached, so it reflects the
-        current (mutable) ``distributions`` / ``metadata``.
+        useful for one-pass iteration. Not cached, so it reflects the
+        current (mutable) ``metadata``.
         """
         return [self.concept(name) for name in self.labels]
 
@@ -566,7 +559,6 @@ class AxisAnnotation:
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
             'types': list(self.types) if self.types else None,
-            'distributions': list(self.distributions) if self.distributions else None,
             'metadata': self.metadata,
         }
         return result
@@ -596,7 +588,6 @@ class AxisAnnotation:
             states=states,
             cardinalities=cardinalities,
             types=data.get('types'),
-            distributions=data.get('distributions'),
             metadata=data.get('metadata'),
         )
 
@@ -628,9 +619,6 @@ class AxisAnnotation:
             new_cards = None
 
         new_types = [self.types[i] for i in idxs]
-        new_distributions = (
-            [self.distributions[i] for i in idxs] if self.distributions is not None else None
-        )
 
         # 3) slice metadata (if present)
         new_metadata = None
@@ -643,8 +631,30 @@ class AxisAnnotation:
             states=new_states,
             cardinalities=new_cards,
             types=new_types,
-            distributions=new_distributions,
             metadata=new_metadata,
+            concept_space=self.concept_space,
+        )
+
+    def to_concept_space(self) -> "AxisAnnotation":
+        """Return a concept-space view: one integer-coded column per concept.
+
+        Cardinalities collapse to 1 (each concept becomes a single column) while
+        labels and types are preserved, so a ground-truth concept tensor of shape
+        ``(batch, n_concepts)`` (integer class indices for categorical concepts,
+        0/1 for binary) can be wrapped as an :class:`~torch_concepts.tensor.AnnotatedTensor`.
+        The result's :attr:`shape` equals the number of concepts, and
+        label-based slicing / :meth:`labels_by_type` operate per concept.
+
+        Returns ``self`` unchanged if this annotation is already concept-space.
+        """
+        if self.concept_space:
+            return self
+        return AxisAnnotation(
+            labels=list(self.labels),
+            cardinalities=[1] * len(self.labels),
+            types=list(self.types),
+            metadata=self.metadata,
+            concept_space=True,
         )
 
     def union_with(self, other: "AxisAnnotation") -> "AxisAnnotation":
@@ -664,12 +674,6 @@ class AxisAnnotation:
         new_states = _merge(self.states, other.states)
         new_types = _merge(self.types, other.types)
 
-        new_distributions = None
-        if self.distributions is not None or other.distributions is not None:
-            new_distributions = _merge(
-                self.distributions or [None] * len(self.labels),
-                other.distributions or [None] * len(other.labels),
-            )
         # merge metadata left-wins
         meta = None
         if self.metadata or other.metadata:
@@ -681,7 +685,7 @@ class AxisAnnotation:
                         meta[k] = v
         return AxisAnnotation(
             labels=labels, states=new_states, cardinalities=None,
-            types=new_types, distributions=new_distributions, metadata=meta,
+            types=new_types, metadata=meta,
         )
 
 

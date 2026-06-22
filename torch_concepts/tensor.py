@@ -102,6 +102,26 @@ class AnnotatedTensor:
         """The :class:`AxisAnnotation` describing axis 1."""
         return self._annotation
 
+    @property
+    def device(self) -> torch.device:
+        """Device of the underlying tensor.
+
+        Defined on the class (not just proxied via ``__getattr__``) so that
+        frameworks which detect movable batch elements by looking for ``to`` /
+        ``device`` on the type (e.g. PyTorch Lightning's ``TransferableDataType``)
+        recognise an :class:`AnnotatedTensor` and move it with the rest of the batch.
+        """
+        return self._data.device
+
+    def to(self, *args, **kwargs) -> 'AnnotatedTensor':
+        """Move/cast the underlying tensor, preserving the annotation.
+
+        Mirrors :meth:`torch.Tensor.to` and returns a new ``AnnotatedTensor``
+        wrapping the moved/cast data. Defined on the class so batch-transfer
+        machinery (e.g. Lightning) treats this as a transferable element.
+        """
+        return AnnotatedTensor(self._data.to(*args, **kwargs), self._annotation)
+
     # ------------------------------------------------------------------ #
     # Label-based slicing                                                  #
     # ------------------------------------------------------------------ #
