@@ -200,3 +200,38 @@ class TestPredictorSubclass:
         assert x.grad is not None
         assert enc.l.weight.grad is not None
         assert pred.l.weight.grad is not None
+
+
+# ===========================================================================
+# 8. annotate with explicit AxisAnnotation argument
+# ===========================================================================
+
+from torch_concepts import AxisAnnotation
+from torch_concepts.tensor import AnnotatedTensor
+
+
+class TestAnnotateMethod:
+    def test_annotate_with_explicit_out_concepts(self):
+        """annotate(x, ann) wraps x in AnnotatedTensor using given annotation."""
+        layer = _SimpleLayer(out_concepts=3, in_concepts=4)
+        x = torch.randn(2, 3)
+        ann = AxisAnnotation(labels=['a', 'b', 'c'])
+        result = layer.annotate(x, out_concepts=ann)
+        assert isinstance(result, AnnotatedTensor)
+        assert result.annotation.labels == ['a', 'b', 'c']
+
+    def test_annotate_uses_stored_out_concepts(self):
+        """annotate(x) uses self.out_concepts when it is an AxisAnnotation."""
+        ann = AxisAnnotation(labels=['x', 'y', 'z'])
+        layer = _SimpleLayer(out_concepts=ann)
+        x = torch.randn(4, 3)
+        result = layer.annotate(x)
+        assert isinstance(result, AnnotatedTensor)
+
+    def test_annotate_returns_plain_tensor_when_no_annotation(self):
+        """annotate(x) returns plain tensor when out_concepts is an int."""
+        layer = _SimpleLayer(out_concepts=3)
+        x = torch.randn(2, 3)
+        result = layer.annotate(x)
+        assert isinstance(result, torch.Tensor)
+        assert not isinstance(result, AnnotatedTensor)

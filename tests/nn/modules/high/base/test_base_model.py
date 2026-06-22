@@ -518,3 +518,69 @@ class TestBaseModelIntegration:
         
         assert x.grad is not None
         assert not torch.all(x.grad == 0)
+
+
+# Missing-line coverage tests
+class TestBaseModelMissingLines:
+    """Cover specific lines not reached by existing tests."""
+
+    # ------------------------------------------------------------------
+    # model.py line 261: variable_dist_kwargs per-instance override
+    # ------------------------------------------------------------------
+    def test_init_with_variable_dist_kwargs_override(self, annotations_with_distributions):
+        """Passing variable_dist_kwargs merges into the model's dict (line 261)."""
+        from torch.distributions import RelaxedBernoulli
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+            variable_dist_kwargs={RelaxedBernoulli: {'temperature': 0.5}},
+        )
+        assert RelaxedBernoulli in model.variable_dist_kwargs
+        assert model.variable_dist_kwargs[RelaxedBernoulli] == {'temperature': 0.5}
+
+    # ------------------------------------------------------------------
+    # model.py line 275: _setup_annotations early-return when None
+    # ------------------------------------------------------------------
+    def test_setup_annotations_none_is_noop(self, annotations_with_distributions):
+        """Calling _setup_annotations(None) is a no-op (line 275 early return)."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+        )
+        # Calling again with None should not overwrite existing annotations
+        prev_names = model.concept_names
+        model._setup_annotations(None)
+        assert model.concept_names == prev_names
+
+    # ------------------------------------------------------------------
+    # model.py line 309: backbone requires latent_size
+    # ------------------------------------------------------------------
+    def test_backbone_without_latent_size_raises(self, annotations_with_distributions):
+        """Providing a backbone without latent_size raises ValueError (line 309)."""
+        backbone = nn.Linear(10, 20)
+        with pytest.raises(ValueError, match="latent_size"):
+            ConcreteModel(
+                input_size=10,
+                annotations=annotations_with_distributions,
+                backbone=backbone,
+                # latent_size intentionally omitted
+            )
+
+    # ------------------------------------------------------------------
+    # model.py lines 355-358: _validate_concept_types raises for unsupported types
+    # ------------------------------------------------------------------
+    def test_validate_concept_types_raises_for_unsupported(self):
+        """A model with restricted supported_concept_types raises ValueError (lines 355-358)."""
+        class BinaryOnlyModel(ConcreteModel):
+            supported_concept_types = frozenset({"binary"})
+
+        mixed_ann = Annotations({
+            1: AxisAnnotation(
+                labels=['bin_c', 'cat_c'],
+                cardinalities=[1, 3],
+                types=['binary', 'categorical'],
+            )
+        })
+
+        with pytest.raises(ValueError, match="BinaryOnlyModel"):
+            BinaryOnlyModel(input_size=10, annotations=mixed_ann)

@@ -357,3 +357,84 @@ class TestInferenceWithPlate:
         out = eng.query(query=[], evidence={"x": torch.randn(B, 4), "g": g_obs})
         # g is evidence; no params for it
         assert "g" not in out.params
+
+
+# ===========================================================================
+# mid.intervention — context manager tests
+# ===========================================================================
+import torch
+import torch.nn as nn
+import torch.distributions as dist
+
+from torch_concepts.nn.modules.mid.intervention import intervention
+from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
+from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.low.priors import FixedPrior
+from torch_concepts.distributions import Delta
+from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
+from torch_concepts.nn.modules.low.intervention.policy.uniform import UniformPolicy
+
+
+def _make_test_pgm():
+    x = ConceptVariable("x", distribution=Delta, size=4)
+    c = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+    cpd_c = ParametricCPD(variable=c, parametrization=nn.Sequential(nn.Linear(4, 2), nn.Sigmoid()), parents=[x])
+    return BayesianNetwork(variables=[x, c], factors=[cpd_x, cpd_c])
+
+
+class TestMidIntervention:
+    def test_context_manager_restores_original(self):
+        """The context manager restores the original parametrization after exiting."""
+        pgm = _make_test_pgm()
+        original_enc = pgm.factors["c"].parametrization["probs"]
+        gt = torch.ones(1, 2)
+        with intervention(
+            pgm,
+            GroundTruthIntervention(gt),
+            UniformPolicy(),
+            variable_to_intervene_on="c",
+            parameter_to_intervene_on="probs",
+        ):
+            # During context: parametrization should be wrapped
+            assert pgm.factors["c"].parametrization["probs"] is not original_enc
+        # After context: restored
+        assert pgm.factors["c"].parametrization["probs"] is original_enc
+
+    def test_context_manager_runs_forward(self):
+        """The wrapped module can be called during the intervention context."""
+        pgm = _make_test_pgm()
+        gt = torch.ones(2, 2)
+        x_in = torch.randn(2, 4)
+        with intervention(
+            pgm,
+            GroundTruthIntervention(gt),
+            UniformPolicy(),
+            variable_to_intervene_on="c",
+            parameter_to_intervene_on="probs",
+        ):
+            result = pgm.factors["c"].parametrization["probs"](x_in)
+        assert result.shape == (2, 2)
+
+    def test_members_to_intervene_on_string(self):
+        """String member names are converted to integer indices."""
+        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = ConceptVariable("g", members=["m0", "m1"], distribution=dist.Bernoulli)
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+        cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        pgm = BayesianNetwork(variables=[x, g], factors=[cpd_x, cpd_g])
+
+        gt = torch.ones(2, 2)
+        # No error expected
+        with intervention(
+            pgm,
+            GroundTruthIntervention(gt),
+            UniformPolicy(),
+            variable_to_intervene_on="g",
+            parameter_to_intervene_on="probs",
+            members_to_intervene_on=["m0"],
+        ):
+            pass

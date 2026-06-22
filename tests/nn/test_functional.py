@@ -5,6 +5,7 @@ import torch
 import pandas as pd
 from torch.nn import Linear
 from torch_concepts.nn.functional import (
+    replace_expand_cols,
     grouped_concept_exogenous_mixture,
     selection_eval,
     linear_equation_eval,
@@ -1050,6 +1051,365 @@ class TestConceptFunctions(unittest.TestCase):
         # print((result > 0) == expected_result)
         self.assertEqual(torch.all((result > 0) == expected_result).item(),
                          True)
+
+
+class TestReplaceExpandCols(unittest.TestCase):
+    """Test replace_expand_cols (line 56 ValueError path)."""
+
+    def test_invalid_dim_raises(self):
+        """c_emb must be 2D or 3D; 1D input raises ValueError (line 56)."""
+        c_emb = torch.randn(4)            # 1D — invalid
+        idx = torch.tensor([0])
+        c_emb_split = torch.randn(1, 1, 2)
+        with self.assertRaises(ValueError):
+            replace_expand_cols(c_emb, idx, c_emb_split)
+
+    def test_4d_raises(self):
+        """4D input also triggers the ValueError guard."""
+        c_emb = torch.randn(2, 3, 4, 5)
+        idx = torch.tensor([0])
+        c_emb_split = torch.randn(2, 1, 2, 4, 5)
+        with self.assertRaises(ValueError):
+            replace_expand_cols(c_emb, idx, c_emb_split)
+
+
+class TestLogicRuleEvalMemoryIdxs(unittest.TestCase):
+    """Test logic_rule_eval with non-None memory_idxs (line 359)."""
+
+    def test_memory_idxs_branch(self):
+        """Passing memory_idxs exercises the else branch at line 357-359."""
+        batch_size, memory_size, n_concepts, n_tasks = 2, 3, 4, 1
+        concept_weights = torch.randn(batch_size, memory_size, n_concepts, n_tasks, 3)
+        concept_weights = torch.softmax(concept_weights, dim=-1)
+        c_pred = torch.rand(batch_size, n_concepts)
+        # memory_idxs can be any tensor; the branch only checks is-not-None
+        memory_idxs = torch.zeros(batch_size, n_tasks, dtype=torch.long)
+
+        result = CF.logic_rule_eval(concept_weights, c_pred, memory_idxs=memory_idxs)
+        # shape is (batch_size, n_tasks, memory_size); concept_weights keeps its
+        # memory dimension through broadcasting
+        self.assertEqual(result.shape, (batch_size, n_tasks, memory_size))
+
+
+class TestEdgeTypeInvalidCombination(unittest.TestCase):
+    """Test edge_type ValueError for invalid matrix entries (line 920)."""
+
+    def test_invalid_combination_raises(self):
+        """Values other than 0/1/-1 combinations that don't match any case."""
+        # graph[0,1]=1, graph[1,0]=2 — no case matches → ValueError
+        graph = torch.tensor([[0, 1, 0], [2, 0, 0], [0, 0, 0]])
+        with self.assertRaises(ValueError):
+            CF.edge_type(graph, 0, 1)
+
+
+class TestCustomHammingDistanceCostPaths(unittest.TestCase):
+    """Test custom_hamming_distance covering all cost branches (lines 948-959)."""
+
+    @staticmethod
+    def _make_df(data, nodes):
+        return pd.DataFrame(data, index=nodes, columns=nodes)
+
+    def _check(self, first_data, second_data):
+        nodes = ['A', 'B']
+        g1 = self._make_df(first_data, nodes)
+        g2 = self._make_df(second_data, nodes)
+        cost, count = CF.custom_hamming_distance(g1, g2)
+        self.assertIsInstance(cost, (int, float))
+        return cost
+
+    def test_directed_to_missing(self):
+        """i->j → / : cost 1/4 (line 943)."""
+        cost = self._check([[0, 1], [0, 0]], [[0, 0], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 4.0)
+
+    def test_reverse_directed_to_missing(self):
+        """i<-j → / : cost 1/4 (line 944)."""
+        cost = self._check([[0, 0], [1, 0]], [[0, 0], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 4.0)
+
+    def test_directed_to_undirected(self):
+        """i->j → i-j : cost 1/5 (line 945)."""
+        cost = self._check([[0, 1], [0, 0]], [[0, 1], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 5.0)
+
+    def test_reverse_directed_to_undirected(self):
+        """i<-j → i-j : cost 1/5 (line 946)."""
+        cost = self._check([[0, 0], [1, 0]], [[0, 1], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 5.0)
+
+    def test_directed_to_opposite(self):
+        """i->j → i<-j : cost 1/3 (line 947)."""
+        cost = self._check([[0, 1], [0, 0]], [[0, 0], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 3.0)
+
+    def test_reverse_directed_to_directed(self):
+        """i<-j → i->j : cost 1/3 (line 948)."""
+        cost = self._check([[0, 0], [1, 0]], [[0, 1], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 3.0)
+
+    def test_undirected_to_missing(self):
+        """i-j → / : cost 1/4 (line 950)."""
+        cost = self._check([[0, 1], [1, 0]], [[0, 0], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 4.0)
+
+    def test_undirected_to_directed(self):
+        """i-j → i->j : cost 1/4 (line 951)."""
+        cost = self._check([[0, 1], [1, 0]], [[0, 1], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 4.0)
+
+    def test_undirected_to_reverse_directed(self):
+        """i-j → i<-j : cost 1/4 (line 952)."""
+        cost = self._check([[0, 1], [1, 0]], [[0, 0], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 4.0)
+
+    def test_missing_to_undirected(self):
+        """/ → i-j : cost 1/2 (line 954)."""
+        cost = self._check([[0, 0], [0, 0]], [[0, 1], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0 / 2.0)
+
+    def test_missing_to_directed(self):
+        """/ → i->j : cost 1 (line 955)."""
+        cost = self._check([[0, 0], [0, 0]], [[0, 1], [0, 0]])
+        self.assertAlmostEqual(cost, 1.0)
+
+    def test_missing_to_reverse_directed(self):
+        """/ → i<-j : cost 1 (line 956)."""
+        cost = self._check([[0, 0], [0, 0]], [[0, 0], [1, 0]])
+        self.assertAlmostEqual(cost, 1.0)
+
+
+class TestCheckBoundUnrecognized(unittest.TestCase):
+    """Test _check_bound raises for unrecognized format (line 1144)."""
+
+    def test_unrecognized_bound_raises(self):
+        """Passing a list (not number/Tensor/ndarray) raises ValueError."""
+        from torch_concepts.nn.functional import _check_bound
+        x0 = torch.ones(3)
+        with self.assertRaises(ValueError):
+            _check_bound([1.0, 2.0, 3.0], x0)
+
+
+class TestBuildConstrMissingBounds(unittest.TestCase):
+    """Test _build_constr fills in missing lb/ub (lines 1069, 1071)."""
+
+    def test_missing_lb_defaults_to_neg_inf(self):
+        """Constraint with only ub — lb defaults to -inf (line 1069)."""
+        from torch_concepts.nn.functional import _build_constr
+        x0 = torch.zeros(2)
+        constr = {"fun": lambda x: x.sum(), "ub": 1.0}
+        result = _build_constr(constr, x0)
+        self.assertIsNotNone(result)
+
+    def test_missing_ub_defaults_to_inf(self):
+        """Constraint with only lb — ub defaults to +inf (line 1071)."""
+        from torch_concepts.nn.functional import _build_constr
+        x0 = torch.zeros(2)
+        constr = {"fun": lambda x: x.sum(), "lb": 0.0}
+        result = _build_constr(constr, x0)
+        self.assertIsNotNone(result)
+
+
+class TestBuildConstrHessHessp(unittest.TestCase):
+    """Test _build_constr hess and hessp branches (lines 1094-1104)."""
+
+    def test_hess_branch(self):
+        """Constraint with explicit 'hess' callable (lines 1095-1096)."""
+        from torch_concepts.nn.functional import _build_constr
+        x0 = torch.zeros(2)
+
+        def fun(x):
+            return x.sum()
+
+        def hess_fn(x):
+            return torch.eye(2)
+
+        constr = {"fun": fun, "lb": 0.0, "ub": 2.0, "hess": hess_fn}
+        nc = _build_constr(constr, x0)
+        # Call the hess to exercise lines 1095-1096
+        x_np = x0.numpy()
+        result = nc.hess(x_np, np.array([1.0]))
+        self.assertIsNotNone(result)
+
+    def test_hessp_branch(self):
+        """Constraint with 'hessp' callable (lines 1099-1104)."""
+        from torch_concepts.nn.functional import _build_constr
+        x0 = torch.zeros(2)
+
+        def fun(x):
+            return x.sum()
+
+        def hessp_fn(x, p):
+            return torch.zeros_like(p)
+
+        constr = {"fun": fun, "lb": 0.0, "ub": 2.0, "hessp": hessp_fn}
+        nc = _build_constr(constr, x0)
+        x_np = x0.numpy()
+        lo = nc.hess(x_np, np.array([1.0]))
+        # LinearOperator should be callable via matvec
+        p_np = np.ones(2)
+        result = lo @ p_np
+        self.assertIsNotNone(result)
+
+
+class TestBuildConstrJacGradFnNone(unittest.TestCase):
+    """Test the grad_fn is None branch inside _build_constr matvec (line 1119)."""
+
+    def test_constant_grad_branch(self):
+        """When constraint uses a precomputed jac, grad_fn is None → zeros (line 1119)."""
+        from torch_concepts.nn.functional import _build_constr
+        x0 = torch.zeros(2)
+
+        def fun(x):
+            return x.sum()
+
+        # Providing "jac" means the grad computed inside f_hess won't have grad_fn
+        def jac_fn(x):
+            return torch.ones(2)
+
+        constr = {"fun": fun, "lb": 0.0, "ub": 2.0, "jac": jac_fn}
+        nc = _build_constr(constr, x0)
+        x_np = x0.numpy()
+        lo = nc.hess(x_np, np.array([1.0]))
+        result = lo @ np.ones(2)
+        self.assertIsNotNone(result)
+
+
+class TestMinimizeConstrJacOnly(unittest.TestCase):
+    """Test minimize_constr with only jac provided (lines 1282-1289)."""
+
+    def test_jac_only_path(self):
+        """Provide jac but not hess — falls into elif jac branch."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def jac(x):
+            return 2 * x
+
+        x0 = torch.ones(2)
+        result = CF.minimize_constr(f, x0, jac=jac, max_iter=20)
+        self.assertIsNotNone(result)
+        self.assertIn('x', result)
+
+    def test_jac_and_hess_string_path(self):
+        """Provide jac and hess as a string (line 1268)."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def jac(x):
+            return 2 * x
+
+        x0 = torch.ones(2)
+        result = CF.minimize_constr(f, x0, jac=jac, hess='2-point', max_iter=20)
+        self.assertIsNotNone(result)
+
+    def test_jac_and_hess_callable_path(self):
+        """Provide jac and hess as callables (lines 1271-1279)."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def jac(x):
+            return 2 * x
+
+        def hess(x):
+            return 2 * torch.eye(x.numel())
+
+        x0 = torch.ones(2)
+        result = CF.minimize_constr(f, x0, jac=jac, hess=hess, max_iter=20)
+        self.assertIsNotNone(result)
+
+
+class TestMinimizeConstrSLSQP(unittest.TestCase):
+    """Test minimize_constr SLSQP method (lines 1316-1339)."""
+
+    def test_slsqp_equality_constraint(self):
+        """SLSQP with equality constraint (lb==ub, line 1317-1318)."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def constraint_fun(x):
+            return x[0] + x[1]
+
+        def constraint_jac(x):
+            return torch.ones_like(x)
+
+        x0 = torch.ones(2)
+        constr = {
+            "fun": constraint_fun,
+            "jac": constraint_jac,
+            "lb": 1.0,
+            "ub": 1.0,
+        }
+        result = CF.minimize_constr(
+            f, x0, constr=constr, method="SLSQP", max_iter=50
+        )
+        self.assertIsNotNone(result)
+
+    def test_slsqp_inequality_lb_zero(self):
+        """SLSQP with lb==0 inequality constraint (line 1319-1320)."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def constraint_fun(x):
+            return x.sum()
+
+        def constraint_jac(x):
+            return torch.ones_like(x)
+
+        x0 = torch.ones(2)
+        constr = {
+            "fun": constraint_fun,
+            "jac": constraint_jac,
+            "lb": 0.0,
+            "ub": 5.0,
+        }
+        result = CF.minimize_constr(
+            f, x0, constr=constr, method="SLSQP", max_iter=50
+        )
+        self.assertIsNotNone(result)
+
+    def test_slsqp_inequality_ub_zero(self):
+        """SLSQP with ub==0 inequality constraint (lines 1321-1324)."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def constraint_fun(x):
+            return x.sum()
+
+        def constraint_jac(x):
+            return torch.ones_like(x)
+
+        x0 = -torch.ones(2)
+        constr = {
+            "fun": constraint_fun,
+            "jac": constraint_jac,
+            "lb": -5.0,
+            "ub": 0.0,
+        }
+        result = CF.minimize_constr(
+            f, x0, constr=constr, method="SLSQP", max_iter=50
+        )
+        self.assertIsNotNone(result)
+
+    def test_slsqp_unsupported_constraint_raises(self):
+        """SLSQP with lb!=0 and ub!=0 and lb!=ub raises NotImplementedError."""
+        def f(x):
+            return (x ** 2).sum()
+
+        def constraint_fun(x):
+            return x.sum()
+
+        def constraint_jac(x):
+            return torch.ones_like(x)
+
+        x0 = torch.ones(2)
+        constr = {
+            "fun": constraint_fun,
+            "jac": constraint_jac,
+            "lb": 1.0,
+            "ub": 3.0,
+        }
+        with self.assertRaises(NotImplementedError):
+            CF.minimize_constr(f, x0, constr=constr, method="SLSQP", max_iter=10)
 
 
 if __name__ == '__main__':

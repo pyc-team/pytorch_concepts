@@ -1029,3 +1029,427 @@ class TestConceptMetricsIntegration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestConceptMetricsEdgeCases(unittest.TestCase):
+    """Test edge cases and missing coverage in ConceptMetrics."""
+
+    def setUp(self):
+        import torchmetrics.classification as tc
+        self.BinaryAccuracy = tc.BinaryAccuracy
+        self.MulticlassAccuracy = tc.MulticlassAccuracy
+
+        # binary-only annotations
+        self.ann_binary = Annotations({
+            1: AxisAnnotation(
+                labels=['b1', 'b2'],
+                cardinalities=[1, 1],
+                types=['binary', 'binary'],
+            )
+        })
+        # categorical-only annotations
+        self.ann_cat = Annotations({
+            1: AxisAnnotation(
+                labels=['c1'],
+                cardinalities=[3],
+                types=['categorical'],
+            )
+        })
+        # mixed
+        self.ann_mixed = Annotations({
+            1: AxisAnnotation(
+                labels=['b1', 'c1'],
+                cardinalities=[1, 3],
+                types=['binary', 'categorical'],
+            )
+        })
+        # dicts of metrics in the format ConceptMetrics expects
+        self.bin_metrics = {'accuracy': self.BinaryAccuracy()}
+        self.cat_metrics = {'accuracy': self.MulticlassAccuracy}
+
+    def test_clone_metric_helper(self):
+        from torch_concepts.nn.modules.metrics import clone_metric
+        m = self.BinaryAccuracy()
+        cloned = clone_metric(m)
+        assert cloned is not m
+
+    def test_repr_non_empty(self):
+        m = ConceptMetrics(
+            annotations=self.ann_binary,
+            binary=self.bin_metrics,
+        )
+        r = repr(m)
+        assert "ConceptMetrics" in r
+
+    def test_collection_property_binary(self):
+        m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        coll = m.collection
+        assert 'binary' in coll
+
+    def test_collection_property_categorical(self):
+        m = ConceptMetrics(annotations=self.ann_cat, categorical=self.cat_metrics)
+        coll = m.collection
+        assert 'categorical' in coll
+
+    def test_clone_with_prefix(self):
+        m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        cloned = m.clone(prefix='val')
+        assert 'val/SUMMARY-binary_' in cloned.binary.prefix
+
+    def test_per_concept_tracking(self):
+        m = ConceptMetrics(
+            annotations=self.ann_binary,
+            binary=self.bin_metrics,
+            per_concept=True,
+        )
+        preds = torch.randn(4, 2)
+        targets = torch.randint(0, 2, (4, 2))
+        m.update(preds, targets)
+        results = m.compute()
+        assert len(results) > 0
+
+    def test_per_concept_tracking_subset(self):
+        m = ConceptMetrics(
+            annotations=self.ann_binary,
+            binary=self.bin_metrics,
+            per_concept=['b1'],
+        )
+        preds = torch.randn(4, 2)
+        targets = torch.randint(0, 2, (4, 2))
+        m.update(preds, targets)
+        results = m.compute()
+        # b1 per-concept collection present
+        assert any('b1' in k for k in results)
+
+    def test_update_skips_empty_batch(self):
+        m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        # Empty batch — should return without error
+        m.update(torch.zeros(0, 2), torch.zeros(0, 2))
+
+    def test_instantiate_metric_from_tuple(self):
+        m = ConceptMetrics(
+            annotations=self.ann_cat,
+            categorical={'acc': (self.MulticlassAccuracy, {})},
+        )
+        preds = torch.randn(4, 3)
+        targets = torch.randint(0, 3, (4, 1))
+        m.update(preds, targets)
+        results = m.compute()
+        assert len(results) > 0
+
+    def test_instantiate_metric_raises_on_num_classes_conflict(self):
+        with self.assertRaises(ValueError):
+            ConceptMetrics(
+                annotations=self.ann_cat,
+                categorical={'acc': (self.MulticlassAccuracy, {'num_classes': 3})},
+            )
+
+    def test_reset_clears_state(self):
+        m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        preds = torch.randn(4, 2)
+        targets = torch.randint(0, 2, (4, 2))
+        m.update(preds, targets)
+        m.reset()
+        # After reset computing should still work (fresh state)
+        m.update(preds, targets)
+        results = m.compute()
+        assert len(results) > 0
+
+    def test_update_with_model_output(self):
+        from torch_concepts.nn.modules.outputs import ModelOutput
+        m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        preds = torch.randn(4, 2)
+        targets = torch.randint(0, 2, (4, 2))
+        mo = ModelOutput()
+        mo.logits = preds
+        mo.target = targets
+        m.update(mo)
+        results = m.compute()
+        assert len(results) > 0
+
+    def test_continuous_not_supported_raises(self):
+        ann_cont = Annotations({
+            1: AxisAnnotation(
+                labels=['cont1'],
+                cardinalities=[1],
+                types=['continuous'],
+            )
+        })
+        from torchmetrics.regression import MeanSquaredError
+        with self.assertRaises(NotImplementedError):
+            ConceptMetrics(annotations=ann_cont, continuous={'mse': MeanSquaredError()})
+
+    def test_per_concept_categorical(self):
+        m = ConceptMetrics(
+            annotations=self.ann_cat,
+            categorical=self.cat_metrics,
+            per_concept=True,
+        )
+        preds = torch.randn(4, 3)
+        targets = torch.randint(0, 3, (4, 1))
+        m.update(preds, targets)
+        results = m.compute()
+        assert len(results) > 0
+
+
+class TestConceptMetricsMissingLines(unittest.TestCase):
+    """Tests targeting specific missing lines in ConceptMetrics."""
+
+    def _make_binary_ann(self):
+        return Annotations({
+            1: AxisAnnotation(labels=['b1', 'b2'], cardinalities=[1, 1], types=['binary', 'binary'])
+        })
+
+    def _make_cat_ann(self):
+        return Annotations({
+            1: AxisAnnotation(labels=['c1'], cardinalities=[3], types=['categorical'])
+        })
+
+    def test_per_concept_invalid_name_raises(self):
+        """per_concept list with unknown name raises ValueError."""
+        ann = self._make_binary_ann()
+        with self.assertRaises(ValueError):
+            ConceptMetrics(
+                annotations=ann,
+                binary={'acc': torchmetrics.classification.BinaryAccuracy()},
+                per_concept=['nonexistent'],
+            )
+
+    def test_per_concept_invalid_type_raises(self):
+        """per_concept with a non-bool/non-list raises ValueError."""
+        ann = self._make_binary_ann()
+        with self.assertRaises(ValueError):
+            ConceptMetrics(
+                annotations=ann,
+                binary={'acc': torchmetrics.classification.BinaryAccuracy()},
+                per_concept=42,
+            )
+
+    def test_clone_with_prefix_updates_per_concept(self):
+        """clone(prefix=...) updates per-concept collection prefixes."""
+        ann = self._make_binary_ann()
+        m = ConceptMetrics(
+            annotations=ann,
+            binary={'acc': torchmetrics.classification.BinaryAccuracy()},
+            per_concept=True,
+        )
+        cloned = m.clone(prefix='test')
+        # Check b1 collection has updated prefix
+        assert cloned._per_concept  # non-empty
+        for coll in cloned._per_concept.values():
+            assert 'test/' in coll.prefix
+
+    def test_clone_with_none_prefix_no_change(self):
+        """clone(prefix=None) keeps existing prefix."""
+        ann = self._make_binary_ann()
+        m = ConceptMetrics(
+            annotations=ann,
+            binary={'acc': torchmetrics.classification.BinaryAccuracy()},
+        )
+        original_prefix = m.binary.prefix
+        cloned = m.clone(prefix=None)
+        assert cloned.binary.prefix == original_prefix
+
+    def test_categorical_summary_update(self):
+        """Summary update for categorical concepts."""
+        ann = self._make_cat_ann()
+        m = ConceptMetrics(
+            annotations=ann,
+            categorical={'acc': torchmetrics.classification.MulticlassAccuracy},
+        )
+        preds = torch.randn(4, 3)
+        targets = torch.randint(0, 3, (4, 1))
+        m.update(preds, targets)
+        results = m.compute()
+        assert len(results) > 0
+
+
+class TestConceptMetricsContinuousPaths(unittest.TestCase):
+    """Cover continuous-concept code paths by bypassing the NotImplementedError guard.
+
+    The continuous branches exist in the source but are currently gated behind
+    NotImplementedError raises in both ConceptMetrics.__init__ and
+    utils.check_collection.  We reach them by constructing a valid binary-only
+    ConceptMetrics and then surgically replacing its internal state so that the
+    continuous MetricCollection contains a real metric — no source modifications.
+    """
+
+    def _make_binary_metrics(self):
+        """Return a ready-to-use binary-only ConceptMetrics instance."""
+        ann = Annotations({
+            1: AxisAnnotation(
+                labels=['b1'],
+                cardinalities=[1],
+                types=['binary'],
+            )
+        })
+        return ConceptMetrics(
+            annotations=ann,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            prefix='t',
+        )
+
+    def _inject_continuous_collection(self, m):
+        """Replace m.continuous with a populated MetricCollection."""
+        from torchmetrics import MetricCollection
+        from torchmetrics.regression import MeanSquaredError
+        m.continuous = MetricCollection(
+            {'mse': MeanSquaredError()},
+            prefix='t/SUMMARY-continuous_',
+        )
+        return m
+
+    # ------------------------------------------------------------------
+    # collection property — line 168
+    # ------------------------------------------------------------------
+    def test_collection_includes_continuous_when_non_empty(self):
+        """collection property adds 'continuous' key when non-empty (line 168)."""
+        m = self._make_binary_metrics()
+        self._inject_continuous_collection(m)
+        coll = m.collection
+        self.assertIn('continuous', coll)
+
+    def test_collection_includes_per_concept_when_non_empty(self):
+        """collection property adds per-concept keys when non-empty (lines 170-171)."""
+        ann = Annotations({
+            1: AxisAnnotation(labels=['b1'], cardinalities=[1], types=['binary'])
+        })
+        m = ConceptMetrics(
+            annotations=ann,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            per_concept=True,
+        )
+        coll = m.collection
+        # _per_concept has 'b1' with a BinaryAccuracy inside — len > 0
+        self.assertIn('b1', coll)
+
+    # ------------------------------------------------------------------
+    # clone() — line 189
+    # ------------------------------------------------------------------
+    def test_clone_updates_continuous_prefix(self):
+        """clone(prefix=...) updates continuous collection prefix (line 189)."""
+        m = self._make_binary_metrics()
+        self._inject_continuous_collection(m)
+        cloned = m.clone(prefix='val')
+        # The prefix of continuous should contain 'val/'
+        self.assertIn('val/', cloned.continuous.prefix)
+
+    # ------------------------------------------------------------------
+    # _setup_metrics() continuous summary branch — lines 253-254
+    # ------------------------------------------------------------------
+    def test_setup_metrics_continuous_summary(self):
+        """_setup_metrics populates summary_continuous from fn_collection (lines 253-254)."""
+        from torchmetrics.regression import MeanSquaredError
+
+        m = self._make_binary_metrics()
+        # Inject a continuous entry into fn_collection (bypassing check_collection)
+        m.fn_collection['continuous'] = {'mse': MeanSquaredError()}
+        # Inject a fake continuous type_group so _setup_metrics iterates it
+        m.groups['continuous'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
+        _, _, summary_cont, _ = m._setup_metrics()
+        self.assertIn('mse', summary_cont)
+
+    # ------------------------------------------------------------------
+    # _setup_metrics() continuous per-concept branch — lines 271-273
+    # ------------------------------------------------------------------
+    def test_setup_metrics_continuous_per_concept(self):
+        """_setup_metrics instantiates per-concept continuous metrics (lines 271-273)."""
+        from torchmetrics.regression import MeanSquaredError
+
+        ann = Annotations({
+            1: AxisAnnotation(
+                labels=['b1'],
+                cardinalities=[1],
+                types=['binary'],
+            )
+        })
+        m = ConceptMetrics(
+            annotations=ann,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            per_concept=True,
+        )
+        # Override the concept type to 'continuous' for b1
+        m.types = ['continuous']
+        # Inject continuous metrics into fn_collection
+        m.fn_collection['continuous'] = {'mse': MeanSquaredError()}
+        m.fn_collection._config.pop('binary', None)
+        # Re-run _setup_metrics — should hit the elif c_type == 'continuous' branch
+        m._concepts_to_trace = ['b1']
+        _, _, _, per_concept = m._setup_metrics()
+        self.assertIn('b1', per_concept)
+
+    # ------------------------------------------------------------------
+    # update() continuous summary path — line 331
+    # ------------------------------------------------------------------
+    def test_update_raises_for_continuous_summary(self):
+        """update() raises NotImplementedError for continuous summary (line 331)."""
+        from torchmetrics import MetricCollection
+        from torchmetrics.regression import MeanSquaredError
+
+        m = self._make_binary_metrics()
+        # Make the continuous collection non-empty
+        m.continuous = MetricCollection(
+            {'mse': MeanSquaredError()},
+            prefix='t/SUMMARY-continuous_',
+        )
+        # Inject a fake continuous group entry so the guard passes
+        m.groups['continuous'] = {
+            'labels': ['fake_cont'],
+            'concept_idx': [0],
+            'logits_idx': slice(0, 1),
+        }
+        # Clear the binary group so we skip straight to the continuous check
+        m.groups['binary'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
+        m.groups['categorical'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
+        preds = torch.randn(4, 1)
+        targets = torch.randn(4, 1)
+        with self.assertRaises(NotImplementedError):
+            m.update(preds, targets)
+
+    # ------------------------------------------------------------------
+    # update() per-concept continuous path — lines 343-344
+    # ------------------------------------------------------------------
+    def test_update_per_concept_continuous(self):
+        """update() calls per-concept collection for continuous type (lines 343-344)."""
+        from torchmetrics import MetricCollection
+        from torchmetrics.regression import MeanSquaredError
+
+        ann = Annotations({
+            1: AxisAnnotation(
+                labels=['b1'],
+                cardinalities=[1],
+                types=['binary'],
+            )
+        })
+        m = ConceptMetrics(
+            annotations=ann,
+            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+            per_concept=True,
+        )
+        # Replace per-concept b1 collection with a continuous-style MSE metric
+        mse = MeanSquaredError()
+        m._per_concept['b1'] = MetricCollection({'mse': mse}, prefix='b1_')
+        # Override type to continuous for b1
+        m.types = ['continuous']
+        # Disable summary to avoid hitting line 321
+        m.summary = False
+
+        preds = torch.randn(4, 1)
+        targets = torch.randn(4, 1)
+        m.update(preds, targets)  # should not raise
+        result = m.compute()
+        self.assertIn('b1_mse', result)
+
+    # ------------------------------------------------------------------
+    # compute() continuous branch — line 354
+    # ------------------------------------------------------------------
+    def test_compute_includes_continuous(self):
+        """compute() includes continuous results when collection is non-empty (line 354)."""
+        m = self._make_binary_metrics()
+        self._inject_continuous_collection(m)
+        # Provide some data to the continuous collection so compute returns a value
+        cont_val = torch.randn(4, 1)
+        m.continuous.update(cont_val, cont_val)  # MSE of identical tensors = 0
+        results = m.compute()
+        self.assertTrue(any('continuous' in k.lower() or 'mse' in k.lower()
+                            for k in results))

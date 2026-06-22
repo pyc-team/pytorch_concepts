@@ -1328,8 +1328,14 @@ def minimize_constr(
             )
         original_fun = constr["fun"]
         original_jac = constr["jac"]
-        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy()
-        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy()
+        # scipy's SLSQP backend requires float64 inputs/outputs throughout.
+        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        x0_np = x0_np.astype("float64")
+        f_slsqp = f_with_jac
+        f_with_jac = lambda x: tuple(
+            v.astype("float64") for v in f_slsqp(x)
+        )
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
