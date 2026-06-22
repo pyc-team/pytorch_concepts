@@ -101,15 +101,11 @@ class ConceptLoss(nn.Module):
         >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
         >>> from torch_concepts import Annotations, AxisAnnotation
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch.distributions import Bernoulli, OneHotCategorical
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['is_round', 'color'],
         ...     cardinalities=[1, 3],
-        ...     metadata={
-        ...         'is_round': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'color': {'type': 'discrete', 'distribution': OneHotCategorical}
-        ...     }
+        ...     types=['binary', 'categorical'],
         ... )})
         >>>
         >>> # Single loss per type (backward compatible)
@@ -287,7 +283,7 @@ class ConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         
@@ -336,14 +332,15 @@ class WeightedConceptLoss(nn.Module):
         >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
         >>> from torch_concepts.annotations import AxisAnnotation, Annotations
-        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 3, 1])})
+        >>> import torch
+        >>> from torch_concepts.nn.modules.outputs import ModelOutput
+        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 1, 1])})
         >>> loss_fn = WeightedConceptLoss(
         ...     ann, concept_weight=0.7, task_weight=0.3,
         ...     task_names=['task'], binary=BCEWithLogitsLoss()
         ... )
-        >>> input = torch.randn(2, 5)
-        >>> target = torch.randint(0, 2, (2, 3))
-        >>> loss = loss_fn(input=input, target=target)
+        >>> out = ModelOutput(logits=torch.randn(2, 3), target=torch.randint(0, 2, (2, 3)).float())
+        >>> loss = loss_fn(out)
     """
     def __init__(
         self,
@@ -397,15 +394,20 @@ class WeightedConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
         task_input = input[:, self.input_t_idx]
         task_target = target[:, self.target_t_idx]
-        
-        c_loss = self.concept_loss(ModelOutput(logits=concept_input, target=concept_target, extras=extra or None))
-        t_loss = self.task_loss(ModelOutput(logits=task_input, target=task_target, extras=extra or None))
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        c_sub = ModelOutput(target=concept_target, extra=extra or None)
+        c_sub.logits = concept_input
+        t_sub = ModelOutput(target=task_target, extra=extra or None)
+        t_sub.logits = task_input
+        c_loss = self.concept_loss(c_sub)
+        t_loss = self.task_loss(t_sub)
         
         return c_loss * self.concept_weight + t_loss * self.task_weight
 
@@ -445,17 +447,12 @@ class DepthWeightedConceptLoss(nn.Module):
         >>> import torch
         >>> from torch_concepts.nn.modules.loss import DepthWeightedConceptLoss
         >>> from torch_concepts.annotations import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
-        >>> from torch.distributions import Bernoulli
+        >>> from torch_concepts import ConceptGraph
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['A', 'B', 'C'],
         ...     cardinalities=[1, 1, 1],
-        ...     metadata={
-        ...         'A': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'B': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'C': {'type': 'discrete', 'distribution': Bernoulli},
-        ...     }
+        ...     types=['binary', 'binary', 'binary'],
         ... )})
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
@@ -466,9 +463,9 @@ class DepthWeightedConceptLoss(nn.Module):
         ...     source_weight=1.0, depth_decay=0.5,
         ...     binary=torch.nn.BCEWithLogitsLoss()
         ... )
-        >>> preds = torch.randn(4, 3)
-        >>> targets = torch.randint(0, 2, (4, 3)).float()
-        >>> loss = loss_fn(input=preds, target=targets)
+        >>> from torch_concepts.nn.modules.outputs import ModelOutput
+        >>> out = ModelOutput(logits=torch.randn(4, 3), target=torch.randint(0, 2, (4, 3)).float())
+        >>> loss = loss_fn(out)
     """
 
     def __init__(
@@ -572,16 +569,18 @@ class DepthWeightedConceptLoss(nn.Module):
         """
         input = output.logits
         target = output.target
-        extra = dict(output.extras) if output.extras else {}
+        extra = dict(output.extra) if output.extra else {}
         
         total_loss = torch.tensor(0.0, device=input.device)
         for i, d in enumerate(self._depth_levels):
             sub_input = input[:, self._input_idx[i]]
             sub_target = target[:, self._target_idx[i]]
             sub_loss = getattr(self, f"loss_depth_{d}")
-            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(
-                ModelOutput(logits=sub_input, target=sub_target, extras=extra or None)
-            )
+            sub_out = ModelOutput(target=sub_target, extra=extra or None)
+
+            # FIXME: update ModelOutput to generalize beyond logits
+            sub_out.logits = sub_input
+            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(sub_out)
         return total_loss
 
 

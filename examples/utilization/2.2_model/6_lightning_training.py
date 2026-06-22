@@ -14,10 +14,8 @@ The model uses:
 
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data import ToyDataset
-from torch_concepts.data.base.datamodule import ConceptDataModule
-from torch.distributions import Bernoulli
+from torch_concepts.nn import ConceptBottleneckModel, MLP
+from torch_concepts.data import BnLearnDataModule
 
 from torchmetrics.classification import BinaryAccuracy
 
@@ -33,43 +31,32 @@ def main():
     print("=" * 60)
     
     n_samples = 10000
-    batch_size = 2048
-    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
-    datamodule = ConceptDataModule(dataset=dataset,
-                                   batch_size=batch_size,
-                                   val_size=0.1,
-                                   test_size=0.2,
-                                   seed=42)
-    annotations = dataset.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    batch_size = 512
+    datamodule = BnLearnDataModule(name="asia", n_gen=n_samples, seed=42,
+                                   val_size=0.1, test_size=0.2,
+                                   batch_size=batch_size)
+    annotations = datamodule.dataset.annotations
+    task_names = ['dysp']
+    concept_names = [n for n in annotations.get_axis_annotation(1).labels if n not in task_names]
+    query = concept_names + task_names
+    n_concepts = len(concept_names)
 
-    n_features = dataset.input_data.shape[1]
-    n_concepts = 2
-    n_tasks = 1
-
-    print(f"Input features: {n_features}")
-    print(f"Concepts: {n_concepts} - {concept_names[:2]}")
-    print(f"Tasks: {n_tasks} - {concept_names[2]}")
-    print(f"Training samples: {n_samples}")
+    n_features = datamodule.dataset.n_features[-1]
 
     # Init model
     print("\n" + "=" * 60)
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    # Define variable distributions as Bernoulli
-    variable_distributions = {name: Bernoulli for name in concept_names}
-
     # Initialize the CBM
     model = ConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
-        variable_distributions=variable_distributions,
-        task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        task_names=task_names,
+        backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
+        latent_size=128,  # Output size of the backbone
         # Enable Lightning training
         lightning=True,
-        # Lightning training parameters
         loss=torch.nn.BCEWithLogitsLoss(),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.02}
@@ -79,29 +66,9 @@ def main():
     print(f"Model type: {type(model).__name__}")
     print(f"Encoder output features: {model.latent_size}")
 
-
-    # Test forward pass
-    print("\n" + "=" * 60)
-    print("Step 3: Test forward pass")
-    print("=" * 60)
-    
-    x_batch = dataset.input_data[:batch_size]
-    
-    # Forward pass
-    query = concept_names
-    print(f"Query variables: {query}")
-    
-    with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
-    
-    print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.probs.shape}")
-    print(f"Expected output dim: {n_concepts + n_tasks}")
-
-
     # Test lightning training
     print("\n" + "=" * 60)
-    print("Step 4: Training loop with lightning")
+    print("Step 3: Training loop with lightning")
     print("=" * 60)
 
     trainer = Trainer(max_epochs=100)
@@ -125,18 +92,16 @@ def main():
     with torch.no_grad():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
-            out = model(x=batch['inputs']['x'], query=query)
-            c_pred = out.probs[:, :n_concepts]
-            y_pred = out.probs[:, n_concepts:]
+            out = model(query=query, input=batch['inputs']['x'])
+            c_pred = torch.cat([out.params[n]['logits'] for n in concept_names], dim=1)
+            y_pred = torch.cat([out.params[n]['logits'] for n in task_names], dim=1)
 
-            c_true = batch['concepts']['c'][:, :n_concepts]
-            y_true = batch['concepts']['c'][:, n_concepts:]
+            c = batch['concepts']['c']
+            c_true = c[:, :n_concepts]
+            y_true = c[:, n_concepts:]
 
-            concept_acc = concept_acc_fn(c_pred, c_true.int()).item()
-            task_acc = task_acc_fn(y_pred, y_true.int()).item()
-
-            concept_acc_sum += concept_acc
-            task_acc_sum += task_acc
+            concept_acc_sum += concept_acc_fn(c_pred, c_true.int()).item()
+            task_acc_sum += task_acc_fn(y_pred, y_true.int()).item()
             num_batches += 1
 
     avg_concept_acc = concept_acc_sum / num_batches if num_batches > 0 else 0.0

@@ -435,21 +435,20 @@ class ToyDAGDataset(ConceptDataset):
         
         # Create concept annotations
         concept_names = non_latent_vars
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
-        
+
         # Cardinalities: binary (2) -> 1, categorical (K) -> K
         cardinalities = [
-            1 if self.cardinalities[var] == 2 else self.cardinalities[var] 
+            1 if self.cardinalities[var] == 2 else self.cardinalities[var]
             for var in non_latent_vars
         ]
-        
+        # all variables are discrete: card==1 -> binary, card>1 -> categorical
+        types = ['binary' if card == 1 else 'categorical' for card in cardinalities]
+
         annotations = Annotations({
             1: AxisAnnotation(
                 labels=concept_names,
                 cardinalities=cardinalities,
-                metadata=concept_metadata
+                types=types,
             )
         })
         

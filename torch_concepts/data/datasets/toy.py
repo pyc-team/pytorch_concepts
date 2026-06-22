@@ -313,16 +313,13 @@ class ToyDataset(ConceptDataset):
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * len(concept_names))  # All binary concepts
 
         annotations = Annotations({
             1: AxisAnnotation(
                 labels=concept_names,
                 cardinalities=cardinalities,
-                metadata=concept_metadata
+                types=['binary'] * len(concept_names),
             )
         })
 
@@ -623,16 +620,15 @@ class CompletenessDataset(ConceptDataset):
         )
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * self._n_concepts) + tuple([self._n_tasks])
+        task_type = 'binary' if self._n_tasks == 1 else 'categorical'
+        types = ['binary'] * self._n_concepts + [task_type]
 
         annotations = Annotations({
             1: AxisAnnotation(
                 labels=concept_names,
                 cardinalities=cardinalities,
-                metadata=concept_metadata
+                types=types,
             )
         })
 

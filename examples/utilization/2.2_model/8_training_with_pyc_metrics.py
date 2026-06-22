@@ -15,7 +15,7 @@ from torch.distributions import Bernoulli
 from pytorch_lightning import Trainer
 import torchmetrics
 
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, MLP
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.data import ToyDataset
@@ -81,7 +81,8 @@ def main():
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
         lightning=True,
         loss=loss_fn,
         metrics=metrics,
@@ -106,10 +107,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        concepts = model(x=x_batch, query=query)
-    
+        concepts = model(input=x_batch, query=query)
+
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output concepts shape: {concepts.probs.shape}")
+    print(f"Output logits shape: {concepts.logits.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -149,31 +150,34 @@ def main():
     c_test = dataset.concepts[test_idxs]
     
     with torch.no_grad():
-        out = model(x=x_test, query=concept_names, return_logits=True)
+        out = model(input=x_test, query=concept_names)
 
     eval_metrics.update(out.logits, c_test.int())
     print(f"Evaluation results with custom metrics: {eval_metrics.compute()}")
 
     # Compute CaCE for every concept on the task
-    print("\n" + "=" * 60)
-    print("Step 7: Compute CaCE (concept → task)")
-    print("=" * 60)
+    # TODO: `compute_cace` needs porting to the refactored intervention API
+    #       (plate-based PGM + mid-level `intervention()` signature). Disabled
+    #       until that is done.
+    # print("\n" + "=" * 60)
+    # print("Step 7: Compute CaCE (concept → task)")
+    # print("=" * 60)
+    #
+    # from torch_concepts.nn.modules.metrics import compute_cace
+    #
+    # task_name = 'xor'
+    # source_names = [n for n in concept_names if n != task_name]
+    # test_loader = datamodule.test_dataloader()
+    #
+    # for src in source_names:
+    #     cace = compute_cace(
+    #         model=model,
+    #         dataloader=test_loader,
+    #         source_concept=src,
+    #         target_concept=task_name,
+    #     )
+    #     print(f"  CaCE({src} → {task_name}) = {cace.item():.4f}")
 
-    from torch_concepts.nn.modules.metrics import compute_cace
-
-    task_name = 'xor'
-    source_names = [n for n in concept_names if n != task_name]
-    test_loader = datamodule.test_dataloader()
-
-    for src in source_names:
-        cace = compute_cace(
-            model=model,
-            dataloader=test_loader,
-            source_concept=src,
-            target_concept=task_name,
-        )
-        print(f"  CaCE({src} → {task_name}) = {cace.item():.4f}")
-    
 
 if __name__ == "__main__":
     main()

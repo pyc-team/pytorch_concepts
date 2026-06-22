@@ -11,21 +11,38 @@ Tests cover:
 - Inference modes (deterministic and ancestral sampling)
 - Target preparation (prepare_target)
 - Edge cases and error handling
+
+Migrated to the high-level model API:
+- forward takes ``input=`` (not ``x=``) and returns ``ModelOutput`` with
+  ``.params`` only (no ``.probs`` / ``.logits``). For each queried concept,
+  ``out.params[name]`` is ``{'logits': tensor(B, cardinality)}`` (CEM sets
+  ``param_for_discrete_var='logits'``).
+- ``model.model`` -> ``model.pgm``.
+- default distributions are now BASE families (Bernoulli / OneHotCategorical),
+  read via ``model.concept_annotations.concept(name).distribution``.
+- ``latent_encoder_kwargs`` removed; use ``backbone=MLP(...)`` + ``latent_size=``.
 """
 import pytest
 import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, RelaxedBernoulli
+from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts.nn.modules.high.models.cem import (
     ConceptEmbeddingModel
 )
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn.modules.mid.inference import (
+from torch_concepts.nn import (
+    MLP,
     DeterministicInference,
     AncestralSamplingInference
 )
+
+
+def _logits(out, names):
+    """Concatenate the queried concepts' logits into a (B, sum(card)) tensor."""
+    import torch
+    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
 
 
 class DummyBackbone(nn.Module):
@@ -33,14 +50,14 @@ class DummyBackbone(nn.Module):
     def __init__(self, out_features=8):
         super().__init__()
         self.out_features = out_features
-    
+
     def forward(self, x):
         return torch.ones(x.shape[0], self.out_features)
 
 
 class TestCEMInitialization(unittest.TestCase):
     """Test CEM initialization."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -55,7 +72,7 @@ class TestCEMInitialization(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_init_basic(self):
         """Test basic initialization."""
         model = ConceptEmbeddingModel(
@@ -63,11 +80,11 @@ class TestCEMInitialization(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1']
         )
-        
-        self.assertIsInstance(model.model, nn.Module)
+
+        self.assertIsInstance(model.pgm, nn.Module)
         self.assertTrue(hasattr(model, 'inference'))
         self.assertEqual(model.concept_names, ['color', 'shape', 'size', 'task1'])
-    
+
     def test_init_with_exogenous_size(self):
         """Test initialization with custom exogenous size."""
         model = ConceptEmbeddingModel(
@@ -76,11 +93,11 @@ class TestCEMInitialization(unittest.TestCase):
             task_names=['task1'],
             embedding_size=32
         )
-        
-        self.assertIsInstance(model.model, nn.Module)
+
+        self.assertIsInstance(model.pgm, nn.Module)
         # The exogenous size should be passed to the encoder
-        self.assertTrue(hasattr(model, 'model'))
-    
+        self.assertTrue(hasattr(model, 'pgm'))
+
     def test_init_with_defaults(self):
         """Test initialization without explicit distributions (defaults used)."""
         ann_no_dist = Annotations({
@@ -94,18 +111,17 @@ class TestCEMInitialization(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann_no_dist,
             task_names=['task']
         )
-        
+
         self.assertEqual(model.concept_names, ['c1', 'c2', 'task'])
-        # Defaults should be filled in
-        meta = model.concept_annotations.metadata
-        self.assertEqual(meta['c1']['distribution'], RelaxedBernoulli)
-    
+        # Distributions live on the model, keyed by type.
+        self.assertEqual(model.variable_distributions['binary'], Bernoulli)
+
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""
         backbone = DummyBackbone()
@@ -113,22 +129,24 @@ class TestCEMInitialization(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             backbone=backbone,
+            latent_size=8,
             task_names=['task1']
         )
-        
+
         self.assertIsNotNone(model.backbone)
-    
+
     def test_init_with_latent_encoder(self):
-        """Test initialization with latent encoder config."""
+        """Test initialization with an MLP latent encoder (backbone + latent_size)."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task1'],
-            latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 2}
+            backbone=MLP(input_size=8, hidden_size=16, n_layers=2),
+            latent_size=16
         )
-        
+
         self.assertEqual(model.latent_size, 16)
-    
+
     def test_init_with_deterministic_inference(self):
         """Test initialization with deterministic inference."""
         model = ConceptEmbeddingModel(
@@ -138,11 +156,11 @@ class TestCEMInitialization(unittest.TestCase):
             inference=DeterministicInference
         )
         model.eval()  # Switch to eval mode to check eval_inference
-        
+
         self.assertIsInstance(model.inference, DeterministicInference)
-    
+
     def test_init_with_ancestral_sampling_inference(self):
-        """Test initialization with ancestral sampling inference."""
+        """Test initialization with ancestral sampling inference (init-only)."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
@@ -150,9 +168,9 @@ class TestCEMInitialization(unittest.TestCase):
             inference=AncestralSamplingInference
         )
         model.eval()  # Switch to eval mode to check eval_inference
-        
+
         self.assertIsInstance(model.inference, AncestralSamplingInference)
-    
+
     def test_factory_default_is_pytorch(self):
         """Test that default lightning=False creates pure PyTorch model."""
         model = ConceptEmbeddingModel(
@@ -160,10 +178,10 @@ class TestCEMInitialization(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1']
         )
-        
+
         # Default is pure PyTorch (no learner mixin)
         self.assertFalse(isinstance(model, BaseLearner))
-    
+
     def test_factory_lightning_training(self):
         """Test that lightning=True creates Lightning model."""
         model = ConceptEmbeddingModel(
@@ -172,14 +190,14 @@ class TestCEMInitialization(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1']
         )
-        
+
         # Should have BaseLearner mixin
         self.assertIsInstance(model, BaseLearner)
 
 
 class TestCEMForward(unittest.TestCase):
     """Test CEM forward pass."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -194,77 +212,84 @@ class TestCEMForward(unittest.TestCase):
                 }
             )
         })
-        
+
         self.model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task1']
         )
-    
+
     def test_forward_basic(self):
         """Test basic forward pass."""
         x = torch.randn(2, 8)
         query = ['color', 'shape', 'size']
-        out = self.model(query=query, x=x)
-        
+        out = self.model(query=query, input=x)
+
+        logits = _logits(out, query)
         # Output shape: batch_size x sum(cardinalities for queried variables)
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 3 + 2 + 1)  # color + shape + size
-    
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 3 + 2 + 1)  # color + shape + size
+
     def test_forward_all_concepts(self):
         """Test forward with all concepts and tasks."""
         x = torch.randn(4, 8)
         query = ['color', 'shape', 'size', 'task1']
-        out = self.model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 4)
-        self.assertEqual(out.probs.shape[1], 3 + 2 + 1 + 1)
-    
+        out = self.model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 4)
+        self.assertEqual(logits.shape[1], 3 + 2 + 1 + 1)
+
     def test_forward_single_concept(self):
         """Test forward with single concept."""
         x = torch.randn(2, 8)
         query = ['color']
-        out = self.model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 3)
-    
+        out = self.model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 3)
+
     def test_forward_only_tasks(self):
         """Test forward with only task variables."""
         x = torch.randn(2, 8)
         query = ['task1']
-        out = self.model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 1)
-    
+        out = self.model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 1)
+
     def test_forward_with_backbone(self):
         """Test forward pass with backbone."""
         backbone = DummyBackbone(out_features=8)
         model = ConceptEmbeddingModel(
-            input_size=8,
+            input_size=100,  # raw input width (consumed by the backbone)
             annotations=self.ann,
             backbone=backbone,
+            latent_size=8,
             task_names=['task1']
         )
-        
+
         x = torch.randn(2, 100)  # Raw input size (before backbone)
         query = ['color', 'shape']
-        out = model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 3 + 2)
-    
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 3 + 2)
+
     def test_forward_batch_sizes(self):
         """Test forward with various batch sizes."""
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             query = ['color', 'shape']
-            out = self.model(query=query, x=x)
-            
-            self.assertEqual(out.probs.shape[0], batch_size)
-            self.assertEqual(out.probs.shape[1], 3 + 2)
-    
+            out = self.model(query=query, input=x)
+
+            logits = _logits(out, query)
+            self.assertEqual(logits.shape[0], batch_size)
+            self.assertEqual(logits.shape[1], 3 + 2)
+
     def test_forward_deterministic_inference(self):
         """Test forward with deterministic inference."""
         model = ConceptEmbeddingModel(
@@ -273,303 +298,33 @@ class TestCEMForward(unittest.TestCase):
             task_names=['task1'],
             inference=DeterministicInference
         )
-        
+
         x = torch.randn(2, 8)
         query = ['color', 'shape']
-        
+
         # Multiple forwards should give same result (deterministic)
-        out1 = model(query=query, x=x)
-        out2 = model(query=query, x=x)
-        
-        self.assertTrue(torch.allclose(out1.probs, out2.probs))
-    
+        out1 = model(query=query, input=x)
+        out2 = model(query=query, input=x)
+
+        self.assertTrue(torch.allclose(_logits(out1, query), _logits(out2, query)))
+
     def test_forward_eval_mode(self):
         """Test forward in eval mode."""
         self.model.eval()
         x = torch.randn(2, 8)
         query = ['color', 'shape']
-        
+
         with torch.no_grad():
-            out = self.model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 3 + 2)
+            out = self.model(query=query, input=x)
 
-
-class TestCEMConceptTypes(unittest.TestCase):
-    """Test CEM with different concept types (binary, categorical, mixed)."""
-    
-    def test_init_binary_only(self):
-        """Test initialization with only binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'c3', 'task'],
-                cardinalities=[1, 1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=10,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=16
-        )
-        
-        self.assertIsInstance(model, ConceptEmbeddingModel)
-        self.assertEqual(model.concept_names, ['c1', 'c2', 'c3', 'task'])
-        # Verify model can be created without errors
-        self.assertTrue(hasattr(model, 'model'))
-    
-    def test_init_categorical_only(self):
-        """Test initialization with only categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['color', 'shape', 'material', 'task'],
-                cardinalities=[5, 4, 3, 2],
-                metadata={
-                    'color': {'type': 'categorical'},
-                    'shape': {'type': 'categorical'},
-                    'material': {'type': 'categorical'},
-                    'task': {'type': 'categorical'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=12,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=20
-        )
-        
-        self.assertIsInstance(model, ConceptEmbeddingModel)
-        self.assertEqual(model.concept_names, ['color', 'shape', 'material', 'task'])
-        self.assertTrue(hasattr(model, 'model'))
-    
-    def test_init_mixed_concepts(self):
-        """Test initialization with mixed binary and categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['binary1', 'categorical1', 'binary2', 'categorical2', 'task'],
-                cardinalities=[1, 4, 1, 3, 1],
-                metadata={
-                    'binary1': {'type': 'discrete'},
-                    'categorical1': {'type': 'categorical'},
-                    'binary2': {'type': 'discrete'},
-                    'categorical2': {'type': 'categorical'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=15,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=24
-        )
-        
-        self.assertIsInstance(model, ConceptEmbeddingModel)
-        self.assertEqual(model.concept_names, ['binary1', 'categorical1', 'binary2', 'categorical2', 'task'])
-        self.assertTrue(hasattr(model, 'model'))
-    
-    def test_forward_binary_only(self):
-        """Test forward pass with only binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'c3', 'task'],
-                cardinalities=[1, 1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=10,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=16
-        )
-        
-        x = torch.randn(8, 10)
-        query = ['c1', 'c2', 'c3', 'task']
-        out = model(query=query, x=x)
-        
-        # All binary: 1 + 1 + 1 + 1 = 4
-        self.assertEqual(out.probs.shape, (8, 4))
-        self.assertFalse(torch.isnan(out.probs).any(), "Output contains NaN values")
-        self.assertFalse(torch.isinf(out.probs).any(), "Output contains Inf values")
-    
-    def test_forward_categorical_only(self):
-        """Test forward pass with only categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['color', 'shape', 'material', 'task'],
-                cardinalities=[5, 4, 3, 2],
-                metadata={
-                    'color': {'type': 'categorical'},
-                    'shape': {'type': 'categorical'},
-                    'material': {'type': 'categorical'},
-                    'task': {'type': 'categorical'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=12,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=20
-        )
-        
-        x = torch.randn(6, 12)
-        query = ['color', 'shape', 'material', 'task']
-        out = model(query=query, x=x)
-        
-        # All categorical: 5 + 4 + 3 + 2 = 14
-        self.assertEqual(out.probs.shape, (6, 14))
-        self.assertFalse(torch.isnan(out.probs).any(), "Output contains NaN values")
-        self.assertFalse(torch.isinf(out.probs).any(), "Output contains Inf values")
-    
-    def test_forward_mixed_concepts(self):
-        """Test forward pass with mixed binary and categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['binary1', 'categorical1', 'binary2', 'categorical2', 'task'],
-                cardinalities=[1, 4, 1, 3, 1],
-                metadata={
-                    'binary1': {'type': 'discrete'},
-                    'categorical1': {'type': 'categorical'},
-                    'binary2': {'type': 'discrete'},
-                    'categorical2': {'type': 'categorical'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=15,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=24
-        )
-        
-        x = torch.randn(10, 15)
-        query = ['binary1', 'categorical1', 'binary2', 'categorical2', 'task']
-        out = model(query=query, x=x)
-        
-        # Mixed: 1 + 4 + 1 + 3 + 1 = 10
-        self.assertEqual(out.probs.shape, (10, 10))
-        self.assertFalse(torch.isnan(out.probs).any(), "Output contains NaN values")
-        self.assertFalse(torch.isinf(out.probs).any(), "Output contains Inf values")
-    
-    def test_forward_binary_only_partial_query(self):
-        """Test forward pass querying subset of binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['c1', 'c2', 'c3', 'c4', 'task'],
-                cardinalities=[1, 1, 1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'c4': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=10,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=16
-        )
-        
-        x = torch.randn(4, 10)
-        # Query only some concepts
-        query = ['c1', 'c3', 'task']
-        out = model(query=query, x=x)
-        
-        # Only queried: 1 + 1 + 1 = 3
-        self.assertEqual(out.probs.shape, (4, 3))
-    
-    def test_forward_categorical_only_partial_query(self):
-        """Test forward pass querying subset of categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['color', 'shape', 'size', 'task'],
-                cardinalities=[5, 4, 3, 2],
-                metadata={
-                    'color': {'type': 'categorical'},
-                    'shape': {'type': 'categorical'},
-                    'size': {'type': 'categorical'},
-                    'task': {'type': 'categorical'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=12,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=20
-        )
-        
-        x = torch.randn(5, 12)
-        # Query only some concepts
-        query = ['color', 'size']
-        out = model(query=query, x=x)
-        
-        # Only queried: 5 + 3 = 8
-        self.assertEqual(out.probs.shape, (5, 8))
-    
-    def test_forward_mixed_concepts_partial_query(self):
-        """Test forward pass querying subset of mixed concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
-                labels=['b1', 'cat1', 'b2', 'cat2', 'b3', 'task'],
-                cardinalities=[1, 4, 1, 3, 1, 1],
-                metadata={
-                    'b1': {'type': 'discrete'},
-                    'cat1': {'type': 'categorical'},
-                    'b2': {'type': 'discrete'},
-                    'cat2': {'type': 'categorical'},
-                    'b3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-        })
-        
-        model = ConceptEmbeddingModel(
-            input_size=15,
-            annotations=ann,
-            task_names=['task'],
-            embedding_size=24
-        )
-        
-        x = torch.randn(7, 15)
-        # Query mix of binary and categorical
-        query = ['b1', 'cat1', 'cat2']
-        out = model(query=query, x=x)
-        
-        # Mixed query: 1 + 4 + 3 = 8
-        self.assertEqual(out.probs.shape, (7, 8))
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 3 + 2)
 
 
 class TestCEMExogenousVariables(unittest.TestCase):
     """Test CEM exogenous variable handling."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -584,7 +339,7 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_different_exogenous_sizes(self):
         """Test models with different exogenous sizes."""
         for exogenous_size in [4, 8, 16, 32]:
@@ -594,14 +349,15 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 task_names=['task'],
                 embedding_size=exogenous_size
             )
-            
+
             x = torch.randn(2, 8)
             query = ['c1', 'c2', 'c3']
-            out = model(query=query, x=x)
-            
-            self.assertEqual(out.probs.shape[0], 2)
-            self.assertEqual(out.probs.shape[1], 2 + 3 + 1)
-    
+            out = model(query=query, input=x)
+
+            logits = _logits(out, query)
+            self.assertEqual(logits.shape[0], 2)
+            self.assertEqual(logits.shape[1], 2 + 3 + 1)
+
     def test_exogenous_in_bipartite_model(self):
         """Test that exogenous variables are properly integrated."""
         model = ConceptEmbeddingModel(
@@ -610,14 +366,14 @@ class TestCEMExogenousVariables(unittest.TestCase):
             task_names=['task'],
             embedding_size=16
         )
-        
+
         # Model should have bipartite structure with exogenous
-        self.assertTrue(hasattr(model.model, 'probabilistic_model'))
+        self.assertTrue(model.pgm is not None)
 
 
 class TestCEMPrepareTarget(unittest.TestCase):
     """Test CEM prepare_target."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -631,24 +387,24 @@ class TestCEMPrepareTarget(unittest.TestCase):
                 }
             )
         })
-        
+
         self.model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-    
+
     def test_prepare_target(self):
         """Test prepare_target returns target unchanged for CEM."""
         target = torch.randint(0, 2, (2, 3)).float()
-        
+
         prepared = self.model.prepare_target(target)
         self.assertTrue(torch.allclose(prepared, target))
 
 
 class TestCEMTraining(unittest.TestCase):
-    """Test CEM training scenarios."""
-    
+    """Test CEM training scenarios (manual PyTorch)."""
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -662,31 +418,32 @@ class TestCEMTraining(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_manual_training_mode(self):
-        """Test manual PyTorch training (no training mode specified)."""
+        """Test manual PyTorch training (no lightning mode)."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         # No lightning mode = pure PyTorch module (no learner mixin)
         self.assertFalse(isinstance(model, BaseLearner))
-        
+
         # Can train manually
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         loss_fn = nn.BCEWithLogitsLoss()
-        
+
         x = torch.randn(4, 8)
         y = torch.randint(0, 2, (4, 3)).float()
-        
+        query = ['c1', 'c2', 'task']
+
         model.train()
-        out = model(query=['c1', 'c2', 'task'], x=x, return_logits=True)
-        loss = loss_fn(out.logits, y)
-        
+        out = model(query=query, input=x)
+        loss = loss_fn(_logits(out, query), y)
+
         self.assertTrue(loss.requires_grad)
-    
+
     def test_gradients_flow(self):
         """Test that gradients flow through the model."""
         model = ConceptEmbeddingModel(
@@ -694,38 +451,40 @@ class TestCEMTraining(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         x = torch.randn(4, 8, requires_grad=True)
-        out = model(query=['c1', 'c2', 'task'], x=x)
-        loss = out.probs.sum()
+        query = ['c1', 'c2', 'task']
+        out = model(query=query, input=x)
+        loss = _logits(out, query).sum()
         loss.backward()
-        
+
         self.assertIsNotNone(x.grad)
-    
+
     def test_training_step(self):
-        """Test a complete training step."""
+        """Test a complete (manual) training step."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         loss_fn = nn.BCEWithLogitsLoss()
-        
+
         # Training step
         model.train()
         x = torch.randn(8, 8)
         y = torch.randint(0, 2, (8, 3)).float()
-        
+        query = ['c1', 'c2', 'task']
+
         optimizer.zero_grad()
-        out = model(query=['c1', 'c2', 'task'], x=x, return_logits=True)
-        loss = loss_fn(out.logits, y)
+        out = model(query=query, input=x)
+        loss = loss_fn(_logits(out, query), y)
         loss.backward()
         optimizer.step()
-        
+
         self.assertTrue(True)  # If we get here, training works
-    
+
     def test_parameters_update(self):
         """Test that parameters actually update during training."""
         model = ConceptEmbeddingModel(
@@ -733,36 +492,37 @@ class TestCEMTraining(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         # Get initial parameters
         initial_params = {name: param.clone() for name, param in model.named_parameters()}
-        
+
         # Training step
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
         loss_fn = nn.MSELoss()
-        
+
         x = torch.randn(8, 8)
         y = torch.randn(8, 3)
-        
+        query = ['c1', 'c2', 'task']
+
         optimizer.zero_grad()
-        out = model(query=['c1', 'c2', 'task'], x=x, return_logits=True)
-        loss = loss_fn(out.logits, y)
+        out = model(query=query, input=x)
+        loss = loss_fn(_logits(out, query), y)
         loss.backward()
         optimizer.step()
-        
+
         # Check that at least some parameters changed
         params_changed = False
         for name, param in model.named_parameters():
             if not torch.allclose(param, initial_params[name]):
                 params_changed = True
                 break
-        
+
         self.assertTrue(params_changed)
 
 
 class TestCEMWithMultipleTasks(unittest.TestCase):
     """Test CEM with multiple task variables."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -778,7 +538,7 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_multiple_tasks_init(self):
         """Test initialization with multiple tasks."""
         model = ConceptEmbeddingModel(
@@ -786,9 +546,9 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1', 'task2']
         )
-        
+
         self.assertEqual(model.concept_names, ['c1', 'c2', 'c3', 'task1', 'task2'])
-    
+
     def test_multiple_tasks_forward(self):
         """Test forward pass with multiple tasks."""
         model = ConceptEmbeddingModel(
@@ -796,14 +556,15 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1', 'task2']
         )
-        
+
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'c3', 'task1', 'task2']
-        out = model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 2 + 3 + 1 + 1 + 2)
-    
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 2 + 3 + 1 + 1 + 2)
+
     def test_query_only_one_task(self):
         """Test querying only one of multiple tasks."""
         model = ConceptEmbeddingModel(
@@ -811,18 +572,19 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
             annotations=self.ann,
             task_names=['task1', 'task2']
         )
-        
+
         x = torch.randn(2, 8)
         query = ['c1', 'task1']
-        out = model(query=query, x=x)
-        
-        self.assertEqual(out.probs.shape[0], 2)
-        self.assertEqual(out.probs.shape[1], 2 + 1)
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertEqual(logits.shape[1], 2 + 1)
 
 
 class TestCEMConceptTypes(unittest.TestCase):
     """Test CEM with different concept types (binary, categorical, mixed)."""
-    
+
     def test_only_binary_concepts_init(self):
         """Test initialization with only binary concepts."""
         ann = Annotations({
@@ -837,17 +599,17 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         self.assertIsNotNone(model)
-        self.assertTrue(hasattr(model, 'model'))
-    
+        self.assertTrue(hasattr(model, 'pgm'))
+
     def test_only_binary_concepts_forward(self):
         """Test forward pass with only binary concepts."""
         ann = Annotations({
@@ -862,20 +624,24 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         x = torch.randn(4, 8)
-        out = model(query=['c1', 'c2', 'c3', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape[0], 4)
-        self.assertEqual(out.probs.shape[1], 4)  # 3 binary concepts + 1 binary task
-    
+        query = ['c1', 'c2', 'c3', 'task']
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 4)
+        self.assertEqual(logits.shape[1], 4)  # 3 binary concepts + 1 binary task
+        self.assertFalse(torch.isnan(logits).any(), "Output contains NaN values")
+        self.assertFalse(torch.isinf(logits).any(), "Output contains Inf values")
+
     def test_only_categorical_concepts_init(self):
         """Test initialization with only categorical concepts."""
         ann = Annotations({
@@ -890,17 +656,17 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         self.assertIsNotNone(model)
-        self.assertTrue(hasattr(model, 'model'))
-    
+        self.assertTrue(hasattr(model, 'pgm'))
+
     def test_only_categorical_concepts_forward(self):
         """Test forward pass with only categorical concepts."""
         ann = Annotations({
@@ -915,26 +681,28 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         x = torch.randn(4, 8)
-        out = model(query=['color', 'shape', 'size', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape[0], 4)
-        self.assertEqual(out.probs.shape[1], 3 + 4 + 5 + 2)  # Sum of all cardinalities
-    
+        query = ['color', 'shape', 'size', 'task']
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 4)
+        self.assertEqual(logits.shape[1], 3 + 4 + 5 + 2)  # Sum of all cardinalities
+
     def test_mixed_concepts_init(self):
         """Test initialization with mixed binary and categorical concepts."""
         ann = Annotations({
             1: AxisAnnotation(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
-                cardinalities=[1, 3, 1, 4, 2],  # Mix: binary (1), categorical (3), binary (1), categorical (4), categorical (2)
+                cardinalities=[1, 3, 1, 4, 2],
                 metadata={
                     'is_red': {'type': 'discrete'},
                     'shape': {'type': 'discrete'},
@@ -944,17 +712,17 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         self.assertIsNotNone(model)
-        self.assertTrue(hasattr(model, 'model'))
-    
+        self.assertTrue(hasattr(model, 'pgm'))
+
     def test_mixed_concepts_forward(self):
         """Test forward pass with mixed binary and categorical concepts."""
         ann = Annotations({
@@ -970,24 +738,26 @@ class TestCEMConceptTypes(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task'],
             embedding_size=16
         )
-        
+
         x = torch.randn(4, 8)
-        out = model(query=['is_red', 'shape', 'has_texture', 'size', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape[0], 4)
-        self.assertEqual(out.probs.shape[1], 1 + 3 + 1 + 4 + 2)  # Sum of all cardinalities = 11
+        query = ['is_red', 'shape', 'has_texture', 'size', 'task']
+        out = model(query=query, input=x)
+
+        logits = _logits(out, query)
+        self.assertEqual(logits.shape[0], 4)
+        self.assertEqual(logits.shape[1], 1 + 3 + 1 + 4 + 2)  # Sum of all cardinalities = 11
 
 
 class TestCEMEdgeCases(unittest.TestCase):
     """Test CEM edge cases and error handling."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -1001,7 +771,7 @@ class TestCEMEdgeCases(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_single_concept(self):
         """Test with single concept."""
         ann = Annotations({
@@ -1014,18 +784,19 @@ class TestCEMEdgeCases(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task']
         )
-        
+
         x = torch.randn(2, 8)
-        out = model(query=['c1', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape, (2, 2))
-    
+        query = ['c1', 'task']
+        out = model(query=query, input=x)
+
+        self.assertEqual(_logits(out, query).shape, (2, 2))
+
     def test_all_binary_concepts(self):
         """Test with all binary concepts."""
         ann = Annotations({
@@ -1040,18 +811,19 @@ class TestCEMEdgeCases(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task']
         )
-        
+
         x = torch.randn(2, 8)
-        out = model(query=['c1', 'c2', 'c3', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape, (2, 4))
-    
+        query = ['c1', 'c2', 'c3', 'task']
+        out = model(query=query, input=x)
+
+        self.assertEqual(_logits(out, query).shape, (2, 4))
+
     def test_all_categorical_concepts(self):
         """Test with all categorical concepts."""
         ann = Annotations({
@@ -1065,18 +837,19 @@ class TestCEMEdgeCases(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task']
         )
-        
+
         x = torch.randn(2, 8)
-        out = model(query=['c1', 'c2', 'task'], x=x)
-        
-        self.assertEqual(out.probs.shape, (2, 3 + 4 + 5))
-    
+        query = ['c1', 'c2', 'task']
+        out = model(query=query, input=x)
+
+        self.assertEqual(_logits(out, query).shape, (2, 3 + 4 + 5))
+
     def test_repr(self):
         """Test string representation."""
         model = ConceptEmbeddingModel(
@@ -1084,34 +857,35 @@ class TestCEMEdgeCases(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         repr_str = repr(model)
         self.assertIsInstance(repr_str, str)
         self.assertIn('ConceptEmbeddingModel', repr_str)
-    
+
     def test_device_consistency(self):
         """Test that model maintains device consistency."""
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         device = torch.device('cuda')
         model = model.to(device)
-        
+
         x = torch.randn(2, 8, device=device)
-        out = model(query=['c1', 'c2', 'task'], x=x)
-        
-        self.assertEqual(out.probs.device.type, device.type)
+        query = ['c1', 'c2', 'task']
+        out = model(query=query, input=x)
+
+        self.assertEqual(_logits(out, query).device.type, device.type)
 
 
 class TestCEMCardinalities(unittest.TestCase):
     """Test CEM cardinality extraction and handling."""
-    
+
     def test_concept_cardinalities_extraction(self):
         """Test that concept cardinalities are correctly extracted."""
         ann = Annotations({
@@ -1127,20 +901,20 @@ class TestCEMCardinalities(unittest.TestCase):
                 }
             )
         })
-        
+
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=ann,
             task_names=['task1', 'task2']
         )
-        
+
         # Concept cardinalities should be [2, 3, 1] (excluding tasks)
-        self.assertTrue(hasattr(model.model, 'probabilistic_model'))
+        self.assertTrue(model.pgm is not None)
 
 
 class TestCEMComparison(unittest.TestCase):
     """Test comparison between CEM and CBM."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = Annotations({
@@ -1154,40 +928,39 @@ class TestCEMComparison(unittest.TestCase):
                 }
             )
         })
-    
+
     def test_cem_has_exogenous(self):
-        """Test that CEM has exogenous variables while CBM doesn't."""
+        """Test that CEM and CBM produce comparable outputs."""
         from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
-        
+
         cem = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         cbm = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         # Both should work but have different architectures
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
-        
-        cem_out = cem(query=query, x=x)
-        cbm_out = cbm(query=query, x=x)
-        
+
+        cem_out = cem(query=query, input=x)
+        cbm_out = cbm(query=query, input=x)
+
         # Outputs should have same shape
-        self.assertEqual(cem_out.probs.shape, cbm_out.probs.shape)
+        self.assertEqual(_logits(cem_out, query).shape, _logits(cbm_out, query).shape)
 
 
 class TestCEMIndependentLearner(unittest.TestCase):
-    """Test CEM with independent training mode."""
-    
+    """Test CEM with Lightning training mode."""
+
     def setUp(self):
         """Set up test fixtures."""
-        # Simple annotation structure - CEM will create exogenous internally
         self.ann = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'c2', 'task'],
@@ -1199,17 +972,17 @@ class TestCEMIndependentLearner(unittest.TestCase):
                 }
             )
         })
-        
+
         self.batch_size = 4
         self.input_size = 8
         self.x = torch.randn(self.batch_size, self.input_size)
         self.c = torch.randint(0, 2, (self.batch_size, 3)).float()
-        
+
         self.batch = {
             'inputs': {'x': self.x},
             'concepts': {'c': self.c}
         }
-    
+
     def test_cem_independent_training_step(self):
         """Test CEM Lightning learner training step works."""
         model = ConceptEmbeddingModel(
@@ -1220,12 +993,11 @@ class TestCEMIndependentLearner(unittest.TestCase):
             loss=nn.BCEWithLogitsLoss()
         )
         model.train()
-        
+
         loss = model.training_step(self.batch)
-        
+
         self.assertIsNotNone(loss)
         self.assertTrue(loss.requires_grad)
-        
 
 
 if __name__ == '__main__':

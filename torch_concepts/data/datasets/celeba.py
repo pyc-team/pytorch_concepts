@@ -217,7 +217,7 @@ class CelebADataset(ConceptDataset):
             1: AxisAnnotation(
                 labels=attr_names,
                 cardinalities=cardinalities,
-                metadata={name: {'type': 'discrete'} for name in attr_names}
+                types=['binary'] * len(attr_names),
             )
         })
 

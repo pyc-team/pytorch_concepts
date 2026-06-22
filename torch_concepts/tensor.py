@@ -6,7 +6,7 @@ This module provides :class:`AnnotatedTensor`, a lightweight wrapper around a
 for its second axis (axis 1), enabling label-based column slicing and
 annotation-preserving tensor operations.
 """
-from typing import Union, Dict
+from typing import Optional, Union, Dict
 
 import torch
 
@@ -60,16 +60,10 @@ class AnnotatedTensor:
         >>>
         >>> # Label-based slicing
         >>> sliced = t["cat", "dog"]
-        >>> sliced.annotation.labels   # ['cat', 'dog']
-        >>> sliced.tensor.shape        # torch.Size([4, 2])
-        >>>
-        >>> # Aggregation over axis 0 preserves the annotation
-        >>> col_means = t.mean(dim=0)
-        >>> col_means.annotation.labels  # ['cat', 'dog', 'bird']
-        >>>
-        >>> # torch module-level functions work too
-        >>> summed = torch.sum(t, dim=0)
-        >>> summed.annotation.labels  # ['cat', 'dog', 'bird']
+        >>> sliced.annotation.labels
+        ['cat', 'dog']
+        >>> sliced.tensor.shape
+        torch.Size([4, 2])
     """
 
     def __init__(self, data: torch.Tensor, annotation: AxisAnnotation):
@@ -101,6 +95,26 @@ class AnnotatedTensor:
     def annotation(self) -> AxisAnnotation:
         """The :class:`AxisAnnotation` describing axis 1."""
         return self._annotation
+
+    @property
+    def device(self) -> torch.device:
+        """Device of the underlying tensor.
+
+        Defined on the class (not just proxied via ``__getattr__``) so that
+        frameworks which detect movable batch elements by looking for ``to`` /
+        ``device`` on the type (e.g. PyTorch Lightning's ``TransferableDataType``)
+        recognise an :class:`AnnotatedTensor` and move it with the rest of the batch.
+        """
+        return self._data.device
+
+    def to(self, *args, **kwargs) -> 'AnnotatedTensor':
+        """Move/cast the underlying tensor, preserving the annotation.
+
+        Mirrors :meth:`torch.Tensor.to` and returns a new ``AnnotatedTensor``
+        wrapping the moved/cast data. Defined on the class so batch-transfer
+        machinery (e.g. Lightning) treats this as a transferable element.
+        """
+        return AnnotatedTensor(self._data.to(*args, **kwargs), self._annotation)
 
     # ------------------------------------------------------------------ #
     # Label-based slicing                                                  #
@@ -168,8 +182,10 @@ class AnnotatedTensor:
             >>> a = AnnotatedTensor(torch.rand(4, 2), ann_a)
             >>> b = AnnotatedTensor(torch.rand(4, 2), ann_b)
             >>> merged = a.union_with(b)
-            >>> merged.annotation.labels   # ['cat', 'dog', 'bird', 'fish']
-            >>> merged.tensor.shape        # torch.Size([4, 4])
+            >>> merged.annotation.labels
+            ['cat', 'dog', 'bird', 'fish']
+            >>> merged.tensor.shape
+            torch.Size([4, 4])
         """
         all_tensors = [self, *others]
 
@@ -204,38 +220,35 @@ class AnnotatedTensor:
     # Type-based splitting                                                 #
     # ------------------------------------------------------------------ #
 
-    def split_by_type(self) -> Dict[str, 'AnnotatedTensor']:
+    def split_by_type(
+        self, 
+        concept_type: Optional[str] = None
+    ) -> Union['AnnotatedTensor', Dict[str, 'AnnotatedTensor']]:
         """
-        Split this tensor into a dictionary of :class:`AnnotatedTensor` instances,
-        one per unique type in the annotation's ``types`` field.
-
-        The keys of the returned dict are the raw type strings (e.g.
-        ``'discrete'``, ``'continuous'``); each value is an
-        :class:`AnnotatedTensor` containing only the columns that belong to
-        that type, with a correspondingly subsetted :class:`AxisAnnotation`.
-
-        Raises:
-            ValueError: If ``annotation.types`` is ``None`` (types are required
-                for splitting).
+        If ``concept_type`` is given, return the sub-tensor of concepts of ``concept_type``.
+        
+        If ``concept_type`` is ``None``, split this tensor into a 
+        dictionary of :class:`AnnotatedTensor` instances, one per concept type present.
+        The keys are the type strings ``'binary'`` / ``'categorical'`` /
+        ``'continuous'`` (only the non-empty ones); each value is an
+        :class:`AnnotatedTensor` containing only the columns of that type, with a
+        correspondingly subsetted :class:`AxisAnnotation`.
 
         Example:
-            >>> ann = AxisAnnotation(
-            ...     labels=['a', 'b', 'c'],
-            ...     types=['discrete', 'continuous', 'discrete'],
-            ... )
-            >>> t = AnnotatedTensor(torch.rand(4, 3), ann)
+            >>> ann = AxisAnnotation(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
+            >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
             >>> d = t.split_by_type()
-            >>> d['discrete'].annotation.labels    # ['a', 'c']
-            >>> d['continuous'].annotation.labels  # ['b']
+            >>> d['binary'].annotation.labels
+            ['a', 'c']
+            >>> d['categorical'].annotation.labels
+            ['b']
         """
-        if self._annotation.types is None:
-            raise ValueError(
-                "split_by_type() requires annotation.types to be set. "
-                "Pass types=['discrete', 'continuous', ...] when constructing "
-                "the AxisAnnotation, or use AxisAnnotation.empty(n, types=...)."
-            )
-
-        return {t: self[labels] for t, labels in self._annotation.labels_by_type.items()}
+        if concept_type is None:
+            return {
+                t: self[labels]
+                for t, labels in self._annotation.labels_by_type.items()
+            }
+        return self[self._annotation.labels_by_type.get(concept_type, [])]
 
     # ------------------------------------------------------------------ #
     # torch.* function protocol                                            #

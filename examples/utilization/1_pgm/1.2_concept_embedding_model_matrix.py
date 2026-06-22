@@ -58,7 +58,7 @@ def main():
         # concepts and embeddings; the result is threaded through the Sigmoid.
         "task_predictor": Sequential(
             MixConceptEmbeddingToConcept(
-                in_concepts=pyc.AxisAnnotation.empty(2, types=['discrete', 'discrete']),
+                in_concepts=pyc.AxisAnnotation.empty(2, types=['binary', 'binary']),
                 in_embeddings=emb_dims,
                 out_concepts=1,
             ),

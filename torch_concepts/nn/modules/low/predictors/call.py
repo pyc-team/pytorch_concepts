@@ -45,7 +45,8 @@ class CallableConceptToConcept(BaseConceptLayer):
         ...     use_bias=True
         ... )
         >>> predictions = predictor(concepts)
-        >>> print(predictions.shape)  # torch.Size([32, 2])
+        >>> print(predictions.shape)
+        torch.Size([32, 2])
 
         References
             Pearl, J. "Causality", Cambridge University Press (2009).

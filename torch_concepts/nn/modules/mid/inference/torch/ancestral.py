@@ -1,4 +1,4 @@
-"""AncestralInference — forward inference that samples ancestrally."""
+"""AncestralSamplingInference — forward inference that samples ancestrally."""
 from __future__ import annotations
 
 from typing import Callable, Union
@@ -7,7 +7,7 @@ from ...models.bayesian_network import BayesianNetwork
 from .forward import ForwardInference
 
 
-class AncestralInference(ForwardInference):
+class AncestralSamplingInference(ForwardInference):
     """Forward inference engine that draws samples ancestrally.
 
     Discrete variables are sampled via the straight-through (ST) estimator so
@@ -37,7 +37,7 @@ class AncestralInference(ForwardInference):
         across a level non-deterministic. Defaults to ``False``.
     """
 
-    name = "AncestralInference"
+    name = "AncestralSamplingInference"
 
     def __init__(
         self,

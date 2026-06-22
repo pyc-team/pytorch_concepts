@@ -7,7 +7,7 @@ from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
-    ParametricCPD, BayesianNetwork, AncestralInference, LearnablePrior, Sequential, \
+    ParametricCPD, BayesianNetwork, AncestralSamplingInference, LearnablePrior, Sequential, \
     RandomPolicy, DoIntervention, intervention, InterventionModule
 
 
@@ -66,7 +66,7 @@ def main():
     )
 
     # Inference Initialization
-    inference_engine = AncestralInference(concept_model)
+    inference_engine = AncestralSamplingInference(concept_model)
     evidence = {'input': x_train}
     query_concepts = {"concepts": c_train, "xor": y_train}
 

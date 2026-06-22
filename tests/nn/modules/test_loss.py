@@ -166,7 +166,7 @@ class TestConceptLoss(unittest.TestCase):
         axis = AxisAnnotation(
             labels=('cont1',),
             cardinalities=[1],
-            metadata={'cont1': {'type': 'continuous'}}
+            types=['continuous'],
         )
         ann = Annotations({1: axis})
         with self.assertRaises(NotImplementedError):
@@ -416,7 +416,7 @@ class TestLossConfiguration(unittest.TestCase):
 # DepthWeightedConceptLoss tests
 # ======================================================================
 
-from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+from torch_concepts import ConceptGraph
 
 
 class TestDepthWeightedConceptLoss(unittest.TestCase):
@@ -1044,7 +1044,7 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
     def test_extra_kwarg_ignored_when_not_in_sig(self):
@@ -1052,14 +1052,14 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         # Should not raise even though BCEWithLogitsLoss doesn't take 'embeddings'
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': torch.randn(4, 8)}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': torch.randn(4, 8)}))
         self.assertEqual(loss.shape, ())
 
     def test_var_kwargs_term_receives_everything(self):
         loss_fn = ConceptLoss(self.ann, binary=_VarKwargsLoss())
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'extra_data': torch.ones(3)}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'extra_data': torch.ones(3)}))
         self.assertEqual(loss.shape, ())
 
     def test_composite_mixed_signatures(self):
@@ -1072,10 +1072,10 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
         # Verify embeddings affect the loss
-        loss_zero = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': torch.zeros(4, 8)}))
+        loss_zero = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': torch.zeros(4, 8)}))
         self.assertNotEqual(loss.item(), loss_zero.item())
 
 
@@ -1104,7 +1104,7 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 3)
         targets = torch.randint(0, 2, (4, 3)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
 
@@ -1113,7 +1113,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
 
     def setUp(self):
         from torch.distributions import Bernoulli
-        from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+        from torch_concepts import ConceptGraph
         axis = AxisAnnotation(
             labels=['A', 'B'],
             cardinalities=[1, 1],
@@ -1134,7 +1134,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extras={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
 
 
@@ -1250,7 +1250,7 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
 
     def test_composite_binary_with_regularizer(self):
         from torch.distributions import Bernoulli
-        from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+        from torch_concepts import ConceptGraph
         axis = AxisAnnotation(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],

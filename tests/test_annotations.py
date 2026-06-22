@@ -8,7 +8,7 @@ This test suite covers:
 import unittest
 import warnings
 import pytest
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import AxisAnnotation, Annotations, Concept
 
 
 class TestAxisAnnotation(unittest.TestCase):
@@ -1194,33 +1194,21 @@ class TestAxisAnnotationCachedUtilities(unittest.TestCase):
         self.mixed_axis = AxisAnnotation(
             labels=['is_big', 'color', 'shape', 'temperature'],
             cardinalities=[1, 3, 2, 1],
-            metadata={
-                'is_big': {'type': 'discrete'},
-                'color': {'type': 'discrete'},
-                'shape': {'type': 'discrete'},
-                'temperature': {'type': 'continuous'}
-            }
+            types=['binary', 'categorical', 'categorical', 'continuous'],
         )
-        
+
         # All binary
         self.binary_axis = AxisAnnotation(
             labels=['a', 'b', 'c'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'a': {'type': 'discrete'},
-                'b': {'type': 'discrete'},
-                'c': {'type': 'discrete'}
-            }
+            types=['binary', 'binary', 'binary'],
         )
-        
+
         # All categorical
         self.categorical_axis = AxisAnnotation(
             labels=['x', 'y'],
             cardinalities=[3, 4],
-            metadata={
-                'x': {'type': 'discrete'},
-                'y': {'type': 'discrete'}
-            }
+            types=['categorical', 'categorical'],
         )
 
     # =========================================================================
@@ -1526,5 +1514,399 @@ class TestAxisAnnotationCachedUtilities(unittest.TestCase):
         self.assertEqual(len(slices), n)
 
 
+class TestConceptView(unittest.TestCase):
+    """Tests for the per-concept `Concept` view."""
+
+    def setUp(self):
+        self.axis = AxisAnnotation(
+            labels=['size', 'color', 'temp'],
+            cardinalities=[1, 3, 1],
+            types=['binary', 'categorical', 'continuous'],
+        )
+
+    def test_concept_basic_fields(self):
+        c = self.axis.concept('color')
+        self.assertIsInstance(c, Concept)
+        self.assertEqual(c.name, 'color')
+        self.assertEqual(c.index, 1)
+        self.assertEqual(c.cardinality, 3)
+        self.assertEqual(c.type, 'categorical')
+        self.assertEqual(c.slice, slice(1, 4))
+
+    def test_concept_type_predicates(self):
+        self.assertTrue(self.axis.concept('size').is_binary)
+        self.assertFalse(self.axis.concept('size').is_categorical)
+        self.assertTrue(self.axis.concept('color').is_categorical)
+        self.assertTrue(self.axis.concept('temp').is_continuous)
+
+    def test_concepts_property_order(self):
+        names = [c.name for c in self.axis.concepts]
+        self.assertEqual(names, ['size', 'color', 'temp'])
+
+    def test_getitem_str_returns_concept(self):
+        self.assertIsInstance(self.axis['color'], Concept)
+        self.assertEqual(self.axis['color'].cardinality, 3)
+
+    def test_getitem_int_returns_label(self):
+        self.assertEqual(self.axis[0], 'size')
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnnotationsExtraCoverage(unittest.TestCase):
+    """Extra tests targeting uncovered lines in annotations.py."""
+
+    def setUp(self):
+        self.basic_axis = AxisAnnotation(
+            labels=['a', 'b', 'c'],
+            cardinalities=[1, 3, 1],
+            types=['binary', 'categorical', 'binary'],
+        )
+        self.annotations = Annotations({1: self.basic_axis})
+
+    # ------------------------------------------------------------------
+    # AxisAnnotation validation edge cases
+    # ------------------------------------------------------------------
+
+    def test_cardinalities_length_mismatch_raises(self):
+        """Extra cardinalities raises ValueError."""
+        with self.assertRaises(ValueError):
+            AxisAnnotation(
+                labels=['a', 'b'],
+                cardinalities=[1, 2, 3],  # too many
+            )
+
+    def test_types_length_mismatch_raises(self):
+        """Mismatched types length raises ValueError."""
+        with self.assertRaises(ValueError):
+            AxisAnnotation(
+                labels=['a', 'b'],
+                cardinalities=[1, 1],
+                types=['binary'],  # too short
+            )
+
+    def test_invalid_concept_type_raises(self):
+        """Unknown type string raises ValueError."""
+        with self.assertRaises(ValueError):
+            AxisAnnotation(
+                labels=['a'],
+                cardinalities=[1],
+                types=['invalid_type'],
+            )
+
+    def test_binary_with_cardinality_gt_1_raises(self):
+        """binary type with cardinality > 1 raises ValueError."""
+        with self.assertRaises(ValueError):
+            AxisAnnotation(
+                labels=['a'],
+                cardinalities=[3],
+                types=['binary'],
+            )
+
+    # ------------------------------------------------------------------
+    # AxisAnnotation.subset
+    # ------------------------------------------------------------------
+
+    def test_subset_no_states_preserves_types(self):
+        """subset on annotation without explicit states works."""
+        axis = AxisAnnotation(labels=['x', 'y'], cardinalities=[1, 1], types=['binary', 'binary'])
+        sub = axis.subset(['x'])
+        self.assertEqual(sub.labels, ['x'])
+
+    def test_subset_unknown_label_raises(self):
+        with self.assertRaises(ValueError):
+            self.basic_axis.subset(['nonexistent'])
+
+    # ------------------------------------------------------------------
+    # AxisAnnotation.to_concept_space
+    # ------------------------------------------------------------------
+
+    def test_to_concept_space_already_concept_space(self):
+        cs = AxisAnnotation(labels=['a'], cardinalities=[1], types=['binary'], concept_space=True)
+        result = cs.to_concept_space()
+        self.assertIs(result, cs)
+
+    def test_to_concept_space_converts(self):
+        axis = AxisAnnotation(labels=['c1', 'c2'], cardinalities=[3, 2], types=['categorical', 'categorical'])
+        cs = axis.to_concept_space()
+        self.assertTrue(cs.concept_space)
+        self.assertEqual(cs.cardinalities, [1, 1])
+
+    # ------------------------------------------------------------------
+    # AxisAnnotation.union_with
+    # ------------------------------------------------------------------
+
+    def test_union_with_merges_labels(self):
+        a = AxisAnnotation(labels=['x'], cardinalities=[1], types=['binary'])
+        b = AxisAnnotation(labels=['y'], cardinalities=[3], types=['categorical'])
+        merged = a.union_with(b)
+        self.assertIn('x', merged.labels)
+        self.assertIn('y', merged.labels)
+
+    def test_union_with_deduplicates(self):
+        a = AxisAnnotation(labels=['x', 'y'], cardinalities=[1, 1], types=['binary', 'binary'])
+        b = AxisAnnotation(labels=['y', 'z'], cardinalities=[1, 1], types=['binary', 'binary'])
+        merged = a.union_with(b)
+        self.assertEqual(merged.labels.count('y'), 1)
+
+    # ------------------------------------------------------------------
+    # Annotations class
+    # ------------------------------------------------------------------
+
+    def test_annotations_repr_empty(self):
+        ann = Annotations({})
+        r = repr(ann)
+        self.assertEqual(r, "Annotations({})")
+
+    def test_annotations_repr_nested(self):
+        ann = Annotations({1: AxisAnnotation(labels=['c1'], cardinalities=[3], types=['categorical'])})
+        r = repr(ann)
+        self.assertIn('nested', r)
+
+    def test_annotations_repr_flat(self):
+        ann = Annotations({1: AxisAnnotation(labels=['b1'], cardinalities=[1], types=['binary'])})
+        r = repr(ann)
+        self.assertIn('axis1', r)
+
+    def test_annotations_shape(self):
+        # shape includes -1 for unannotated axis 0; axis-1 size is 5
+        shape = self.annotations.shape
+        self.assertIn(5, shape)
+
+    def test_annotations_num_annotated_axes(self):
+        self.assertEqual(self.annotations.num_annotated_axes, 1)
+
+    def test_annotations_annotated_axes(self):
+        self.assertEqual(self.annotations.annotated_axes, (1,))
+
+    def test_annotations_has_axis(self):
+        self.assertTrue(self.annotations.has_axis(1))
+        self.assertFalse(self.annotations.has_axis(0))
+
+    def test_annotations_get_axis_annotation(self):
+        result = self.annotations.get_axis_annotation(1)
+        self.assertIsInstance(result, AxisAnnotation)
+
+    def test_annotations_get_axis_annotation_invalid_raises(self):
+        with self.assertRaises(ValueError):
+            self.annotations.get_axis_annotation(0)
+
+    def test_annotations_get_axis_labels(self):
+        labels = self.annotations.get_axis_labels(1)
+        self.assertEqual(labels, ['a', 'b', 'c'])
+
+    def test_annotations_get_axis_cardinalities(self):
+        cards = self.annotations.get_axis_cardinalities(1)
+        self.assertEqual(cards, [1, 3, 1])
+
+    def test_annotations_is_axis_nested(self):
+        self.assertTrue(self.annotations.is_axis_nested(1))
+
+    def test_annotations_get_index(self):
+        idx = self.annotations.get_index(1, 'b')
+        self.assertEqual(idx, 1)
+
+    def test_annotations_get_label(self):
+        label = self.annotations.get_label(1, 0)
+        self.assertEqual(label, 'a')
+
+    def test_annotations_get_states(self):
+        states = self.annotations.get_states(1)
+        self.assertIsNotNone(states)
+
+    def test_annotations_get_label_states(self):
+        states = self.annotations.get_label_states(1, 'b')
+        self.assertEqual(len(states), 3)  # cardinality 3
+
+    def test_annotations_get_label_state(self):
+        state = self.annotations.get_label_state(1, 'b', 0)
+        self.assertEqual(state, '0')
+
+    def test_annotations_get_state_index(self):
+        idx = self.annotations.get_state_index(1, 'b', '0')
+        self.assertEqual(idx, 0)
+
+    def test_annotations_get_state_index_invalid_raises(self):
+        with self.assertRaises(ValueError):
+            self.annotations.get_state_index(1, 'b', 'invalid_state')
+
+    def test_annotations_getitem(self):
+        ann = self.annotations[1]
+        self.assertIsInstance(ann, AxisAnnotation)
+
+    def test_annotations_setitem(self):
+        ann = Annotations({1: self.basic_axis})
+        new_axis = AxisAnnotation(labels=['x'], cardinalities=[1], types=['binary'])
+        ann[2] = new_axis
+        self.assertTrue(ann.has_axis(2))
+
+    def test_annotations_delitem(self):
+        ann = Annotations({1: self.basic_axis, 2: AxisAnnotation(labels=['x'], cardinalities=[1], types=['binary'])})
+        del ann[2]
+        self.assertFalse(ann.has_axis(2))
+
+    def test_annotations_delitem_invalid_raises(self):
+        with self.assertRaises(KeyError):
+            del self.annotations[99]
+
+    def test_annotations_contains(self):
+        self.assertIn(1, self.annotations)
+        self.assertNotIn(0, self.annotations)
+
+    def test_annotations_len(self):
+        self.assertEqual(len(self.annotations), 1)
+
+    def test_annotations_iter(self):
+        axes = list(self.annotations)
+        self.assertIn(1, axes)
+
+    def test_annotations_keys_values_items(self):
+        self.assertIn(1, self.annotations.keys())
+        for v in self.annotations.values():
+            self.assertIsInstance(v, AxisAnnotation)
+        for k, v in self.annotations.items():
+            self.assertEqual(k, 1)
+            self.assertIsInstance(v, AxisAnnotation)
+
+    def test_annotations_axis_annotations_property(self):
+        d = self.annotations.axis_annotations
+        self.assertIsInstance(d, dict)
+
+    def test_annotations_select(self):
+        result = self.annotations.select(1, ['a', 'b'])
+        self.assertEqual(result.get_axis_labels(1), ['a', 'b'])
+
+    def test_annotations_select_invalid_axis_raises(self):
+        with self.assertRaises(ValueError):
+            self.annotations.select(0, ['a'])
+
+    def test_annotations_select_many(self):
+        result = self.annotations.select_many({1: ['a', 'c']})
+        self.assertEqual(result.get_axis_labels(1), ['a', 'c'])
+
+    def test_annotations_select_many_invalid_axis_raises(self):
+        with self.assertRaises(ValueError):
+            self.annotations.select_many({0: ['a']})
+
+    def test_annotations_join_union(self):
+        a = Annotations({1: AxisAnnotation(labels=['x', 'y'], cardinalities=[1, 1], types=['binary', 'binary'])})
+        b = Annotations({1: AxisAnnotation(labels=['y', 'z'], cardinalities=[1, 1], types=['binary', 'binary'])})
+        result = a.join_union(b, axis=1)
+        labels = result.get_axis_labels(1)
+        self.assertIn('x', labels)
+        self.assertIn('z', labels)
+
+    def test_annotations_join_union_missing_axis_raises(self):
+        a = Annotations({1: self.basic_axis})
+        b = Annotations({2: AxisAnnotation(labels=['z'], cardinalities=[1], types=['binary'])})
+        with self.assertRaises(ValueError):
+            a.join_union(b, axis=1)
+
+
+class TestAnnotatedTensorCoverage(unittest.TestCase):
+    """Tests targeting uncovered lines in tensor.py."""
+
+    def setUp(self):
+        import torch as _torch
+        self.torch = _torch
+        self.ann = AxisAnnotation(labels=['a', 'b', 'c'])
+        from torch_concepts.tensor import AnnotatedTensor
+        self.AnnotatedTensor = AnnotatedTensor
+        self.t = AnnotatedTensor(_torch.rand(4, 3), self.ann)
+
+    def test_init_1d_tensor_raises(self):
+        with self.assertRaises(ValueError):
+            self.AnnotatedTensor(self.torch.rand(3), self.ann)
+
+    def test_init_mismatched_size_raises(self):
+        with self.assertRaises(ValueError):
+            self.AnnotatedTensor(self.torch.rand(4, 5), self.ann)
+
+    def test_device_property(self):
+        self.assertEqual(self.t.device, self.torch.device('cpu'))
+
+    def test_to_method_returns_annotated_tensor(self):
+        moved = self.t.to(self.torch.float64)
+        self.assertIsInstance(moved, self.AnnotatedTensor)
+        self.assertEqual(moved.tensor.dtype, self.torch.float64)
+
+    def test_getitem_list_syntax(self):
+        result = self.t[['a', 'b']]
+        self.assertIsInstance(result, self.AnnotatedTensor)
+        self.assertEqual(result.annotation.labels, ['a', 'b'])
+
+    def test_getitem_fallback_index(self):
+        # Integer row indexing — axis-1 unchanged → still annotated
+        result = self.t[0]
+        # shape is (3,) → < 2 dims, so annotation is dropped
+        self.assertIsInstance(result, self.torch.Tensor)
+
+    def test_union_with_type_error(self):
+        with self.assertRaises(TypeError):
+            self.t.union_with(self.torch.rand(4, 2))
+
+    def test_union_with_shape_mismatch(self):
+        ann2 = AxisAnnotation(labels=['x', 'y'])
+        t2 = self.AnnotatedTensor(self.torch.rand(5, 2), ann2)  # batch=5 vs 4
+        with self.assertRaises(ValueError):
+            self.t.union_with(t2)
+
+    def test_union_with_deduplicates_overlap(self):
+        torch = self.torch
+        ann2 = AxisAnnotation(labels=['b', 'c', 'd'])  # 'b','c' overlap
+        ann1 = AxisAnnotation(labels=['a', 'b', 'c'])
+        from torch_concepts.tensor import AnnotatedTensor as AT
+        t1 = AT(torch.rand(4, 3), ann1)
+        t2 = AT(torch.rand(4, 3), ann2)
+        merged = t1.union_with(t2)
+        # 'd' added; 'b','c' not duplicated
+        self.assertIn('d', merged.annotation.labels)
+        self.assertEqual(merged.annotation.labels.count('b'), 1)
+
+    def test_split_by_type_no_arg_returns_dict(self):
+        torch = self.torch
+        ann = AxisAnnotation(
+            labels=['x', 'y'],
+            cardinalities=[1, 1],
+            types=['binary', 'binary'],
+        )
+        from torch_concepts.tensor import AnnotatedTensor as AT
+        t = AT(torch.rand(3, 2), ann)
+        result = t.split_by_type()
+        self.assertIsInstance(result, dict)
+
+    def test_split_by_type_specific_type(self):
+        torch = self.torch
+        ann = AxisAnnotation(
+            labels=['x', 'y'],
+            cardinalities=[1, 1],
+            types=['binary', 'binary'],
+        )
+        from torch_concepts.tensor import AnnotatedTensor as AT
+        t = AT(torch.rand(3, 2), ann)
+        result = t.split_by_type('binary')
+        self.assertIsInstance(result, AT)
+
+    def test_torch_function_passthrough(self):
+        torch = self.torch
+        result = torch.sum(self.t, dim=0)
+        self.assertIsInstance(result, torch.Tensor)
+
+    def test_repr_contains_annotation(self):
+        r = repr(self.t)
+        self.assertIn('a', r)
+
+    def test_len(self):
+        self.assertEqual(len(self.t), 4)
+
+    def test_arithmetic_ops(self):
+        result = self.t + self.t
+        # same axis-1 size → still annotated
+        self.assertIsInstance(result, self.AnnotatedTensor)
+
+    def test_wrap_dimension_change(self):
+        # sum over axis 1 changes axis-1 size → returns plain tensor
+        result = self.t.sum(dim=1)
+        self.assertNotIsInstance(result, self.AnnotatedTensor)

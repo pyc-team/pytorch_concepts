@@ -12,7 +12,54 @@ import torch
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Dict, List, Tuple, Union, Optional, Any, Sequence
+from typing import Dict, List, Tuple, Type, Union, Optional, Any, Sequence
+
+
+#: The canonical concept-type vocabulary. A concept is exactly one of these.
+_CONCEPT_TYPES = ('binary', 'categorical', 'continuous')
+
+
+@dataclass(frozen=True)
+class Concept:
+    """Read-only, per-concept view over a single column of an :class:`AxisAnnotation`.
+
+    Groups one concept's properties into a single named object so callers can write
+    ``axis.concept('color').cardinality`` instead of the index-dance
+    ``int(axis.cardinalities[axis.get_index('color')])``. It is a *view*: the values
+    are read from the owning ``AxisAnnotation``'s parallel lists at construction
+    time (no duplicated storage), so the lists remain the canonical representation.
+
+    Attributes:
+        name (str): Concept label.
+        index (int): Concept-level index within the axis.
+        cardinality (int): Number of states (1 for binary/continuous scalars).
+        type (str): Concept type, one of ``'binary'`` / ``'categorical'`` / ``'continuous'``.
+        states (Optional[List[str]]): State labels for this concept.
+        slice (slice): Column span of this concept in the flattened (logit) tensor.
+        metadata (dict): Raw per-concept metadata (escape hatch for extra keys).
+    """
+    name: str
+    index: int
+    cardinality: int
+    type: str
+    states: Optional[List[str]]
+    slice: slice
+    metadata: dict = field(default_factory=dict)
+
+    @property
+    def is_continuous(self) -> bool:
+        """Whether this concept is continuous."""
+        return self.type == 'continuous'
+
+    @property
+    def is_binary(self) -> bool:
+        """Whether this concept is a single binary value (cardinality 1)."""
+        return self.type == 'binary'
+
+    @property
+    def is_categorical(self) -> bool:
+        """Whether this concept is a multi-state (categorical) variable."""
+        return self.type == 'categorical'
 
 
 @dataclass
@@ -43,42 +90,62 @@ class AxisAnnotation:
         >>> axis_binary = AxisAnnotation(
         ...     labels=['has_wheels', 'has_windows', 'is_red']
         ... )
-        >>> print(axis_binary.labels)  # ['has_wheels', 'has_windows', 'is_red']
-        >>> print(axis_binary.is_nested)  # False
-        >>> print(axis_binary.cardinalities)  # [1, 1, 1] - binary concepts
+        >>> print(axis_binary.labels)
+        ['has_wheels', 'has_windows', 'is_red']
+        >>> print(axis_binary.is_nested)
+        False
+        >>> print(axis_binary.cardinalities)
+        [1, 1, 1]
         >>>
         >>> # Nested concepts with explicit states
         >>> axis_nested = AxisAnnotation(
         ...     labels=['color', 'shape'],
         ...     states=[['red', 'green', 'blue'], ['circle', 'square']],
         ... )
-        >>> print(axis_nested.labels)  # ['color', 'shape']
-        >>> print(axis_nested.is_nested)  # True
-        >>> print(axis_nested.cardinalities)  # [3, 2]
-        >>> print(axis_nested.states[0])  # ['red', 'green', 'blue']
+        >>> print(axis_nested.labels)
+        ['color', 'shape']
+        >>> print(axis_nested.is_nested)
+        True
+        >>> print(axis_nested.cardinalities)
+        [3, 2]
+        >>> print(axis_nested.states[0])
+        ['red', 'green', 'blue']
         >>>
         >>> # With cardinalities only (auto-generates state labels)
         >>> axis_cards = AxisAnnotation(
         ...     labels=['size', 'material'],
-        ...     cardinalities=[3, 4]  # 3 sizes, 4 materials
+        ...     cardinalities=[3, 4]
         ... )
-        >>> print(axis_cards.cardinalities)  # [3, 4]
-        >>> print(axis_cards.states[0])  # ['0', '1', '2']
+        >>> print(axis_cards.cardinalities)
+        [3, 4]
+        >>> print(axis_cards.states[0])
+        ['0', '1', '2']
         >>>
         >>> # Access methods
         >>> idx = axis_binary.get_index('has_wheels')
-        >>> print(idx)  # 0
+        >>> print(idx)
+        0
         >>> label = axis_binary.get_label(1)
-        >>> print(label)  # 'has_windows'
+        >>> print(label)
+        has_windows
     """
     labels: List[str]
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
-    types: Optional[List[str]] = field(default=None)  # e.g., 'discrete' or 'continuous' # TODO: make consistent
+    types: Optional[List[str]] = field(default=None)  # 'binary' | 'categorical' | 'continuous'
     metadata: Optional[Dict[str, Dict]] = field(default=None)
+    # Concept-space annotation: each concept occupies a single integer-coded
+    # column regardless of its type (so all cardinalities are 1). This describes
+    # a ground-truth concept tensor, not the model's logit space. When True the
+    # ``categorical requires cardinality > 1`` invariant is relaxed (a categorical
+    # concept's column holds an integer class index). Build one from a normal
+    # (logit-space) annotation via :meth:`to_concept_space`.
+    concept_space: bool = field(default=False)
 
     def __setattr__(self, key, value):
-        # Allow first assignment or initialization
+        # `metadata` may change after construction, so it is
+        # freely reassignable. The structural fields (labels, states,
+        # cardinalities, types) remain write-once.
         if key == 'metadata':
             super().__setattr__(key, value)
             return
@@ -131,8 +198,43 @@ class AxisAnnotation:
                 f"inferred cardinalities {inferred_cardinalities} from states"
             )
 
+        # Validate optional per-concept lists line up with the labels.
+        if self.types is not None and len(self.types) != len(self.labels):
+            raise ValueError(
+                f"Number of types ({len(self.types)}) must match "
+                f"number of labels ({len(self.labels)})"
+            )
+
+        # Canonicalise the concept type. It is one of 'binary' / 'categorical' /
+        # 'continuous'. When omitted, default discrete concepts from cardinality
+        # (binary if card==1 else categorical); 'continuous' must be declared
+        # explicitly (it cannot be inferred). Then enforce the type<->cardinality
+        # invariant so the two never drift.
+        if self.types is None:
+            resolved_types = [
+                'binary' if card == 1 else 'categorical' for card in self.cardinalities
+            ]
+        else:
+            resolved_types = list(self.types)
+        for label, t, card in zip(self.labels, resolved_types, self.cardinalities):
+            if t not in _CONCEPT_TYPES:
+                raise ValueError(
+                    f"Concept {label!r}: type must be one of {_CONCEPT_TYPES}, got {t!r}."
+                )
+            if t == 'binary' and card != 1:
+                raise ValueError(
+                    f"Concept {label!r}: 'binary' requires cardinality 1, got {card}."
+                )
+            # In concept-space every concept is a single integer-coded column, so a
+            # categorical concept legitimately has cardinality 1 (the column holds a
+            # class index); only enforce the >1 invariant in logit-space annotations.
+            if t == 'categorical' and card <= 1 and not self.concept_space:
+                raise ValueError(
+                    f"Concept {label!r}: 'categorical' requires cardinality > 1, got {card}."
+                )
+        object.__setattr__(self, 'types', resolved_types)
+
         # Determine is_nested from cardinalities
-        # FIXME: should we consider nested also mix of scalars and bernoulli?
         is_nested = any(card > 1 for card in self.cardinalities)
 
         object.__setattr__(self, 'is_nested', is_nested)
@@ -187,16 +289,17 @@ class AxisAnnotation:
         """Return number of labels in this axis."""
         return len(self.labels)
 
-    def __getitem__(self, idx: int) -> Union[str, Dict[str, Union[str, Tuple[str, ...]]]]:
+    def __getitem__(self, key: Union[int, str]) -> Union[str, "Concept"]:
         """
-        Get label or states at index.
-        For non-nested: returns labels[idx] (str)
-        For nested: returns dict {'label': label, 'states': state_tuple}
+        Index by position or by name.
+        - ``axis[int]`` returns the label at that index (``str``).
+        - ``axis[str]`` returns the :class:`Concept` view for that label.
         """
-        if not (0 <= idx < len(self.labels)):
-            raise IndexError(f"Index {idx} out of range")
-
-        return self.labels[idx]
+        if isinstance(key, str):
+            return self.concept(key)
+        if not (0 <= key < len(self.labels)):
+            raise IndexError(f"Index {key} out of range")
+        return self.labels[key]
 
     @cached_property
     def label_to_index(self) -> Dict[str, int]:
@@ -250,13 +353,13 @@ class AxisAnnotation:
         Example:
             >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
             >>> axis.cumulative_cardinalities
-            [0, 3, 5, 6]  # color: 0-3, shape: 3-5, size: 5-6
+            [0, 3, 5, 6]
         """
         cum = [0]
         for c in self.cardinalities:
             cum.append(cum[-1] + c)
         return cum
-    
+
     @cached_property
     def concept_slices(self) -> Dict[str, slice]:
         """Precomputed mapping from concept name to slice in flattened tensor.
@@ -264,8 +367,7 @@ class AxisAnnotation:
         Example:
             >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
             >>> axis.concept_slices['color']
-            slice(0, 3)
-            >>> tensor[:, axis.concept_slices['shape']]  # Get shape logits
+            slice(0, 3, None)
         """
         cum = self.cumulative_cardinalities
         return {name: slice(cum[i], cum[i+1]) 
@@ -273,24 +375,20 @@ class AxisAnnotation:
     
     @cached_property
     def labels_by_type(self) -> Dict[str, List[str]]:
-        """Precomputed mapping from type name to the ordered list of labels of that type.
+        """Mapping from concept type to the ordered list of labels of that type.
 
-        Returns ``{}`` when ``types`` is ``None``.
+        Only non-empty types are included. Derived from :attr:`type_groups` so the
+        grouping logic lives in one place.
 
         Example:
             >>> axis = AxisAnnotation(
             ...     labels=['a', 'b', 'c'],
-            ...     types=['discrete', 'continuous', 'discrete'],
+            ...     cardinalities=[1, 1, 3],
             ... )
             >>> axis.labels_by_type
-            {'discrete': ['a', 'c'], 'continuous': ['b']}
+            {'binary': ['a', 'b'], 'categorical': ['c']}
         """
-        if self.types is None:
-            return {}
-        groups: Dict[str, List[str]] = {}
-        for label, t in zip(self.labels, self.types):
-            groups.setdefault(t, []).append(label)
-        return groups
+        return {t: g['labels'] for t, g in self.type_groups.items() if g['labels']}
 
     @cached_property
     def type_groups(self) -> Dict[str, Dict[str, List]]:
@@ -306,51 +404,56 @@ class AxisAnnotation:
             >>> axis = AxisAnnotation(
             ...     labels=['size', 'color', 'temp'],
             ...     cardinalities=[1, 3, 1],
-            ...     metadata={
-            ...         'size': {'type': 'discrete'},
-            ...         'color': {'type': 'discrete'},
-            ...         'temp': {'type': 'continuous'}
-            ...     }
+            ...     types=['binary', 'categorical', 'continuous'],
             ... )
-            >>> axis.type_groups['binary']['labels']  # ['size']
-            >>> axis.type_groups['categorical']['logits_idx']  # [1, 2, 3]
+            >>> axis.type_groups['binary']['labels']
+            ['size']
+            >>> axis.type_groups['categorical']['logits_idx']
+            [1, 2, 3]
         """
         cum = self.cumulative_cardinalities
-        
-        groups = {
-            'binary': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-            'categorical': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-            'continuous': {'labels': [], 'concept_idx': [], 'logits_idx': []},
-        }
-        
-        for i, label in enumerate(self.labels):
-            card = self.cardinalities[i]
 
-            # Prefer the first-class `types` field, then metadata, then infer
-            if self.types is not None:
-                concept_type = self.types[i]
-            elif self.metadata and label in self.metadata:
-                concept_type = self.metadata[label].get('type', 'discrete')
-            else:
-                concept_type = 'discrete'  # Default assumption
-            
-            # Classify into binary/categorical/continuous
-            if concept_type == 'continuous':
-                group_key = 'continuous'
-            elif concept_type == 'discrete' and card == 1:
-                group_key = 'binary'
-            else:  # discrete with card > 1
-                group_key = 'categorical'
-            
-            # Store at concept level
-            groups[group_key]['labels'].append(label)
-            groups[group_key]['concept_idx'].append(i)
-            
-            # Store at logit level (all positions for this concept)
-            groups[group_key]['logits_idx'].extend(range(cum[i], cum[i+1]))
-        
+        groups = {t: {'labels': [], 'concept_idx': [], 'logits_idx': []}
+                  for t in _CONCEPT_TYPES}
+
+        for i, label in enumerate(self.labels):
+            group = groups[self.types[i]]
+            group['labels'].append(label)
+            group['concept_idx'].append(i)
+            group['logits_idx'].extend(range(cum[i], cum[i + 1]))
+
         return groups
-    
+
+    def concept(self, name: str) -> "Concept":
+        """Return a read-only :class:`Concept` view for ``name``.
+
+        Groups the concept's per-column properties (cardinality, type, states, logit slice) 
+        into one object, so callers can write ``axis.concept('color').cardinality`` instead of 
+        the index-dance over the parallel lists. 
+        Built fresh on each call so it always reflects the current (mutable) ``metadata``.
+        """
+        i = self.get_index(name)
+        meta = (self.metadata.get(name, {}) if self.metadata else {}) or {}
+        return Concept(
+            name=name,
+            index=i,
+            cardinality=int(self.cardinalities[i]),
+            type=self.types[i],
+            states=self.states[i] if self.states is not None else None,
+            slice=self.concept_slices[name],
+            metadata=meta,
+        )
+
+    @property
+    def concepts(self) -> List["Concept"]:
+        """All concepts as :class:`Concept` views, in axis order.
+
+        Views are read from the canonical parallel lists (no duplicated storage);
+        useful for one-pass iteration. Not cached, so it reflects the
+        current (mutable) ``metadata``.
+        """
+        return [self.concept(name) for name in self.labels]
+
     def slice_tensor(self, tensor: torch.Tensor, concepts: List[str]) -> torch.Tensor:
         """Extract and concatenate columns for specified concepts.
         
@@ -362,8 +465,12 @@ class AxisAnnotation:
             Tensor with columns for specified concepts concatenated
             
         Example:
-            >>> # Reorder from topological to annotation order
+            >>> import torch
+            >>> axis = AxisAnnotation(labels=['color', 'shape'], cardinalities=[3, 2])
+            >>> predictions = torch.rand(4, 5)
             >>> reordered = axis.slice_tensor(predictions, axis.labels)
+            >>> reordered.shape
+            torch.Size([4, 5])
         """
         pieces = [tensor[:, self.concept_slices[c]] for c in concepts]
         return torch.cat(pieces, dim=1)
@@ -395,11 +502,9 @@ class AxisAnnotation:
             >>> # Single concept → slice
             >>> axis.get_slice('color')
             slice(0, 3, None)
-            >>> tensor[:, axis.get_slice('color')]  # slicing
-            
             >>> # Multiple concepts → flattened indices
             >>> axis.get_slice(['color', 'size'])
-            [0, 1, 2, 5]  # color takes 0-2, size takes 5
+            [0, 1, 2, 5]
         """
         slices = self.concept_slices  # Use cached property
         
@@ -443,7 +548,8 @@ class AxisAnnotation:
 
         Example:
             >>> axis = AxisAnnotation.empty(4)
-            >>> axis.labels   # ['c_0', 'c_1', 'c_2', 'c_3']
+            >>> axis.labels
+            ['c_0', 'c_1', 'c_2', 'c_3']
         """
         cardinalities = [cardinalities] * n if isinstance(cardinalities, int) else cardinalities
         types = [types] * n if isinstance(types, str) else types  # broadcast single str to list
@@ -527,7 +633,7 @@ class AxisAnnotation:
             new_states = None
             new_cards = None
 
-        new_types = [self.types[i] for i in idxs] if self.types is not None else None
+        new_types = [self.types[i] for i in idxs]
 
         # 3) slice metadata (if present)
         new_metadata = None
@@ -541,22 +647,48 @@ class AxisAnnotation:
             cardinalities=new_cards,
             types=new_types,
             metadata=new_metadata,
+            concept_space=self.concept_space,
+        )
+
+    def to_concept_space(self) -> "AxisAnnotation":
+        """Return a concept-space view: one integer-coded column per concept.
+
+        Cardinalities collapse to 1 (each concept becomes a single column) while
+        labels and types are preserved, so a ground-truth concept tensor of shape
+        ``(batch, n_concepts)`` (integer class indices for categorical concepts,
+        0/1 for binary) can be wrapped as an :class:`~torch_concepts.tensor.AnnotatedTensor`.
+        The result's :attr:`shape` equals the number of concepts, and
+        label-based slicing / :meth:`labels_by_type` operate per concept.
+
+        Returns ``self`` unchanged if this annotation is already concept-space.
+        """
+        if self.concept_space:
+            return self
+        return AxisAnnotation(
+            labels=list(self.labels),
+            cardinalities=[1] * len(self.labels),
+            types=list(self.types),
+            metadata=self.metadata,
+            concept_space=True,
         )
 
     def union_with(self, other: "AxisAnnotation") -> "AxisAnnotation":
         left = list(self.labels)
         right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
-        # merge types: left types + right-only types (left-wins for overlap)
-        new_types = None
-        if self.types is not None or other.types is not None:
-            left_types = self.types or ['discrete'] * len(self.labels)
-            right_types = other.types or ['discrete'] * len(other.labels)
-            right_only_types = [
-                right_types[other.labels.index(l)]
-                for l in right_only
+
+        def _merge(left_values, right_values):
+            """Left values + right-only values (left wins for overlapping labels)."""
+            return list(left_values) + [
+                right_values[other.labels.index(l)] for l in right_only
             ]
-            new_types = left_types + right_only_types
+
+        # ``states`` / ``types`` are always populated after construction, so we
+        # carry them through directly (cardinalities re-infer from states). This
+        # keeps categorical concepts' cardinalities intact through a union.
+        new_states = _merge(self.states, other.states)
+        new_types = _merge(self.types, other.types)
+
         # merge metadata left-wins
         meta = None
         if self.metadata or other.metadata:
@@ -566,7 +698,10 @@ class AxisAnnotation:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return AxisAnnotation(labels=labels, states=None, cardinalities=None, types=new_types, metadata=meta)
+        return AxisAnnotation(
+            labels=labels, states=new_states, cardinalities=None,
+            types=new_types, metadata=meta,
+        )
 
 
 class Annotations:
@@ -599,20 +734,25 @@ class Annotations:
         >>> annotations = Annotations({1: concept_ann})
         >>>
         >>> # Access concept labels
-        >>> print(annotations.get_axis_labels(1))  # ['color', 'shape', 'size']
+        >>> print(annotations.get_axis_labels(1))
+        ['color', 'shape', 'size']
         >>>
         >>> # Get index of a concept
         >>> idx = annotations.get_index(1, 'color')
-        >>> print(idx)  # 0
+        >>> print(idx)
+        0
         >>>
         >>> # Check if axis is nested
-        >>> print(annotations.is_axis_nested(1))  # True
+        >>> print(annotations.is_axis_nested(1))
+        True
         >>>
         >>> # Get cardinalities
-        >>> print(annotations.get_axis_cardinalities(1))  # [3, 2, 1]
+        >>> print(annotations.get_axis_cardinalities(1))
+        [3, 2, 1]
         >>>
         >>> # Access via indexing
-        >>> print(annotations[1].labels)  # ['color', 'shape', 'size']
+        >>> print(annotations[1].labels)
+        ['color', 'shape', 'size']
         >>>
         >>> # Multiple axes example
         >>> task_ann = AxisAnnotation(labels=['task1', 'task2', 'task3'])
@@ -620,7 +760,8 @@ class Annotations:
         ...     1: concept_ann,
         ...     2: task_ann
         ... })
-        >>> print(multi_ann.annotated_axes)  # (1, 2)
+        >>> print(multi_ann.annotated_axes)
+        (1, 2)
     """
 
     def __init__(self, axis_annotations: Optional[Union[List, Dict[int, AxisAnnotation]]] = None):

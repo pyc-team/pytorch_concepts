@@ -9,13 +9,14 @@ import os
 import numpy as np
 import pandas as pd
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, default_collate
 from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
 
 from ...concept_graph import ConceptGraph
 from ...annotations import Annotations, AxisAnnotation
+from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
 
 # TODO: implement masks for missing values
@@ -87,32 +88,22 @@ class ConceptDataset(Dataset):
         if annotations is None and concepts is not None:
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
+            n = concepts.shape[1]
             annotations = Annotations({
-                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(concepts.shape[1])],
-                                      cardinalities=None, # assume binary
-                                      metadata={f"concept_{i}": {'type': 'discrete', # assume discrete (bernoulli)
-                                                                } for i in range(concepts.shape[1])})
+                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(n)],
+                                      cardinalities=[1] * n,  # assume binary
+                                      types=['binary'] * n)
                                       })
         # assert first axis is annotated axis for concepts
         if 1 not in annotations.annotated_axes:
             raise ValueError("Concept annotations must include axis 1 for concepts. " \
             "Axis 0 is always assumed to be the batch dimension")
-
-        # sanity check
         axis_annotation = annotations[1]
-        if axis_annotation.metadata is not None:
-            assert all('type' in v  for v in axis_annotation.metadata.values()), \
-                "Concept metadata must contain 'type' for each concept."
-            assert all(v['type'] in ['discrete', 'continuous'] for v in axis_annotation.metadata.values()), \
-                "Concept metadata 'type' must be either 'discrete' or 'continuous'."
-
         if axis_annotation.cardinalities is not None:
             concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
             concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
-            
-        # NOTE: both 'discrete' and 'continuous' concept types are supported.
 
         # set concept annotations
         # this defines self.annotations property
@@ -181,6 +172,26 @@ class ConceptDataset(Dataset):
         }
 
         return sample
+
+    def collate(self, samples):
+        """Collate samples into a batch, re-annotating the ground-truth concepts.
+
+        The default collate stacks the per-sample (plain, 1-D) concept rows into a
+        ``(batch, n_concepts)`` tensor; this re-wraps that tensor as an
+        :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
+        concept-space annotation as :attr:`concepts`, so every batch's concepts
+        are label/type aware. Inputs and any other keys are collated unchanged.
+        Used as the DataLoader ``collate_fn`` by :class:`ConceptDataModule`.
+        """
+        batch = default_collate(samples)
+        annotation = getattr(self.concepts, 'annotation', None)
+        if annotation is not None and isinstance(batch, dict):
+            concepts = batch.get('concepts')
+            if isinstance(concepts, dict):
+                c = concepts.get('c')
+                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.shape:
+                    concepts['c'] = AnnotatedTensor(c, annotation)
+        return batch
 
 
     # Dataset properties #####################################################
@@ -364,19 +375,23 @@ class ConceptDataset(Dataset):
             # Reduce states
             reduced_states = tuple(axis_annotation.states[i] for i in indices)
 
+            # Reduce types
+            reduced_types = tuple(axis_annotation.types[i] for i in indices)
+
             # Reduce metadata if present
             if axis_annotation.metadata is not None:
-                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]] 
+                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
                                    for i in range(len(indices))}
             else:
                 reduced_metadata = None
-            
+
             # Create reduced annotations
             self._annotations = Annotations({
                 1: AxisAnnotation(
                     labels=reduced_labels,
                     cardinalities=reduced_cardinalities,
                     states=reduced_states,
+                    types=reduced_types,
                     metadata=reduced_metadata
                 )
             })
@@ -433,7 +448,16 @@ class ConceptDataset(Dataset):
         concepts = parse_tensor(concepts, 'concepts', self.precision)
         #########################################################################
 
-        self.concepts = concepts
+        # Wrap the full concept tensor with a *concept-space* annotation (one
+        # integer-coded column per concept, so categorical labels are class
+        # indices) so it carries the concept labels/types. Per-sample
+        # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
+        # axis 1); batches are re-annotated by :meth:`collate`.
+        concept_ann = self.annotations.get_axis_annotation(1).to_concept_space()
+        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.shape:
+            self.concepts = AnnotatedTensor(concepts, concept_ann)
+        else:
+            self.concepts = concepts
 
     def add_exogenous(self,
                       name: str,

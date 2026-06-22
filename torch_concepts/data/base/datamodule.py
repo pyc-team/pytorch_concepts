@@ -641,15 +641,20 @@ class ConceptDataModule(LightningDataModule):
         else:
             raise ValueError("Argument `split` must be one of "
                              "'train', 'val', 'test', or None.")
-        if dataset is None: 
+        if dataset is None:
             return None
         pin_memory = self.pin_memory if split == 'train' else None
+        # The concept dataset owns batch collation so every batch's ground-truth
+        # concepts arrive as an annotated tensor (see ``ConceptDataset.collate``).
+        # Splits are ``Subset`` wrappers, so read the collate off the base dataset.
+        collate_fn = getattr(self.dataset, 'collate', None)
         return DataLoader(dataset,
                           batch_size=batch_size or self.batch_size,
                           shuffle=shuffle,
                           drop_last=split == 'train',
                           num_workers=self.workers,
-                          pin_memory=pin_memory)
+                          pin_memory=pin_memory,
+                          collate_fn=collate_fn)
 
     def train_dataloader(self, shuffle: bool = True,
                         batch_size: Optional[int] = None) -> Optional[DataLoader]:

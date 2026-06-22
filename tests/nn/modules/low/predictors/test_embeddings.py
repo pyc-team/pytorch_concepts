@@ -13,14 +13,15 @@ from torch_concepts.nn.modules.low.predictors.mix import MixSumConceptEmbeddingT
 # ---------------------------------------------------------------------------
 
 def _axis(n, cardinalities=None):
-    """Create an AxisAnnotation for n discrete concepts."""
+    """Create an AxisAnnotation for n concepts."""
     if cardinalities is None:
         cardinalities = [1] * n
     assert sum(cardinalities) == n, "cardinalities must sum to n"
+    types = ['binary' if c == 1 else 'categorical' for c in cardinalities]
     return AxisAnnotation(
         labels=[f"c{i}" for i in range(len(cardinalities))],
         cardinalities=cardinalities,
-        types=["discrete"] * len(cardinalities),
+        types=types,
     )
 
 
@@ -93,28 +94,18 @@ class TestMixConceptEmbeddingToConcept:
 # 2. MixSumConceptEmbeddingToConcept
 # ===========================================================================
 
-pytestmark_sum = pytest.mark.xfail(
-    raises=AttributeError,
-    reason="MixSumConceptEmbeddingToConcept.__init__ passes int to super().__init__ "
-           "which expects AxisAnnotation for in_concepts",
-)
-
-
 class TestMixSumConceptEmbeddingToConcept:
-    @pytestmark_sum
     def test_initialization_with_cardinalities(self):
         pred = MixSumConceptEmbeddingToConcept(
             in_concepts=10, in_embeddings=20, out_concepts=3, cardinalities=[3, 4, 3],
         )
-        assert pred.in_concepts == 10
+        assert len(pred.in_concepts.labels) == 3  # 3 groups
         assert pred.out_concepts == 3
 
-    @pytestmark_sum
     def test_initialization_defaults_all_binary(self):
         pred = MixSumConceptEmbeddingToConcept(in_concepts=8, in_embeddings=16, out_concepts=4)
-        assert pred.cardinalities == [1] * 8
+        assert pred.in_concepts.cardinalities == [1] * 8
 
-    @pytestmark_sum
     def test_forward_shape(self):
         pred = MixSumConceptEmbeddingToConcept(
             in_concepts=10, in_embeddings=20, out_concepts=3, cardinalities=[3, 4, 3],
@@ -122,18 +113,15 @@ class TestMixSumConceptEmbeddingToConcept:
         out = pred(concepts=torch.randn(4, 10), embeddings=torch.randn(4, 10, 20))
         assert out.shape == (4, 3)
 
-    @pytestmark_sum
     def test_forward_shape_all_binary(self):
         pred = MixSumConceptEmbeddingToConcept(in_concepts=6, in_embeddings=12, out_concepts=2)
         out = pred(concepts=torch.randn(3, 6), embeddings=torch.randn(3, 6, 12))
         assert out.shape == (3, 2)
 
-    @pytestmark_sum
     def test_predictor_is_linear(self):
         pred = MixSumConceptEmbeddingToConcept(in_concepts=4, in_embeddings=8, out_concepts=2)
         assert isinstance(pred.predictor, nn.Linear)
 
-    @pytestmark_sum
     def test_group_count_invariance(self):
         p1 = MixSumConceptEmbeddingToConcept(
             in_concepts=4, in_embeddings=8, out_concepts=2, cardinalities=[1] * 4
@@ -143,7 +131,6 @@ class TestMixSumConceptEmbeddingToConcept:
         )
         assert p1.predictor.weight.shape == p2.predictor.weight.shape
 
-    @pytestmark_sum
     def test_gradient_flow(self):
         pred = MixSumConceptEmbeddingToConcept(
             in_concepts=6, in_embeddings=10, out_concepts=2, cardinalities=[2, 2, 2],

@@ -83,34 +83,42 @@ class ConceptGraph:
         >>> graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
         >>>
         >>> # Get root nodes (no incoming edges)
-        >>> print(graph.get_root_nodes())  # ['A']
+        >>> print(graph.get_root_nodes())
+        ['A']
         >>>
         >>> # Get leaf nodes (no outgoing edges)
-        >>> print(graph.get_leaf_nodes())  # ['C']
+        >>> print(graph.get_leaf_nodes())
+        ['C']
         >>>
         >>> # Check edge existence
-        >>> print(graph.has_edge('A', 'B'))  # True
-        >>> print(graph.has_edge('B', 'A'))  # False
+        >>> print(graph.has_edge('A', 'B'))
+        True
+        >>> print(graph.has_edge('B', 'A'))
+        False
         >>>
         >>> # Get edge weight
-        >>> print(graph.get_edge_weight('A', 'C'))  # 1.0
+        >>> print(graph.get_edge_weight('A', 'C'))
+        1.0
         >>>
         >>> # Get successors and predecessors
-        >>> print(graph.get_successors('A'))  # ['B', 'C']
-        >>> print(graph.get_predecessors('C'))  # ['A', 'B']
+        >>> print(graph.get_successors('A'))
+        ['B', 'C']
+        >>> print(graph.get_predecessors('C'))
+        ['A', 'B']
         >>>
         >>> # Check if DAG
-        >>> print(graph.is_dag())  # True
+        >>> print(graph.is_dag())
+        True
         >>>
         >>> # Topological sort
-        >>> print(graph.topological_sort())  # ['A', 'B', 'C']
+        >>> print(graph.topological_sort())
+        ['A', 'B', 'C']
         >>>
         >>> # Convert to NetworkX for visualization
         >>> nx_graph = graph.to_networkx()
         >>>
         >>> # Convert to pandas DataFrame
         >>> df = graph.to_pandas()
-        >>> print(df)
         >>>
         >>> # Create from sparse format directly
         >>> edge_index = torch.tensor([[0, 0, 1], [1, 2, 2]])
@@ -428,7 +436,7 @@ class ConceptGraph:
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+            >>> from torch_concepts import ConceptGraph
             >>> adj = torch.tensor([[0., 1., 0.],
             ...                     [0., 0., 1.],
             ...                     [0., 0., 0.]])
@@ -561,7 +569,7 @@ def dense_to_sparse(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import dense_to_sparse
+        >>> from torch_concepts.concept_graph import dense_to_sparse
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -602,13 +610,15 @@ def to_networkx_graph(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import to_networkx_graph
+        >>> from torch_concepts.concept_graph import to_networkx_graph
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> G = to_networkx_graph(adj, node_names=['A', 'B', 'C'])
-        >>> print(list(G.nodes()))  # ['A', 'B', 'C']
-        >>> print(list(G.edges()))  # [('A', 'B'), ('A', 'C'), ('B', 'C')]
+        >>> print(list(G.nodes()))
+        ['A', 'B', 'C']
+        >>> print(list(G.edges()))
+        [('A', 'B'), ('A', 'C'), ('B', 'C')]
     """
     # Extract node names and tensor data
     if isinstance(adj_matrix, ConceptGraph):
@@ -655,12 +665,13 @@ def get_root_nodes(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_root_nodes
+        >>> from torch_concepts.concept_graph import get_root_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> roots = get_root_nodes(adj, node_names=['A', 'B', 'C'])
-        >>> print(roots)  # ['A']
+        >>> print(roots)
+        ['A']
     """
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
@@ -688,12 +699,13 @@ def get_leaf_nodes(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_leaf_nodes
+        >>> from torch_concepts.concept_graph import get_leaf_nodes
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> leaves = get_leaf_nodes(adj, node_names=['A', 'B', 'C'])
-        >>> print(leaves)  # ['C']
+        >>> print(leaves)
+        ['C']
     """
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
@@ -726,12 +738,13 @@ def topological_sort(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import topological_sort
+        >>> from torch_concepts.concept_graph import topological_sort
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> ordered = topological_sort(adj, node_names=['A', 'B', 'C'])
-        >>> print(ordered)  # ['A', 'B', 'C']
+        >>> print(ordered)
+        ['A', 'B', 'C']
     """
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
@@ -763,12 +776,13 @@ def get_predecessors(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_predecessors
+        >>> from torch_concepts.concept_graph import get_predecessors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> preds = get_predecessors(adj, 'C', node_names=['A', 'B', 'C'])
-        >>> print(preds)  # ['A', 'B']
+        >>> print(preds)
+        ['A', 'B']
     """
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix
@@ -804,12 +818,13 @@ def get_successors(
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import get_successors
+        >>> from torch_concepts.concept_graph import get_successors
         >>> adj = torch.tensor([[0., 1., 1.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
         >>> succs = get_successors(adj, 'A', node_names=['A', 'B', 'C'])
-        >>> print(succs)  # ['B', 'C']
+        >>> print(succs)
+        ['B', 'C']
     """
     if isinstance(adj_matrix, nx.DiGraph):
         G = adj_matrix

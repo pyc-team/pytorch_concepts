@@ -3,7 +3,7 @@ Example: Verifying automatic routing of model outputs to loss terms
 
 Creates a **fully synthetic** setup with 2 binary + 2 categorical concepts
 and a model that returns extra keys (``embeddings``, ``latent``) via
-``ModelOutput.extras`` alongside the standard ``logits`` / ``target``.
+``ModelOutput.extra`` alongside the standard ``logits`` / ``target``.
 
 Four custom loss terms are defined, each declaring a **different subset**
 of kwargs in its ``forward()`` signature:
@@ -24,11 +24,10 @@ route each term only the kwargs it declares, so:
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, OneHotCategorical
 from torch.utils.data import DataLoader, TensorDataset
 
 from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
 
 # ======================================================================
@@ -85,10 +84,10 @@ class CBMWithExtraOutputs(ConceptBottleneckModel):
 
     def forward(self, *args, **kwargs):
         out = super().forward(*args, **kwargs)
-        batch_size = out.probs.shape[0] if out.probs is not None else out.logits.shape[0]
-        device = (out.probs if out.probs is not None else out.logits).device
+        batch_size = out.logits.shape[0]
+        device = out.logits.device
         # Synthetic extra outputs (in practice these come from the model)
-        out.extras = {
+        out.extra = {
             'embeddings': torch.randn(batch_size, 16, device=device),
             'latent': torch.randn(batch_size, 8, device=device),
         }
@@ -114,12 +113,7 @@ def make_annotations():
     return Annotations({1: AxisAnnotation(
         labels=['b1', 'b2', 'cat1', 'cat2'],
         cardinalities=[1, 1, 3, 4],
-        metadata={
-            'b1':   {'type': 'discrete', 'distribution': Bernoulli},
-            'b2':   {'type': 'discrete', 'distribution': Bernoulli},
-            'cat1': {'type': 'discrete', 'distribution': OneHotCategorical},
-            'cat2': {'type': 'discrete', 'distribution': OneHotCategorical},
-        },
+        types=['binary', 'binary', 'categorical', 'categorical'],
     )})
 
 
@@ -152,28 +146,25 @@ def main():
     print()
 
     # ── Build model ───────────────────────────────────────────
+    # Distributions are owned by the model: binary -> Bernoulli, categorical ->
+    # OneHotCategorical are resolved from the concept types (no need to specify).
     model = CBMWithExtraOutputs(
         input_size=10,
         annotations=ann,
         task_names=[],
-        variable_distributions={
-            'b1': Bernoulli, 
-            'b2': Bernoulli,
-            'cat1': OneHotCategorical, 
-            'cat2': OneHotCategorical,
-        },
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=10, hidden_size=16, n_layers=1),
+        latent_size=16,
     )
 
     # ── Manual forward + loss (no Lightning, just to inspect routing) ─
     model.train()
-    out = model(x=x, query=['b1', 'b2', 'cat1', 'cat2'], return_logits=True)
+    out = model(input=x, query=['b1', 'b2', 'cat1', 'cat2'])
     out.target = c
 
     print(f"ModelOutput fields: logits={out.logits.shape}, target={out.target.shape}")
-    print(f"  extras keys: {sorted(out.extras.keys())}")
-    print(f"  embeddings shape: {out.extras['embeddings'].shape}")
-    print(f"  latent shape: {out.extras['latent'].shape}")
+    print(f"  extra keys: {sorted(out.extra.keys())}")
+    print(f"  embeddings shape: {out.extra['embeddings'].shape}")
+    print(f"  latent shape: {out.extra['latent'].shape}")
     print()
 
     print("Computing loss (watch which keys each term receives):")

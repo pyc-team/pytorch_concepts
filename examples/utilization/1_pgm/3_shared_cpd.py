@@ -14,7 +14,7 @@ This script verifies:
   3. members are views into one stacked tensor (no memory duplication);
   4. the encoder weights are counted once in ``model.parameters()``;
   5. members are addressable individually (single member; partial evidence);
-  6. it works under a different backend (AncestralInference) unchanged.
+  6. it works under a different backend (AncestralSamplingInference) unchanged.
 """
 
 import torch
@@ -24,7 +24,7 @@ from torch.distributions import Bernoulli
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork, DeterministicInference, AncestralInference,
+    ParametricCPD, BayesianNetwork, DeterministicInference, AncestralSamplingInference,
     LinearEmbeddingToConcept, LearnablePrior, Sequential,
 )
 
@@ -123,8 +123,8 @@ def main():
     print("partial evidence (c0 queried, c1..c3 observed): OK")
 
     # 6) A different backend works unchanged.
-    anc = AncestralInference(shared_net).query(NAMES, evidence={"embs": embs_value})
-    print(f"AncestralInference samples: {[tuple(anc.samples[n].shape) for n in NAMES]}")
+    anc = AncestralSamplingInference(shared_net).query(NAMES, evidence={"embs": embs_value})
+    print(f"AncestralSamplingInference samples: {[tuple(anc.samples[n].shape) for n in NAMES]}")
 
     print("\nPlate CPD matches N independent CPDs; one shared compute; addressable per member.")
 

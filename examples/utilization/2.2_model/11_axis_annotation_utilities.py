@@ -9,12 +9,7 @@ from torch_concepts.annotations import AxisAnnotation
 axis = AxisAnnotation(
     labels=['is_big', 'color', 'shape', 'temperature'],
     cardinalities=[1, 3, 2, 1],
-    metadata={
-        'is_big': {'type': 'discrete'},
-        'color': {'type': 'discrete'},
-        'shape': {'type': 'discrete'},
-        'temperature': {'type': 'continuous'}
-    }
+    types=['binary', 'categorical', 'categorical', 'continuous'],
 )
 
 tensor = torch.arange(7).unsqueeze(0).float().expand(4, -1)  # Shape: [4, 7]

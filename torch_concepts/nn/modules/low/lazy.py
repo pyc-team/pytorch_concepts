@@ -236,7 +236,7 @@ class LazyConstructor(torch.nn.Module):
             >>>
             >>> # Create and build propagator
             >>> lazy_constructor = LazyConstructor(LinearConceptToConcept)
-            >>> lazy_constructor.build(
+            >>> _ = lazy_constructor.build(
             ...     out_concepts=3,
             ...     in_concepts=5,
             ...     in_embeddings=None,

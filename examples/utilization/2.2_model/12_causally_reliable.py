@@ -8,12 +8,12 @@ import torchmetrics
 
 from torch_concepts import seed_everything
 
-from torch_concepts.nn import CausallyReliableConceptBottleneckModel
+from torch_concepts.nn import CausallyReliableConceptBottleneckModel, MLP
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.data import BnLearnDataModule
-from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
+from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
 
 def main():
 
@@ -67,12 +67,12 @@ def main():
         input_size=n_features,
         annotations=annotations,
         graph=datamodule.graph,
-        exogenous_size=8,
+        embedding_size=8,
         hypernet_hidden_size=8,
-        latent_encoder_kwargs={'hidden_size': 128, 'n_layers': 1},
+        backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
+        latent_size=128,
         lightning=True,
         train_inference=DeterministicInference,
-        train_inference_kwargs={'detach': False},
         loss=loss_fn,
         metrics=metrics,
         optim_class=torch.optim.AdamW,
@@ -96,10 +96,10 @@ def main():
     
     device = next(model.parameters()).device
     with torch.no_grad():
-        concepts = model(x=x_batch.to(device), query=concept_names)
-    
+        concepts = model(input=x_batch.to(device), query=concept_names)
+
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output concepts shape: {concepts.probs.shape}")
+    print(f"Output logits shape: {concepts.logits.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
