@@ -50,10 +50,10 @@ def main():
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    # {concept_name: distribution_class} for every concept on the axis (concepts
-    # + tasks). Overrides the model's default.
-    variable_distributions = {name: RelaxedBernoulli for name in dataset.concept_names}
-    print(f"variable_distributions: {{name: RelaxedBernoulli}} for {dataset.concept_names}")
+    # Override the model's per-type distribution policy: model every binary
+    # concept with RelaxedBernoulli.
+    variable_distributions = {'binary': RelaxedBernoulli}
+    print(f"variable_distributions (per-type override): {variable_distributions}")
 
     model = ConceptBottleneckModel(
         input_size=n_features,
@@ -64,7 +64,7 @@ def main():
         latent_size=16,  # output size of the backbone
     )
     print(f"Model: {type(model).__name__} | latent_size: {model.latent_size}")
-    print(f"dysp distribution from annotations: {model.concept_annotations.concept('dysp').distribution.__name__}")
+    print(f"binary distribution (model-owned): {model.variable_distributions['binary'].__name__}")
     print(f"dysp distribution from pgm variable: {model.pgm.variables['tasks'].distribution.__name__}")
 
     # ------------------------------------------------------------------

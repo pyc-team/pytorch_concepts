@@ -29,19 +29,14 @@ def main():
     annotations = Annotations({
         1: AxisAnnotation(
             labels=tuple(concept_names),
-            metadata={
-                'binary1': {'type': 'discrete', 'distribution': Bernoulli},
-                'binary2': {'type': 'discrete', 'distribution': Bernoulli},
-                'cat1': {'type': 'discrete', 'distribution': Categorical},
-                'cat2': {'type': 'discrete', 'distribution': Categorical},
-            },
-            cardinalities=[1, 1, 3, 4]  # binary=1, cat1=3 classes, cat2=4 classes
+            types=['binary', 'binary', 'categorical', 'categorical'],
+            cardinalities=[1, 1, 3, 4],
         )
     })
     
     print("\nAnnotations:")
     print(f"  Concepts: {concept_names}")
-    print(f"  Types: {[annotations[1].metadata[name]['type'] for name in concept_names]}")
+    print(f"  Types: {annotations[1].types}")
     print(f"  Cardinalities: {annotations[1].cardinalities}")
    
     # Three ways to specify metrics

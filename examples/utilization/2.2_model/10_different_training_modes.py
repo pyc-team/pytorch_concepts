@@ -13,21 +13,17 @@ built-in train/eval mode.  Calling `model.train()` activates
 `train_inference`; calling `model.eval()` activates
 `eval_inference`.  Lightning toggles this automatically.
 
-Current inference options:
-- DeterministicInference: Returns logits directly (standard behavior)
-- AncestralSamplingInference: Samples from distributions
-
-Note: Independent training (where each level uses ground truth from previous levels)
-can be implemented by creating a custom train_inference that uses evidence.
+Train and eval must use the *same* inference class; the two regimes are
+differentiated through ``train_inference_kwargs``.  Independent training (each
+level conditioned on ground-truth parents) is obtained by teacher-forcing the
+ground-truth concepts during training only, via ``p_int=1.0`` on the training
+engine, while evaluation keeps the default ``p_int=0.0``.
 """
 
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel
-from torch_concepts.nn.modules.mid.inference import (
-    DeterministicInference,
-    IndependentInference
-)
+from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP
+from torch_concepts.nn import DeterministicInference, IndependentInference
 from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
@@ -51,9 +47,11 @@ def evaluate(model, datamodule, n_concepts, query):
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
             # model.eval() automatically selects eval_inference
-            out = model(x=batch['inputs']['x'], query=query)
-            c_pred = out.probs[:, :n_concepts]
-            y_pred = out.probs[:, n_concepts:]
+            out = model(input=batch['inputs']['x'], query=query)
+            c_logits = out.logits[:, :n_concepts]
+            y_logits = out.logits[:, n_concepts:]
+            c_pred = torch.sigmoid(c_logits)
+            y_pred = torch.sigmoid(y_logits)
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]
@@ -122,7 +120,8 @@ def main():
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
         # Inference engines (both default to DeterministicInference)
         inference=DeterministicInference,
         train_inference=DeterministicInference,
@@ -144,20 +143,20 @@ def main():
     # DIFFERENT TRAINING MODE: INDEPENDENT TRAINING
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Example 2: Independent Training with Different Inference Engines")
+    print("Example 2: Independent Training via teacher forcing (p_int)")
     print("=" * 60)
-    print("Uses IndependentInference for training")
-    print("Uses DeterministicInference for evaluation")
+    print("Train: DeterministicInference with p_int=1.0 (teacher-force GT concepts)")
+    print("Eval:  DeterministicInference with p_int=0.0 (no teacher forcing)")
 
     model_sampling = ConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # Different inference for train vs eval
-        inference=DeterministicInference,        # Eval: deterministic
-        train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        inference=DeterministicInference,
+        train_inference=IndependentInference,
         # Lightning kwargs
         lightning=True,
         loss=loss,
@@ -165,8 +164,8 @@ def main():
         optim_kwargs=optim_kwargs
     )
     print(f"Model type: {type(model_sampling).__name__}")
-    print(f"Eval inference: {model_sampling.eval_inference.__class__.__name__}")
-    print(f"Training inference: {model_sampling.train_inference.__class__.__name__}")
+    print(f"Eval inference: {model_sampling.eval_inference.__class__.__name__} (p_int={model_sampling.eval_inference.p_int})")
+    print(f"Training inference: {model_sampling.train_inference.__class__.__name__} (p_int={model_sampling.train_inference.p_int})")
 
     trainer_sampling = Trainer(max_epochs=100)
     trainer_sampling.fit(model_sampling, datamodule=datamodule)
@@ -176,9 +175,9 @@ def main():
     # CEM WITH INDEPENDENT TRAINING (handles exogenous variables)
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Example 3: CEM with Independent Training")
+    print("Example 3: CEM with Independent Training (teacher forcing)")
     print("=" * 60)
-    print("Tests exogenous variable handling in IndependentInference")
+    print("Tests exogenous variable handling with p_int=1.0 teacher forcing")
 
     model_cem = ConceptEmbeddingModel(
         input_size=n_features,
@@ -186,18 +185,18 @@ def main():
         variable_distributions=variable_distributions,
         task_names=['xor'],
         embedding_size=4,
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-        # Different inference for train vs eval
-        inference=DeterministicInference,        # Eval: deterministic
-        train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        inference=DeterministicInference,
+        train_inference=IndependentInference,
         lightning=True,
         loss=loss,
         optim_class=optim,
         optim_kwargs=optim_kwargs
     )
     print(f"Model type: {type(model_cem).__name__}")
-    print(f"Eval inference: {model_cem.eval_inference.__class__.__name__}")
-    print(f"Training inference: {model_cem.train_inference.__class__.__name__}")
+    print(f"Eval inference: {model_cem.eval_inference.__class__.__name__} (p_int={model_cem.eval_inference.p_int})")
+    print(f"Training inference: {model_cem.train_inference.__class__.__name__} (p_int={model_cem.train_inference.p_int})")
 
     trainer_cem = Trainer(max_epochs=100)
     trainer_cem.fit(model_cem, datamodule=datamodule)

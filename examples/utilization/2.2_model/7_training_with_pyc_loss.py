@@ -16,9 +16,10 @@ from torchmetrics.classification import BinaryAccuracy
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
+from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
 
 def main():
 
@@ -67,7 +68,12 @@ def main():
         input_size=n_features,
         annotations=annotations,
         task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
+        latent_size=128,  # Output size of the backbone
+        # Inference engines
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        # Lightning kwargs
         lightning=True,
         loss=loss_fn,
         optim_class=torch.optim.AdamW,
@@ -91,10 +97,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        out = model(x=x_batch, query=query)
+        out = model(input=x_batch, query=query)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output concept probs shape: {out.probs.shape}")
+    print(f"Output concept logits shape: {out.logits.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -124,9 +130,10 @@ def main():
     with torch.no_grad():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
-            out = model(x=batch['inputs']['x'], query=query)
-            c_pred = out.probs[:, :n_concepts]
-            y_pred = out.probs[:, n_concepts:]
+            out = model(query=query, input=batch['inputs']['x'])
+            probs = torch.sigmoid(out.logits)
+            c_pred = probs[:, :n_concepts]
+            y_pred = probs[:, n_concepts:]
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]
