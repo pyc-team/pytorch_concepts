@@ -9,13 +9,14 @@ import os
 import numpy as np
 import pandas as pd
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, default_collate
 from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
 
 from ...concept_graph import ConceptGraph
 from ...annotations import Annotations, AxisAnnotation
+from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
 
 # TODO: implement masks for missing values
@@ -171,6 +172,26 @@ class ConceptDataset(Dataset):
         }
 
         return sample
+
+    def collate(self, samples):
+        """Collate samples into a batch, re-annotating the ground-truth concepts.
+
+        The default collate stacks the per-sample (plain, 1-D) concept rows into a
+        ``(batch, n_concepts)`` tensor; this re-wraps that tensor as an
+        :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
+        concept-space annotation as :attr:`concepts`, so every batch's concepts
+        are label/type aware. Inputs and any other keys are collated unchanged.
+        Used as the DataLoader ``collate_fn`` by :class:`ConceptDataModule`.
+        """
+        batch = default_collate(samples)
+        annotation = getattr(self.concepts, 'annotation', None)
+        if annotation is not None and isinstance(batch, dict):
+            concepts = batch.get('concepts')
+            if isinstance(concepts, dict):
+                c = concepts.get('c')
+                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.shape:
+                    concepts['c'] = AnnotatedTensor(c, annotation)
+        return batch
 
 
     # Dataset properties #####################################################
@@ -427,7 +448,16 @@ class ConceptDataset(Dataset):
         concepts = parse_tensor(concepts, 'concepts', self.precision)
         #########################################################################
 
-        self.concepts = concepts
+        # Wrap the full concept tensor with a *concept-space* annotation (one
+        # integer-coded column per concept, so categorical labels are class
+        # indices) so it carries the concept labels/types. Per-sample
+        # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
+        # axis 1); batches are re-annotated by :meth:`collate`.
+        concept_ann = self.annotations.get_axis_annotation(1).to_concept_space()
+        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.shape:
+            self.concepts = AnnotatedTensor(concepts, concept_ann)
+        else:
+            self.concepts = concepts
 
     def add_exogenous(self,
                       name: str,
