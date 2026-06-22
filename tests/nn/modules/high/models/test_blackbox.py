@@ -21,6 +21,9 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, Categorical
 
 from torch_concepts.nn.modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.nn.modules.loss import ConceptLoss
+from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn import MLP
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
@@ -393,7 +396,6 @@ class TestBlackBoxRepr(unittest.TestCase):
 # BlackBox Lightning Integration Tests
 # =============================================================================
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestBlackBoxLightning(unittest.TestCase):
     """Test BlackBox with Lightning training mode."""
     
@@ -499,21 +501,16 @@ class TestBlackBoxLightning(unittest.TestCase):
         config = model.configure_optimizers()
         self.assertIsNone(config)
     
-    def test_lightning_get_inference_kwargs_returns_empty(self):
-        """Test that _get_inference_kwargs returns {} for BlackBox."""
+    def test_lightning_no_inference_engine(self):
+        """Test that BlackBox with lightning=True does not have inference engines."""
         model = BlackBox(
             lightning=True,
             input_size=8,
             annotations=self.ann,
         )
-        
-        batch = {
-            'inputs': {'x': torch.randn(2, 8)},
-            'concepts': {'c': torch.randint(0, 2, (2, 2)).float()}
-        }
-        
-        kwargs = model._get_inference_kwargs(batch)
-        self.assertEqual(kwargs, {})
+
+        self.assertFalse(hasattr(model, 'eval_inference'))
+        self.assertFalse(hasattr(model, 'train_inference'))
 
 
 # =============================================================================
@@ -844,7 +841,6 @@ class TestBlackBoxTaskOnlyMultipleTasks(unittest.TestCase):
 # BlackBoxTaskOnly Lightning Integration Tests
 # =============================================================================
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestBlackBoxTaskOnlyLightning(unittest.TestCase):
     """Test BlackBoxTaskOnly with Lightning training mode."""
     
@@ -915,22 +911,17 @@ class TestBlackBoxTaskOnlyLightning(unittest.TestCase):
         self.assertIn('optimizer', config)
         self.assertIsInstance(config['optimizer'], torch.optim.AdamW)
     
-    def test_lightning_get_inference_kwargs_returns_empty(self):
-        """Test that _get_inference_kwargs returns {} for BlackBoxTaskOnly."""
+    def test_lightning_no_inference_engine(self):
+        """Test that BlackBoxTaskOnly with lightning=True does not have inference engines."""
         model = BlackBoxTaskOnly(
             lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names='task',
         )
-        
-        batch = {
-            'inputs': {'x': torch.randn(2, 8)},
-            'concepts': {'c': torch.randint(0, 2, (2, 4)).float()}
-        }
-        
-        kwargs = model._get_inference_kwargs(batch)
-        self.assertEqual(kwargs, {})
+
+        self.assertFalse(hasattr(model, 'eval_inference'))
+        self.assertFalse(hasattr(model, 'train_inference'))
 
 
 class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
@@ -950,7 +941,6 @@ class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
         self.assertIn('BlackBoxTaskOnly', repr_str)
 
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
     """Test that BlackBoxTaskOnly rebuilds ConceptLoss with task-only annotations."""
 
@@ -996,7 +986,6 @@ class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
         self.assertIsInstance(model.loss, ConceptLoss)
 
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestBlackBoxTaskOnlySetupMetrics(unittest.TestCase):
     """Test that setup_metrics rebuilds ConceptMetrics with task-only annotations."""
 
@@ -1052,11 +1041,11 @@ class TestBlackBoxTaskOnlySetupMetrics(unittest.TestCase):
 
 class TestBlackBoxDeviceConsistency(unittest.TestCase):
     """Test device consistency for BlackBox models."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = make_annotations(['c1', 'task'], [1, 1])
-    
+
     def test_blackbox_device_consistency(self):
         """Test that BlackBox maintains device consistency."""
         if not torch.cuda.is_available():

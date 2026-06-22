@@ -153,45 +153,27 @@ class TestIndicesToMask:
             indices_to_mask([0, 1], c_vals, n_concepts=3, batch_size=3)
 
     def test_integration_with_intervention(self):
-        """Test that indices_to_mask works with intervention strategies."""
-        import torch.nn as nn
+        """Test that indices_to_mask output is compatible with DoIntervention."""
         from torch_concepts.nn import DoIntervention
 
-        # Create a simple model
-        model = nn.Linear(5, 3)
-
-        # Define index-based intervention
         c_idxs = [0, 2]
         c_vals = [1.0, 0.0]
         n_concepts = 3
         batch_size = 4
 
-        # Convert to mask-based format
         mask, target = indices_to_mask(c_idxs, c_vals, n_concepts, batch_size)
 
-        # Create intervention with constant values matching target
+        # DoIntervention replaces concept predictions with constants
         intervention_vals = torch.tensor([1.0, 0.0, 0.0])
-        strategy = DoIntervention(model, intervention_vals)
+        strategy = DoIntervention(intervention_vals)
 
-        # Create a simple wrapper to test
-        class DummyModule(nn.Module):
-            def forward(self, **kwargs):
-                return torch.randn(batch_size, n_concepts)
-
-        dummy = DummyModule()
-        wrapped = strategy.query(dummy, mask)
-
-        # Test that it runs without error
-        output = wrapped()
+        concept_preds = torch.randn(batch_size, n_concepts)
+        output = strategy(concept_preds)
         assert output.shape == (batch_size, n_concepts)
 
-        # Check that intervened positions match target values
-        # (within the mask: where mask is 0, output should match target)
-        intervened_mask = (mask == 0)
+        # Every row should equal the intervention constants
         for i in range(batch_size):
-            for j in range(n_concepts):
-                if intervened_mask[i, j]:
-                    assert torch.isclose(output[i, j], target[i, j], atol=1e-5)
+            assert torch.allclose(output[i], intervention_vals, atol=1e-5)
 
 
 if __name__ == "__main__":

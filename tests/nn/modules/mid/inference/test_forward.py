@@ -400,4 +400,5 @@ class TestInferenceOutputAlias:
         m = _make_simple_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         out = eng.query(query=["c"], evidence={})
-        assert out.model_params is out.params
+        # model_params alias was removed; params is the canonical field
+        assert hasattr(out, 'params')

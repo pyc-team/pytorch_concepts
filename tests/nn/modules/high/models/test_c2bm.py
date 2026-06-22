@@ -207,8 +207,8 @@ class TestC2BMInitialization:
             graph=chain_graph,
         )
         assert model.concept_names == ['A', 'B', 'C']
-        # Defaults should have been filled (base family Bernoulli).
-        assert model.concept_annotations.concept('A').distribution == Bernoulli
+        # Distributions live on the model, keyed by type.
+        assert model.variable_distributions['binary'] == Bernoulli
 
     def test_diamond_graph_init(self, diamond_graph, binary_diamond_ann):
         model = CausallyReliableConceptBottleneckModel(
@@ -219,14 +219,14 @@ class TestC2BMInitialization:
         assert model is not None
 
     def test_independent_train_inference(self, chain_graph, binary_chain_ann):
-        """Using a different train_inference class should raise ValueError."""
-        with pytest.raises(ValueError, match="must be the same class"):
-            CausallyReliableConceptBottleneckModel(
-                input_size=8,
-                annotations=binary_chain_ann,
-                graph=chain_graph,
-                train_inference=IndependentInference,
-            )
+        """IndependentInference is a subclass of DeterministicInference — allowed as train_inference."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            train_inference=IndependentInference,
+        )
+        assert model is not None
 
     def test_same_train_and_eval_inference_allowed(self, chain_graph, binary_chain_ann):
         """Passing the same class for train_inference and inference is allowed."""
@@ -405,12 +405,24 @@ class TestC2BMTrainEvalRouting:
 # return_logits (API removed)
 # ===========================================================================
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestC2BMReturnLogits:
-    """The return_logits API no longer exists."""
+    """The return_logits API no longer exists — logits live in out.params[name]['logits']."""
 
-    def test_return_logits_shape(self):
-        pass
+    def test_return_logits_shape(self, chain_graph, binary_chain_ann):
+        """Logits are accessed via out.params[name]['logits'], not a top-level attribute."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+        )
+        x = torch.randn(4, 8)
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        # Each queried concept has logits in params
+        for name in query:
+            assert name in out.params
+            assert 'logits' in out.params[name]
+        assert _logits(out, query).shape == (4, 3)
 
 
 # ===========================================================================
@@ -510,28 +522,40 @@ class TestC2BMManualTraining:
 # ===========================================================================
 
 class TestC2BMIndependentInference:
-    """Verify that IndependentInference as train_inference raises ValueError."""
+    """Verify that IndependentInference as train_inference is accepted."""
 
-    def test_different_train_inference_raises(self, chain_graph, binary_chain_ann):
-        with pytest.raises(ValueError, match="must be the same class"):
-            CausallyReliableConceptBottleneckModel(
-                input_size=8,
-                annotations=binary_chain_ann,
-                graph=chain_graph,
-                train_inference=IndependentInference,
-            )
+    def test_different_train_inference_allowed(self, chain_graph, binary_chain_ann):
+        """IndependentInference is a subclass of DeterministicInference — now allowed."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            train_inference=IndependentInference,
+        )
+        assert model is not None
 
 
 # ===========================================================================
 # Ancestral sampling inference
 # ===========================================================================
 
-@pytest.mark.skip(reason="out of scope: ancestral inference forward is a known-open issue — revisit later")
 class TestC2BMAncestralSamplingInference:
-    """Test forward pass with AncestralSamplingInference."""
+    """Test forward pass with AncestralSamplingInference as train_inference."""
 
     def test_sampling_produces_output(self, chain_graph, binary_chain_ann):
-        pass
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            train_inference=AncestralSamplingInference,
+        )
+        assert isinstance(model.eval_inference, DeterministicInference)
+        assert isinstance(model.train_inference, AncestralSamplingInference)
+        x = torch.randn(4, 8)
+        names = binary_chain_ann.get_axis_annotation(1).labels
+        out = model(query=list(names), input=x)
+        assert out.params
+        assert all('logits' in v for v in out.params.values())
 
 
 # ===========================================================================
@@ -558,12 +582,19 @@ class TestC2BMPrepareTarget:
 # Lightning integration
 # ===========================================================================
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestC2BMLightning:
     """Test Lightning training capabilities."""
 
-    def test_lightning_mode_creates_learner(self):
-        pass
+    def test_lightning_mode_creates_learner(self, chain_graph, binary_chain_ann):
+        """Test that lightning=True creates a BaseLearner instance."""
+        from torch_concepts.nn.modules.high.base.learner import BaseLearner
+        model = CausallyReliableConceptBottleneckModel(
+            lightning=True,
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+        )
+        assert isinstance(model, BaseLearner)
 
 
 # ===========================================================================

@@ -243,7 +243,7 @@ class TestGroupedConceptExogenousMixture(unittest.TestCase):
         self.assertEqual(result.shape, (batch_size, len(groups), emb_size))
 
     def test_grouped_mixture_singleton_groups(self):
-        """Test with singleton groups (two-half mixture)."""
+        """Test with singleton groups — each group has one concept."""
         batch_size = 2
         n_concepts = 3
         emb_size = 10
@@ -252,8 +252,8 @@ class TestGroupedConceptExogenousMixture(unittest.TestCase):
         c_emb = torch.randn(batch_size, n_concepts, emb_size)
         c_scores = torch.rand(batch_size, n_concepts)
 
-        with self.assertRaises(AssertionError):
-            result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
+        result = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
+        self.assertEqual(result.shape, (batch_size, len(groups), emb_size))
 
     def test_grouped_mixture_invalid_groups(self):
         """Test with invalid group sizes."""

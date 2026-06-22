@@ -119,9 +119,8 @@ class TestCEMInitialization(unittest.TestCase):
         )
 
         self.assertEqual(model.concept_names, ['c1', 'c2', 'task'])
-        # Defaults should be filled in (base families)
-        ann = model.concept_annotations
-        self.assertEqual(ann.concept('c1').distribution, Bernoulli)
+        # Distributions live on the model, keyed by type.
+        self.assertEqual(model.variable_distributions['binary'], Bernoulli)
 
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""
@@ -172,7 +171,6 @@ class TestCEMInitialization(unittest.TestCase):
 
         self.assertIsInstance(model.inference, AncestralSamplingInference)
 
-    @pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
     def test_factory_default_is_pytorch(self):
         """Test that default lightning=False creates pure PyTorch model."""
         model = ConceptEmbeddingModel(
@@ -184,7 +182,6 @@ class TestCEMInitialization(unittest.TestCase):
         # Default is pure PyTorch (no learner mixin)
         self.assertFalse(isinstance(model, BaseLearner))
 
-    @pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
     def test_factory_lightning_training(self):
         """Test that lightning=True creates Lightning model."""
         model = ConceptEmbeddingModel(
@@ -959,13 +956,11 @@ class TestCEMComparison(unittest.TestCase):
         self.assertEqual(_logits(cem_out, query).shape, _logits(cbm_out, query).shape)
 
 
-@pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
 class TestCEMIndependentLearner(unittest.TestCase):
-    """Test CEM with independent training mode."""
+    """Test CEM with Lightning training mode."""
 
     def setUp(self):
         """Set up test fixtures."""
-        # Simple annotation structure - CEM will create exogenous internally
         self.ann = Annotations({
             1: AxisAnnotation(
                 labels=['c1', 'c2', 'task'],

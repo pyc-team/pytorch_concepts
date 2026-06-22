@@ -16,8 +16,6 @@ from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.dense_layers import MLP
 from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn.modules.utils import GroupConfig
-from torch_concepts.utils import add_distribution_to_annotations, add_activation_to_annotations
 
 
 # Test Fixtures
@@ -53,32 +51,24 @@ class DummyLatentEncoder(nn.Module):
 # Fixtures
 @pytest.fixture
 def annotations_with_distributions():
-    """Annotations with distributions in metadata."""
+    """Annotations with binary concept types."""
     return Annotations({
         1: AxisAnnotation(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                'task': {'type': 'discrete'}
-            }
+            types=['binary', 'binary', 'binary'],
         )
     })
 
 
 @pytest.fixture
 def annotations_without_distributions():
-    """Annotations without distributions but with type metadata."""
+    """Annotations with binary concept types (alias of annotations_with_distributions)."""
     return Annotations({
         1: AxisAnnotation(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                'task': {'type': 'discrete'}
-            }
+            types=['binary', 'binary', 'binary'],
         )
     })
 
@@ -90,10 +80,7 @@ def mixed_annotations():
         1: AxisAnnotation(
             labels=['binary_c', 'cat_c'],
             cardinalities=[1, 3],
-            metadata={
-                'binary_c': {'type': 'discrete'},
-                'cat_c': {'type': 'discrete'}
-            }
+            types=['binary', 'categorical'],
         )
     })
 
@@ -106,69 +93,55 @@ class TestBaseModelInitialization:
     """Test BaseModel initialization with various configurations."""
     
     def test_init_defaults(self, annotations_with_distributions):
-        """Test initialization fills default distributions and activations."""
+        """Test initialization sets default distributions on the model."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         assert model.concept_names == ['c1', 'c2', 'task']
-        ann = model.concept_annotations
-        assert ann.distributions is not None
-        assert ann.concept('c1').distribution == Bernoulli
+        assert model.variable_distributions['binary'] == Bernoulli
 
     def test_init_with_variable_distributions_dict(
         self, annotations_without_distributions
     ):
-        """Test initialization with variable_distributions dict passed to constructor."""
+        """Test initialization with variable_distributions type-keyed dict."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_without_distributions,
             variable_distributions={
-                'c1': RelaxedBernoulli,
-                'c2': RelaxedBernoulli,
-                'task': Bernoulli,
+                'binary': RelaxedBernoulli,
             },
         )
-        
+
         assert model.concept_names == ['c1', 'c2', 'task']
-        ann = model.concept_annotations
-        assert ann.distributions is not None
-        assert ann.concept('c1').distribution == RelaxedBernoulli
+        assert model.variable_distributions['binary'] == RelaxedBernoulli
         assert model.latent_size == 10  # No encoder, uses input_size
-        assert ann.concept('c2').distribution == RelaxedBernoulli
-        assert ann.concept('task').distribution == Bernoulli
-    
-    def test_init_with_variable_distributions_groupconfig(
+
+    def test_init_with_variable_distributions_categorical(
         self, mixed_annotations
     ):
-        """Test initialization with variable_distributions as GroupConfig passed to constructor."""
+        """Test initialization with per-type variable_distributions override."""
         model = ConcreteModel(
             input_size=10,
             annotations=mixed_annotations,
-            variable_distributions=GroupConfig(
-                binary=RelaxedBernoulli,
-                categorical=OneHotCategorical,
-            ),
+            variable_distributions={
+                'binary': RelaxedBernoulli,
+                'categorical': OneHotCategorical,
+            },
         )
-        
+
         assert model.concept_names == ['binary_c', 'cat_c']
-        ann = model.concept_annotations
-        assert ann.distributions is not None
-        assert ann.concept('binary_c').distribution == RelaxedBernoulli
-        assert ann.concept('cat_c').distribution == OneHotCategorical
-    
+        assert model.variable_distributions['binary'] == RelaxedBernoulli
+        assert model.variable_distributions['categorical'] == OneHotCategorical
+
     def test_init_without_distributions_uses_defaults(self, annotations_without_distributions):
-        """Test that missing distributions are filled with defaults (Bernoulli for binary discrete)."""
+        """Test that no override leaves class-level defaults in place."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_without_distributions
         )
-        ann = model.concept_annotations
-        assert ann.distributions is not None
-        assert ann.concept('c1').distribution == Bernoulli
-        assert ann.concept('c2').distribution == Bernoulli
-        assert ann.concept('task').distribution == Bernoulli
+        assert model.variable_distributions['binary'] == Bernoulli
     
     def test_init_with_backbone_class(self, annotations_with_distributions):
         """Test initialization with a custom backbone instance."""
@@ -407,10 +380,10 @@ class TestBaseModelProperties:
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         assert hasattr(model, 'concept_annotations')
         assert isinstance(model.concept_annotations, AxisAnnotation)
-        assert model.concept_annotations.distributions is not None
+        assert model.concept_annotations.labels == ['c1', 'c2', 'task']
     
     def test_latent_size_property_with_backbone(self, annotations_with_distributions):
         """Test latent_size attribute with backbone."""
