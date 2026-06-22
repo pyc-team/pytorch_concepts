@@ -27,6 +27,8 @@ class BlackBox(BaseModel):
         **kwargs: Additional arguments for BaseModel.
 
     Example:
+        >>> from torch_concepts.annotations import Annotations, AxisAnnotation
+        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'task'], cardinalities=[1, 1])})
         >>> model = BlackBox(input_size=8, annotations=ann)
         >>> out = model(torch.randn(2, 8))
     """
@@ -143,6 +145,8 @@ class BlackBoxTaskOnly(BaseModel):
             slice the ground-truth target tensor to match the task-only output.
 
     Example:
+        >>> from torch_concepts.annotations import Annotations, AxisAnnotation
+        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'task'], cardinalities=[1, 1])})
         >>> model = BlackBoxTaskOnly(input_size=8, annotations=ann, task_names=['task'])
         >>> out = model(torch.randn(2, 8))
     """

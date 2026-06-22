@@ -53,7 +53,8 @@ class HyperlinearConceptEmbeddingToConcept(BaseConceptLayer):
         >>>
         >>> # Forward pass
         >>> output = predictor(concepts=concepts, embeddings=embeddings)
-        >>> print(output.shape)  # torch.Size([4, 3])
+        >>> print(output.shape)
+        torch.Size([4, 3])
 
     References:
         De Felice et al. "Causally Reliable Concept Bottleneck Models", NeurIPS 2025. https://arxiv.org/pdf/2503.04363

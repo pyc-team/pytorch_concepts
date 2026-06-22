@@ -401,7 +401,7 @@ def compute_cace(
 
     Example::
 
-        >>> cace = compute_cace(
+        >>> cace = compute_cace(  # doctest: +SKIP
         ...     model=cbm,
         ...     dataloader=test_loader,
         ...     source_concept="c1",

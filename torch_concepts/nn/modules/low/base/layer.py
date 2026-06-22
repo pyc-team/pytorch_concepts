@@ -55,7 +55,8 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         >>>
         >>> # Forward pass
         >>> output = layer(concepts)
-        >>> print(output.shape)  # torch.Size([2, 5])
+        >>> print(output.shape)
+        torch.Size([2, 5])
     """
 
     def __init__(

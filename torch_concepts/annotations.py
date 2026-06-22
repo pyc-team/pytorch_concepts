@@ -90,33 +90,44 @@ class AxisAnnotation:
         >>> axis_binary = AxisAnnotation(
         ...     labels=['has_wheels', 'has_windows', 'is_red']
         ... )
-        >>> print(axis_binary.labels)  # ['has_wheels', 'has_windows', 'is_red']
-        >>> print(axis_binary.is_nested)  # False
-        >>> print(axis_binary.cardinalities)  # [1, 1, 1] - binary concepts
+        >>> print(axis_binary.labels)
+        ['has_wheels', 'has_windows', 'is_red']
+        >>> print(axis_binary.is_nested)
+        False
+        >>> print(axis_binary.cardinalities)
+        [1, 1, 1]
         >>>
         >>> # Nested concepts with explicit states
         >>> axis_nested = AxisAnnotation(
         ...     labels=['color', 'shape'],
         ...     states=[['red', 'green', 'blue'], ['circle', 'square']],
         ... )
-        >>> print(axis_nested.labels)  # ['color', 'shape']
-        >>> print(axis_nested.is_nested)  # True
-        >>> print(axis_nested.cardinalities)  # [3, 2]
-        >>> print(axis_nested.states[0])  # ['red', 'green', 'blue']
+        >>> print(axis_nested.labels)
+        ['color', 'shape']
+        >>> print(axis_nested.is_nested)
+        True
+        >>> print(axis_nested.cardinalities)
+        [3, 2]
+        >>> print(axis_nested.states[0])
+        ['red', 'green', 'blue']
         >>>
         >>> # With cardinalities only (auto-generates state labels)
         >>> axis_cards = AxisAnnotation(
         ...     labels=['size', 'material'],
-        ...     cardinalities=[3, 4]  # 3 sizes, 4 materials
+        ...     cardinalities=[3, 4]
         ... )
-        >>> print(axis_cards.cardinalities)  # [3, 4]
-        >>> print(axis_cards.states[0])  # ['0', '1', '2']
+        >>> print(axis_cards.cardinalities)
+        [3, 4]
+        >>> print(axis_cards.states[0])
+        ['0', '1', '2']
         >>>
         >>> # Access methods
         >>> idx = axis_binary.get_index('has_wheels')
-        >>> print(idx)  # 0
+        >>> print(idx)
+        0
         >>> label = axis_binary.get_label(1)
-        >>> print(label)  # 'has_windows'
+        >>> print(label)
+        has_windows
     """
     labels: List[str]
     states: Optional[List[List[str]]] = field(default=None)
@@ -342,7 +353,7 @@ class AxisAnnotation:
         Example:
             >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
             >>> axis.cumulative_cardinalities
-            [0, 3, 5, 6]  # color: 0-3, shape: 3-5, size: 5-6
+            [0, 3, 5, 6]
         """
         cum = [0]
         for c in self.cardinalities:
@@ -356,8 +367,7 @@ class AxisAnnotation:
         Example:
             >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
             >>> axis.concept_slices['color']
-            slice(0, 3)
-            >>> tensor[:, axis.concept_slices['shape']]  # Get shape logits
+            slice(0, 3, None)
         """
         cum = self.cumulative_cardinalities
         return {name: slice(cum[i], cum[i+1]) 
@@ -396,8 +406,10 @@ class AxisAnnotation:
             ...     cardinalities=[1, 3, 1],
             ...     types=['binary', 'categorical', 'continuous'],
             ... )
-            >>> axis.type_groups['binary']['labels']  # ['size']
-            >>> axis.type_groups['categorical']['logits_idx']  # [1, 2, 3]
+            >>> axis.type_groups['binary']['labels']
+            ['size']
+            >>> axis.type_groups['categorical']['logits_idx']
+            [1, 2, 3]
         """
         cum = self.cumulative_cardinalities
 
@@ -453,8 +465,12 @@ class AxisAnnotation:
             Tensor with columns for specified concepts concatenated
             
         Example:
-            >>> # Reorder from topological to annotation order
+            >>> import torch
+            >>> axis = AxisAnnotation(labels=['color', 'shape'], cardinalities=[3, 2])
+            >>> predictions = torch.rand(4, 5)
             >>> reordered = axis.slice_tensor(predictions, axis.labels)
+            >>> reordered.shape
+            torch.Size([4, 5])
         """
         pieces = [tensor[:, self.concept_slices[c]] for c in concepts]
         return torch.cat(pieces, dim=1)
@@ -486,11 +502,9 @@ class AxisAnnotation:
             >>> # Single concept → slice
             >>> axis.get_slice('color')
             slice(0, 3, None)
-            >>> tensor[:, axis.get_slice('color')]  # slicing
-            
             >>> # Multiple concepts → flattened indices
             >>> axis.get_slice(['color', 'size'])
-            [0, 1, 2, 5]  # color takes 0-2, size takes 5
+            [0, 1, 2, 5]
         """
         slices = self.concept_slices  # Use cached property
         
@@ -534,7 +548,8 @@ class AxisAnnotation:
 
         Example:
             >>> axis = AxisAnnotation.empty(4)
-            >>> axis.labels   # ['c_0', 'c_1', 'c_2', 'c_3']
+            >>> axis.labels
+            ['c_0', 'c_1', 'c_2', 'c_3']
         """
         cardinalities = [cardinalities] * n if isinstance(cardinalities, int) else cardinalities
         types = [types] * n if isinstance(types, str) else types  # broadcast single str to list
@@ -719,20 +734,25 @@ class Annotations:
         >>> annotations = Annotations({1: concept_ann})
         >>>
         >>> # Access concept labels
-        >>> print(annotations.get_axis_labels(1))  # ['color', 'shape', 'size']
+        >>> print(annotations.get_axis_labels(1))
+        ['color', 'shape', 'size']
         >>>
         >>> # Get index of a concept
         >>> idx = annotations.get_index(1, 'color')
-        >>> print(idx)  # 0
+        >>> print(idx)
+        0
         >>>
         >>> # Check if axis is nested
-        >>> print(annotations.is_axis_nested(1))  # True
+        >>> print(annotations.is_axis_nested(1))
+        True
         >>>
         >>> # Get cardinalities
-        >>> print(annotations.get_axis_cardinalities(1))  # [3, 2, 1]
+        >>> print(annotations.get_axis_cardinalities(1))
+        [3, 2, 1]
         >>>
         >>> # Access via indexing
-        >>> print(annotations[1].labels)  # ['color', 'shape', 'size']
+        >>> print(annotations[1].labels)
+        ['color', 'shape', 'size']
         >>>
         >>> # Multiple axes example
         >>> task_ann = AxisAnnotation(labels=['task1', 'task2', 'task3'])
@@ -740,7 +760,8 @@ class Annotations:
         ...     1: concept_ann,
         ...     2: task_ann
         ... })
-        >>> print(multi_ann.annotated_axes)  # (1, 2)
+        >>> print(multi_ann.annotated_axes)
+        (1, 2)
     """
 
     def __init__(self, axis_annotations: Optional[Union[List, Dict[int, AxisAnnotation]]] = None):

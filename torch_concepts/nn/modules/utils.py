@@ -40,10 +40,13 @@ class GroupConfig:
         >>> default_loss = MSELoss()
         >>> binary_loss = loss_config['binary']
         >>> loss_config.get('continuous', default_loss)
+        MSELoss()
         >>>
         >>> # Check what's configured
         >>> 'binary' in loss_config
+        True
         >>> list(loss_config.keys())
+        ['binary', 'categorical', 'continuous']
     """
     
     def __init__(

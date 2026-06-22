@@ -34,34 +34,24 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     Example:
         >>> import torch
         >>> from torch_concepts.nn import MixConceptEmbeddingToConcept
+        >>> from torch_concepts import AxisAnnotation
         >>>
-        >>> # Create predictor with 10 concepts, 20 embedding dims, 3 output concepts
+        >>> # Create predictor: 3 concepts (cardinalities 3, 4, 3), 10 embedding dims, 2 outputs
+        >>> in_ann = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 4, 3])
         >>> predictor = MixConceptEmbeddingToConcept(
-        ...     in_concepts=10,
+        ...     in_concepts=in_ann,
         ...     in_embeddings=10,
-        ...     out_concepts=3,
-        ...     cardinalities=[2, 4, 4],  # 3 groups summing to 10
+        ...     out_concepts=2,
         ... )
         >>>
         >>> # Generate random inputs
-        >>> concepts = torch.randn(4, 10)  # batch_size=4, n_concepts=10
-        >>> embeddings = torch.randn(4, 10, 20)  # (batch, n_concepts, emb_size)
+        >>> concepts = torch.randn(4, 10)  # batch_size=4, total logits (3+4+3=10)
+        >>> embeddings = torch.randn(4, 10, 10)  # (batch, total_cardinality, emb_size)
         >>>
         >>> # Forward pass
         >>> output = predictor(concepts=concepts, embeddings=embeddings)
-        >>> print(output.shape)  # torch.Size([4, 3])
-        >>>
-        >>> # With concept groups (e.g., color has 3 values, shape has 4, etc.)
-        >>> predictor_grouped = MixConceptEmbeddingToConcept(
-        ...     in_concepts=10,
-        ...     in_embeddings=20, # Must be equal to embedding size when cardinalities are provided
-        ...     out_concepts=3,
-        ...     cardinalities=[3, 4, 3]  # 3 groups summing to 10
-        ... )
-        >>>
-        >>> # Forward pass with grouped concepts
-        >>> output = predictor_grouped(concepts=concepts, embeddings=embeddings)
-        >>> print(output.shape)  # torch.Size([4, 3])
+        >>> print(output.shape)
+        torch.Size([4, 2])
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the

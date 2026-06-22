@@ -193,10 +193,10 @@ class BaseModel(nn.Module, ABC):
     >>> x = torch.randn(32, 10)
     >>> y = torch.randint(0, 2, (32, 3)).float()
     >>> 
-    >>> for epoch in range(100):
+    >>> for epoch in range(3):
     ...     optimizer.zero_grad()
-    ...     out = model(x, query=['c1', 'c2', 'task'])
-    ...     loss = loss_fn(out, y)
+    ...     out = model(query=['c1', 'c2', 'task'], input=x)
+    ...     loss = loss_fn(out.logits, y)
     ...     loss.backward()
     ...     optimizer.step()
 

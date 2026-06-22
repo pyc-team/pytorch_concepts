@@ -332,14 +332,15 @@ class WeightedConceptLoss(nn.Module):
         >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
         >>> from torch_concepts.annotations import AxisAnnotation, Annotations
-        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 3, 1])})
+        >>> import torch
+        >>> from torch_concepts.nn.modules.outputs import ModelOutput
+        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 1, 1])})
         >>> loss_fn = WeightedConceptLoss(
         ...     ann, concept_weight=0.7, task_weight=0.3,
         ...     task_names=['task'], binary=BCEWithLogitsLoss()
         ... )
-        >>> input = torch.randn(2, 5)
-        >>> target = torch.randint(0, 2, (2, 3))
-        >>> loss = loss_fn(input=input, target=target)
+        >>> out = ModelOutput(logits=torch.randn(2, 3), target=torch.randint(0, 2, (2, 3)).float())
+        >>> loss = loss_fn(out)
     """
     def __init__(
         self,
@@ -446,7 +447,7 @@ class DepthWeightedConceptLoss(nn.Module):
         >>> import torch
         >>> from torch_concepts.nn.modules.loss import DepthWeightedConceptLoss
         >>> from torch_concepts.annotations import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
+        >>> from torch_concepts import ConceptGraph
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['A', 'B', 'C'],
@@ -462,9 +463,9 @@ class DepthWeightedConceptLoss(nn.Module):
         ...     source_weight=1.0, depth_decay=0.5,
         ...     binary=torch.nn.BCEWithLogitsLoss()
         ... )
-        >>> preds = torch.randn(4, 3)
-        >>> targets = torch.randint(0, 2, (4, 3)).float()
-        >>> loss = loss_fn(input=preds, target=targets)
+        >>> from torch_concepts.nn.modules.outputs import ModelOutput
+        >>> out = ModelOutput(logits=torch.randn(4, 3), target=torch.randint(0, 2, (4, 3)).float())
+        >>> loss = loss_fn(out)
     """
 
     def __init__(

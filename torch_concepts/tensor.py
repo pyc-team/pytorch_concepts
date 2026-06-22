@@ -60,16 +60,10 @@ class AnnotatedTensor:
         >>>
         >>> # Label-based slicing
         >>> sliced = t["cat", "dog"]
-        >>> sliced.annotation.labels   # ['cat', 'dog']
-        >>> sliced.tensor.shape        # torch.Size([4, 2])
-        >>>
-        >>> # Aggregation over axis 0 preserves the annotation
-        >>> col_means = t.mean(dim=0)
-        >>> col_means.annotation.labels  # ['cat', 'dog', 'bird']
-        >>>
-        >>> # torch module-level functions work too
-        >>> summed = torch.sum(t, dim=0)
-        >>> summed.annotation.labels  # ['cat', 'dog', 'bird']
+        >>> sliced.annotation.labels
+        ['cat', 'dog']
+        >>> sliced.tensor.shape
+        torch.Size([4, 2])
     """
 
     def __init__(self, data: torch.Tensor, annotation: AxisAnnotation):
@@ -188,8 +182,10 @@ class AnnotatedTensor:
             >>> a = AnnotatedTensor(torch.rand(4, 2), ann_a)
             >>> b = AnnotatedTensor(torch.rand(4, 2), ann_b)
             >>> merged = a.union_with(b)
-            >>> merged.annotation.labels   # ['cat', 'dog', 'bird', 'fish']
-            >>> merged.tensor.shape        # torch.Size([4, 4])
+            >>> merged.annotation.labels
+            ['cat', 'dog', 'bird', 'fish']
+            >>> merged.tensor.shape
+            torch.Size([4, 4])
         """
         all_tensors = [self, *others]
 
@@ -242,8 +238,10 @@ class AnnotatedTensor:
             >>> ann = AxisAnnotation(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
             >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
             >>> d = t.split_by_type()
-            >>> d['binary'].annotation.labels       # ['a', 'c']
-            >>> d['categorical'].annotation.labels  # ['b']
+            >>> d['binary'].annotation.labels
+            ['a', 'c']
+            >>> d['categorical'].annotation.labels
+            ['b']
         """
         if concept_type is None:
             return {

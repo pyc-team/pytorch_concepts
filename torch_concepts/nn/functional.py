@@ -154,11 +154,8 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
         >>>
         >>> # Apply grouped mixture
         >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
-        >>> print(mixed.shape)  # torch.Size([4, 3, 10])
-        >>> # Output shape: (batch_size, n_groups, emb_size // 2)
-        >>>
-        >>> # Singleton groups use two-half mixture
-        >>> # Multi-concept groups use weighted average of base exogenous
+        >>> print(mixed.shape)
+        torch.Size([4, 3, 20])
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
@@ -868,11 +865,12 @@ def cace_score(y_pred_c0, y_pred_c1):
     Returns:
         torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
 
-    Example::
-
+    Example:
+        >>> import torch
         >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
         >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
-        >>> cace_score(y_c0, y_c1)  # tensor([ 0.5, -0.5])
+        >>> cace_score(y_c0, y_c1)
+        tensor([ 0.5000, -0.5000])
     """
     if y_pred_c0.shape != y_pred_c1.shape:
         raise RuntimeError(

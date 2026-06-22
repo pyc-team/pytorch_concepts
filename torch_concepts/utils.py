@@ -297,7 +297,8 @@ def get_from_string(class_path: str):
 
     Example:
         >>> Adam = get_from_string('torch.optim.Adam')
-        >>> optimizer = Adam(model.parameters(), lr=0.001)
+        >>> Adam.__name__
+        'Adam'
     """
     module_path, class_name = class_path.rsplit('.', 1)
     module = importlib.import_module(module_path)
