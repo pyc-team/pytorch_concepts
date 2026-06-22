@@ -363,51 +363,7 @@ class BaseModel(nn.Module, ABC):
 
     @staticmethod
     def _resolve_train_inference(inference, train_inference):
-        """Validate and resolve the train_inference class.
-
-        If ``train_inference`` is ``None`` it falls back to ``inference``. The
-        training and evaluation engines must belong to the *same family*: the two
-        classes must be identical or one a subclass of the other (e.g.
-        :class:`IndependentInference`, a :class:`DeterministicInference` with
-        ``p_int=1``, is a valid training engine for a ``DeterministicInference``
-        evaluator). Otherwise a ``ValueError`` is raised.
-
-        Parameters
-        ----------
-        inference : type
-            The evaluation inference class.
-        train_inference : type or None
-            The training inference class, or ``None`` to fall back to
-            ``inference``.
-
-        Returns
-        -------
-        type
-            Resolved training inference class.
-
-        Raises
-        ------
-        ValueError
-            If ``train_inference`` is not in the same class family as ``inference``.
-        """
-
-        def _unwrap(fn):
-            return fn.func if isinstance(fn, functools.partial) else fn
-
-        if train_inference is not None:
-            train_cls, eval_cls = _unwrap(train_inference), _unwrap(inference)
-            same_family = (
-                train_cls is eval_cls
-                or issubclass(train_cls, eval_cls)
-                or issubclass(eval_cls, train_cls)
-            )
-            if not same_family:
-                raise ValueError(
-                    f"train_inference ({train_cls.__name__}) must be the same class as "
-                    f"inference ({eval_cls.__name__}) or a subclass of it. Mixing unrelated "
-                    "inference engines for training and evaluation is not yet fully stable hence"
-                    "not supported."
-                )
+        """Resolve the training inference class, falling back to ``inference`` when ``None``."""
         return train_inference if train_inference is not None else inference
 
     def setup_inference(

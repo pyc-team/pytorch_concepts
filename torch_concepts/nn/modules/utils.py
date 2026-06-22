@@ -151,12 +151,8 @@ def check_collection(annotations: AxisAnnotation,
         ... )
         >>> concept_annotations = AxisAnnotation(
         ...     labels=['c1', 'c2', 'c3'],
-        ...     metadata={
-        ...         'c1': {'type': 'discrete'},
-        ...         'c2': {'type': 'discrete'},
-        ...         'c3': {'type': 'discrete'}
-        ...     },
         ...     cardinalities=[1, 3, 2],
+        ...     types=['binary', 'categorical', 'categorical'],
         ... )
         >>> filtered_config = check_collection(
         ...     concept_annotations,

@@ -40,7 +40,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
     input_size : int
         Dimensionality of input features (after the backbone, if any).
     annotations : Annotations
-        Concept annotations (labels, cardinalities, distributions).
+        Concept annotations (labels, cardinalities, types).
     graph : ConceptGraph
         Directed acyclic graph over the concepts (node names must match labels).
     embedding_size : int, default 16

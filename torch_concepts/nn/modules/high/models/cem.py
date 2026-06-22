@@ -51,7 +51,7 @@ class ConceptEmbeddingModel(BipartiteModel):
     input_size : int
         Dimensionality of input features (after the backbone, if any).
     annotations : Annotations
-        Concept annotations (labels, cardinalities, distributions).
+        Concept annotations (labels, cardinalities, types).
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
     embedding_size : int, default 16

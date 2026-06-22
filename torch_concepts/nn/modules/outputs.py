@@ -99,5 +99,6 @@ class ModelOutput:
     guide_params: Dict[str, ParamDict] = field(default_factory=dict)
     samples: Dict[str, torch.Tensor] = field(default_factory=dict)
     probabilities: Optional[torch.Tensor] = None
-    target: Optional[torch.Tensor] = None # TODO: to be updated
-    extra: Optional[Dict[str, torch.Tensor]] = None # TODO: to be updated
+    logits: Optional[torch.Tensor] = None # FIXME: to be removed
+    target: Optional[torch.Tensor] = None
+    extra: Optional[Dict[str, torch.Tensor]] = None

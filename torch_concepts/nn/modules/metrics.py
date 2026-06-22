@@ -27,7 +27,7 @@ class ConceptMetrics(nn.Module):
 
     Args:
         annotations (Annotations): Concept annotations (axis 1) with labels,
-            cardinalities, and metadata specifying ``'discrete'`` types.
+            cardinalities, and types (``'binary'``, ``'categorical'``, or ``'continuous'``).
         binary: Metric specs for binary concepts (cardinality 1).
         categorical: Metric specs for categorical concepts (cardinality > 1).
         continuous: Metric specs for continuous concepts (not yet supported).

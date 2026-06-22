@@ -101,15 +101,11 @@ class ConceptLoss(nn.Module):
         >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
         >>> from torch_concepts import Annotations, AxisAnnotation
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch.distributions import Bernoulli, OneHotCategorical
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['is_round', 'color'],
         ...     cardinalities=[1, 3],
-        ...     metadata={
-        ...         'is_round': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'color': {'type': 'discrete', 'distribution': OneHotCategorical}
-        ...     }
+        ...     types=['binary', 'categorical'],
         ... )})
         >>>
         >>> # Single loss per type (backward compatible)
@@ -451,16 +447,11 @@ class DepthWeightedConceptLoss(nn.Module):
         >>> from torch_concepts.nn.modules.loss import DepthWeightedConceptLoss
         >>> from torch_concepts.annotations import Annotations, AxisAnnotation
         >>> from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
-        >>> from torch.distributions import Bernoulli
         >>>
         >>> ann = Annotations({1: AxisAnnotation(
         ...     labels=['A', 'B', 'C'],
         ...     cardinalities=[1, 1, 1],
-        ...     metadata={
-        ...         'A': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'B': {'type': 'discrete', 'distribution': Bernoulli},
-        ...         'C': {'type': 'discrete', 'distribution': Bernoulli},
-        ...     }
+        ...     types=['binary', 'binary', 'binary'],
         ... )})
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
