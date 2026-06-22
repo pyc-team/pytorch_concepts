@@ -46,10 +46,36 @@ class BlackBox(BaseModel):
         output_size = sum(self.concept_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
+    def build_query(self, ground_truth) -> dict:
+        """Build query dict mapping each concept name to its ground-truth column.
+
+        Parameters
+        ----------
+        ground_truth : torch.Tensor
+            Full concept-level ground truth, shape ``(batch, n_concepts)``.
+
+        Returns
+        -------
+        dict
+            ``{concept_name: tensor(batch, cardinality)}`` for every concept.
+        """
+        if ground_truth is None:
+            return {name: None for name in self.concept_names}
+        axis = self.concept_annotations
+        query = {}
+        for i, name in enumerate(axis.labels):
+            card = axis.concept(name).cardinality
+            if card == 1:
+                query[name] = ground_truth[:, i].float().unsqueeze(-1)
+            else:
+                import torch.nn.functional as F
+                query[name] = F.one_hot(ground_truth[:, i].long(), card).float()
+        return query
+
     def forward(
         self,
-        x: torch.Tensor,
-        query: List[str] = None,
+        x: torch.Tensor = None,
+        query=None,
         evidence: torch.Tensor = None,
         **kwargs
     ) -> ModelOutput:
@@ -57,12 +83,15 @@ class BlackBox(BaseModel):
 
         Parameters
         ----------
-        x : torch.Tensor
-            Input tensor.
-        query : List[str], optional
-            Concept names to return. Defaults to all concepts.
-        evidence : torch.Tensor, optional
-            Evidence tensor (ignored for BlackBox).
+        x : torch.Tensor, optional
+            Input tensor. When ``None``, the tensor is extracted from
+            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+        query : list of str or dict, optional
+            Concept names to return. Defaults to all concepts.  When a dict
+            is supplied (from ``build_query``), the keys are used as names.
+        evidence : dict or torch.Tensor, optional
+            Evidence dict (``{'input': x}`` from shared_step) or raw tensor
+            (ignored for BlackBox).
         **kwargs
             Additional arguments (ignored).
 
@@ -72,10 +101,18 @@ class BlackBox(BaseModel):
             ``params[name]['logits']`` per queried concept (uniform with the
             PGM-based models).
         """
+        # Resolve the raw input tensor
+        if x is None and isinstance(evidence, dict):
+            x = evidence.get('input', None)
+
         output = self.linear(self.backbone(x))
 
         axis = self.concept_annotations
-        names = query if query is not None else axis.labels
+        # query may be a list of strings, a dict (from build_query), or None
+        if isinstance(query, dict):
+            names = list(query.keys()) if query else axis.labels
+        else:
+            names = query if query is not None else axis.labels
         params = {name: {"logits": output[:, axis.concept_slices[name]]} for name in names}
         out = ModelOutput(params=params)
 
@@ -153,22 +190,50 @@ class BlackBoxTaskOnly(BaseModel):
         output_size = sum(self.task_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
+    def build_query(self, ground_truth) -> dict:
+        """Build query dict mapping each *task* name to its ground-truth column.
+
+        Parameters
+        ----------
+        ground_truth : torch.Tensor
+            Full concept-level ground truth, shape ``(batch, n_all_concepts)``.
+
+        Returns
+        -------
+        dict
+            ``{task_name: tensor(batch, cardinality)}`` for every task.
+        """
+        if ground_truth is None:
+            return {name: None for name in self.task_names}
+        axis = self.concept_annotations
+        query = {}
+        for idx, name in zip(self.task_concept_idx, self.task_names):
+            card = axis.concept(name).cardinality
+            if card == 1:
+                query[name] = ground_truth[:, idx].float().unsqueeze(-1)
+            else:
+                import torch.nn.functional as F
+                query[name] = F.one_hot(ground_truth[:, idx].long(), card).float()
+        return query
+
     def forward(self,
-                x: torch.Tensor,
-                query: List[str] = None,
-                evidence: torch.Tensor = None,
+                x: torch.Tensor = None,
+                query=None,
+                evidence=None,
                 **kwargs
         ) -> ModelOutput:
         """Forward pass through the BlackBoxTaskOnly model.
 
         Parameters
         ----------
-        x : torch.Tensor
-            Input tensor.
-        query : List[str], optional
+        x : torch.Tensor, optional
+            Input tensor. When ``None``, the tensor is extracted from
+            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+        query : list of str or dict, optional
             Ignored; predictions are always returned for ``task_names``.
-        evidence : torch.Tensor, optional
-            Evidence tensor (ignored).
+        evidence : dict or torch.Tensor, optional
+            Evidence dict (``{'input': x}`` from shared_step) or raw tensor
+            (ignored).
         **kwargs
             Additional arguments (ignored).
 
@@ -177,6 +242,10 @@ class BlackBoxTaskOnly(BaseModel):
         ModelOutput
             ``params[name]['logits']`` per task (uniform with the PGM-based models).
         """
+        # Resolve the raw input tensor
+        if x is None and isinstance(evidence, dict):
+            x = evidence.get('input', None)
+
         output = self.linear(self.backbone(x))
 
         # The linear head spans the task sub-annotation; slice it per task.
