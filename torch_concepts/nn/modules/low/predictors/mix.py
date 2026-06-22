@@ -164,13 +164,21 @@ class MixSumConceptEmbeddingToConcept(MixConceptEmbeddingToConcept):
         bias: bool = True,
         **kwargs
     ):
+        # FIXME: update to use AxisAnnotation for in_concepts and out_concepts, 
+        # and remove cardinalities
         if cardinalities is None:
             cardinalities = [1] * in_concepts
+        n_groups = len(cardinalities)
+        types = ['binary' if c == 1 else 'categorical' for c in cardinalities]
+        annotation = AxisAnnotation(
+            labels=[f"c{i}" for i in range(n_groups)],
+            cardinalities=cardinalities,
+            types=types,
+        )
         super().__init__(
-            in_concepts=in_concepts,
+            in_concepts=annotation,
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
-            cardinalities=cardinalities,
             **kwargs,
         )
         self.predictor = torch.nn.Linear(in_embeddings, out_concepts, bias=bias)
