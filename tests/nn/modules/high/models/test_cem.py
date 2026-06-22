@@ -35,7 +35,7 @@ from torch_concepts.annotations import AxisAnnotation, Annotations
 from torch_concepts.nn import (
     MLP,
     DeterministicInference,
-    AncestralInference
+    AncestralSamplingInference
 )
 
 
@@ -166,11 +166,11 @@ class TestCEMInitialization(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names=['task1'],
-            inference=AncestralInference
+            inference=AncestralSamplingInference
         )
         model.eval()  # Switch to eval mode to check eval_inference
 
-        self.assertIsInstance(model.inference, AncestralInference)
+        self.assertIsInstance(model.inference, AncestralSamplingInference)
 
     @pytest.mark.skip(reason="out of scope: lightning/loss/metrics — revisit later")
     def test_factory_default_is_pytorch(self):

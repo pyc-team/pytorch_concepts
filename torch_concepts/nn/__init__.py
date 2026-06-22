@@ -72,7 +72,7 @@ from .modules.mid.inference.pyro.base import PyroBaseInference
 from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
-from .modules.mid.inference.torch.ancestral import AncestralInference
+from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
@@ -172,7 +172,7 @@ __all__ = [
     "TorchBaseInference",
     "ForwardInference",
     "DeterministicInference",
-    "AncestralInference",
+    "AncestralSamplingInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",

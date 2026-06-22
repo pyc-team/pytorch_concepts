@@ -23,7 +23,7 @@ from torch_concepts.nn import MLP
 from torch_concepts import ConceptGraph
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
 from torch_concepts.nn.modules.mid.inference.torch.independent import IndependentInference
-from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralInference
+from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSamplingInference
 
 
 # ---------------------------------------------------------------------------
@@ -234,11 +234,11 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralInference,
-            train_inference=AncestralInference,
+            inference=AncestralSamplingInference,
+            train_inference=AncestralSamplingInference,
         )
-        assert isinstance(model.eval_inference, AncestralInference)
-        assert isinstance(model.train_inference, AncestralInference)
+        assert isinstance(model.eval_inference, AncestralSamplingInference)
+        assert isinstance(model.train_inference, AncestralSamplingInference)
 
     def test_train_inference_defaults_to_inference_class(self, chain_graph, binary_chain_ann):
         """When train_inference is omitted, it defaults to the same class as inference."""
@@ -246,7 +246,7 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralInference,
+            inference=AncestralSamplingInference,
         )
         assert type(model.train_inference) is type(model.eval_inference)
 
@@ -255,9 +255,9 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralInference,
+            inference=AncestralSamplingInference,
         )
-        assert isinstance(model.eval_inference, AncestralInference)
+        assert isinstance(model.eval_inference, AncestralSamplingInference)
 
     def test_inference_kwargs_forwarded(self, chain_graph, binary_chain_ann):
         model = CausallyReliableConceptBottleneckModel(
@@ -527,8 +527,8 @@ class TestC2BMIndependentInference:
 # ===========================================================================
 
 @pytest.mark.skip(reason="out of scope: ancestral inference forward is a known-open issue — revisit later")
-class TestC2BMAncestralInference:
-    """Test forward pass with AncestralInference."""
+class TestC2BMAncestralSamplingInference:
+    """Test forward pass with AncestralSamplingInference."""
 
     def test_sampling_produces_output(self, chain_graph, binary_chain_ann):
         pass

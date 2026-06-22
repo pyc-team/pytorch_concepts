@@ -1,4 +1,4 @@
-"""Comprehensive tests for DeterministicInference and AncestralInference.
+"""Comprehensive tests for DeterministicInference and AncestralSamplingInference.
 
 Covers: construction, basic query, evidence clamping, teacher forcing,
 out.params structure, out.samples in ancestral mode, plate queries,
@@ -13,7 +13,7 @@ from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
-from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralInference
+from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSamplingInference
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.outputs import InferenceOutput
@@ -85,25 +85,25 @@ class TestDeterministicInferenceConstruction:
         assert eng.parallelize_levels is False
 
 
-class TestAncestralInferenceConstruction:
+class TestAncestralSamplingInferenceConstruction:
     def test_basic_construction(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
-        assert isinstance(eng, AncestralInference)
+        eng = AncestralSamplingInference(m)
+        assert isinstance(eng, AncestralSamplingInference)
 
     def test_mode_is_ancestral(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         assert eng.mode == "ancestral"
 
     def test_default_p_int_one(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         assert eng.p_int == 1.0
 
     def test_initial_temperature_stored(self):
         m = _make_simple_model()
-        eng = AncestralInference(m, initial_temperature=2.0)
+        eng = AncestralSamplingInference(m, initial_temperature=2.0)
         assert float(eng.temperature) == pytest.approx(2.0)
 
 
@@ -227,38 +227,38 @@ class TestTeacherForcing:
 
 
 # ===========================================================================
-# 5. AncestralInference — samples
+# 5. AncestralSamplingInference — samples
 # ===========================================================================
 
 class TestAncestralQuerySamples:
     def test_returns_inference_output(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
         assert isinstance(out, InferenceOutput)
 
     def test_samples_populated_in_ancestral_mode(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
         assert len(out.samples) > 0
 
     def test_samples_contain_queried_variable(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
         assert "c" in out.samples
 
     def test_samples_shape(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         B = 4
         out = eng.query(query=["c"], evidence={"x": torch.randn(B, 4)})
         assert out.samples["c"].shape == (B, 2)
 
     def test_params_also_present_in_ancestral(self):
         m = _make_simple_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
         assert "c" in out.params
 
@@ -302,7 +302,7 @@ class TestPlateQueries:
 
     def test_ancestral_samples_plate(self):
         m = _make_plate_model()
-        eng = AncestralInference(m)
+        eng = AncestralSamplingInference(m)
         B = 3
         out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4)})
         assert "g" in out.samples
@@ -371,12 +371,12 @@ class TestParallelizeLevels:
 class TestTemperatureAnnealing:
     def test_initial_temperature_default_one(self):
         m = _make_simple_model()
-        eng = AncestralInference(m, initial_temperature=1.0)
+        eng = AncestralSamplingInference(m, initial_temperature=1.0)
         assert float(eng.temperature) == pytest.approx(1.0)
 
     def test_step_increments_in_ancestral(self):
         m = _make_simple_model()
-        eng = AncestralInference(m, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
+        eng = AncestralSamplingInference(m, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
         t0 = float(eng.temperature)
         eng.step()
         t1 = float(eng.temperature)
