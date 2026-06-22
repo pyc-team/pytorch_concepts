@@ -35,8 +35,8 @@ PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
 }
 
 _DEFAULT_DISTRIBUTIONS = {
-    'binary': dist.RelaxedBernoulli,
-    'categorical': dist.RelaxedOneHotCategorical,
+    'binary': dist.Bernoulli,
+    'categorical': dist.OneHotCategorical,
     'continuous': dist.Normal,
 }
 
