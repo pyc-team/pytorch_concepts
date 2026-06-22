@@ -285,18 +285,15 @@ class SteerlingModel(SteerlingLowLevelModel):
         the annotation is constructed internally rather than supplied by a
         datamodule.
 
-        The ``types`` + cardinalities below resolve, via
-        :func:`~torch_concepts.utils.add_default_properties`, to exactly the
-        distributions the PGM uses: ``RelaxedBernoulli`` (sigmoid) for the
-        binary known/unknown concepts and ``RelaxedOneHotCategorical`` (softmax)
-        for the categorical ``new_token``.
+        The ``types`` + cardinalities below describe the concepts; the model
+        itself owns how each is modelled (``RelaxedBernoulli`` / sigmoid for the
+        binary known/unknown concepts and ``RelaxedOneHotCategorical`` / softmax
+        for the categorical ``new_token``), set explicitly on its variables.
 
         Returns:
-            AxisAnnotation: axis-1 annotation with default distributions and
-            activations filled in.
+            AxisAnnotation: axis-1 annotation (labels, types, cardinalities).
         """
         from torch_concepts.annotations import AxisAnnotation
-        from torch_concepts.utils import add_default_properties
 
         labels = list(self.known_names) + list(self.unknown_names) + ["new_token"]
         cardinalities = (
@@ -305,12 +302,11 @@ class SteerlingModel(SteerlingLowLevelModel):
             + [self.vocab_size]
         )
         types = ['binary'] * (self.n_known + len(self.unknown_names)) + ['categorical']
-        axis = AxisAnnotation(
+        return AxisAnnotation(
             labels=labels,
             cardinalities=cardinalities,
             types=types,
         )
-        return add_default_properties(axis)
 
     # ------------------------------------------------------------------
     # Properties
