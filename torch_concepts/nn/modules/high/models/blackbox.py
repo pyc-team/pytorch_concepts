@@ -27,8 +27,8 @@ class BlackBox(BaseModel):
         **kwargs: Additional arguments for BaseModel.
 
     Example:
-        >>> from torch_concepts.annotations import Annotations, AxisAnnotation
-        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'task'], cardinalities=[1, 1])})
+        >>> from torch_concepts.annotations import Annotations
+        >>> ann = Annotations(labels=['c1', 'task'], cardinalities=[1, 1])
         >>> model = BlackBox(input_size=8, annotations=ann)
         >>> out = model(torch.randn(2, 8))
     """
@@ -139,14 +139,14 @@ class BlackBoxTaskOnly(BaseModel):
         **kwargs: Additional arguments for BaseModel.
 
     Attributes:
-        task_annotations (AxisAnnotation): Sub-annotation restricted to task
+        task_annotations (Annotations): Sub-annotation restricted to task
             concepts only.  Use this to build ``ConceptLoss`` / ``ConceptMetrics``.
         task_concept_idx (List[int]): Concept-level column indices used to
             slice the ground-truth target tensor to match the task-only output.
 
     Example:
-        >>> from torch_concepts.annotations import Annotations, AxisAnnotation
-        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'task'], cardinalities=[1, 1])})
+        >>> from torch_concepts.annotations import Annotations
+        >>> ann = Annotations(labels=['c1', 'task'], cardinalities=[1, 1])
         >>> model = BlackBoxTaskOnly(input_size=8, annotations=ann, task_names=['task'])
         >>> out = model(torch.randn(2, 8))
     """
@@ -162,10 +162,9 @@ class BlackBoxTaskOnly(BaseModel):
         
         # Pre-compute task annotations before super().__init__ so that
         # setup_metrics (called by BaseLearner.__init__) can use them.
-        concept_ann = annotations.get_axis_annotation(axis=1)
-        self.task_annotations = concept_ann.subset(self.task_names)
+        self.task_annotations = annotations.subset(self.task_names)
         self.task_concept_idx = [
-            concept_ann.get_index(name)
+            annotations.get_index(name)
             for name in self.task_names
         ]
 
@@ -179,7 +178,7 @@ class BlackBoxTaskOnly(BaseModel):
         # Rebuild loss with task-only annotations so index slicing matches
         # the task-only tensors produced by prepare_target.
         if isinstance(getattr(self, 'loss', None), ConceptLoss):
-            task_ann = Annotations({1: self.task_annotations})
+            task_ann = self.task_annotations
             self.loss = ConceptLoss(
                 annotations=task_ann,
                 binary=self.loss.fn_collection.get('binary'),
@@ -286,7 +285,7 @@ class BlackBoxTaskOnly(BaseModel):
         metrics using ``task_annotations`` so that indices match the
         task-only output.
         """
-        task_ann = Annotations({1: self.task_annotations})
+        task_ann = self.task_annotations
         task_metrics = ConceptMetrics(
             annotations=task_ann,
             binary=metrics.fn_collection.get('binary'),

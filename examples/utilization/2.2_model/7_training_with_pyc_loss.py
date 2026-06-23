@@ -39,7 +39,7 @@ def main():
                                    test_size=0.2,
                                    seed=42)
     annotations = dataset.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     n_features = dataset.input_data.shape[1]
     n_concepts = 2

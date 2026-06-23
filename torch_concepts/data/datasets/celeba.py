@@ -6,7 +6,7 @@ import numpy as np
 import logging
 from typing import List, Optional, Union
 from tqdm import tqdm
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from glob import glob
 import numpy as np
@@ -213,13 +213,11 @@ class CelebADataset(ConceptDataset):
     
         # Create annotations
         cardinalities = tuple([1] * len(attr_names))
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=attr_names,
-                cardinalities=cardinalities,
-                types=['binary'] * len(attr_names),
-            )
-        })
+        annotations = Annotations(
+            labels=attr_names,
+            cardinalities=cardinalities,
+            types=['binary'] * len(attr_names),
+        )
 
         # --- Save processed data ---
         logger.info(f"Saving filenames, concepts, annotations and split mapping to {self.root_dir}")

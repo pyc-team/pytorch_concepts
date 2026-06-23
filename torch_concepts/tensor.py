@@ -2,7 +2,7 @@
 Annotated tensor for concept-based neural networks.
 
 This module provides :class:`AnnotatedTensor`, a lightweight wrapper around a
-:class:`torch.Tensor` that carries an :class:`~torch_concepts.AxisAnnotation`
+:class:`torch.Tensor` that carries an :class:`~torch_concepts.Annotations`
 for its second axis (axis 1), enabling label-based column slicing and
 annotation-preserving tensor operations.
 """
@@ -10,14 +10,14 @@ from typing import Optional, Union, Dict
 
 import torch
 
-from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.annotations import Annotations
 
 
 class AnnotatedTensor:
     """
     A tensor annotated along its second axis (axis 1).
 
-    Wraps a :class:`torch.Tensor` together with an :class:`AxisAnnotation`
+    Wraps a :class:`torch.Tensor` together with an :class:`Annotations`
     that describes the semantics of axis 1.  Supports:
 
     * **Label-based slicing** — select columns by concept name::
@@ -43,7 +43,7 @@ class AnnotatedTensor:
 
     Args:
         data: The underlying tensor. Must have at least 2 dimensions.
-        annotation: Annotation for axis 1. ``annotation.shape`` must equal
+        annotation: Annotation for axis 1. ``annotation.size`` must equal
             ``data.shape[1]``.
 
     Raises:
@@ -52,10 +52,10 @@ class AnnotatedTensor:
 
     Example:
         >>> import torch
-        >>> from torch_concepts import AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>> from torch_concepts.tensor import AnnotatedTensor
         >>>
-        >>> ann = AxisAnnotation(labels=["cat", "dog", "bird"])
+        >>> ann = Annotations(labels=["cat", "dog", "bird"])
         >>> t = AnnotatedTensor(torch.rand(4, 3), ann)
         >>>
         >>> # Label-based slicing
@@ -66,13 +66,13 @@ class AnnotatedTensor:
         torch.Size([4, 2])
     """
 
-    def __init__(self, data: torch.Tensor, annotation: AxisAnnotation):
+    def __init__(self, data: torch.Tensor, annotation: Annotations):
         if data.dim() < 2:
             raise ValueError(
                 "AnnotatedTensor requires a tensor with at least 2 dimensions, "
                 f"got ndim={data.dim()}."
             )
-        ann_size = annotation.shape
+        ann_size = annotation.size
         if data.shape[1] != ann_size:
             raise ValueError(
                 f"Annotation size ({ann_size}) must match tensor axis-1 size "
@@ -92,8 +92,8 @@ class AnnotatedTensor:
         return self._data
 
     @property
-    def annotation(self) -> AxisAnnotation:
-        """The :class:`AxisAnnotation` describing axis 1."""
+    def annotation(self) -> Annotations:
+        """The :class:`Annotations` describing axis 1."""
         return self._annotation
 
     @property
@@ -158,7 +158,7 @@ class AnnotatedTensor:
 
         All tensors must share the same shape on every axis **except** axis 1.
         The merged annotation is built by chaining
-        :meth:`~torch_concepts.AxisAnnotation.union_with`: labels that already
+        :meth:`~torch_concepts.Annotations.union_with`: labels that already
         appear on the left are not duplicated; metadata is merged with
         left-wins semantics.
 
@@ -177,8 +177,8 @@ class AnnotatedTensor:
                         tensor's non-axis-1 shape.
 
         Example:
-            >>> ann_a = AxisAnnotation(labels=["cat", "dog"])
-            >>> ann_b = AxisAnnotation(labels=["bird", "fish"])
+            >>> ann_a = Annotations(labels=["cat", "dog"])
+            >>> ann_b = Annotations(labels=["bird", "fish"])
             >>> a = AnnotatedTensor(torch.rand(4, 2), ann_a)
             >>> b = AnnotatedTensor(torch.rand(4, 2), ann_b)
             >>> merged = a.union_with(b)
@@ -232,10 +232,10 @@ class AnnotatedTensor:
         The keys are the type strings ``'binary'`` / ``'categorical'`` /
         ``'continuous'`` (only the non-empty ones); each value is an
         :class:`AnnotatedTensor` containing only the columns of that type, with a
-        correspondingly subsetted :class:`AxisAnnotation`.
+        correspondingly subsetted :class:`Annotations`.
 
         Example:
-            >>> ann = AxisAnnotation(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
+            >>> ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
             >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
             >>> d = t.split_by_type()
             >>> d['binary'].annotation.labels

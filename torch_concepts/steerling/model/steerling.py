@@ -291,9 +291,9 @@ class SteerlingModel(SteerlingLowLevelModel):
         for the categorical ``new_token``), set explicitly on its variables.
 
         Returns:
-            AxisAnnotation: axis-1 annotation (labels, types, cardinalities).
+            Annotations: axis-1 annotation (labels, types, cardinalities).
         """
-        from torch_concepts.annotations import AxisAnnotation
+        from torch_concepts.annotations import Annotations
 
         labels = list(self.known_names) + list(self.unknown_names) + ["new_token"]
         cardinalities = (
@@ -302,7 +302,7 @@ class SteerlingModel(SteerlingLowLevelModel):
             + [self.vocab_size]
         )
         types = ['binary'] * (self.n_known + len(self.unknown_names)) + ['categorical']
-        return AxisAnnotation(
+        return Annotations(
             labels=labels,
             cardinalities=cardinalities,
             types=types,

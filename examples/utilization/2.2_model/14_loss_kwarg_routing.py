@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
 
@@ -110,11 +110,11 @@ def make_synthetic_data(n=512, seed=0):
 
 
 def make_annotations():
-    return Annotations({1: AxisAnnotation(
+    return Annotations(
         labels=['b1', 'b2', 'cat1', 'cat2'],
         cardinalities=[1, 1, 3, 4],
         types=['binary', 'binary', 'categorical', 'categorical'],
-    )})
+    )
 
 
 # ======================================================================

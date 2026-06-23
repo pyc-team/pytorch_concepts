@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Union
 import warnings
 
 from ...concept_graph import ConceptGraph
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
 
@@ -57,7 +57,7 @@ class ConceptDataset(Dataset):
     Example:
         >>> X = torch.randn(100, 28, 28)  # 100 images
         >>> C = torch.randint(0, 2, (100, 5))  # 5 binary concepts
-        >>> annotations = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'c3', 'c4', 'c5'])})
+        >>> annotations = Annotations(labels=['c1', 'c2', 'c3', 'c4', 'c5'])
         >>> dataset = ConceptDataset(X, C, annotations=annotations)
         >>> len(dataset)
         100
@@ -89,16 +89,10 @@ class ConceptDataset(Dataset):
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
             n = concepts.shape[1]
-            annotations = Annotations({
-                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(n)],
+            annotations = Annotations(labels=[f"concept_{i}" for i in range(n)],
                                       cardinalities=[1] * n,  # assume binary
                                       types=['binary'] * n)
-                                      })
-        # assert first axis is annotated axis for concepts
-        if 1 not in annotations.annotated_axes:
-            raise ValueError("Concept annotations must include axis 1 for concepts. " \
-            "Axis 0 is always assumed to be the batch dimension")
-        axis_annotation = annotations[1]
+        axis_annotation = annotations
         if axis_annotation.cardinalities is not None:
             concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
             concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
@@ -189,7 +183,7 @@ class ConceptDataset(Dataset):
             concepts = batch.get('concepts')
             if isinstance(concepts, dict):
                 c = concepts.get('c')
-                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.shape:
+                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.size:
                     concepts['c'] = AnnotatedTensor(c, annotation)
         return batch
 
@@ -234,7 +228,7 @@ class ConceptDataset(Dataset):
         Returns:
             List[str]: Names of all concepts.
         """
-        return self.annotations.get_axis_labels(1)
+        return self.annotations.labels
     
     @property
     def annotations(self) -> Optional[Annotations]:
@@ -355,7 +349,7 @@ class ConceptDataset(Dataset):
             concept_names_subset: List of strings naming the subset of concepts to use. 
                                     If :obj:`None`, will use all concepts.
         """
-        self.concept_names_all = annotations.get_axis_labels(1)
+        self.concept_names_all = annotations.labels
         if concept_names_subset is not None:
             # sanity check, all subset concepts must be in all concepts
             missing_concepts = set(concept_names_subset) - set(self.concept_names_all)
@@ -366,7 +360,7 @@ class ConceptDataset(Dataset):
             indices = [self.concept_names_all.index(name) for name in to_select]
             
             # Reduce annotations by extracting only the selected concepts
-            axis_annotation = annotations[1]
+            axis_annotation = annotations
             reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
             
             # Reduce cardinalities
@@ -386,15 +380,13 @@ class ConceptDataset(Dataset):
                 reduced_metadata = None
 
             # Create reduced annotations
-            self._annotations = Annotations({
-                1: AxisAnnotation(
-                    labels=reduced_labels,
-                    cardinalities=reduced_cardinalities,
-                    states=reduced_states,
-                    types=reduced_types,
-                    metadata=reduced_metadata
-                )
-            })
+            self._annotations = Annotations(
+                labels=reduced_labels,
+                cardinalities=reduced_cardinalities,
+                states=reduced_states,
+                types=reduced_types,
+                metadata=reduced_metadata
+            )
 
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 
@@ -453,8 +445,8 @@ class ConceptDataset(Dataset):
         # indices) so it carries the concept labels/types. Per-sample
         # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
         # axis 1); batches are re-annotated by :meth:`collate`.
-        concept_ann = self.annotations.get_axis_annotation(1).to_concept_space()
-        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.shape:
+        concept_ann = self.annotations.to_concept_space()
+        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
             self.concepts = AnnotatedTensor(concepts, concept_ann)
         else:
             self.concepts = concepts

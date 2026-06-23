@@ -2,17 +2,16 @@
 Concept annotations for tensors.
 
 This module provides annotation structures for concept-based tensors, allowing
-semantic labeling of tensor dimensions and their components. It supports both
+semantic labeling of a tensor's concept axis and its components. It supports both
 simple (flat) and nested (hierarchical) concept structures.
 """
 
 import warnings
 import torch
 
-from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Dict, List, Tuple, Type, Union, Optional, Any, Sequence
+from typing import Dict, List, Tuple, Union, Optional, Any, Sequence
 
 
 #: The canonical concept-type vocabulary. A concept is exactly one of these.
@@ -21,12 +20,12 @@ _CONCEPT_TYPES = ('binary', 'categorical', 'continuous')
 
 @dataclass(frozen=True)
 class Concept:
-    """Read-only, per-concept view over a single column of an :class:`AxisAnnotation`.
+    """Read-only, per-concept view over a single column of an :class:`Annotations`.
 
     Groups one concept's properties into a single named object so callers can write
-    ``axis.concept('color').cardinality`` instead of the index-dance
-    ``int(axis.cardinalities[axis.get_index('color')])``. It is a *view*: the values
-    are read from the owning ``AxisAnnotation``'s parallel lists at construction
+    ``annotations.concept('color').cardinality`` instead of the index-dance
+    ``int(annotations.cardinalities[annotations.get_index('color')])``. It is a *view*:
+    the values are read from the owning ``Annotations``' parallel lists at construction
     time (no duplicated storage), so the lists remain the canonical representation.
 
     Attributes:
@@ -63,69 +62,76 @@ class Concept:
 
 
 @dataclass
-class AxisAnnotation:
+class Annotations:
     """
-    Annotations for a single axis of a tensor.
+    Annotations for the concept axis of a tensor.
 
-    This class provides semantic labeling for one dimension of a tensor,
-    supporting both simple binary concepts and nested multi-state concepts.
+    This class provides semantic labeling for the concept dimension (axis 1) of a
+    tensor, supporting both simple binary concepts and nested multi-state concepts.
+    Axis 0 is the (unannotated) batch dimension.
 
     Attributes:
-        labels (list[str]): Ordered, unique labels for this axis.
+        labels (list[str]): Ordered, unique concept labels.
         states (Optional[list[list[str]]]): State labels for each concept (if nested).
         cardinalities (Optional[list[int]]): Cardinality of each concept.
+        types (Optional[list[str]]): ``'binary'`` / ``'categorical'`` / ``'continuous'`` per concept.
         metadata (Optional[Dict[str, Dict]]): Additional metadata for each label.
-        is_nested (bool): Whether this axis has nested/hierarchical structure.
+        is_nested (bool): Whether the axis has nested/hierarchical structure.
 
     Args:
-        labels: List of concept names for this axis.
+        labels: List of concept names.
         states: Optional list of state lists for nested concepts.
         cardinalities: Optional list of cardinalities per concept.
+        types: Optional concept types per concept.
         metadata: Optional metadata dictionary keyed by label names.
 
     Example:
-        >>> from torch_concepts import AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>>
         >>> # Simple binary concepts
-        >>> axis_binary = AxisAnnotation(
+        >>> ann_binary = Annotations(
         ...     labels=['has_wheels', 'has_windows', 'is_red']
         ... )
-        >>> print(axis_binary.labels)
+        >>> print(ann_binary.labels)
         ['has_wheels', 'has_windows', 'is_red']
-        >>> print(axis_binary.is_nested)
+        >>> print(ann_binary.is_nested)
         False
-        >>> print(axis_binary.cardinalities)
+        >>> print(ann_binary.cardinalities)
         [1, 1, 1]
+        >>> print(ann_binary.shape)
+        (-1, 3)
         >>>
         >>> # Nested concepts with explicit states
-        >>> axis_nested = AxisAnnotation(
+        >>> ann_nested = Annotations(
         ...     labels=['color', 'shape'],
         ...     states=[['red', 'green', 'blue'], ['circle', 'square']],
         ... )
-        >>> print(axis_nested.labels)
+        >>> print(ann_nested.labels)
         ['color', 'shape']
-        >>> print(axis_nested.is_nested)
+        >>> print(ann_nested.is_nested)
         True
-        >>> print(axis_nested.cardinalities)
+        >>> print(ann_nested.cardinalities)
         [3, 2]
-        >>> print(axis_nested.states[0])
+        >>> print(ann_nested.states[0])
         ['red', 'green', 'blue']
+        >>> print(ann_nested.shape)
+        (-1, 5)
         >>>
         >>> # With cardinalities only (auto-generates state labels)
-        >>> axis_cards = AxisAnnotation(
+        >>> ann_cards = Annotations(
         ...     labels=['size', 'material'],
         ...     cardinalities=[3, 4]
         ... )
-        >>> print(axis_cards.cardinalities)
+        >>> print(ann_cards.cardinalities)
         [3, 4]
-        >>> print(axis_cards.states[0])
+        >>> print(ann_cards.states[0])
         ['0', '1', '2']
         >>>
         >>> # Access methods
-        >>> idx = axis_binary.get_index('has_wheels')
+        >>> idx = ann_binary.get_index('has_wheels')
         >>> print(idx)
         0
-        >>> label = axis_binary.get_label(1)
+        >>> label = ann_binary.get_label(1)
         >>> print(label)
         has_windows
     """
@@ -250,16 +256,23 @@ class AxisAnnotation:
                         raise ValueError(f"Metadata missing for label {label!r}")
 
     @property
-    def shape(self) -> Union[int, Tuple[int, ...]]:
+    def size(self) -> int:
+        """Flattened concept dimension: ``sum(cardinalities)``.
+
+        Equals ``len(labels)`` when non-nested (all cardinalities are 1). This is the
+        size of axis 1 of the annotated (logit-space) tensor.
         """
-        Return the size of this axis.
-        For non-nested: int (number of labels)
-        For nested: tuple of ints (cardinalities)
+        return sum(self.cardinalities)
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        """Annotated tensor shape ``(B, sum(cardinalities))``.
+
+        Axis 0 is the unknown batch dimension B, returned as ``-1``; axis 1 is the
+        flattened concept dimension :attr:`size`.
         """
-        if self.is_nested:
-            return sum(self.cardinalities)
-        return len(self.labels)
-    
+        return (-1, self.size)
+
     def has_metadata(self, key) -> bool:
         """Check if metadata contains a specific key for all labels."""
         if self.metadata is None:
@@ -286,14 +299,14 @@ class AxisAnnotation:
         return result
 
     def __len__(self) -> int:
-        """Return number of labels in this axis."""
+        """Return number of labels."""
         return len(self.labels)
 
     def __getitem__(self, key: Union[int, str]) -> Union[str, "Concept"]:
         """
         Index by position or by name.
-        - ``axis[int]`` returns the label at that index (``str``).
-        - ``axis[str]`` returns the :class:`Concept` view for that label.
+        - ``annotations[int]`` returns the label at that index (``str``).
+        - ``annotations[str]`` returns the :class:`Concept` view for that label.
         """
         if isinstance(key, str):
             return self.concept(key)
@@ -304,55 +317,75 @@ class AxisAnnotation:
     @cached_property
     def label_to_index(self) -> Dict[str, int]:
         """Precomputed mapping from concept name to concept-level index.
-        
+
         Provides O(1) lookup for concept indices, useful for efficient
         concept extraction operations.
-        
+
         Example:
-            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'])
-            >>> axis.label_to_index['shape']
+            >>> ann = Annotations(labels=['color', 'shape', 'size'])
+            >>> ann.label_to_index['shape']
             1
         """
         return {name: i for i, name in enumerate(self.labels)}
-    
+
     def get_index(self, label: str) -> int:
-        """Get index of a label in this axis."""
+        """Get index of a label."""
         try:
             return self.label_to_index[label]
         except KeyError:
             raise ValueError(f"Label {label!r} not found in labels {self.labels}")
 
     def get_label(self, idx: int) -> str:
-        """Get label at given index in this axis."""
+        """Get label at given index."""
         if not (0 <= idx < len(self.labels)):
             raise IndexError(f"Index {idx} out of range with {len(self.labels)} labels")
         return self.labels[idx]
 
     def get_total_cardinality(self) -> Optional[int]:
-        """Get total cardinality for nested axis, or None if not nested."""
+        """Get total cardinality for nested annotations, or number of labels otherwise."""
         if self.is_nested:
             if self.cardinalities is not None:
                 return sum(self.cardinalities)
             else:
-                raise ValueError("Cardinalities are not defined for this nested axis")
+                raise ValueError("Cardinalities are not defined for this nested annotation")
         else:
             return len(self.labels)
 
     # =========================================================================
+    # State navigation
+    # =========================================================================
+
+    def get_label_states(self, label: str) -> List[str]:
+        """Get the ordered state labels of a concept."""
+        return self.states[self.get_index(label)]
+
+    def get_label_state(self, label: str, idx: int) -> str:
+        """Get the state label at position ``idx`` of a concept."""
+        return self.states[self.get_index(label)][idx]
+
+    def get_state_index(self, label: str, state: str) -> int:
+        """Get the index of a state label for a concept."""
+        states = self.states[self.get_index(label)]
+        try:
+            return states.index(state)
+        except ValueError:
+            raise ValueError(f"State {state!r} not found for concept {label!r}")
+
+    # =========================================================================
     # Cached index properties for efficient tensor slicing
     # =========================================================================
-    
+
     @cached_property
     def cumulative_cardinalities(self) -> List[int]:
         """Precomputed cumulative cardinalities for O(1) slicing.
-        
+
         Returns a list where cumulative_cardinalities[i] is the starting
-        position of concept i in the flattened tensor, and 
+        position of concept i in the flattened tensor, and
         cumulative_cardinalities[i+1] is the ending position (exclusive).
-        
+
         Example:
-            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
-            >>> axis.cumulative_cardinalities
+            >>> ann = Annotations(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
+            >>> ann.cumulative_cardinalities
             [0, 3, 5, 6]
         """
         cum = [0]
@@ -363,16 +396,16 @@ class AxisAnnotation:
     @cached_property
     def concept_slices(self) -> Dict[str, slice]:
         """Precomputed mapping from concept name to slice in flattened tensor.
-        
+
         Example:
-            >>> axis = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
-            >>> axis.concept_slices['color']
+            >>> ann = Annotations(labels=['color', 'shape', 'size'], cardinalities=[3, 2, 1])
+            >>> ann.concept_slices['color']
             slice(0, 3, None)
         """
         cum = self.cumulative_cardinalities
-        return {name: slice(cum[i], cum[i+1]) 
+        return {name: slice(cum[i], cum[i+1])
                 for i, name in enumerate(self.labels)}
-    
+
     @cached_property
     def labels_by_type(self) -> Dict[str, List[str]]:
         """Mapping from concept type to the ordered list of labels of that type.
@@ -381,11 +414,11 @@ class AxisAnnotation:
         grouping logic lives in one place.
 
         Example:
-            >>> axis = AxisAnnotation(
+            >>> ann = Annotations(
             ...     labels=['a', 'b', 'c'],
             ...     cardinalities=[1, 1, 3],
             ... )
-            >>> axis.labels_by_type
+            >>> ann.labels_by_type
             {'binary': ['a', 'b'], 'categorical': ['c']}
         """
         return {t: g['labels'] for t, g in self.type_groups.items() if g['labels']}
@@ -393,22 +426,22 @@ class AxisAnnotation:
     @cached_property
     def type_groups(self) -> Dict[str, Dict[str, List]]:
         """Precomputed type-based groupings at both concept and logit levels.
-        
+
         Returns a dict with keys 'binary', 'categorical', 'continuous', each
         containing:
             - 'labels': list of concept names
             - 'concept_idx': list of concept-level indices
             - 'logits_idx': list of logit-level indices
-        
+
         Example:
-            >>> axis = AxisAnnotation(
+            >>> ann = Annotations(
             ...     labels=['size', 'color', 'temp'],
             ...     cardinalities=[1, 3, 1],
             ...     types=['binary', 'categorical', 'continuous'],
             ... )
-            >>> axis.type_groups['binary']['labels']
+            >>> ann.type_groups['binary']['labels']
             ['size']
-            >>> axis.type_groups['categorical']['logits_idx']
+            >>> ann.type_groups['categorical']['logits_idx']
             [1, 2, 3]
         """
         cum = self.cumulative_cardinalities
@@ -427,9 +460,9 @@ class AxisAnnotation:
     def concept(self, name: str) -> "Concept":
         """Return a read-only :class:`Concept` view for ``name``.
 
-        Groups the concept's per-column properties (cardinality, type, states, logit slice) 
-        into one object, so callers can write ``axis.concept('color').cardinality`` instead of 
-        the index-dance over the parallel lists. 
+        Groups the concept's per-column properties (cardinality, type, states, logit slice)
+        into one object, so callers can write ``annotations.concept('color').cardinality``
+        instead of the index-dance over the parallel lists.
         Built fresh on each call so it always reflects the current (mutable) ``metadata``.
         """
         i = self.get_index(name)
@@ -456,64 +489,64 @@ class AxisAnnotation:
 
     def slice_tensor(self, tensor: torch.Tensor, concepts: List[str]) -> torch.Tensor:
         """Extract and concatenate columns for specified concepts.
-        
+
         Args:
             tensor: Input tensor of shape (batch, total_logits)
             concepts: List of concept names to extract, in desired output order
-            
+
         Returns:
             Tensor with columns for specified concepts concatenated
-            
+
         Example:
             >>> import torch
-            >>> axis = AxisAnnotation(labels=['color', 'shape'], cardinalities=[3, 2])
+            >>> ann = Annotations(labels=['color', 'shape'], cardinalities=[3, 2])
             >>> predictions = torch.rand(4, 5)
-            >>> reordered = axis.slice_tensor(predictions, axis.labels)
+            >>> reordered = ann.slice_tensor(predictions, ann.labels)
             >>> reordered.shape
             torch.Size([4, 5])
         """
         pieces = [tensor[:, self.concept_slices[c]] for c in concepts]
         return torch.cat(pieces, dim=1)
-    
+
     def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
         """Get slice or indices for concept(s) in the flattened tensor.
-        
+
         Unified method for accessing concept positions:
         - Single concept name → returns slice object for tensor indexing
         - List of concept names → returns flattened list of indices
-        
+
         Uses precomputed concept_slices for O(1) per-concept lookup.
-        
+
         Args:
             labels: Single concept name (str) or list of concept names.
-            
+
         Returns:
             - slice: If labels is a single string
             - List[int]: If labels is a list of strings
-            
+
         Raises:
             ValueError: If any label is not found in the axis labels.
-            
+
         Example:
-            >>> axis = AxisAnnotation(
+            >>> ann = Annotations(
             ...     labels=['color', 'shape', 'size'],
             ...     cardinalities=[3, 2, 1]
             ... )
             >>> # Single concept → slice
-            >>> axis.get_slice('color')
+            >>> ann.get_slice('color')
             slice(0, 3, None)
             >>> # Multiple concepts → flattened indices
-            >>> axis.get_slice(['color', 'size'])
+            >>> ann.get_slice(['color', 'size'])
             [0, 1, 2, 5]
         """
         slices = self.concept_slices  # Use cached property
-        
+
         # Single concept → return slice directly
         if isinstance(labels, str):
             if labels not in slices:
                 raise ValueError(f"Label '{labels}' not found in axis labels {self.labels}")
             return slices[labels]
-        
+
         # Multiple concepts → return flattened indices
         logits_indices = []
         for label in labels:
@@ -521,12 +554,12 @@ class AxisAnnotation:
                 raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
             s = slices[label]
             logits_indices.extend(range(s.start, s.stop))
-        
+
         return logits_indices
 
     def get_logits_idx(self, labels: List[str]) -> List[int]:
         """Alias for get_slice(labels) when labels is a list.
-        
+
         Deprecated: Use get_slice() instead.
         """
         return self.get_slice(labels)
@@ -537,18 +570,18 @@ class AxisAnnotation:
             n: int,
             cardinalities: Optional[Union[int, List[int]]] = None,
             types: Optional[Union[str, List[str]]] = None
-    ) -> "AxisAnnotation":
-        """Create an AxisAnnotation with *n* anonymous binary labels ``c_0 … c_{n-1}``.
+    ) -> "Annotations":
+        """Create an Annotations with *n* anonymous binary labels ``c_0 … c_{n-1}``.
 
         Args:
             n: Number of labels.
 
         Returns:
-            A new :class:`AxisAnnotation` with labels ``['c_0', 'c_1', 'c_2', 'c_3']``.
+            A new :class:`Annotations` with labels ``['c_0', 'c_1', 'c_2', 'c_3']``.
 
         Example:
-            >>> axis = AxisAnnotation.empty(4)
-            >>> axis.labels
+            >>> ann = Annotations.empty(4)
+            >>> ann.labels
             ['c_0', 'c_1', 'c_2', 'c_3']
         """
         cardinalities = [cardinalities] * n if isinstance(cardinalities, int) else cardinalities
@@ -579,19 +612,19 @@ class AxisAnnotation:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AxisAnnotation':
+    def from_dict(cls, data: Dict[str, Any]) -> 'Annotations':
         """
-        Create AxisAnnotation from dictionary.
+        Create Annotations from dictionary.
 
         Parameters
         ----------
         data : dict
-            Dictionary with serialized AxisAnnotation data.
+            Dictionary with serialized Annotations data.
 
         Returns
         -------
-        AxisAnnotation
-            Reconstructed AxisAnnotation object.
+        Annotations
+            Reconstructed Annotations object.
         """
         # Keep as lists (native format)
         labels = data['labels']
@@ -606,9 +639,9 @@ class AxisAnnotation:
             metadata=data.get('metadata'),
         )
 
-    def subset(self, keep_labels: Sequence[str]) -> "AxisAnnotation":
+    def subset(self, keep_labels: Sequence[str]) -> "Annotations":
         """
-        Return a new AxisAnnotation restricted to `keep_labels`
+        Return a new Annotations restricted to `keep_labels`
         (order follows the order in `keep_labels`).
 
         Raises
@@ -641,7 +674,7 @@ class AxisAnnotation:
             new_metadata = {lab: self.metadata[lab] for lab in keep_labels}
 
         # 4) build a fresh object
-        return AxisAnnotation(
+        return Annotations(
             labels=new_labels,
             states=new_states,
             cardinalities=new_cards,
@@ -650,21 +683,21 @@ class AxisAnnotation:
             concept_space=self.concept_space,
         )
 
-    def to_concept_space(self) -> "AxisAnnotation":
+    def to_concept_space(self) -> "Annotations":
         """Return a concept-space view: one integer-coded column per concept.
 
         Cardinalities collapse to 1 (each concept becomes a single column) while
         labels and types are preserved, so a ground-truth concept tensor of shape
         ``(batch, n_concepts)`` (integer class indices for categorical concepts,
         0/1 for binary) can be wrapped as an :class:`~torch_concepts.tensor.AnnotatedTensor`.
-        The result's :attr:`shape` equals the number of concepts, and
+        The result's :attr:`size` equals the number of concepts, and
         label-based slicing / :meth:`labels_by_type` operate per concept.
 
         Returns ``self`` unchanged if this annotation is already concept-space.
         """
         if self.concept_space:
             return self
-        return AxisAnnotation(
+        return Annotations(
             labels=list(self.labels),
             cardinalities=[1] * len(self.labels),
             types=list(self.types),
@@ -672,7 +705,7 @@ class AxisAnnotation:
             concept_space=True,
         )
 
-    def union_with(self, other: "AxisAnnotation") -> "AxisAnnotation":
+    def union_with(self, other: "Annotations") -> "Annotations":
         left = list(self.labels)
         right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
@@ -698,322 +731,7 @@ class AxisAnnotation:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return AxisAnnotation(
+        return Annotations(
             labels=labels, states=new_states, cardinalities=None,
             types=new_types, metadata=meta,
         )
-
-
-class Annotations:
-    """
-    Multi-axis annotation container for concept tensors.
-
-    This class manages annotations for multiple tensor dimensions, providing
-    a unified interface for working with concept-based tensors that may have
-    different semantic meanings along different axes.
-
-    Attributes:
-        _axis_annotations (Dict[int, AxisAnnotation]): Map from axis index to annotation.
-
-    Args:
-        axis_annotations: Either a list of AxisAnnotations (indexed 0, 1, 2, ...)
-                         or a dict mapping axis numbers to AxisAnnotations.
-
-    Example:
-        >>> from torch_concepts import Annotations, AxisAnnotation
-        >>>
-        >>> # Create annotations for a concept tensor
-        >>> # Axis 0: batch (typically not annotated)
-        >>> # Axis 1: concepts
-        >>> concept_ann = AxisAnnotation(
-        ...     labels=['color', 'shape', 'size'],
-        ...     cardinalities=[3, 2, 1]  # 3 colors, 2 shapes, 1 binary size
-        ... )
-        >>>
-        >>> # Create annotations object
-        >>> annotations = Annotations({1: concept_ann})
-        >>>
-        >>> # Access concept labels
-        >>> print(annotations.get_axis_labels(1))
-        ['color', 'shape', 'size']
-        >>>
-        >>> # Get index of a concept
-        >>> idx = annotations.get_index(1, 'color')
-        >>> print(idx)
-        0
-        >>>
-        >>> # Check if axis is nested
-        >>> print(annotations.is_axis_nested(1))
-        True
-        >>>
-        >>> # Get cardinalities
-        >>> print(annotations.get_axis_cardinalities(1))
-        [3, 2, 1]
-        >>>
-        >>> # Access via indexing
-        >>> print(annotations[1].labels)
-        ['color', 'shape', 'size']
-        >>>
-        >>> # Multiple axes example
-        >>> task_ann = AxisAnnotation(labels=['task1', 'task2', 'task3'])
-        >>> multi_ann = Annotations({
-        ...     1: concept_ann,
-        ...     2: task_ann
-        ... })
-        >>> print(multi_ann.annotated_axes)
-        (1, 2)
-    """
-
-    def __init__(self, axis_annotations: Optional[Union[List, Dict[int, AxisAnnotation]]] = None):
-        """
-        Initialize Annotations container.
-
-        Args:
-            axis_annotations: Either a list or dict of AxisAnnotation objects.
-        """
-
-        if axis_annotations is None:
-            self._axis_annotations = {}
-        else:
-            if isinstance(axis_annotations, list):
-                # assume list corresponds to axes 0, 1, 2, ...
-                self._axis_annotations = {}
-                for axis, ann in enumerate(axis_annotations):
-                    assert axis >= 0, "Axis must be non-negative"
-                    self._axis_annotations[axis] = ann
-            else:
-                # Validate that axis numbers in annotations match dict keys
-                self._axis_annotations = deepcopy(axis_annotations)
-
-    def annotate_axis(self, axis_annotation: AxisAnnotation, axis: int) -> None:
-        """
-        Add or update annotation for an axis.
-        """
-        assert axis >= 0, "Axis must be non-negative"
-        self._axis_annotations[axis] = axis_annotation
-
-    # ------------------------------ Introspection ------------------------------ #
-    @property
-    def shape(self) -> Tuple[int, ...]:
-        """Get shape of the annotated tensor based on annotations."""
-        shape = []
-        max_axis = max(self._axis_annotations.keys(), default=-1)
-        for axis in range(max_axis + 1):
-            if axis in self._axis_annotations:
-                shape.append(self._axis_annotations[axis].shape)
-            else:
-                shape.append(-1)  # Unknown size for unannotated axes
-        return tuple(shape)
-
-    @property
-    def num_annotated_axes(self) -> int:
-        """Number of annotated axes."""
-        return len(self._axis_annotations)
-
-    @property
-    def annotated_axes(self) -> Tuple[int, ...]:
-        """Tuple of annotated axis numbers (sorted)."""
-        return tuple(sorted(self._axis_annotations.keys()))
-
-    def has_axis(self, axis: int) -> bool:
-        """Check if an axis is annotated."""
-        return axis in self._axis_annotations
-
-    def get_axis_annotation(self, axis: int) -> AxisAnnotation:
-        """Get annotation for a specific axis."""
-        if axis not in self._axis_annotations:
-            raise ValueError(f"Axis {axis} is not annotated")
-        return self._axis_annotations[axis]
-
-    def get_axis_labels(self, axis: int) -> List[str]:
-        """Get ordered labels for an axis."""
-        return self.get_axis_annotation(axis).labels
-
-    def get_axis_cardinalities(self, axis: int) -> Optional[List[int]]:
-        """Get cardinalities for an axis (if nested), or None."""
-        return self.get_axis_annotation(axis).cardinalities
-
-    def is_axis_nested(self, axis: int) -> bool:
-        """Check if an axis has nested structure."""
-        return self.get_axis_annotation(axis).is_nested
-
-    def get_index(self, axis: int, label: str) -> int:
-        """Get index of a label within an axis."""
-        return self.get_axis_annotation(axis).get_index(label)
-
-    def get_label(self, axis: int, idx: int) -> str:
-        """Get label at index within an axis."""
-        return self.get_axis_annotation(axis).get_label(idx)
-
-    def get_states(self, axis: int) -> Optional[List[List[str]]]:
-        """Get states for a nested axis, or None."""
-        return self.get_axis_annotation(axis).states
-
-    def get_label_states(self, axis: int, label: str) -> List[str]:
-        """Get states of a concept in a nested axis."""
-        ann = self.get_axis_annotation(axis)
-        if ann.states is None:
-            raise ValueError(f"Axis {axis} has no states defined")
-        idx = ann.get_index(label)
-        return ann.states[idx]
-
-    def get_label_state(self, axis: int, label: str, idx: int) -> str:
-        """Get states of a concept in a nested axis."""
-        ann = self.get_axis_annotation(axis)
-        if ann.states is None:
-            raise ValueError(f"Axis {axis} has no states defined")
-        idx_label = ann.get_index(label)
-        state = ann.states[idx_label][idx]
-        return state
-
-    def get_state_index(self, axis: int, label: str, state: str) -> int:
-        """Get index of a state label for a concept in a nested axis."""
-        ann = self.get_axis_annotation(axis)
-        if ann.states is None:
-            raise ValueError(f"Axis {axis} has no states defined")
-        idx_label = ann.get_index(label)
-        try:
-            return ann.states[idx_label].index(state)
-        except ValueError:
-            raise ValueError(f"State {state!r} not found for concept {label!r} in axis {axis}")
-
-    def __getitem__(self, axis: int) -> AxisAnnotation:
-        """
-        Get annotations for an axis (list-like indexing).
-        ann[0] returns AxisAnnotation for axis 0
-        ann[0][2] returns label at index 2 of axis 0
-        ann[1][2][0] returns first state of concept at index 2 of axis 1
-        """
-        return self.get_axis_annotation(axis)
-
-    def __setitem__(self, axis: int, annotation: AxisAnnotation) -> None:
-        """Set annotation for an axis."""
-        self.annotate_axis(annotation, axis)
-
-    def __delitem__(self, axis: int) -> None:
-        """Remove annotation for an axis."""
-        if axis not in self._axis_annotations:
-            raise KeyError(f"Axis {axis} is not annotated")
-        del self._axis_annotations[axis]
-
-    def __contains__(self, axis: int) -> bool:
-        """Check if an axis is annotated."""
-        return axis in self._axis_annotations
-
-    def __len__(self) -> int:
-        """Return number of annotated axes."""
-        return len(self._axis_annotations)
-
-    def __iter__(self):
-        """Iterate over axis numbers."""
-        return iter(self._axis_annotations)
-
-    def keys(self):
-        """Return axis numbers (dict-like interface)."""
-        return self._axis_annotations.keys()
-
-    def values(self):
-        """Return AxisAnnotation objects (dict-like interface)."""
-        return self._axis_annotations.values()
-
-    def items(self):
-        """Return (axis, AxisAnnotation) pairs (dict-like interface)."""
-        return self._axis_annotations.items()
-
-    @property
-    def axis_annotations(self) -> Dict[int, AxisAnnotation]:
-        """Access to the underlying axis annotations dictionary."""
-        return self._axis_annotations
-
-    def __repr__(self) -> str:
-        """String representation."""
-        if not self._axis_annotations:
-            return "Annotations({})"
-
-        parts = []
-        for axis in sorted(self._axis_annotations.keys()):
-            ann = self._axis_annotations[axis]
-            if ann.is_nested:
-                parts.append(f"axis{axis}={ann.labels} (nested, cards={ann.cardinalities})")
-            else:
-                parts.append(f"axis{axis}={ann.labels}")
-        return f"Annotations({', '.join(parts)})"
-
-    def select(self, axis: int, keep_labels: Sequence[str]) -> "Annotations":
-        """
-        Return a new Annotations where only `keep_labels` are kept on `axis`.
-        Other axes are unchanged.
-        """
-        if axis not in self._axis_annotations:
-            raise ValueError(f"Axis {axis} is not annotated")
-
-        new_map = deepcopy(self._axis_annotations)
-        new_map[axis] = new_map[axis].subset(keep_labels)
-        return Annotations(new_map)
-
-    def select_many(self, labels_by_axis: Dict[int, Sequence[str]]) -> "Annotations":
-        """
-        Return a new Annotations applying independent label filters per axis.
-        """
-        new_map = deepcopy(self._axis_annotations)
-        for ax, labs in labels_by_axis.items():
-            if ax not in new_map:
-                raise ValueError(f"Axis {ax} is not annotated")
-            new_map[ax] = new_map[ax].subset(labs)
-        return Annotations(new_map)
-
-    # --- Annotations: union join that allows overlapping labels on the join axis ---
-    def join_union(self, other: "Annotations", axis: int) -> "Annotations":
-        if axis not in self._axis_annotations or axis not in other._axis_annotations:
-            raise ValueError(f"Both annotations must include axis {axis} to join")
-
-        # non-join axes must match exactly
-        all_axes = set(self._axis_annotations.keys()).union(other._axis_annotations.keys())
-        for ax in all_axes:
-            if ax == axis:
-                continue
-            if ax not in self._axis_annotations or ax not in other._axis_annotations:
-                raise ValueError(f"Axis {ax} missing on one side while joining on axis {axis}")
-            if self._axis_annotations[ax].to_dict() != other._axis_annotations[ax].to_dict():
-                raise ValueError(f"Non-join axis {ax} differs between annotations")
-
-        joined = deepcopy(self._axis_annotations)
-        joined[axis] = self._axis_annotations[axis].union_with(other._axis_annotations[axis])
-        return Annotations(joined)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert to JSON-serializable dictionary.
-
-        Returns
-        -------
-        dict
-            Dictionary with axis annotations.
-        """
-        return {
-            'axis_annotations': {
-                str(axis): ann.to_dict() for axis, ann in self._axis_annotations.items()
-            }
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Annotations':
-        """
-        Create Annotations from dictionary.
-
-        Parameters
-        ----------
-        data : dict
-            Dictionary with serialized Annotations data.
-
-        Returns
-        -------
-        Annotations
-            Reconstructed Annotations object.
-        """
-        axis_annotations = {}
-        if 'axis_annotations' in data:
-            for axis_str, ann_data in data['axis_annotations'].items():
-                axis = int(axis_str)
-                axis_annotations[axis] = AxisAnnotation.from_dict(ann_data)
-        return cls(axis_annotations=axis_annotations)

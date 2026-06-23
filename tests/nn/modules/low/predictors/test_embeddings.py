@@ -3,7 +3,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.nn import MixConceptEmbeddingToConcept
 from torch_concepts.nn.modules.low.predictors.mix import MixSumConceptEmbeddingToConcept
 
@@ -13,12 +13,12 @@ from torch_concepts.nn.modules.low.predictors.mix import MixSumConceptEmbeddingT
 # ---------------------------------------------------------------------------
 
 def _axis(n, cardinalities=None):
-    """Create an AxisAnnotation for n concepts."""
+    """Create an Annotations for n concepts."""
     if cardinalities is None:
         cardinalities = [1] * n
     assert sum(cardinalities) == n, "cardinalities must sum to n"
     types = ['binary' if c == 1 else 'categorical' for c in cardinalities]
-    return AxisAnnotation(
+    return Annotations(
         labels=[f"c{i}" for i in range(len(cardinalities))],
         cardinalities=cardinalities,
         types=types,
@@ -64,7 +64,7 @@ class TestMixConceptEmbeddingToConcept:
     def test_int_in_concepts_raises(self):
         with pytest.raises(AttributeError):
             MixConceptEmbeddingToConcept(
-                in_concepts=10,  # int is wrong; must be AxisAnnotation
+                in_concepts=10,  # int is wrong; must be Annotations
                 in_embeddings=20,
                 out_concepts=3,
             )

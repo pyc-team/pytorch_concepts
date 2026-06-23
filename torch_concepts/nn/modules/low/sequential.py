@@ -5,7 +5,7 @@ from typing import Optional, Union
 
 import torch
 
-from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
 
 
@@ -19,12 +19,12 @@ class Sequential(torch.nn.Sequential):
     module, then threads that module's single output through the rest — while a
     single-tensor ``seq(x)`` still behaves exactly like ``nn.Sequential``.
 
-    If ``out_concepts`` (an :class:`~torch_concepts.AxisAnnotation`) is set,
+    If ``out_concepts`` (an :class:`~torch_concepts.Annotations`) is set,
     :meth:`annotate` wraps an output in an
     :class:`~torch_concepts.tensor.AnnotatedTensor` to label its columns.
     """
 
-    def __init__(self, *args, out_concepts: Optional[AxisAnnotation] = None, **kwargs):
+    def __init__(self, *args, out_concepts: Optional[Annotations] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.out_concepts = out_concepts
 
@@ -38,9 +38,9 @@ class Sequential(torch.nn.Sequential):
             output = module(output)  # the rest are single-tensor
         return output
     
-    def annotate(self, x, out_concepts: AxisAnnotation = None) -> AnnotatedTensor:
+    def annotate(self, x, out_concepts: Annotations = None) -> AnnotatedTensor:
         if out_concepts is None:
-            if isinstance(self.out_concepts, AxisAnnotation):
+            if isinstance(self.out_concepts, Annotations):
                 out_concepts = self.out_concepts
             else:
                 return x

@@ -10,7 +10,7 @@ import torch
 
 import inspect
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 
 
 def _filter_kwargs_for_ctor(cls, **kwargs):
@@ -152,8 +152,8 @@ class LazyConstructor(torch.nn.Module):
 
     def build(self,
               out_concepts: int,
-              in_concepts: Optional[Union[int, AxisAnnotation]] = None,
-              in_embeddings: Optional[Union[int, AxisAnnotation]] = None,
+              in_concepts: Optional[Union[int, Annotations]] = None,
+              in_embeddings: Optional[Union[int, Annotations]] = None,
               **kwargs
               ) -> torch.nn.Module:
         """

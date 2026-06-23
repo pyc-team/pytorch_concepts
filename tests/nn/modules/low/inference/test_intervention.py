@@ -599,7 +599,7 @@ class TestGradientPolicy:
 # 16. Additional intervention module coverage
 # ===========================================================================
 
-from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.annotations import Annotations
 
 
 class TestInterventionModuleCoverage:
@@ -635,7 +635,7 @@ class TestInterventionModuleCoverage:
             m(x)
 
     def test_sel_idx_string_type_raises(self):
-        """String-based concept selection without AxisAnnotation raises ValueError."""
+        """String-based concept selection without Annotations raises ValueError."""
         enc = _make_enc()
         m = InterventionModule(
             enc,
@@ -690,14 +690,14 @@ class TestInterventionModuleCoverage:
         assert m.original_module is enc
 
     def test_sel_idx_string_with_valid_axis_annotation(self):
-        """String-based selection with valid AxisAnnotation returns correct indices (lines 112-113)."""
-        from torch_concepts.annotations import AxisAnnotation
+        """String-based selection with valid Annotations returns correct indices (lines 112-113)."""
+        from torch_concepts.annotations import Annotations
 
         class AnnotatedEncoder(nn.Module):
             def __init__(self):
                 super().__init__()
                 self.l = nn.Linear(4, 3)
-                self.out_concepts = AxisAnnotation(labels=['alpha', 'beta', 'gamma'])
+                self.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
 
             def forward(self, x):
                 return torch.sigmoid(self.l(x))

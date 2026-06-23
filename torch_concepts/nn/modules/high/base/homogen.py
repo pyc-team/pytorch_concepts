@@ -34,7 +34,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from .....annotations import AxisAnnotation
+from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
 from ...low.priors import LearnablePrior
@@ -80,7 +80,7 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
     @abstractmethod
     def build_predictor(
         self,
-        in_concepts: AxisAnnotation,
+        in_concepts: Annotations,
         in_embeddings: Optional[int],
         out_concepts: Optional[int],
     ) -> nn.Module:
