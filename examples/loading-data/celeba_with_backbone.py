@@ -66,14 +66,14 @@ def main():
     dataset = CelebADataset(root='./data/celeba')
 
     # Get annotations for concepts
-    annotations = dataset.annotations.get_axis_annotation(1)  
+    annotations = dataset.annotations
     
     print(f"   Dataset size: {len(dataset)} samples")
     print(f"   Number of concepts: {len(annotations.labels)}")
     print(f"   Task attribute: {task_attribute}")
     
     # Get concept and task indices from annotations
-    all_labels = dataset.annotations[1].labels
+    all_labels = annotations.labels
     concept_indices = [all_labels.index(c) for c in all_labels if c != task_attribute]
     task_index = all_labels.index(task_attribute)
     

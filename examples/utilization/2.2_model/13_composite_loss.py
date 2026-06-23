@@ -36,10 +36,10 @@ def main():
     datamodule.setup('fit')
 
     annotations = datamodule.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     # Assign distribution families to each concept
-    axis = annotations.get_axis_annotation(1)
+    axis = annotations
     variable_distributions = {
         name: Bernoulli if axis.cardinalities[i] == 1 else OneHotCategorical
         for i, name in enumerate(concept_names)

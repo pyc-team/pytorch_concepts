@@ -37,7 +37,7 @@ def main():
                                    batch_size=batch_size)
     annotations = datamodule.dataset.annotations
     task_names = ['dysp']
-    concept_names = [n for n in annotations.get_axis_annotation(1).labels if n not in task_names]
+    concept_names = [n for n in annotations.labels if n not in task_names]
     query = concept_names + task_names
     n_concepts = len(concept_names)
 

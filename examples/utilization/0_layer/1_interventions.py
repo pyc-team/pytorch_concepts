@@ -54,7 +54,7 @@ def main():
     )
 
     # PyC layers
-    out_concepts = pyc.AxisAnnotation(["c1", "c2"])
+    out_concepts = pyc.Annotations(["c1", "c2"])
     c_encoder = LinearEmbeddingToConcept(in_embeddings=embedding_dims, out_concepts=out_concepts)
     y_predictor = LinearConceptToConcept(in_concepts=concept_dims, out_concepts=task_dims)
 

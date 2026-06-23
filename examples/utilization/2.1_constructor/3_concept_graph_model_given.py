@@ -2,7 +2,7 @@ import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
+from torch_concepts import Annotations, ConceptGraph
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, LazyConstructor, \
     LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
@@ -34,12 +34,12 @@ def main():
         'xor': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 1.0}, 'type': 'binary', 'description': 'XOR Task'},
         'not_xor': {'distribution': RelaxedBernoulli, 'dist_kwargs': {'temperature': 1.0}, 'type': 'binary', 'description': 'NOT XOR Task'},
     }
-    annotations = Annotations({1: AxisAnnotation(concept_names + task_names + task_names2, cardinalities=cardinalities, metadata=metadata)})
+    annotations = Annotations(concept_names + task_names + task_names2, cardinalities=cardinalities, metadata=metadata)
 
     model_graph = ConceptGraph(torch.tensor([[0, 0, 1, 0],
                                              [0, 0, 1, 0],
                                              [0, 0, 0, 1],
-                                             [0, 0, 0, 0]]), list(annotations.get_axis_annotation(1).labels))
+                                             [0, 0, 0, 0]]), list(annotations.labels))
 
     # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())

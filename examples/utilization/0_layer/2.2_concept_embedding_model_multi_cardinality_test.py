@@ -16,7 +16,7 @@ import warnings
 from torch.nn import ModuleDict
 import torch.nn.functional as F
 
-from torch_concepts import seed_everything, AxisAnnotation, AnnotatedTensor
+from torch_concepts import seed_everything, Annotations, AnnotatedTensor
 from torch_concepts.data import BnLearnDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, MixConceptEmbeddingToConcept
 from torch_concepts.nn import MLP
@@ -41,7 +41,7 @@ def main():
     c_raw = dataset.concepts        # (n_samples, 27) integer class indices
 
     # Concept/task split from the DAG structure
-    axis = dataset.annotations.get_axis_annotation(1)
+    axis = dataset.annotations
     task_idx = axis.labels.index(task_node)
     concept_idx = [axis.labels.index(node) for node in axis.labels if node != task_node]
 
@@ -49,7 +49,7 @@ def main():
     n_concepts_expanded = sum(concept_cardinalities)  # one column per cardinality class
 
     # Annotation describing concepts' semantics.
-    concept_annotations = AxisAnnotation(
+    concept_annotations = Annotations(
         labels=[axis.labels[i] for i in concept_idx],
         cardinalities=concept_cardinalities,
         types=['binary' if c == 1 else 'categorical' for c in concept_cardinalities],

@@ -35,7 +35,7 @@ def main():
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_tasks = y_train.shape[1]
-    concept_annotations = pyc.AxisAnnotation.empty(n_concepts, types=['binary', 'continuous'])
+    concept_annotations = pyc.Annotations.empty(n_concepts, types=['binary', 'continuous'])
 
     # Build model using low-level layers
     latent_encoder = torch.nn.Sequential(

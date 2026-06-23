@@ -32,7 +32,7 @@ def main():
                                    val_size=0.1,
                                    test_size=0.2)
     annotations = datamodule.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     n_features = datamodule.n_features[-1]
     n_concepts = 2

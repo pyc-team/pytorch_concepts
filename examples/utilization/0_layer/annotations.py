@@ -27,16 +27,14 @@ def main():
     # --------------------------------------------------------------------------
     # Concept annotations
     # --------------------------------------------------------------------------
-    annotations = pyc.Annotations({
-        1: pyc.AxisAnnotation(
-            labels=["smoking", "genotype", "tar", "cancer"],
-            cardinalities=[1, 3, 1, 1],
-            types=["binary", "categorical", "continuous", "binary"]
-        )
-    })
+    annotations = pyc.Annotations(
+        labels=["smoking", "genotype", "tar", "cancer"],
+        cardinalities=[1, 3, 1, 1],
+        types=["binary", "categorical", "continuous", "binary"]
+    )
 
-    # Accessing concept annotations by name    
-    annotations[1].concept("genotype")
+    # Accessing concept annotations by name
+    annotations.concept("genotype")
 
 
 
@@ -46,7 +44,7 @@ def main():
 
     tensor = pyc.AnnotatedTensor(
         data=torch.randn(10, 6),    # (batch_size, sum(cardinalities))
-        annotation=annotations[1]
+        annotation=annotations
     )
 
     # slice by concept name
