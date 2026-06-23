@@ -189,9 +189,9 @@ for step in range(EPOCHS):
         evidence={'x': batch['x']}
     )
     
-    loss_c1 = loss_fn(out.model_params['c1']['probs'], batch['c1'])
-    loss_c2 = loss_fn(out.model_params['c2']['probs'], batch['c2'])
-    loss_y = loss_fn(out.model_params['y']['probs'], batch['y'])
+    loss_c1 = loss_fn(out.params['c1']['probs'], batch['c1'])
+    loss_c2 = loss_fn(out.params['c2']['probs'], batch['c2'])
+    loss_y = loss_fn(out.params['y']['probs'], batch['y'])
     loss = loss_c1 + loss_c2 + loss_y
     
     optim.zero_grad()
@@ -199,7 +199,7 @@ for step in range(EPOCHS):
     optim.step()
 
     if step % 1000 == 0:
-        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.model_params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.model_params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.model_params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
+        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
 
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
@@ -207,7 +207,7 @@ test_batch = make_batch(B=512)
 det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
-y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
+y_pred = torch.where(out.params['y']['probs'] > 0.5, 1.0, 0.0)
 y_true = test_batch['y']
 acc = (y_pred == y_true).float().mean()
 print(f'test accuracy on y: {acc.item():.3f}')
@@ -230,9 +230,9 @@ for step in range(EPOCHS):
     batch = make_batch()
     out = det(query={'c1': batch['c1'], 'c2': batch['c2'], 'y': batch['y']}, evidence={'x': batch['x']})
     
-    loss_c1 = loss_fn(out.model_params['c1']['probs'], batch['c1'])
-    loss_c2 = loss_fn(out.model_params['c2']['probs'], batch['c2'])
-    loss_y = loss_fn(out.model_params['y']['probs'], batch['y'])
+    loss_c1 = loss_fn(out.params['c1']['probs'], batch['c1'])
+    loss_c2 = loss_fn(out.params['c2']['probs'], batch['c2'])
+    loss_y = loss_fn(out.params['y']['probs'], batch['y'])
     loss = loss_c1 + loss_c2 + loss_y
     
     optim.zero_grad()
@@ -240,7 +240,7 @@ for step in range(EPOCHS):
     optim.step()
 
     if step % 1000 == 0:
-        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.model_params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.model_params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.model_params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
+        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
 
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
@@ -248,7 +248,7 @@ test_batch = make_batch(B=512)
 det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
-y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
+y_pred = torch.where(out.params['y']['probs'] > 0.5, 1.0, 0.0)
 y_true = test_batch['y']
 acc = (y_pred == y_true).float().mean()
 print(f'test accuracy on y: {acc.item():.3f}')
@@ -272,9 +272,9 @@ for step in range(EPOCHS):
     batch = make_batch()
     out = det(query={'c1': batch['c1'], 'c2': batch['c2'], 'y': batch['y']}, evidence={'x': batch['x']})
     
-    loss_c1 = loss_fn(out.model_params['c1']['probs'], batch['c1'])
-    loss_c2 = loss_fn(out.model_params['c2']['probs'], batch['c2'])
-    loss_y = loss_fn(out.model_params['y']['probs'], batch['y'])
+    loss_c1 = loss_fn(out.params['c1']['probs'], batch['c1'])
+    loss_c2 = loss_fn(out.params['c2']['probs'], batch['c2'])
+    loss_y = loss_fn(out.params['y']['probs'], batch['y'])
     loss = loss_c1 + loss_c2 + loss_y
     
     optim.zero_grad()
@@ -282,7 +282,7 @@ for step in range(EPOCHS):
     optim.step()
 
     if step % 1000 == 0:
-        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.model_params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.model_params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.model_params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
+        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
 
 print()
 print("Deterministic inference at test-time (only input x provided as evidence)")
@@ -290,7 +290,7 @@ test_batch = make_batch(B=512)
 det_test = DeterministicInference(pgm, p_int=0.0)
 with torch.no_grad():
     out = det_test(query={'c1': test_batch['c1'], 'c2': test_batch['c2'], 'y': test_batch['y']}, evidence={'x': test_batch['x']})
-y_pred = torch.where(out.model_params['y']['probs'] > 0.5, 1.0, 0.0)
+y_pred = torch.where(out.params['y']['probs'] > 0.5, 1.0, 0.0)
 y_true = test_batch['y']
 acc = (y_pred == y_true).float().mean()
 print(f'test accuracy on y: {acc.item():.3f}')
@@ -317,9 +317,9 @@ for step in range(EPOCHS):
     batch = make_batch()
     out = det(query={'c1': batch['c1'], 'c2': batch['c2'], 'y': batch['y']}, evidence={'x': batch['x']})
     
-    loss_c1 = loss_fn(out.model_params['c1']['probs'], batch['c1'])
-    loss_c2 = loss_fn(out.model_params['c2']['probs'], batch['c2'])
-    loss_y = loss_fn(out.model_params['y']['probs'], batch['y'])
+    loss_c1 = loss_fn(out.params['c1']['probs'], batch['c1'])
+    loss_c2 = loss_fn(out.params['c2']['probs'], batch['c2'])
+    loss_y = loss_fn(out.params['y']['probs'], batch['y'])
     loss = loss_c1 + loss_c2 + loss_y
     
     optim.zero_grad()
@@ -327,7 +327,7 @@ for step in range(EPOCHS):
     optim.step()
 
     if step % 1000 == 0:
-        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.model_params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.model_params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.model_params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
+        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
 
 print()
 print("Ancestral inference at test-time (only input x provided as evidence)")
@@ -461,9 +461,9 @@ for step in range(EPOCHS):
     batch = make_batch()
     out = det(query={'c1': batch['c1'], 'c2': batch['c2'], 'y': batch['y']}, evidence={'x': batch['x']})
     
-    loss_c1 = loss_fn(out.model_params['c1']['probs'], batch['c1'])
-    loss_c2 = loss_fn(out.model_params['c2']['probs'], batch['c2'])
-    loss_y = loss_fn(out.model_params['y']['probs'], batch['y'])
+    loss_c1 = loss_fn(out.params['c1']['probs'], batch['c1'])
+    loss_c2 = loss_fn(out.params['c2']['probs'], batch['c2'])
+    loss_y = loss_fn(out.params['y']['probs'], batch['y'])
     loss = loss_c1 + loss_c2 + loss_y
     
     optim.zero_grad()
@@ -471,7 +471,7 @@ for step in range(EPOCHS):
     optim.step()
 
     if step % 1000 == 0:
-        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.model_params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.model_params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.model_params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
+        print(f"Step {step}: Loss {loss.item():.4f} | c1 acc {(out.params['c1']['probs'] > 0.5).float().eq(batch['c1']).float().mean().item():.4f} | c2 acc {(out.params['c2']['probs'] > 0.5).float().eq(batch['c2']).float().mean().item():.4f} | y acc {(out.params['y']['probs'] > 0.5).float().eq(batch['y']).float().mean().item():.4f}")
 
 print()
 print("Ancestral inference at test-time (only input x provided as evidence)")
