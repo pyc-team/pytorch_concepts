@@ -18,7 +18,7 @@ from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, 
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn import MLP
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 def _logits(out, names):
@@ -42,8 +42,7 @@ class TestCBMInitialization(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
@@ -53,7 +52,6 @@ class TestCBMInitialization(unittest.TestCase):
                     'task1': {'type': 'discrete'}
                 }
             )
-        })
     
     def test_init_defaults(self):
         """Test initialization with default distributions on the model."""
@@ -113,8 +111,7 @@ class TestCBMForward(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
@@ -124,7 +121,6 @@ class TestCBMForward(unittest.TestCase):
                     'task1': {'type': 'discrete'}
                 }
             )
-        })
         
         self.model = ConceptBottleneckModel(
             input_size=8,
@@ -188,8 +184,7 @@ class TestCBMPrepareTarget(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -198,7 +193,6 @@ class TestCBMPrepareTarget(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         
         self.model = ConceptBottleneckModel(
             input_size=8,
@@ -219,8 +213,7 @@ class TestCBMTraining(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -229,7 +222,6 @@ class TestCBMTraining(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
     
     def test_manual_training_mode(self):
         """Test manual PyTorch training (no lightning mode)."""
@@ -278,8 +270,7 @@ class TestCBMEdgeCases(unittest.TestCase):
     
     def test_empty_query(self):
         """Test behavior with empty query."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 metadata={
@@ -287,7 +278,6 @@ class TestCBMEdgeCases(unittest.TestCase):
                     'c2': {'type': 'discrete'}
                 }
             )
-        })
         
         model = ConceptBottleneckModel(
             input_size=8,
@@ -301,8 +291,7 @@ class TestCBMEdgeCases(unittest.TestCase):
     
     def test_repr(self):
         """Test string representation."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
                 metadata={
@@ -310,7 +299,6 @@ class TestCBMEdgeCases(unittest.TestCase):
                     'task': {'type': 'discrete'},
                 }
             )
-        })
 
         model = ConceptBottleneckModel(
             input_size=8,
@@ -331,8 +319,7 @@ class TestCBMFactory(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -341,7 +328,6 @@ class TestCBMFactory(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_factory_joint_mode(self):
         """Test factory creates Lightning model with lightning=True."""
@@ -383,8 +369,7 @@ class TestCBMUnifiedForward(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -393,7 +378,6 @@ class TestCBMUnifiedForward(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         self.x = torch.randn(4, 8)
     
     def test_forward_with_x_only(self):
@@ -442,8 +426,7 @@ class TestTrainingModes(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -452,7 +435,6 @@ class TestTrainingModes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         self.kwargs = {
             'input_size': 8,
             'annotations': self.ann,
@@ -480,8 +462,7 @@ class TestLearnerIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -490,7 +471,6 @@ class TestLearnerIntegration(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         self.batch = {
             'inputs': {'x': torch.randn(4, 8)},
             'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
@@ -548,18 +528,16 @@ if __name__ == '__main__':
 
 import torch
 from torch_concepts import ConceptGraph
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
 
 
 def _make_graph_cbm_ann():
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['a', 'b', 'c'],
             cardinalities=[1, 1, 1],
             types=['binary', 'binary', 'binary'],
         )
-    })
 
 
 def _make_dag():
@@ -609,19 +587,17 @@ class TestGraphCBMConstruction:
 
 import torch
 from torch_concepts import ConceptGraph
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn.modules.high.base.graph import DirectedGraphModel
 from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
 
 
 def _make_simple_ann():
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['x', 'y'],
             cardinalities=[1, 1],
             types=['binary', 'binary'],
         )
-    })
 
 
 def _make_two_node_dag():
@@ -670,25 +646,23 @@ class TestDirectedGraphModelBase:
 
     def test_plate_compatible_levels(self):
         """plate_compatible_levels returns True for homogeneous levels."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['a', 'b'],
                 cardinalities=[1, 1],
                 types=['binary', 'binary'],
             )
-        })
         graph = ConceptGraph(
             torch.tensor([[0., 0.], [0., 0.]]),
             node_names=['a', 'b'],
         )
-        axis_ann = ann.get_axis_annotation(1)
+        axis_ann = ann
         result = DirectedGraphModel.plate_compatible_levels(axis_ann, graph)
         assert all(result)
 
     def test_plate_compatible_levels_metadata_fallback(self):
         """plate_compatible_levels uses metadata type when types is None."""
         # Build annotation without explicit types (uses metadata)
-        ann_axis = AxisAnnotation(
+        ann_axis = Annotations(
             labels=['a', 'b'],
             cardinalities=[1, 1],
             metadata={'a': {'type': 'binary'}, 'b': {'type': 'binary'}},

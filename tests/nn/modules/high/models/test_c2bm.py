@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli
 
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn.modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 from torch_concepts.nn import MLP
 from torch_concepts import ConceptGraph
@@ -64,19 +64,16 @@ def _diamond_graph():
 
 def _binary_annotations(names):
     """All-binary annotations for *names* (defaults will assign Bernoulli)."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=list(names),
             cardinalities=[1] * len(names),
             metadata={n: {'type': 'discrete'} for n in names},
         )
-    })
 
 
 def _mixed_annotations():
     """A (binary), B (3-class categorical), C (binary)  — chain graph."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
             metadata={
@@ -85,7 +82,6 @@ def _mixed_annotations():
                 'C': {'type': 'discrete'},
             },
         )
-    })
 
 
 class DummyBackbone(nn.Module):
@@ -190,8 +186,7 @@ class TestC2BMInitialization:
 
     def test_with_defaults(self, chain_graph):
         """Annotations without distributions — base-family defaults should be used."""
-        ann_no_dist = Annotations({
-            1: AxisAnnotation(
+        ann_no_dist = Annotations(
                 labels=['A', 'B', 'C'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -200,7 +195,6 @@ class TestC2BMInitialization:
                     'C': {'type': 'discrete'},
                 },
             )
-        })
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=ann_no_dist,
@@ -552,7 +546,7 @@ class TestC2BMAncestralSamplingInference:
         assert isinstance(model.eval_inference, DeterministicInference)
         assert isinstance(model.train_inference, AncestralSamplingInference)
         x = torch.randn(4, 8)
-        names = binary_chain_ann.get_axis_annotation(1).labels
+        names = binary_chain_ann.labels
         out = model(query=list(names), input=x)
         assert out.params
         assert all('logits' in v for v in out.params.values())

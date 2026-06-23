@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.dense_layers import MLP
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 # Test Fixtures
@@ -52,37 +52,31 @@ class DummyLatentEncoder(nn.Module):
 @pytest.fixture
 def annotations_with_distributions():
     """Annotations with binary concept types."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
             types=['binary', 'binary', 'binary'],
         )
-    })
 
 
 @pytest.fixture
 def annotations_without_distributions():
     """Annotations with binary concept types (alias of annotations_with_distributions)."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
             types=['binary', 'binary', 'binary'],
         )
-    })
 
 
 @pytest.fixture
 def mixed_annotations():
     """Annotations with mixed concept types."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['binary_c', 'cat_c'],
             cardinalities=[1, 3],
             types=['binary', 'categorical'],
         )
-    })
 
 
 
@@ -382,7 +376,7 @@ class TestBaseModelProperties:
         )
 
         assert hasattr(model, 'concept_annotations')
-        assert isinstance(model.concept_annotations, AxisAnnotation)
+        assert isinstance(model.concept_annotations, Annotations)
         assert model.concept_annotations.labels == ['c1', 'c2', 'task']
     
     def test_latent_size_property_with_backbone(self, annotations_with_distributions):
@@ -574,13 +568,11 @@ class TestBaseModelMissingLines:
         class BinaryOnlyModel(ConcreteModel):
             supported_concept_types = frozenset({"binary"})
 
-        mixed_ann = Annotations({
-            1: AxisAnnotation(
+        mixed_ann = Annotations(
                 labels=['bin_c', 'cat_c'],
                 cardinalities=[1, 3],
                 types=['binary', 'categorical'],
             )
-        })
 
         with pytest.raises(ValueError, match="BinaryOnlyModel"):
             BinaryOnlyModel(input_size=10, annotations=mixed_ann)

@@ -31,7 +31,7 @@ from torch_concepts.nn.modules.high.models.cem import (
     ConceptEmbeddingModel
 )
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     MLP,
     DeterministicInference,
@@ -60,8 +60,7 @@ class TestCEMInitialization(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
@@ -71,7 +70,6 @@ class TestCEMInitialization(unittest.TestCase):
                     'task1': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_init_basic(self):
         """Test basic initialization."""
@@ -100,8 +98,7 @@ class TestCEMInitialization(unittest.TestCase):
 
     def test_init_with_defaults(self):
         """Test initialization without explicit distributions (defaults used)."""
-        ann_no_dist = Annotations({
-            1: AxisAnnotation(
+        ann_no_dist = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -110,7 +107,6 @@ class TestCEMInitialization(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -200,8 +196,7 @@ class TestCEMForward(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
                 metadata={
@@ -211,7 +206,6 @@ class TestCEMForward(unittest.TestCase):
                     'task1': {'type': 'discrete'}
                 }
             )
-        })
 
         self.model = ConceptEmbeddingModel(
             input_size=8,
@@ -327,8 +321,7 @@ class TestCEMExogenousVariables(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[2, 3, 1, 1],
                 metadata={
@@ -338,7 +331,6 @@ class TestCEMExogenousVariables(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_different_exogenous_sizes(self):
         """Test models with different exogenous sizes."""
@@ -376,8 +368,7 @@ class TestCEMPrepareTarget(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -386,7 +377,6 @@ class TestCEMPrepareTarget(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         self.model = ConceptEmbeddingModel(
             input_size=8,
@@ -407,8 +397,7 @@ class TestCEMTraining(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -417,7 +406,6 @@ class TestCEMTraining(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_manual_training_mode(self):
         """Test manual PyTorch training (no lightning mode)."""
@@ -525,8 +513,7 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 2],
                 metadata={
@@ -537,7 +524,6 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
                     'task2': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_multiple_tasks_init(self):
         """Test initialization with multiple tasks."""
@@ -587,8 +573,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_only_binary_concepts_init(self):
         """Test initialization with only binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary (cardinality 1)
                 metadata={
@@ -598,7 +583,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -612,8 +596,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_only_binary_concepts_forward(self):
         """Test forward pass with only binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary
                 metadata={
@@ -623,7 +606,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -644,8 +626,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_only_categorical_concepts_init(self):
         """Test initialization with only categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical (cardinality > 1)
                 metadata={
@@ -655,7 +636,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -669,8 +649,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_only_categorical_concepts_forward(self):
         """Test forward pass with only categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical
                 metadata={
@@ -680,7 +659,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -699,8 +677,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_mixed_concepts_init(self):
         """Test initialization with mixed binary and categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],
                 metadata={
@@ -711,7 +688,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -725,8 +701,7 @@ class TestCEMConceptTypes(unittest.TestCase):
 
     def test_mixed_concepts_forward(self):
         """Test forward pass with mixed binary and categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],  # Mixed
                 metadata={
@@ -737,7 +712,6 @@ class TestCEMConceptTypes(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -760,8 +734,7 @@ class TestCEMEdgeCases(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -770,12 +743,10 @@ class TestCEMEdgeCases(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_single_concept(self):
         """Test with single concept."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
                 metadata={
@@ -783,7 +754,6 @@ class TestCEMEdgeCases(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -799,8 +769,7 @@ class TestCEMEdgeCases(unittest.TestCase):
 
     def test_all_binary_concepts(self):
         """Test with all binary concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
                 metadata={
@@ -810,7 +779,6 @@ class TestCEMEdgeCases(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -826,8 +794,7 @@ class TestCEMEdgeCases(unittest.TestCase):
 
     def test_all_categorical_concepts(self):
         """Test with all categorical concepts."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[3, 4, 5],
                 metadata={
@@ -836,7 +803,6 @@ class TestCEMEdgeCases(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -888,8 +854,7 @@ class TestCEMCardinalities(unittest.TestCase):
 
     def test_concept_cardinalities_extraction(self):
         """Test that concept cardinalities are correctly extracted."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 4],
                 metadata={
@@ -900,7 +865,6 @@ class TestCEMCardinalities(unittest.TestCase):
                     'task2': {'type': 'discrete'}
                 }
             )
-        })
 
         model = ConceptEmbeddingModel(
             input_size=8,
@@ -917,8 +881,7 @@ class TestCEMComparison(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -927,7 +890,6 @@ class TestCEMComparison(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
     def test_cem_has_exogenous(self):
         """Test that CEM and CBM produce comparable outputs."""
@@ -961,8 +923,7 @@ class TestCEMIndependentLearner(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -971,7 +932,6 @@ class TestCEMIndependentLearner(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
 
         self.batch_size = 4
         self.input_size = 8

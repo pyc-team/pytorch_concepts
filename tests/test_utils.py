@@ -20,7 +20,7 @@ from torch_concepts.utils import (
     seed_everything,
 )
 
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 class TestUtils(unittest.TestCase):

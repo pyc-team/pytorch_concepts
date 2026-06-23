@@ -18,7 +18,7 @@ from torch_concepts.nn import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
 
 
@@ -33,13 +33,11 @@ class TestHighLevelIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Mixed binary and categorical concepts
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 3, 1, 4],
                 types=['binary', 'categorical', 'binary', 'categorical'],
             )
-        })
 
         self.loss_binary = nn.BCEWithLogitsLoss()
         self.loss_categorical = nn.CrossEntropyLoss()
@@ -166,13 +164,11 @@ class TestAnnotationsWithComponents(unittest.TestCase):
 
     def test_annotations_with_distributions_in_metadata(self):
         """Test that binary annotations initialize model, loss, and metrics correctly."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 types=['binary', 'binary'],
             )
-        })
 
         model = ConceptBottleneckModel(
             input_size=8,
@@ -194,13 +190,11 @@ class TestAnnotationsWithComponents(unittest.TestCase):
 
     def test_annotations_with_variable_distributions(self):
         """Test that per-type variable_distributions override works on the model."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 types=['binary', 'binary'],
             )
-        })
 
         # Model with explicit per-type distribution override
         model = ConceptBottleneckModel(
@@ -228,13 +222,11 @@ class TestTwoTrainingModes(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 types=['binary', 'binary', 'binary'],
             )
-        })
     
     def test_manual_pytorch_training(self):
         """Test manual PyTorch training mode."""
@@ -305,13 +297,11 @@ class TestDistributionHandling(unittest.TestCase):
 
     def test_mixed_distribution_types(self):
         """Test handling of mixed distribution types."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['binary1', 'cat1', 'binary2', 'cat2'],
                 cardinalities=[1, 3, 1, 4],
                 types=['binary', 'categorical', 'binary', 'categorical'],
             )
-        })
 
         model = ConceptBottleneckModel(
             input_size=16,

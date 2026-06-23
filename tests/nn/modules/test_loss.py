@@ -11,7 +11,7 @@ import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
 from torch_concepts.nn.modules.outputs import ModelOutput
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 class TestConceptLoss(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestConceptLoss(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create annotations with mixed concept types (binary and categorical only)
-        axis_mixed = AxisAnnotation(
+        axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
             metadata={
@@ -30,10 +30,10 @@ class TestConceptLoss(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
-        self.annotations_mixed = Annotations({1: axis_mixed})
+        self.annotations_mixed = axis_mixed
         
         # All binary
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
             metadata={
@@ -42,10 +42,10 @@ class TestConceptLoss(unittest.TestCase):
                 'b3': {'type': 'discrete'},
             }
         )
-        self.annotations_binary = Annotations({1: axis_binary})
+        self.annotations_binary = axis_binary
         
         # All categorical
-        axis_categorical = AxisAnnotation(
+        axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
             metadata={
@@ -53,10 +53,10 @@ class TestConceptLoss(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
-        self.annotations_categorical = Annotations({1: axis_categorical})
+        self.annotations_categorical = axis_categorical
         
         # All continuous - not currently tested as continuous concepts are not fully supported
-        # self.annotations_continuous = AxisAnnotation(
+        # self.annotations_continuous = Annotations(
         #     labels=('cont1', 'cont2', 'cont3'),
         #     cardinalities=(1, 1, 1),
         #     metadata={
@@ -163,12 +163,12 @@ class TestConceptLoss(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_continuous_raises_at_construction(self):
         """Continuous concepts raise NotImplementedError via check_collection."""
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('cont1',),
             cardinalities=[1],
             types=['continuous'],
         )
-        ann = Annotations({1: axis})
+        ann = axis
         with self.assertRaises(NotImplementedError):
             ConceptLoss(ann, continuous=nn.MSELoss())
 
@@ -179,7 +179,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create annotations with concepts and tasks
-        self.annotations = AxisAnnotation(
+        self.annotations = Annotations(
             labels=('concept1', 'concept2', 'concept3', 'task1', 'task2'),
             cardinalities=(1, 1, 1, 1, 1),
             metadata={
@@ -190,12 +190,12 @@ class TestWeightedConceptLoss(unittest.TestCase):
                 'task2': {'type': 'discrete'},
             }
         )
-        self.annotations = Annotations({1: self.annotations})
+        self.annotations = self.annotations
         
         self.task_names = ['task1', 'task2']
         
         # Mixed types (binary and categorical only - continuous not supported yet)
-        self.annotations_mixed = AxisAnnotation(
+        self.annotations_mixed = Annotations(
             labels=('c1', 'c2', 'c3', 't1', 't2'),
             cardinalities=(1, 3, 1, 1, 4),
             metadata={
@@ -206,7 +206,7 @@ class TestWeightedConceptLoss(unittest.TestCase):
                 't2': {'type': 'discrete'},
             }
         )
-        self.annotations_mixed = Annotations({1: self.annotations_mixed})
+        self.annotations_mixed = self.annotations_mixed
         
         self.task_names_mixed = ['t1', 't2']
 
@@ -376,7 +376,7 @@ class TestLossConfiguration(unittest.TestCase):
 
     def test_missing_required_loss_config(self):
         """Test that missing required loss config raises error."""
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('b1', 'b2'),
             cardinalities=(1, 1),
             metadata={
@@ -384,7 +384,7 @@ class TestLossConfiguration(unittest.TestCase):
                 'b2': {'type': 'discrete'},
             }
         )
-        annotations = Annotations({1: axis})
+        annotations = axis
         
         # Missing binary loss config (only provides categorical)
         with self.assertRaises(ValueError):
@@ -394,7 +394,7 @@ class TestLossConfiguration(unittest.TestCase):
         """Test that unused loss configs produce warnings."""
         import warnings
         
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('b1', 'b2'),
             cardinalities=(1, 1),
             metadata={
@@ -402,7 +402,7 @@ class TestLossConfiguration(unittest.TestCase):
                 'b2': {'type': 'discrete'},
             }
         )
-        annotations = Annotations({1: axis})
+        annotations = axis
         
         # Provides continuous loss but no continuous concepts
         with warnings.catch_warnings(record=True) as w:
@@ -430,7 +430,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         """
         from torch.distributions import Bernoulli
 
-        self.axis = AxisAnnotation(
+        self.axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
             metadata={
@@ -439,7 +439,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
                 'C': {'type': 'discrete', 'distribution': Bernoulli},
             }
         )
-        self.annotations = Annotations({1: self.axis})
+        self.annotations = self.axis
 
         adj = torch.tensor([
             [0., 1., 0.],
@@ -530,7 +530,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         loss = loss_fn(ModelOutput(logits=preds, target=targets))
 
         # Compare with loss coming only from root (depth 0)
-        root_ann = Annotations({1: self.axis.subset(['A'])})
+        root_ann = self.axis.subset(['A'])
         root_loss_fn = ConceptLoss(root_ann, binary=nn.BCEWithLogitsLoss())
         root_loss = root_loss_fn(ModelOutput(logits=preds[:, 0:1], target=targets[:, 0:1]))
         # Loss should be dominated by root; difference from root should be small
@@ -565,7 +565,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         """Works with a mix of binary and categorical concepts."""
         from torch.distributions import Bernoulli, OneHotCategorical
 
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
             metadata={
@@ -574,7 +574,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
                 'C': {'type': 'discrete', 'distribution': Bernoulli},
             }
         )
-        ann = Annotations({1: axis})
+        ann = axis
         adj = torch.tensor([
             [0., 1., 0.],
             [0., 0., 1.],
@@ -609,7 +609,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         """
         from torch.distributions import Bernoulli
 
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
             metadata={
@@ -618,7 +618,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
                 'C': {'type': 'discrete', 'distribution': Bernoulli},
             }
         )
-        ann = Annotations({1: axis})
+        ann = axis
         adj = torch.tensor([
             [0., 0., 1.],
             [0., 0., 1.],
@@ -706,7 +706,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         graph_xy = ConceptGraph(adj, node_names=['X', 'Y'])
 
         # Annotations only have A, B — neither in the graph
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
             metadata={
@@ -714,7 +714,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
                 'B': {'type': 'discrete', 'distribution': Bernoulli},
             }
         )
-        ann = Annotations({1: axis})
+        ann = axis
 
         loss_fn = DepthWeightedConceptLoss(
             ann, graph_xy,
@@ -779,7 +779,7 @@ class TestConceptLossComposite(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
             metadata={
@@ -788,9 +788,9 @@ class TestConceptLossComposite(unittest.TestCase):
                 'b3': {'type': 'discrete'},
             }
         )
-        self.annotations_binary = Annotations({1: axis_binary})
+        self.annotations_binary = axis_binary
 
-        axis_mixed = AxisAnnotation(
+        axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
             metadata={
@@ -800,7 +800,7 @@ class TestConceptLossComposite(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
-        self.annotations_mixed = Annotations({1: axis_mixed})
+        self.annotations_mixed = axis_mixed
 
     # ------------------------------------------------------------------
     # List construction
@@ -1032,12 +1032,12 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
     """Test that extra kwargs flow to loss terms based on signature."""
 
     def setUp(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
             metadata={'b1': {'type': 'discrete'}, 'b2': {'type': 'discrete'}},
         )
-        self.ann = Annotations({1: axis})
+        self.ann = axis
 
     def test_extra_kwarg_reaches_term(self):
         loss_fn = ConceptLoss(self.ann, binary=_EmbeddingAwareLoss())
@@ -1083,7 +1083,7 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
     """Test WeightedConceptLoss forwards extra kwargs to inner ConceptLoss."""
 
     def setUp(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
             metadata={
@@ -1092,7 +1092,7 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
                 't1': {'type': 'discrete'},
             },
         )
-        self.ann = Annotations({1: axis})
+        self.ann = axis
 
     def test_extra_kwargs_forwarded(self):
         loss_fn = WeightedConceptLoss(
@@ -1114,7 +1114,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
     def setUp(self):
         from torch.distributions import Bernoulli
         from torch_concepts import ConceptGraph
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
             metadata={
@@ -1122,7 +1122,7 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
                 'B': {'type': 'discrete', 'distribution': Bernoulli},
             },
         )
-        self.ann = Annotations({1: axis})
+        self.ann = axis
         adj = torch.tensor([[0., 1.], [0., 0.]])
         self.graph = ConceptGraph(adj, node_names=['A', 'B'])
 
@@ -1146,12 +1146,12 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
     """Test ConceptLoss with composite lists on categorical concepts."""
 
     def setUp(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
             metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
-        self.ann = Annotations({1: axis})
+        self.ann = axis
 
     def test_categorical_composite_forward(self):
         loss_fn = ConceptLoss(
@@ -1187,12 +1187,12 @@ class TestMixedCompositeBothTypes(unittest.TestCase):
     """Test composite lists on BOTH binary and categorical simultaneously."""
 
     def test_mixed_composite(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('b1', 'cat1'),
             cardinalities=[1, 4],
             metadata={'b1': {'type': 'discrete'}, 'cat1': {'type': 'discrete'}},
         )
-        ann = Annotations({1: axis})
+        ann = axis
 
         loss_fn = ConceptLoss(
             ann,
@@ -1219,7 +1219,7 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
     """Test WeightedConceptLoss with per-type composite losses."""
 
     def test_composite_binary_with_regularizer(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
             metadata={
@@ -1228,7 +1228,7 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
                 't1': {'type': 'discrete'},
             },
         )
-        ann = Annotations({1: axis})
+        ann = axis
 
         loss_fn = WeightedConceptLoss(
             ann,
@@ -1251,7 +1251,7 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
     def test_composite_binary_with_regularizer(self):
         from torch.distributions import Bernoulli
         from torch_concepts import ConceptGraph
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
             metadata={
@@ -1260,7 +1260,7 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
                 'C': {'type': 'discrete', 'distribution': Bernoulli},
             },
         )
-        ann = Annotations({1: axis})
+        ann = axis
         adj = torch.tensor([[0., 1., 0.], [0., 0., 1.], [0., 0., 0.]])
         graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
 
@@ -1285,12 +1285,12 @@ class TestPrepareCategorical(unittest.TestCase):
 
     def test_padding_and_shape(self):
         """Logits padded to max_card, stacked along batch dim."""
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
             metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
-        ann = Annotations({1: axis})
+        ann = axis
         loss_fn = ConceptLoss(ann, categorical=nn.CrossEntropyLoss())
 
         preds = torch.randn(4, 8)  # 3 + 5
@@ -1312,12 +1312,12 @@ class TestPrepareCategorical(unittest.TestCase):
         self.assertTrue((cat_mask[4:, :]).all())  # cat2 has max card, no padding
 
     def test_single_categorical_no_padding(self):
-        axis = AxisAnnotation(
+        axis = Annotations(
             labels=('cat1',),
             cardinalities=(4,),
             metadata={'cat1': {'type': 'discrete'}},
         )
-        ann = Annotations({1: axis})
+        ann = axis
         loss_fn = ConceptLoss(ann, categorical=nn.CrossEntropyLoss())
 
         preds = torch.randn(6, 4)

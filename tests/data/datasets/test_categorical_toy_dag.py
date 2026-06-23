@@ -105,12 +105,11 @@ class TestToyDAGDataset:
         assert dataset.n_concepts == 3
         assert len(dataset.concept_names) == 3
         # Binary variables (cardinality 2) are stored as dimension 1 in annotations
-        assert dataset.annotations[1].cardinalities == [1, 1, 1]
+        assert dataset.annotations.cardinalities == [1, 1, 1]
 
         # Check annotations
         assert dataset.annotations is not None
-        assert 1 in dataset.annotations
-        axis_annotation = dataset.annotations.get_axis_annotation(1)
+        axis_annotation = dataset.annotations
         assert axis_annotation is not None
         assert axis_annotation.labels == ['engine', 'wheels', 'car_start']
         # Metadata is a dict with concept names as keys
@@ -313,7 +312,7 @@ class TestToyDAGDataset:
         assert dataset.n_concepts == 3
         
         # Check cardinalities (all binary variables are stored as dimension 1)
-        assert dataset.annotations[1].cardinalities == [1, 1, 1]
+        assert dataset.annotations.cardinalities == [1, 1, 1]
         
         # Check that values are within valid ranges (all binary: 0 or 1)
         concepts = dataset.concepts.numpy()

@@ -25,7 +25,7 @@ from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn import MLP
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 # =============================================================================
@@ -62,13 +62,11 @@ def make_annotations(labels, cardinalities, distributions=None):
     metadata = {}
     for label, card in zip(labels, cardinalities):
         metadata[label] = {'type': 'discrete'}
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=labels,
             cardinalities=cardinalities,
             metadata=metadata
         )
-    })
 
 
 # =============================================================================
@@ -124,13 +122,12 @@ class TestBlackBoxInitialization(unittest.TestCase):
         model = BlackBox(input_size=8, annotations=self.ann)
         
         # Sum of cardinalities: 1 + 2 + 1 = 4
-        expected_output_size = sum(self.ann[1].cardinalities)
+        expected_output_size = sum(self.ann.cardinalities)
         self.assertEqual(model.linear.out_features, expected_output_size)
     
     def test_init_with_defaults(self):
         """Test initialization with default distributions."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 metadata={
@@ -138,7 +135,6 @@ class TestBlackBoxInitialization(unittest.TestCase):
                     'c2': {'type': 'discrete'}
                 }
             )
-        })
         
         model = BlackBox(
             input_size=8,
@@ -216,7 +212,7 @@ class TestBlackBoxForward(unittest.TestCase):
         out = model(x)
 
         # Output size is sum of cardinalities: 1 + 3 + 2 = 6
-        expected_output_size = sum(self.ann[1].cardinalities)
+        expected_output_size = sum(self.ann.cardinalities)
         self.assertEqual(_logits(out, self.ALL).shape, (2, expected_output_size))
 
     def test_forward_batch_sizes(self):
@@ -320,7 +316,7 @@ class TestBlackBoxForward(unittest.TestCase):
 
         logits = _logits(out, self.ALL)
         self.assertEqual(logits.shape[0], 3)
-        self.assertEqual(logits.shape[1], sum(self.ann[1].cardinalities))
+        self.assertEqual(logits.shape[1], sum(self.ann.cardinalities))
 
     def test_forward_extra_kwargs_ignored(self):
         """Test that extra kwargs in forward are silently ignored."""
@@ -611,8 +607,7 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
     
     def test_init_with_defaults(self):
         """Test initialization with default distributions."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
                 metadata={
@@ -620,7 +615,6 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         
         model = BlackBoxTaskOnly(
             input_size=8,

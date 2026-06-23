@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -51,7 +51,7 @@ class FullMockLearner(BaseLearner):
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)
         self.n_concepts = n_concepts
-        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.concept_annotations = annotations
         self.concept_names = self.concept_annotations.labels
         self.dummy_param = nn.Parameter(torch.randn(1))
 
@@ -147,15 +147,13 @@ class TestBaseLearnerMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for ConceptMetrics testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli}
                 }
             )
-        })
 
     def test_metrics_none(self):
         """Test initialization with no metrics."""
@@ -223,15 +221,13 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli}
                 }
             )
-        })
 
     def test_update_and_log_metrics(self):
         """Test update_and_log_metrics method."""
@@ -423,15 +419,13 @@ class TestGetInferenceKwargs(unittest.TestCase):
     """Test shared_step's build_query/forward integration replaces the old _get_inference_kwargs."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
 
     def test_no_inference_returns_empty(self):
         """FullMockLearner.build_query with None ground_truth returns empty dict."""
@@ -461,15 +455,13 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
     """Test shared_step and the per-split step methods."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
         self.loss_fn = ConceptLoss(
             self.annotations,
             binary=nn.BCEWithLogitsLoss(),
@@ -592,15 +584,13 @@ class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
     """Cover ConceptMetrics with empty collection and log_metrics else branch."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
 
     def test_concept_metrics_no_collection(self):
         """ConceptMetrics with empty collection sets split metrics to None."""

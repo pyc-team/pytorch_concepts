@@ -14,7 +14,7 @@ from sklearn.metrics import f1_score
 
 from torch_concepts.nn.functional import completeness_score, intervention_score, cace_score
 from torch_concepts.nn.modules.metrics import ConceptMetrics, Metric
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 class ANDModel(torch.nn.Module):
@@ -136,8 +136,7 @@ class TestComputeCace(unittest.TestCase):
         from torch.distributions import Bernoulli
         from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -146,7 +145,6 @@ class TestComputeCace(unittest.TestCase):
                     'task': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
         self.model = ConceptBottleneckModel(
             input_size=4, annotations=ann, task_names=['task']
         )
@@ -233,7 +231,7 @@ class TestConceptMetrics(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create annotations with mixed concept types (binary and categorical only)
-        axis_mixed = AxisAnnotation(
+        axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
             metadata={
@@ -243,10 +241,10 @@ class TestConceptMetrics(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
-        self.annotations_mixed = Annotations({1: axis_mixed})
+        self.annotations_mixed = axis_mixed
         
         # All binary
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
             metadata={
@@ -255,10 +253,10 @@ class TestConceptMetrics(unittest.TestCase):
                 'b3': {'type': 'discrete'},
             }
         )
-        self.annotations_binary = Annotations({1: axis_binary})
+        self.annotations_binary = axis_binary
         
         # All categorical
-        axis_categorical = AxisAnnotation(
+        axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
             metadata={
@@ -266,7 +264,7 @@ class TestConceptMetrics(unittest.TestCase):
                 'cat2': {'type': 'discrete'},
             }
         )
-        self.annotations_categorical = Annotations({1: axis_categorical})
+        self.annotations_categorical = axis_categorical
 
     def test_binary_only_metrics(self):
         """Test ConceptMetrics with only binary concepts."""
@@ -555,7 +553,7 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
             metadata={
@@ -563,7 +561,7 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
                 'b2': {'type': 'discrete'}
             }
         )
-        self.annotations_binary = Annotations({1: axis_binary})
+        self.annotations_binary = axis_binary
     
     def test_empty_batch_update(self):
         """Test updating with empty batch."""
@@ -670,7 +668,7 @@ class TestConceptMetricsAccuracy(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
             metadata={
@@ -678,7 +676,7 @@ class TestConceptMetricsAccuracy(unittest.TestCase):
                 'b2': {'type': 'discrete'}
             }
         )
-        self.annotations_binary = Annotations({1: axis_binary})
+        self.annotations_binary = axis_binary
     
     def test_perfect_accuracy(self):
         """Test that perfect predictions give 100% accuracy."""
@@ -751,12 +749,12 @@ class TestConceptMetricsMultipleBatches(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
             metadata={'b1': {'type': 'discrete'}}
         )
-        self.annotations = Annotations({1: axis_binary})
+        self.annotations = axis_binary
     
     def test_accumulation_across_batches(self):
         """Test that metrics correctly accumulate across batches."""
@@ -816,7 +814,7 @@ class TestConceptMetricsRepr(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
             metadata={
@@ -824,7 +822,7 @@ class TestConceptMetricsRepr(unittest.TestCase):
                 'b2': {'type': 'discrete'}
             }
         )
-        self.annotations = Annotations({1: axis_binary})
+        self.annotations = axis_binary
     
     def test_repr_with_metrics(self):
         """Test __repr__ method."""
@@ -870,12 +868,12 @@ class TestConceptMetricsClone(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_binary = AxisAnnotation(
+        axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
             metadata={'b1': {'type': 'discrete'}}
         )
-        self.annotations = Annotations({1: axis_binary})
+        self.annotations = axis_binary
     
     def test_clone_with_prefix(self):
         """Test cloning with a new prefix."""
@@ -933,7 +931,7 @@ class TestConceptMetricsIntegration(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        axis_mixed = AxisAnnotation(
+        axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1'),
             cardinalities=[1, 1, 3],
             metadata={
@@ -942,7 +940,7 @@ class TestConceptMetricsIntegration(unittest.TestCase):
                 'cat1': {'type': 'discrete'}
             }
         )
-        self.annotations = Annotations({1: axis_mixed})
+        self.annotations = axis_mixed
     
     def test_full_training_epoch_simulation(self):
         """Simulate a complete training epoch with multiple batches."""
@@ -1040,29 +1038,23 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         self.MulticlassAccuracy = tc.MulticlassAccuracy
 
         # binary-only annotations
-        self.ann_binary = Annotations({
-            1: AxisAnnotation(
+        self.ann_binary = Annotations(
                 labels=['b1', 'b2'],
                 cardinalities=[1, 1],
                 types=['binary', 'binary'],
             )
-        })
         # categorical-only annotations
-        self.ann_cat = Annotations({
-            1: AxisAnnotation(
+        self.ann_cat = Annotations(
                 labels=['c1'],
                 cardinalities=[3],
                 types=['categorical'],
             )
-        })
         # mixed
-        self.ann_mixed = Annotations({
-            1: AxisAnnotation(
+        self.ann_mixed = Annotations(
                 labels=['b1', 'c1'],
                 cardinalities=[1, 3],
                 types=['binary', 'categorical'],
             )
-        })
         # dicts of metrics in the format ConceptMetrics expects
         self.bin_metrics = {'accuracy': self.BinaryAccuracy()}
         self.cat_metrics = {'accuracy': self.MulticlassAccuracy}
@@ -1168,13 +1160,11 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         assert len(results) > 0
 
     def test_continuous_not_supported_raises(self):
-        ann_cont = Annotations({
-            1: AxisAnnotation(
+        ann_cont = Annotations(
                 labels=['cont1'],
                 cardinalities=[1],
                 types=['continuous'],
             )
-        })
         from torchmetrics.regression import MeanSquaredError
         with self.assertRaises(NotImplementedError):
             ConceptMetrics(annotations=ann_cont, continuous={'mse': MeanSquaredError()})
@@ -1196,14 +1186,10 @@ class TestConceptMetricsMissingLines(unittest.TestCase):
     """Tests targeting specific missing lines in ConceptMetrics."""
 
     def _make_binary_ann(self):
-        return Annotations({
-            1: AxisAnnotation(labels=['b1', 'b2'], cardinalities=[1, 1], types=['binary', 'binary'])
-        })
+        return Annotations(labels=['b1', 'b2'], cardinalities=[1, 1], types=['binary', 'binary'])
 
     def _make_cat_ann(self):
-        return Annotations({
-            1: AxisAnnotation(labels=['c1'], cardinalities=[3], types=['categorical'])
-        })
+        return Annotations(labels=['c1'], cardinalities=[3], types=['categorical'])
 
     def test_per_concept_invalid_name_raises(self):
         """per_concept list with unknown name raises ValueError."""
@@ -1276,13 +1262,11 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
 
     def _make_binary_metrics(self):
         """Return a ready-to-use binary-only ConceptMetrics instance."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['b1'],
                 cardinalities=[1],
                 types=['binary'],
             )
-        })
         return ConceptMetrics(
             annotations=ann,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
@@ -1311,9 +1295,7 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
 
     def test_collection_includes_per_concept_when_non_empty(self):
         """collection property adds per-concept keys when non-empty (lines 170-171)."""
-        ann = Annotations({
-            1: AxisAnnotation(labels=['b1'], cardinalities=[1], types=['binary'])
-        })
+        ann = Annotations(labels=['b1'], cardinalities=[1], types=['binary'])
         m = ConceptMetrics(
             annotations=ann,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
@@ -1356,13 +1338,11 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
         """_setup_metrics instantiates per-concept continuous metrics (lines 271-273)."""
         from torchmetrics.regression import MeanSquaredError
 
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['b1'],
                 cardinalities=[1],
                 types=['binary'],
             )
-        })
         m = ConceptMetrics(
             annotations=ann,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
@@ -1414,13 +1394,11 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
         from torchmetrics import MetricCollection
         from torchmetrics.regression import MeanSquaredError
 
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['b1'],
                 cardinalities=[1],
                 types=['binary'],
             )
-        })
         m = ConceptMetrics(
             annotations=ann,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
