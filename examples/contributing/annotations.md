@@ -9,34 +9,30 @@ An `Annotations` object organizes metadata for each concept axis in your data. I
 - Support for advanced features like causal graphs and interventions
 
 ## Key Classes
-- `Annotations`: Container for all axis annotations
-- `AxisAnnotation`: Describes one axis (usually concepts)
+- `Annotations`: Describes the concept axis (labels, types, cardinalities, metadata)
 
 ## Minimal Example
 ```python
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
 
 concept_names = ['color', 'shape', 'size']
 cardinalities = [3, 2, 1]  # 3 colors, 2 shapes, 1 binary size
-metadata = {
-    'color': {'type': 'discrete'},
-    'shape': {'type': 'discrete'},
-    'size': {'type': 'discrete'}
-}
+types = ['categorical', 'categorical', 'binary']
+metadata = {}
 
-annotations = Annotations({
-    1: AxisAnnotation(
-        labels=concept_names,
-        cardinalities=cardinalities,
-        metadata=metadata
-    )
-})
+annotations = Annotations(
+    labels=concept_names,
+    cardinalities=cardinalities,
+    types=types,
+    metadata=metadata
+)
 ```
 
-## AxisAnnotation Arguments
+## Annotations Arguments
 - `labels`: List of concept names (required)
 - `cardinalities`: List of number of states per concept (required)
-- `metadata`: Dict of metadata for each concept (required, must include `'type'`)
+- 'types': List of type per concept (i.e., 'binary', 'categorical' or 'continuous').
+- `metadata`: (optional) Dict of extra metadata per concept
 - `states`: (optional) List of state labels for each concept
 
 ## Example with States
@@ -44,45 +40,40 @@ annotations = Annotations({
 states = [
     ['red', 'green', 'blue'],
     ['circle', 'square'],
-    ['small', 'large']
+    ['large']
 ]
-annotations = Annotations({
-    1: AxisAnnotation(
-        labels=concept_names,
-        cardinalities=cardinalities,
-        metadata=metadata,
-        states=states
-    )
-})
+annotations = Annotations(
+    labels=concept_names,
+    cardinalities=cardinalities,
+    types=types,
+    metadata=metadata,
+    states=states
+)
 ```
-
-## Metadata Requirements
-- Each concept in `metadata` must have a `'type'` field:
-    - `'discrete'`: for binary/categorical concepts
-    - `'continuous'`: for continuous concepts (not yet supported)
-- You can add extra fields (e.g., `'distribution'`, `'description'`)
 
 ## Accessing Annotation Info
 ```python
 # Get concept names
-print(annotations.get_axis_labels(1))
+print(annotations.labels)
 # Get cardinalities
-print(annotations.get_axis_cardinalities(1))
+print(annotations.cardinalities)
+# Get types
+print(annotations.types)
 # Get metadata for a concept
-print(annotations.get_axis_annotation(1).metadata['color'])
+print(annotations.metadata['color'])
 ```
 
-## Advanced: Multiple Axes
-You can annotate multiple axes (e.g., concepts, tasks):
+## Concepts and Tasks
+Concepts and tasks share a single `Annotations` object; list them together as labels:
 ```python
-annotations = Annotations({
-    1: AxisAnnotation(labels=['c1', 'c2']),
-    2: AxisAnnotation(labels=['task1', 'task2'])
-})
+annotations = Annotations(
+    labels=['c1', 'c2', 'task1', 'task2'],
+    cardinalities=[1, 1, 1, 1],
+    types=['binary', 'binary', 'binary', 'binary']
+)
 ```
 
 ## Best Practices
-- Always annotate axis 1 (concepts)
 - Use **unique** and clear concept names
 - Set correct cardinalities and types
 

@@ -537,20 +537,15 @@ Test your metric with ConceptMetrics:
 ```python
 def test_custom_metric_with_concept_metrics(self):
     """Test custom metric integrates with ConceptMetrics."""
-    from torch_concepts import Annotations, AxisAnnotation
+    from torch_concepts import Annotations
     from torch_concepts.nn.modules.metrics import ConceptMetrics
     
     # Create annotations
-    annotations = Annotations({
-        1: AxisAnnotation(
-            labels=['c1', 'c2'],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'}
-            },
-            cardinalities=[1, 1]
-        )
-    })
+    annotations = Annotations(
+        labels=['c1', 'c2'],
+        cardinalities=[1, 1],
+        types=['binary', 'binary']
+    )
     
     # Create metrics with your custom metric
     metrics = ConceptMetrics(
