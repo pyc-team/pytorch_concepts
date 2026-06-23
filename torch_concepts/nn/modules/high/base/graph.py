@@ -25,7 +25,7 @@ exposes the graph structure.
 from abc import ABC
 from typing import List, Optional
 
-from .....annotations import AxisAnnotation
+from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from .model import BaseModel
 
@@ -231,7 +231,7 @@ class DirectedGraphModel(GraphModel, ABC):
 
     @staticmethod
     def plate_compatible_levels(
-        axis_annotation: AxisAnnotation,
+        axis_annotation: Annotations,
         graph: ConceptGraph,
     ) -> List[bool]:
         """Flag, per graph level, whether its concepts can share a plate.
@@ -248,7 +248,7 @@ class DirectedGraphModel(GraphModel, ABC):
 
         Parameters
         ----------
-        axis_annotation : AxisAnnotation
+        axis_annotation : Annotations
             Concept annotations carrying per-concept ``cardinalities`` and types.
         graph : ConceptGraph
             A directed acyclic concept graph whose node names are concept labels.

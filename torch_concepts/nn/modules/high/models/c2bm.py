@@ -18,7 +18,7 @@ from typing import Optional
 
 from torch.distributions import Bernoulli, OneHotCategorical
 
-from .....annotations import Annotations, AxisAnnotation
+from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
@@ -110,7 +110,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
     def build_encoder(self, in_embeddings, out_concepts):
         return LinearEmbeddingToConcept(in_embeddings=in_embeddings, out_concepts=out_concepts)
 
-    def build_predictor(self, in_concepts: AxisAnnotation, in_embeddings, out_concepts):
+    def build_predictor(self, in_concepts: Annotations, in_embeddings, out_concepts):
         return HyperlinearConceptEmbeddingToConcept(
             in_concepts=int(sum(in_concepts.cardinalities)),
             in_embeddings=in_embeddings,

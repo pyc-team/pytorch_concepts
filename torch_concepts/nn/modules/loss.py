@@ -7,7 +7,7 @@ from torch import nn
 
 from .utils import GroupConfig, check_collection
 from .outputs import ModelOutput
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 from ...utils import instantiate_from_string
 from ...concept_graph import ConceptGraph
 
@@ -57,7 +57,7 @@ def _normalize_loss_terms(terms, weights):
     return list(terms), list(weights)
 
 
-def get_concept_task_idx(annotations: AxisAnnotation, concepts: List[str], tasks: List[str]):
+def get_concept_task_idx(annotations: Annotations, concepts: List[str], tasks: List[str]):
     """Get concept and task indices at both concept-level and logit-level."""
     # Concept-level indices
     concepts_idxs = [annotations.get_index(name) for name in concepts]
@@ -99,14 +99,14 @@ class ConceptLoss(nn.Module):
 
     Example:
         >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
-        >>> from torch_concepts import Annotations, AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
         >>>
-        >>> ann = Annotations({1: AxisAnnotation(
+        >>> ann = Annotations(
         ...     labels=['is_round', 'color'],
         ...     cardinalities=[1, 3],
         ...     types=['binary', 'categorical'],
-        ... )})
+        ... )
         >>>
         >>> # Single loss per type (backward compatible)
         >>> loss_fn = ConceptLoss(
@@ -142,10 +142,9 @@ class ConceptLoss(nn.Module):
         
         # Validate against annotations (check_collection checks None vs not-None)
         fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
-        annotations = annotations.get_axis_annotation(axis=1)
         self.fn_collection = check_collection(annotations, fn_collection, 'loss')
-        
-        # Use cached type_groups from AxisAnnotation
+
+        # Use cached type_groups from Annotations
         self.groups = annotations.type_groups
         self.cardinalities = annotations.cardinalities
 
@@ -331,10 +330,10 @@ class WeightedConceptLoss(nn.Module):
     Example:
         >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch_concepts.annotations import AxisAnnotation, Annotations
+        >>> from torch_concepts.annotations import Annotations
         >>> import torch
         >>> from torch_concepts.nn.modules.outputs import ModelOutput
-        >>> ann = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'task'], cardinalities=[1, 1, 1])})
+        >>> ann = Annotations(labels=['c1', 'c2', 'task'], cardinalities=[1, 1, 1])
         >>> loss_fn = WeightedConceptLoss(
         ...     ann, concept_weight=0.7, task_weight=0.3,
         ...     task_names=['task'], binary=BCEWithLogitsLoss()
@@ -360,10 +359,9 @@ class WeightedConceptLoss(nn.Module):
         self.task_weight = task_weight
         fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
         self.fn_collection = fn_collection
-        annotations = annotations.get_axis_annotation(axis=1)
         concept_names = [name for name in annotations.labels if name not in task_names]
-        task_annotations = Annotations({1:annotations.subset(task_names)})
-        concept_annotations = Annotations({1:annotations.subset(concept_names)})
+        task_annotations = annotations.subset(task_names)
+        concept_annotations = annotations.subset(concept_names)
 
         self.concept_loss = ConceptLoss(
             concept_annotations, binary=binary, categorical=categorical, continuous=continuous,
@@ -446,14 +444,14 @@ class DepthWeightedConceptLoss(nn.Module):
     Example:
         >>> import torch
         >>> from torch_concepts.nn.modules.loss import DepthWeightedConceptLoss
-        >>> from torch_concepts.annotations import Annotations, AxisAnnotation
+        >>> from torch_concepts.annotations import Annotations
         >>> from torch_concepts import ConceptGraph
         >>>
-        >>> ann = Annotations({1: AxisAnnotation(
+        >>> ann = Annotations(
         ...     labels=['A', 'B', 'C'],
         ...     cardinalities=[1, 1, 1],
         ...     types=['binary', 'binary', 'binary'],
-        ... )})
+        ... )
         >>> adj = torch.tensor([[0., 1., 0.],
         ...                     [0., 0., 1.],
         ...                     [0., 0., 0.]])
@@ -485,7 +483,7 @@ class DepthWeightedConceptLoss(nn.Module):
         self.source_weight = source_weight
         self.depth_decay = depth_decay
 
-        axis = annotations.get_axis_annotation(axis=1)
+        axis = annotations
         concept_names = list(axis.labels)
         concept_set = set(concept_names)
         # Compute levels from graph
@@ -504,7 +502,7 @@ class DepthWeightedConceptLoss(nn.Module):
             names = [n for n in level_names if n in concept_set]
             if not names:
                 continue
-            sub_ann = Annotations({1: axis.subset(names)})
+            sub_ann = axis.subset(names)
 
             key = f"loss_depth_{d}"
             sub_loss = ConceptLoss(
@@ -527,7 +525,7 @@ class DepthWeightedConceptLoss(nn.Module):
         graph_names = {n for level in depth_levels for n in level}
         missing = [n for n in concept_names if n not in graph_names]
         if missing:
-            sub_ann = Annotations({1: axis.subset(missing)})
+            sub_ann = axis.subset(missing)
             key = "loss_depth_0"
             if not hasattr(self, key):
                 sub_loss = ConceptLoss(

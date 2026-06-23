@@ -710,7 +710,7 @@ def number_of_effective_concepts(
             (binary/continuous) concepts and ``m`` for an ``m``-way categorical
             concept. If ``None`` (default), every column is its own concept.
             If you use the annotation system, pass
-            ``cardinalities=annotations.get_axis_cardinalities(concept_axis)``.
+            ``cardinalities=annotations.cardinalities``.
 
     Returns:
         float: Average number of concepts each class relies on.
@@ -800,7 +800,7 @@ def number_of_contributing_concepts(
             (binary/continuous) concepts and ``m`` for an ``m``-way categorical
             concept. If ``None`` (default), every column is its own concept.
             If you use the annotation system, pass
-            ``cardinalities=annotations.get_axis_cardinalities(concept_axis)``.
+            ``cardinalities=annotations.cardinalities``.
 
     Returns:
         float: Average number of concepts needed to explain a fraction

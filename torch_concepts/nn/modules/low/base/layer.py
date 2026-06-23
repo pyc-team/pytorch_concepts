@@ -10,7 +10,7 @@ import torch
 
 from abc import ABC
 
-from torch_concepts import AxisAnnotation, AnnotatedTensor
+from torch_concepts import Annotations, AnnotatedTensor
 
 
 class BaseConceptLayer(ABC, torch.nn.Module):
@@ -61,9 +61,9 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     def __init__(
         self,
-        out_concepts: Union[int, AxisAnnotation],
-        in_concepts: Union[int, AxisAnnotation] = None,
-        in_embeddings: Union[int, AxisAnnotation] = None,
+        out_concepts: Union[int, Annotations],
+        in_concepts: Union[int, Annotations] = None,
+        in_embeddings: Union[int, Annotations] = None,
         *args,
         **kwargs,
     ):
@@ -74,13 +74,13 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
         self.in_concepts_shape = None
         if in_concepts is not None:
-            self.in_concepts_shape = in_concepts if isinstance(in_concepts, int) else in_concepts.shape
+            self.in_concepts_shape = in_concepts if isinstance(in_concepts, int) else in_concepts.size
 
         self.in_embeddings_shape = None
         if in_embeddings is not None:
-            self.in_embeddings_shape = in_embeddings if isinstance(in_embeddings, int) else in_embeddings.shape
+            self.in_embeddings_shape = in_embeddings if isinstance(in_embeddings, int) else in_embeddings.size
 
-        self.out_concepts_shape = out_concepts if isinstance(out_concepts, int) else out_concepts.shape
+        self.out_concepts_shape = out_concepts if isinstance(out_concepts, int) else out_concepts.size
 
     def forward(
         self,
@@ -100,9 +100,9 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         """
         raise NotImplementedError
 
-    def annotate(self, x, out_concepts: AxisAnnotation = None) -> AnnotatedTensor:
+    def annotate(self, x, out_concepts: Annotations = None) -> AnnotatedTensor:
         if out_concepts is None:
-            if isinstance(self.out_concepts, AxisAnnotation):
+            if isinstance(self.out_concepts, Annotations):
                 out_concepts = self.out_concepts
             else:
                 return x

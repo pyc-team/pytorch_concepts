@@ -3,7 +3,7 @@ from typing import Union, Optional
 
 import torch
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
 from ..dense_layers import MLP
 from ....functional import prune_linear_layer
@@ -61,9 +61,9 @@ class HyperlinearConceptEmbeddingToConcept(BaseConceptLayer):
     """
     def __init__(
         self,
-        in_concepts: Union[int, AxisAnnotation],
+        in_concepts: Union[int, Annotations],
         in_embeddings: int,
-        out_concepts: Optional[Union[int, AxisAnnotation]] = None,
+        out_concepts: Optional[Union[int, Annotations]] = None,
         hidden_size: int = 32,
         activation='relu',
         use_bias : bool = True,

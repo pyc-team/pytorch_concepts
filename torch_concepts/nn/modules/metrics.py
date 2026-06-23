@@ -72,7 +72,6 @@ class ConceptMetrics(nn.Module):
         self.per_concept = per_concept
         
         # Extract and validate annotations
-        annotations = annotations.get_axis_annotation(axis=1)
         self.concept_annotations = annotations
         self.concept_names = annotations.labels
         self.n_concepts = len(self.concept_names)
@@ -80,7 +79,7 @@ class ConceptMetrics(nn.Module):
         self.metadata = annotations.metadata
         self.types = list(annotations.types)
 
-        # Use cached type_groups from AxisAnnotation
+        # Use cached type_groups from Annotations
         self.groups = annotations.type_groups
         
         # Validate that continuous concepts are not used

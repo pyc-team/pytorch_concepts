@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
 from typing import List, Union
@@ -34,10 +34,10 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     Example:
         >>> import torch
         >>> from torch_concepts.nn import MixConceptEmbeddingToConcept
-        >>> from torch_concepts import AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>>
         >>> # Create predictor: 3 concepts (cardinalities 3, 4, 3), 10 embedding dims, 2 outputs
-        >>> in_ann = AxisAnnotation(labels=['color', 'shape', 'size'], cardinalities=[3, 4, 3])
+        >>> in_ann = Annotations(labels=['color', 'shape', 'size'], cardinalities=[3, 4, 3])
         >>> predictor = MixConceptEmbeddingToConcept(
         ...     in_concepts=in_ann,
         ...     in_embeddings=10,
@@ -60,9 +60,9 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     """
     def __init__(
         self,
-        in_concepts: AxisAnnotation,
-        in_embeddings: Union[int, AxisAnnotation],
-        out_concepts: Union[int, AxisAnnotation],
+        in_concepts: Annotations,
+        in_embeddings: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
         **kwargs,
     ):
         super().__init__(
@@ -154,13 +154,13 @@ class MixSumConceptEmbeddingToConcept(MixConceptEmbeddingToConcept):
         bias: bool = True,
         **kwargs
     ):
-        # FIXME: update to use AxisAnnotation for in_concepts and out_concepts, 
+        # FIXME: update to use Annotations for in_concepts and out_concepts, 
         # and remove cardinalities
         if cardinalities is None:
             cardinalities = [1] * in_concepts
         n_groups = len(cardinalities)
         types = ['binary' if c == 1 else 'categorical' for c in cardinalities]
-        annotation = AxisAnnotation(
+        annotation = Annotations(
             labels=[f"c{i}" for i in range(n_groups)],
             cardinalities=cardinalities,
             types=types,

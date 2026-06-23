@@ -9,7 +9,7 @@ import sympytorch
 from tqdm import tqdm
 
 from ..base.dataset import ConceptDataset
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
       
 logger = logging.getLogger(__name__)
 
@@ -185,13 +185,11 @@ class DSpritesRegressionDataset(ConceptDataset):
         
         cardinalities = tuple([1] * len(cy_names))
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=cy_names,
-                cardinalities=cardinalities,
-                types=['continuous'] * len(cy_names),
-            )
-        })
+        annotations = Annotations(
+            labels=cy_names,
+            cardinalities=cardinalities,
+            types=['continuous'] * len(cy_names),
+        )
 
         # images
         images = dsprites_data['imgs']

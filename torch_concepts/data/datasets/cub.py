@@ -22,7 +22,7 @@ from typing import List, Mapping, Optional
 import zipfile
 import shutil
 
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 
@@ -878,14 +878,12 @@ class CUBDataset(ConceptDataset):
         cardinalities = [1] * len(SELECTED_CONCEPT_NAMES) + [N_CLASSES]
         types = ['binary'] * len(SELECTED_CONCEPT_NAMES) + ['categorical']
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                states=states,
-                cardinalities=cardinalities,
-                types=types,
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Build split mapping (native train/val/test)
         split_series = pd.Series(split_labels, name='split')

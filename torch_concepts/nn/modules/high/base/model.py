@@ -126,10 +126,10 @@ class BaseModel(nn.Module, ABC):
         Class-level declaration of which concept types this model supports.
         An empty set means no restriction. Concrete models set this to e.g.
         ``frozenset({"binary", "categorical"})``. The recognised strings are the
-        keys of :attr:`~torch_concepts.annotations.AxisAnnotation.type_groups`:
+        keys of :attr:`~torch_concepts.annotations.Annotations.type_groups`:
         ``"binary"``, ``"categorical"``, ``"continuous"``.
-    concept_annotations : AxisAnnotation
-        Axis-1 annotations with distribution metadata for each concept.
+    concept_annotations : Annotations
+        Concept-axis annotations for each concept.
     concept_names : List[str]
         List of concept variable names from annotations.
     backbone : BackboneType
@@ -164,15 +164,13 @@ class BaseModel(nn.Module, ABC):
     >>> import torch.nn as nn
     >>> from torch.distributions import Bernoulli, RelaxedBernoulli
     >>> from torch_concepts.nn import ConceptBottleneckModel
-    >>> from torch_concepts.annotations import AxisAnnotation, Annotations
+    >>> from torch_concepts.annotations import Annotations
     >>>
-    >>> ann = Annotations({
-    ...     1: AxisAnnotation(
-    ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1],
-    ...         types=['binary', 'binary', 'binary'],
-    ...     )
-    ... })
+    >>> ann = Annotations(
+    ...     labels=['c1', 'c2', 'task'],
+    ...     cardinalities=[1, 1, 1],
+    ...     types=['binary', 'binary', 'binary'],
+    ... )
     >>>
     >>> # Option 1: let the model pick distributions from each concept's type
     >>> model = ConceptBottleneckModel(
@@ -274,7 +272,7 @@ class BaseModel(nn.Module, ABC):
         if annotations is None:
             return
 
-        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.concept_annotations = annotations
         self.concept_names = self.concept_annotations.labels
 
         # Reject annotations that contain concept types this model cannot handle.
@@ -339,7 +337,7 @@ class BaseModel(nn.Module, ABC):
         """Raise if the annotations contain concept types this model does not support.
 
         Does nothing when :attr:`supported_concept_types` is empty (no restriction).
-        Uses :attr:`~torch_concepts.annotations.AxisAnnotation.type_groups` to
+        Uses :attr:`pyc.Annotations.type_groups` to
         determine each concept's type (``"binary"``, ``"categorical"``,
         ``"continuous"``).
         """

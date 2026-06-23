@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Tuple, Optional, Union
 from collections import defaultdict
 
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 from ..base import ConceptDataset
 from ..preprocessing.autoencoder import extract_embs_from_autoencoder
 
@@ -444,13 +444,11 @@ class ToyDAGDataset(ConceptDataset):
         # all variables are discrete: card==1 -> binary, card>1 -> categorical
         types = ['binary' if card == 1 else 'categorical' for card in cardinalities]
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                cardinalities=cardinalities,
-                types=types,
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=types,
+        )
         
         # Create graph (adjacency matrix) - include all non-latent variables
         graph = pd.DataFrame(

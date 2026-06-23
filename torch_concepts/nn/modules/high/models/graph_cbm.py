@@ -5,9 +5,9 @@ assembler is genuinely extendible: a plain linear concept bottleneck defined ove
 an arbitrary DAG (concepts may have concept parents) is obtained by supplying
 *only* the encoder and predictor layers — no embeddings, no custom assembly.
 """
-from typing import Optional
+from typing import Optional, Union
 
-from .....annotations import Annotations, AxisAnnotation
+from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.linear import LinearConceptToConcept
@@ -79,7 +79,7 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
             out_concepts=out_concepts
         )
 
-    def build_predictor(self, in_concepts: AxisAnnotation, in_embeddings, out_concepts):
+    def build_predictor(self, in_concepts: Annotations, in_embeddings, out_concepts):
         return LinearConceptToConcept(
             in_concepts=int(sum(in_concepts.cardinalities)), 
             out_concepts=out_concepts
