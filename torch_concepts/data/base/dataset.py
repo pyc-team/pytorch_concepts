@@ -394,7 +394,7 @@ class ConceptDataset(Dataset):
         self,
         class_names: Optional[List[str]] = None,
         **kwargs,
-    ) -> tuple[Dict[str, Tensor], Dict[str, AxisAnnotation], Optional[str]]:
+    ) -> tuple[Dict[str, Tensor], Dict[str, AxisAnnotation]]:
         """Run the configured concept-supervision pipeline once.
 
         Dataset subclasses with processed files can call this method from
@@ -403,26 +403,24 @@ class ConceptDataset(Dataset):
         """
         if self.concept_pipeline is None:
             raise RuntimeError("No concept_pipeline configured.")
-        values, annotations, selected = self.concept_pipeline(
+        values, annotations = self.concept_pipeline(
             self,
             class_names=class_names,
             **kwargs,
         )
-        self.set_generated_concepts(values, annotations, selected)
-        return values, annotations, selected
+        self.set_generated_concepts(values, annotations)
+        return values, annotations
 
     def set_generated_concepts(
         self,
         values: Dict[str, Tensor],
         annotations: Dict[str, AxisAnnotation],
-        selected: Optional[str] = None,
     ) -> None:
         """Attach generated concept tensors and update training supervision.
 
         Args:
             values: Generated concept tensors keyed by pipeline output name.
             annotations: Axis annotations keyed like ``values``.
-            selected: Name of the generated tensor selected for supervision.
         """
         self.generated_concepts = dict(values)
         self.generated_annotations = dict(annotations)
@@ -430,39 +428,21 @@ class ConceptDataset(Dataset):
             raise ValueError(
                 "Generated concept values and annotations must use the same keys."
             )
-        if (
-            selected is not None
-            and selected not in self.generated_concepts
-        ):
-            raise ValueError(
-                f"Selected generated concepts {selected!r} were not provided."
-            )
-        self._resolve_ground_truth(selected)
+        self._resolve_ground_truth()
 
-    def _resolve_ground_truth(
-        self,
-        selected_generated: Optional[str] = None,
-    ) -> None:
+    def _resolve_ground_truth(self) -> None:
         """Resolve the tensor and annotation used as training supervision."""
-        if self.use_as_gt and selected_generated is not None:
-            self.ground_truth = self.generated_concepts[selected_generated]
-            self._ground_truth_annotation = self.generated_annotations[
-                selected_generated
-            ]
+        if self.use_as_gt and self.generated_concepts:
+            name = next(iter(self.generated_concepts))
+            self.ground_truth = self.generated_concepts[name]
+            self._ground_truth_annotation = self.generated_annotations[name]
         elif self.concepts is not None:
             self.ground_truth = self.concepts
             self._ground_truth_annotation = self._annotations[1]
-        elif selected_generated is not None:
-            self.ground_truth = self.generated_concepts[selected_generated]
-            self._ground_truth_annotation = self.generated_annotations[
-                selected_generated
-            ]
         elif self.generated_concepts:
-            selected_generated = next(iter(self.generated_concepts))
-            self.ground_truth = self.generated_concepts[selected_generated]
-            self._ground_truth_annotation = self.generated_annotations[
-                selected_generated
-            ]
+            name = next(iter(self.generated_concepts))
+            self.ground_truth = self.generated_concepts[name]
+            self._ground_truth_annotation = self.generated_annotations[name]
         else:
             self.ground_truth = None
             self._ground_truth_annotation = None

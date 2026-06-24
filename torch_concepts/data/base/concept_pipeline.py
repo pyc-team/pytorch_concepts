@@ -70,18 +70,36 @@ class UnionConceptFilter:
 
 
 class ConceptSupervisionPipeline:
-    """Compose concept generation, annotation, filtering, and aggregation."""
+    """Compose concept generation, annotation, filtering, and aggregation.
+
+    Parameters
+    ----------
+    generators : ConceptGenerator or sequence of ConceptGenerator
+        Concept generators to produce concept annotations from the dataset.
+    annotators : Annotator or sequence of Annotator
+        Annotators to produce concept values from the dataset and concept annotations.
+    concept_filter : callable, optional
+        Function to filter or merge concept annotations from multiple generators.
+        If None, no filtering is applied. If routing='merged', a default filter is used to merge concept axes while preserving categorical structure.
+    aggregator : callable, optional
+        Function to aggregate the generated concept values into a single tensor.
+        If None, no aggregation is performed.
+    routing : {'merged', 'cartesian', 'zip'}, default='merged'
+        Routing mode for combining generators and annotators:
+        - 'merged': merges all generated concepts, then sends them to all annotators.
+        - 'cartesian': sends each generated concept to all annotators.
+        - 'zip': sends each generated concept to the corresponding annotator, producing a one-to-one mapping of results. The mapping is determined by the order of generators and annotators in the pipeline configuration.
+    name : str, optional
+        Name of the pipeline. If None, the class name is used.
+    """
 
     def __init__(
         self,
         generators: ConceptGenerator | Sequence[ConceptGenerator],
         annotators: Annotator | Sequence[Annotator],
         concept_filter: Callable[[dict[str, AxisAnnotation]], AxisAnnotation] | None = None,
-        binding_filter: Callable[[dict[str, Tensor]], dict[str, Tensor]] | None = None,
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
-        keep_all: bool = True,
-        selected: str | None = None,
         name: str | None = None,
     ):
         if routing not in {"merged", "cartesian", "zip"}:
@@ -105,11 +123,8 @@ class ConceptSupervisionPipeline:
             if concept_filter is not None
             else UnionConceptFilter() if routing == "merged" else None
         )
-        self.binding_filter = binding_filter
         self.aggregator = aggregator
         self.routing = routing
-        self.keep_all = keep_all
-        self.selected = selected
         self.name = name or self.__class__.__name__
 
     def __call__(
@@ -117,7 +132,7 @@ class ConceptSupervisionPipeline:
         dataset: Dataset,
         class_names: list[str] | None = None,
         **kwargs: Any,
-    ) -> tuple[dict[str, Tensor], dict[str, AxisAnnotation], str | None]:
+    ) -> tuple[dict[str, Tensor], dict[str, AxisAnnotation]]:
         generator_names = self._component_names(self.generators)
         annotator_names = self._component_names(self.annotators)
         concepts = {
@@ -182,21 +197,6 @@ class ConceptSupervisionPipeline:
                     dataset,
                 )
 
-        if self.binding_filter is not None:
-            values = self.binding_filter(values)
-            missing_annotations = set(values) - set(annotations)
-            if missing_annotations:
-                raise ValueError(
-                    "binding_filter introduced values without annotations: "
-                    f"{sorted(missing_annotations)}."
-                )
-            annotations = {
-                name: annotations[name]
-                for name in values
-            }
-            self._validate_values(values, annotations, dataset)
-
-        aggregate_name = None
         if self.aggregator is not None:
             aggregate_annotation = self._common_annotation(annotations)
             aggregate_values = self.aggregator(values)
@@ -211,20 +211,7 @@ class ConceptSupervisionPipeline:
                 unique=False,
             )
 
-        selected = self.selected or aggregate_name
-        if selected is None and values:
-            selected = next(iter(values))
-        if selected is not None and selected not in values:
-            raise ValueError(
-                f"Selected generated concepts {selected!r} were not produced. "
-                f"Available values: {list(values)}."
-            )
-
-        if not self.keep_all and selected is not None:
-            values = {selected: values[selected]}
-            annotations = {selected: annotations[selected]}
-
-        return values, annotations, selected
+        return values, annotations
 
     @staticmethod
     def _as_list(value: Any, expected_type: type, name: str) -> list[Any]:
@@ -279,20 +266,6 @@ class ConceptSupervisionPipeline:
         cls._validate_value(name, concept_values, annotation, dataset)
         values[name] = concept_values
         annotations[name] = annotation
-
-    @classmethod
-    def _validate_values(
-        cls,
-        values: dict[str, Tensor],
-        annotations: dict[str, AxisAnnotation],
-        dataset: Dataset,
-    ) -> None:
-        if not isinstance(values, dict):
-            raise TypeError("binding_filter must return dict[str, Tensor].")
-        for name, concept_values in values.items():
-            cls._validate_value(
-                name, concept_values, annotations[name], dataset
-            )
 
     @staticmethod
     def _validate_value(
