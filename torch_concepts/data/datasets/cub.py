@@ -41,7 +41,8 @@ import torchvision.transforms as transforms
 
 from collections import defaultdict
 from PIL import Image
-from torch.utils.data import Dataset
+from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts.data.base import ConceptDataset
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -738,7 +739,7 @@ def discrete_to_continuous_unc(unc_val, attr_label, unc_map):
 ## Data Loaders
 ##########################################################
 
-class CUBDataset(Dataset):
+class CUBDataset(ConceptDataset):
     """
     TODO
     """
@@ -756,6 +757,9 @@ class CUBDataset(Dataset):
         unc_map=DEFAULT_UNC_MAP,
         selected_concepts=None,
         training_augment=True,
+        concept_pipeline=None,
+        use_as_gt=False,
+        concept_pipeline_kwargs=None,
     ):
         """
         TODO: Define different arguments
@@ -803,19 +807,90 @@ class CUBDataset(Dataset):
         if selected_concepts is None:
             selected_concepts = list(range(len(SELECTED_CONCEPTS)))
         self.selected_concepts = selected_concepts
-        self.concept_names = self.concept_attr_names = list(
-            np.array(
-                CONCEPT_SEMANTICS
-            )[CONCEPT_SEMANTICS][selected_concepts]
+        native_names = list(
+            np.array(CONCEPT_SEMANTICS)[SELECTED_CONCEPTS][selected_concepts]
         )
+        self.concept_attr_names = native_names
         self.task_names = self.task_attr_names = CLASS_NAMES
+        self.concept_pipeline_kwargs = dict(concept_pipeline_kwargs or {})
+
+        native_values = []
+        for item in self.data:
+            key = (
+                'uncertain_attribute_label'
+                if uncertain_concept_labels
+                else 'attribute_label'
+            )
+            values = np.array(item[key])[self.selected_concepts]
+            if uncertainty_based_random_labels:
+                certainties = np.array(
+                    item['attribute_certainty']
+                )[self.selected_concepts]
+                hard_values = np.array(
+                    item['attribute_label']
+                )[self.selected_concepts]
+                probabilities = [
+                    discrete_to_continuous_unc(certainty, value, unc_map)
+                    for certainty, value in zip(certainties, hard_values)
+                ]
+                values = np.random.binomial(1, probabilities)
+            native_values.append(self.concept_transform(values))
+        native_values = np.asarray(native_values, dtype=np.float32)
+        annotations = Annotations({
+            1: AxisAnnotation(
+                labels=native_names,
+                cardinalities=[1] * len(native_names),
+                metadata={
+                    name: {'type': 'discrete'}
+                    for name in native_names
+                },
+            )
+        })
+
+        super().__init__(
+            input_data=[item['img_path'] for item in self.data],
+            concepts=native_values,
+            annotations=annotations,
+            concept_pipeline=concept_pipeline,
+            use_as_gt=use_as_gt,
+            name=self.name,
+        )
+        self.build()
+
+    @property
+    def raw_filenames(self):
+        return []
+
+    @property
+    def processed_filenames(self):
+        return []
+
+    @property
+    def n_samples(self):
+        return len(self.input_data)
+
+    @property
+    def n_features(self):
+        return (3, 299, 299)
+
+    @property
+    def shape(self):
+        return (self.n_samples, *self.n_features)
+
+    def build(self):
+        """Generate concepts after native CUB concepts are initialized."""
+        if self.concept_pipeline is not None:
+            self.generate_concepts(
+                class_names=self.task_names,
+                **self.concept_pipeline_kwargs,
+            )
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         img_data = self.data[idx]
-        img_path = img_data['img_path']
+        img_path = img_data["img_path"]
         if self.path_transform is None:
             # This is needed if the dataset is downloaded from the original
             # CBM paper's repository/experiment code
@@ -834,39 +909,22 @@ class CUBDataset(Dataset):
         else:
             img = Image.open(self.path_transform(img_path)).convert('RGB')
 
-        class_label = self.label_transform(img_data['class_label'])
         img = self.sample_transform(img)
-
-        if self.uncertain_concept_labels:
-            attr_label = img_data['uncertain_attribute_label']
-        else:
-            attr_label = img_data['attribute_label']
-        attr_label = self.concept_transform(
-            np.array(attr_label)[self.selected_concepts]
-        )
-
-        # We may want to randomly sample concept labels based on their provided
-        # annotator uncertainty
-        if self.uncertainty_based_random_labels:
-            discrete_unc_label = np.array(
-                img_data['attribute_certainty']
-            )[self.selected_concepts]
-            instance_attr_label = np.array(img_data['attribute_label'])
-            competencies = []
-            for (discrete_unc_val, hard_concept_val) in zip(
-                discrete_unc_label,
-                instance_attr_label,
-            ):
-                competencies.append(
-                    discrete_to_continuous_unc(
-                        discrete_unc_val,
-                        hard_concept_val,
-                        self.unc_map,
-                    )
-                )
-            attr_label = np.random.binomial(1, competencies)
-
-        return img, torch.FloatTensor(attr_label), class_label
+        class_label = self.label_transform(img_data['class_label'])
+        return {
+            'inputs': {
+                'x': img,
+                'y': class_label,
+            },
+            'concepts': {
+                'ground_truth': self.ground_truth[idx],
+                'native': self.concepts[idx],
+                'generated': {
+                    name: values[idx]
+                    for name, values in self.generated_concepts.items()
+                },
+            },
+        }
 
     def concept_weights(self):
         """
