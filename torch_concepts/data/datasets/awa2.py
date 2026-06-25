@@ -20,7 +20,7 @@ from typing import List, Mapping, Optional
 import zipfile
 from pathlib import Path
 
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url_wget, zip_is_valid
 
@@ -410,16 +410,14 @@ class AWA2Dataset(ConceptDataset):
         class_states = [CLASS_NAMES]
         states = binary_states + class_states
         cardinalities = [1] * len(CONCEPT_SEMANTICS) + [N_CLASSES]
-        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        types = ['binary'] * len(CONCEPT_SEMANTICS) + ['categorical']
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                states=states,
-                cardinalities=cardinalities,
-                metadata=concept_metadata,
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Save artefacts
         os.makedirs(self.root, exist_ok=True)

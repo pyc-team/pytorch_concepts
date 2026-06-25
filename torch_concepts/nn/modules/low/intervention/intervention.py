@@ -7,7 +7,7 @@ import torch.nn as nn
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Union
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from ..base.intervention import (
     BaseConceptInterventionStrategy,
     BaseModuleInterventionStrategy,
@@ -106,9 +106,9 @@ class BaseInterventionModule(nn.Module, ABC):
                 return torch.tensor(self.out_concepts_to_intervene_on, dtype=torch.long)
             elif isinstance(self.out_concepts_to_intervene_on[0], str):
                 original_annotations = getattr(self.original_module, "out_concepts", None)
-                if original_annotations is None and not isinstance(original_annotations, AxisAnnotation):
+                if original_annotations is None and not isinstance(original_annotations, Annotations):
                     raise ValueError("To use string-based concept selection, the original module must have an "
-                                     "'out_concepts' attribute of type AxisAnnotation.")
+                                     "'out_concepts' attribute of type Annotations.")
                 indices = [original_annotations.label_to_index[item] for item in self.out_concepts_to_intervene_on]
                 return torch.tensor(indices, dtype=torch.long)
             else:

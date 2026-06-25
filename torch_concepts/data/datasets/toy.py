@@ -9,7 +9,7 @@ from sklearn.datasets import make_spd_matrix, make_low_rank_matrix
 from typing import List, Optional, Union
 
 from ..base.dataset import ConceptDataset
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -313,18 +313,13 @@ class ToyDataset(ConceptDataset):
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * len(concept_names))  # All binary concepts
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                cardinalities=cardinalities,
-                metadata=concept_metadata
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=['binary'] * len(concept_names),
+        )
 
         # Save all data
         logger.info(f"Saving dataset to {self.root_dir}")
@@ -623,18 +618,15 @@ class CompletenessDataset(ConceptDataset):
         )
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * self._n_concepts) + tuple([self._n_tasks])
+        task_type = 'binary' if self._n_tasks == 1 else 'categorical'
+        types = ['binary'] * self._n_concepts + [task_type]
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                cardinalities=cardinalities,
-                metadata=concept_metadata
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Save all data
         logger.info(f"Saving dataset to {self.root_dir}")

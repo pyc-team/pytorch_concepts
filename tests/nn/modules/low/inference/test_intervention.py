@@ -504,3 +504,305 @@ class TestExtraModules:
         m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
                                extra_modules={"task_head": head})
         assert "task_head" in dict(m.named_modules())
+
+
+# ===========================================================================
+# 14. PositiveWeightsIntervention strategy
+# ===========================================================================
+
+from torch_concepts.nn.modules.low.intervention.strategy.positive_weights import PositiveWeightsIntervention
+
+
+class TestPositiveWeightsIntervention:
+    def test_construction(self):
+        strat = PositiveWeightsIntervention()
+        from torch_concepts.nn.modules.low.base.intervention import BaseModuleInterventionStrategy
+        assert isinstance(strat, BaseModuleInterventionStrategy)
+
+    def test_transform_makes_weights_nonnegative(self):
+        enc = _make_enc()
+        # Force some negative weights
+        with torch.no_grad():
+            enc.linear.weight.fill_(-1.0)
+        strat = PositiveWeightsIntervention()
+        strat.transform(enc)
+        assert (enc.linear.weight >= 0).all()
+
+    def test_transform_preserves_positive_weights(self):
+        enc = _make_enc()
+        with torch.no_grad():
+            enc.linear.weight.fill_(2.0)
+        strat = PositiveWeightsIntervention()
+        strat.transform(enc)
+        assert torch.allclose(enc.linear.weight, torch.full_like(enc.linear.weight, 2.0))
+
+    def test_transform_returns_module(self):
+        enc = _make_enc()
+        strat = PositiveWeightsIntervention()
+        result = strat.transform(enc)
+        assert result is enc
+
+    def test_full_intervention_via_intervention_module(self):
+        """PositiveWeightsIntervention used as strategy in InterventionModule."""
+        enc = _make_enc()
+        with torch.no_grad():
+            enc.linear.weight.fill_(-0.5)
+        strat = PositiveWeightsIntervention()
+        m = InterventionModule(enc, strat, UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # After applying ReLU to weights, all weights are 0, output should be bias-only
+        assert out.shape == (B, enc.out_f)
+
+
+# ===========================================================================
+# 15. GradientPolicy
+# ===========================================================================
+
+from torch_concepts.nn.modules.low.intervention.policy.gradient import GradientPolicy
+
+
+class TestGradientPolicy:
+    def test_construction(self):
+        p = GradientPolicy()
+        from torch_concepts.nn.modules.low.base.intervention import BaseInterventionPolicy
+        assert isinstance(p, BaseInterventionPolicy)
+
+    def test_with_gradients_returns_abs(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        grads = torch.tensor([[-1.0, 2.0, -3.0]] * B)
+        out = p(concepts, concept_grads=grads)
+        assert torch.allclose(out, grads.abs())
+
+    def test_without_gradients_returns_zeros(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        out = p(concepts)
+        assert torch.equal(out, torch.zeros(B, F))
+
+    def test_no_gradients_same_shape_as_input(self):
+        p = GradientPolicy()
+        concepts = torch.randn(3, 7)
+        out = p(concepts)
+        assert out.shape == (3, 7)
+
+    def test_gradient_scores_are_nonnegative(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        grads = torch.randn(B, F)
+        out = p(concepts, concept_grads=grads)
+        assert (out >= 0).all()
+
+
+# ===========================================================================
+# 16. Additional intervention module coverage
+# ===========================================================================
+
+from torch_concepts.annotations import Annotations
+
+
+class TestInterventionModuleCoverage:
+    def test_build_context_fn_is_called(self):
+        """build_context_fn is invoked and its return value flows into policy/strategy."""
+        enc = _make_enc()
+        context_called = []
+
+        def my_build_context(preds, module, inputs, extra_tensors, extra_modules):
+            context_called.append(True)
+            return {}
+
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.5),
+            UniformPolicy(),
+            build_context=my_build_context,
+        )
+        x = torch.randn(B, enc.in_f)
+        m(x)
+        assert context_called
+
+    def test_invalid_strategy_type_raises(self):
+        """Passing an object that is neither BaseConceptInterventionStrategy nor BaseModuleInterventionStrategy raises."""
+        enc = _make_enc()
+
+        class FakeStrategy:
+            pass
+
+        m = InterventionModule(enc, FakeStrategy(), UniformPolicy())
+        x = torch.randn(B, enc.in_f)
+        with pytest.raises((ValueError, AttributeError)):
+            m(x)
+
+    def test_sel_idx_string_type_raises(self):
+        """String-based concept selection without Annotations raises ValueError."""
+        enc = _make_enc()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=['concept_a'],
+        )
+        with pytest.raises(ValueError):
+            _ = m.sel_idx
+
+    def test_sel_idx_invalid_type_raises(self):
+        """out_concepts_to_intervene_on with floats raises ValueError."""
+        enc = _make_enc()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=[1.5],  # not int or str
+        )
+        with pytest.raises(ValueError):
+            _ = m.sel_idx
+
+    def test_module_with_var_kwargs_patches_forward(self):
+        """Module whose forward has **kwargs still gets patched cleanly."""
+        class KwargsEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+            def forward(self, x, **kwargs):
+                return torch.sigmoid(self.l(x))
+
+        enc = KwargsEncoder()
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        x = torch.randn(B, 4)
+        out = m(x)
+        assert out.shape == (B, 3)
+
+    def test_patch_forward_signature_exception_path(self):
+        """Module whose forward raises during inspect.signature() skips patching silently (lines 99-100)."""
+        class _Unpatchable(nn.Module):
+            """forward is a non-callable descriptor — inspect.signature raises TypeError."""
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+
+        enc = _Unpatchable()
+        # Overwrite 'forward' with a built-in that has no inspectable signature
+        enc.forward = len  # built-in: inspect.signature raises ValueError
+        # Construction must not raise — the except branch (lines 99-100) silently
+        # swallows the signature-inspection failure.
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_sel_idx_string_with_valid_axis_annotation(self):
+        """String-based selection with valid Annotations returns correct indices (lines 112-113)."""
+        from torch_concepts.annotations import Annotations
+
+        class AnnotatedEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+                self.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
+
+            def forward(self, x):
+                return torch.sigmoid(self.l(x))
+
+        enc = AnnotatedEncoder()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=['alpha', 'gamma'],
+        )
+        sel = m.sel_idx
+        assert sel.tolist() == [0, 2]
+
+    def test_forward_bind_raises_falls_back_to_empty_dict(self):
+        """When sig.bind raises TypeError, original_module_inputs falls back to {} (lines 140-141)."""
+        class _BadSigEncoder(nn.Module):
+            """forward requires extra required arg so sig.bind with just x fails."""
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+
+            def forward(self, x, required_extra):
+                return torch.sigmoid(self.l(x))
+
+        enc = _BadSigEncoder()
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        x = torch.randn(B, 4)
+        # Calling m(x) without required_extra triggers TypeError inside sig.bind;
+        # also, the underlying encoder call will fail — we only care that the
+        # except branch is reachable, so catch the propagated error from enc.forward.
+        with pytest.raises(TypeError):
+            m(x)
+
+
+# ===========================================================================
+# 17. Base intervention abstract methods (base/intervention.py lines 27, 43, 53)
+# ===========================================================================
+
+from torch_concepts.nn.modules.low.base.intervention import (
+    BaseConceptInterventionStrategy,
+    BaseModuleInterventionStrategy,
+    BaseInterventionPolicy,
+)
+
+
+class TestBaseInterventionModuleCoverageExtra:
+    def test_patch_forward_signature_exception_branch(self):
+        """A forward with no inspectable signature triggers the except (ValueError/TypeError) branch (lines 99-100)."""
+        class _Unpatchable(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+            def forward(self, x):
+                return torch.sigmoid(self.l(x))
+
+        enc = _Unpatchable()
+        # range() has no signature inspectable by inspect.signature -> raises ValueError
+        enc.forward = range
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_base_build_context_raises_not_implemented(self):
+        """BaseInterventionModule.build_context raises NotImplementedError (line 128)."""
+        from torch_concepts.nn.modules.low.intervention.intervention import (
+            BaseInterventionModule,
+        )
+
+        class _Concrete(BaseInterventionModule):
+            def build_context(self, *args, **kwargs):
+                return super().build_context(*args, **kwargs)
+
+        enc = _make_enc()
+        m = _Concrete(enc, DoIntervention(0.0), UniformPolicy())
+        with pytest.raises(NotImplementedError):
+            m.build_context({}, enc, torch.randn(B, F))
+
+
+class TestBaseInterventionAbstractMethods:
+    def test_base_concept_strategy_forward_raises(self):
+        """BaseConceptInterventionStrategy.forward raises NotImplementedError (line 27)."""
+        class _ConcreteStrategy(BaseConceptInterventionStrategy):
+            def forward(self, *args, **kwargs):
+                return super().forward(*args, **kwargs)
+
+        strat = _ConcreteStrategy()
+        with pytest.raises(NotImplementedError):
+            strat(torch.randn(2, 3))
+
+    def test_base_module_strategy_transform_raises(self):
+        """BaseModuleInterventionStrategy.transform raises NotImplementedError (line 43)."""
+        class _ConcreteModuleStrategy(BaseModuleInterventionStrategy):
+            def transform(self, module, *args, **kwargs):
+                return super().transform(module, *args, **kwargs)
+
+        strat = _ConcreteModuleStrategy()
+        with pytest.raises(NotImplementedError):
+            strat.transform(nn.Linear(2, 2))
+
+    def test_base_policy_forward_raises(self):
+        """BaseInterventionPolicy.forward raises NotImplementedError (line 53)."""
+        class _ConcretePolicy(BaseInterventionPolicy):
+            def forward(self, x, *args, **kwargs):
+                return super().forward(x, *args, **kwargs)
+
+        policy = _ConcretePolicy()
+        with pytest.raises(NotImplementedError):
+            policy(torch.randn(2, 3))

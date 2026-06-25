@@ -3,7 +3,7 @@ import warnings
 import logging
 import torch
 
-from ...annotations import AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,13 @@ class GroupConfig:
         >>> default_loss = MSELoss()
         >>> binary_loss = loss_config['binary']
         >>> loss_config.get('continuous', default_loss)
+        MSELoss()
         >>>
         >>> # Check what's configured
         >>> 'binary' in loss_config
+        True
         >>> list(loss_config.keys())
+        ['binary', 'categorical', 'continuous']
     """
     
     def __init__(
@@ -119,7 +122,7 @@ class GroupConfig:
         return cls(**config_dict)
     
     
-def check_collection(annotations: AxisAnnotation, 
+def check_collection(annotations: Annotations, 
                      collection: GroupConfig,
                      collection_name: str) -> GroupConfig:
     """Validate loss/metric configurations against concept annotations.
@@ -130,7 +133,7 @@ def check_collection(annotations: AxisAnnotation,
     3. Unused configurations are warned about
     
     Args:
-        annotations (AxisAnnotation): Concept annotations with metadata.
+        annotations (Annotations): Concept annotations with metadata.
         collection (GroupConfig): Configuration object with losses or metrics.
         collection_name (str): Either 'loss' or 'metrics' for error messages.
         
@@ -144,19 +147,15 @@ def check_collection(annotations: AxisAnnotation,
     Example:
         >>> from torch_concepts.nn.modules.utils import GroupConfig, check_collection
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch_concepts import AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>> loss_config = GroupConfig(
         ...     binary=BCEWithLogitsLoss(),
         ...     categorical=CrossEntropyLoss()
         ... )
-        >>> concept_annotations = AxisAnnotation(
+        >>> concept_annotations = Annotations(
         ...     labels=['c1', 'c2', 'c3'],
-        ...     metadata={
-        ...         'c1': {'type': 'discrete'},
-        ...         'c2': {'type': 'discrete'},
-        ...         'c3': {'type': 'discrete'}
-        ...     },
         ...     cardinalities=[1, 3, 2],
+        ...     types=['binary', 'categorical', 'categorical'],
         ... )
         >>> filtered_config = check_collection(
         ...     concept_annotations,
@@ -168,7 +167,7 @@ def check_collection(annotations: AxisAnnotation,
         f"collection_name must be 'loss' or 'metrics', got '{collection_name}'"
     )
 
-    # Use cached type_groups from AxisAnnotation
+    # Use cached type_groups from Annotations
     groups = annotations.type_groups
     
     has_binary = len(groups['binary']['labels']) > 0

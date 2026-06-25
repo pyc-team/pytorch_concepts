@@ -50,10 +50,11 @@ from .modules.metrics import ConceptMetrics, compute_cace
 from .modules.outputs import ModelOutput, InferenceOutput
 
 # Models (high-level)
-# from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
-# from .modules.high.models.cbm import ConceptBottleneckModel
-# from .modules.high.models.cem import ConceptEmbeddingModel
-# from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from .modules.high.models.cbm import ConceptBottleneckModel
+from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
+from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 # Models (mid-level)
 from .modules.mid.models.factor import ParametricFactor
@@ -71,7 +72,7 @@ from .modules.mid.inference.pyro.base import PyroBaseInference
 from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
-from .modules.mid.inference.torch.ancestral import AncestralInference
+from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
@@ -106,7 +107,6 @@ __all__ = [
     "BaseConceptInterventionStrategy",
     "BaseModuleInterventionStrategy",
     "BaseInterventionPolicy",
-    "BaseConstructor",
     "BaseInterventionModule",
 
     # LazyConstructor
@@ -150,12 +150,13 @@ __all__ = [
     "ModelOutput",
     "InferenceOutput",
 
-    # # Models (high-level)
-    # "BlackBox",
-    # "BlackBoxTaskOnly",
-    # "ConceptBottleneckModel",
-    # "ConceptEmbeddingModel",
-    # "CausallyReliableConceptBottleneckModel",
+    # Models (high-level)
+    "BlackBox",
+    "BlackBoxTaskOnly",
+    "ConceptBottleneckModel",
+    "ConceptEmbeddingModel",
+    "GraphConceptBottleneckModel",
+    "CausallyReliableConceptBottleneckModel",
 
     # Models (mid-level)
     "ParametricFactor",
@@ -171,7 +172,7 @@ __all__ = [
     "TorchBaseInference",
     "ForwardInference",
     "DeterministicInference",
-    "AncestralInference",
+    "AncestralSamplingInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",

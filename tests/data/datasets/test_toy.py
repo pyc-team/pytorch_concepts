@@ -56,8 +56,7 @@ class TestToyDataset:
 
         # Check that annotations exist
         assert dataset.annotations is not None
-        assert 1 in dataset.annotations
-        assert dataset.annotations[1].labels is not None
+        assert dataset.annotations.labels is not None
 
     def test_xor_dataset_structure(self, temp_dir):
         """Test XOR dataset specific structure."""
@@ -245,7 +244,7 @@ class TestToyDataset:
         )
 
         # Check annotations structure
-        assert dataset.annotations[1].cardinalities is not None
+        assert dataset.annotations.cardinalities is not None
         assert dataset.annotations[1].metadata is not None
 
         # All concepts should be discrete
@@ -481,9 +480,8 @@ class TestCompletenessDataset:
 
         # Check annotations structure
         assert dataset.annotations is not None
-        assert 1 in dataset.annotations
-        assert dataset.annotations[1].labels is not None
-        assert dataset.annotations[1].cardinalities is not None
+        assert dataset.annotations.labels is not None
+        assert dataset.annotations.cardinalities is not None
         assert dataset.annotations[1].metadata is not None
 
         # All concepts should be discrete

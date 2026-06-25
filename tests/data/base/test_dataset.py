@@ -3,7 +3,7 @@ import torch
 import pandas as pd
 
 from torch_concepts.data.base.dataset import ConceptDataset
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
 
 
 
@@ -16,13 +16,11 @@ class TestConceptSubset(unittest.TestCase):
         self.X = torch.randn(self.n_samples, 10)
         self.C = torch.randint(0, 2, (self.n_samples, 5))
         self.all_concept_names = ['concept_0', 'concept_1', 'concept_2', 'concept_3', 'concept_4']
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
                 metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
-        })
 
     def test_subset_selection(self):
         """Test that concept subset is correctly selected."""
@@ -117,13 +115,11 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.X = torch.randn(self.n_samples, 10)
         self.C = torch.randint(0, 2, (self.n_samples, 5))
         self.all_concept_names = ['c0', 'c1', 'c2', 'c3', 'c4']
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
                 metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
-        })
         # Graph: c0 -> c1 -> c2 -> c3 -> c4
         self.graph = pd.DataFrame(0, index=self.all_concept_names, columns=self.all_concept_names)
         self.graph.loc['c0', 'c1'] = 1

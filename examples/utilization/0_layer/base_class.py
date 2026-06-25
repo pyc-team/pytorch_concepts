@@ -7,14 +7,14 @@ def main():
     concepts = torch.randn(7, 3)
     embeddings = torch.randn(7, 5)
 
-    # AxisAnnotation and AnnotatedTensor example
-    in_concepts = pyc.AxisAnnotation(labels=['c1', 'c2', 'c3'])
+    # Annotations and AnnotatedTensor example
+    in_concepts = pyc.Annotations(labels=['c1', 'c2', 'c3'])
     annotated_concepts = pyc.AnnotatedTensor(concepts, in_concepts)
     print(annotated_concepts.sum(dim=0, keepdims=True))
     print(annotated_concepts['c1', 'c3'])
     print(annotated_concepts.unsqueeze(2).permute(2, 1, 0))
     concepts2 = torch.randn(7, 3)
-    in_concepts2 = pyc.AxisAnnotation(labels=['c1', 'c_test', 'c3'])
+    in_concepts2 = pyc.Annotations(labels=['c1', 'c_test', 'c3'])
     annotated_concepts2 = pyc.AnnotatedTensor(concepts2, in_concepts2)
     print(annotated_concepts2)
     annotated_concepts2 = annotated_concepts2.union_with(annotated_concepts)
@@ -42,9 +42,9 @@ def main():
     output = layer.forward(annotated_concepts, embeddings) # forward pass with annotated concepts
     print(output)
 
-    # Concept layer instantiation with AxisAnnotation
-    out_concepts = pyc.AxisAnnotation(labels=['c4', 'c5'])
-    in_embeddings = pyc.AxisAnnotation(labels=['c1', 'c2', 'c3', 'c4', 'c5'])
+    # Concept layer instantiation with Annotations
+    out_concepts = pyc.Annotations(labels=['c4', 'c5'])
+    in_embeddings = pyc.Annotations(labels=['c1', 'c2', 'c3', 'c4', 'c5'])
     annotated_embeddings = pyc.AnnotatedTensor(embeddings, in_embeddings)
     layer = MyConceptLayer(in_concepts=in_concepts, in_embeddings=in_embeddings, out_concepts=out_concepts)
     output = layer.forward(annotated_concepts, annotated_embeddings) # forward pass with annotated concepts and annotated embeddings

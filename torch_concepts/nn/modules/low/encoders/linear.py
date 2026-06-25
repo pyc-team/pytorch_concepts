@@ -7,7 +7,7 @@ from typing import Union
 
 import torch
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
 
 
@@ -47,8 +47,8 @@ class LinearEmbeddingToConcept(BaseConceptLayer):
     """
     def __init__(
         self,
-        in_embeddings: Union[int, AxisAnnotation],
-        out_concepts: Union[int, AxisAnnotation],
+        in_embeddings: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
         *args,
         **kwargs,
     ):

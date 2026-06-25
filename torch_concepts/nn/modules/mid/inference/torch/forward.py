@@ -67,7 +67,7 @@ class ForwardInference(TorchBaseInference):
     """Abstract base class for torch based, forward-pass inference engines.
 
     Concrete subclasses (:class:`DeterministicInference`,
-    :class:`AncestralInference`) implement the :meth:`_propagate` method to
+    :class:`AncestralSamplingInference`) implement the :meth:`_propagate` method to
     decide whether each variable is resolved deterministically (MAP estimate)
     or by ancestral sampling.  All shared logic (topological traversal,
     evidence clamping, teacher forcing, temperature schedule) lives here.

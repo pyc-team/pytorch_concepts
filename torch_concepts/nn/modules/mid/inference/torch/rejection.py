@@ -3,7 +3,7 @@
 Algorithm
 ---------
 1. Draw ``n_samples`` joint samples from the PGM by calling
-   :class:`AncestralInference` (ancestral mode) with every variable
+   :class:`AncestralSamplingInference` (ancestral mode) with every variable
    declared as a query and no evidence.
 2. For each row b in the batch:
    a. Build an **evidence mask**: samples where every E variable equals e_b.
@@ -61,7 +61,7 @@ def _match(sampled: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
 class RejectionSampling(TorchBaseInference):
     """Approximate conditional inference via pure rejection sampling.
 
-    Internally delegates joint sampling to :class:`AncestralInference`
+    Internally delegates joint sampling to :class:`AncestralSamplingInference`
     so the topological ordering logic is not duplicated.
 
     Parameters

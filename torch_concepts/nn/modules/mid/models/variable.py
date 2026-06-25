@@ -35,8 +35,8 @@ PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
 }
 
 _DEFAULT_DISTRIBUTIONS = {
-    'binary': dist.RelaxedBernoulli,
-    'categorical': dist.RelaxedOneHotCategorical,
+    'binary': dist.Bernoulli,
+    'categorical': dist.OneHotCategorical,
     'continuous': dist.Normal,
 }
 
@@ -175,6 +175,7 @@ class Variable(ABC):
                     f"{type(self).__name__}({names!r}): per-member `size` must be a "
                     f"positive int, got {size!r}."
                 )
+            self._is_plate: bool = True
             self.members: List[str] = list(members)
             self.member_size: int = member_size
             total = len(self.members) * member_size
@@ -220,6 +221,7 @@ class Variable(ABC):
                     f"{type(self).__name__}({names!r}): all shape dimensions must be "
                     f"positive, got {tuple(shape)}."
                 )
+            self._is_plate: bool = False
             self.members = [self.name]
             self.member_size = math.prod(shape)
 
@@ -245,8 +247,8 @@ class Variable(ABC):
 
     @property
     def is_plate(self) -> bool:
-        """Whether this variable holds more than one named member."""
-        return len(self.members) > 1
+        """Whether this variable was created with explicit named members."""
+        return self._is_plate
 
     @property
     def plate(self) -> "Variable":

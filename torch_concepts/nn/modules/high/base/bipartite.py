@@ -1,82 +1,74 @@
-"""Base class for bipartite concept models (CBM, CEM, etc.).
+"""Bipartite-graph mixin and abstract base for concept→task models.
 
-This module provides a BaseBipartiteModel that handles common functionality
-for models with bipartite graph structure (concepts → tasks).
+A *bipartite* concept model splits its variables into two layers — concepts and
+tasks — with edges only from concepts to tasks (no concept→concept edges). This
+module provides:
+
+* :class:`BipartiteMixin` — derives the bipartite :class:`ConceptGraph` from a
+  list of ``task_names`` (the rest of the annotation labels become the concept
+  layer). Shared by every bipartite model so the graph-building logic lives in
+  one place.
+* :class:`BipartiteModel` — abstract bipartite model (a ``DirectedGraphModel``
+  using the mixin) and the parent of the concrete bipartite models (CBM, CEM).
+  It builds the bipartite graph but leaves ``_build_probabilistic_model``
+  abstract, so each concrete model assembles its own probabilistic model
+  explicitly.
 """
+from abc import ABC
+from typing import List, Union
 
-from typing import List, Union, Dict
+import pandas as pd
 import torch
 
-from .....annotations import Annotations
+from .....concept_graph import ConceptGraph
 from .....data.utils import ensure_list
-from .model import BaseModel
+from .graph import DirectedGraphModel
 
 
-class BaseBipartiteModel(BaseModel):
-    """Base class for bipartite concept models.
-    
-    Provides common functionality for models with bipartite graph structure
-    where concepts predict tasks. Subclasses (CBM, CEM) only need to implement
-    `__init__` to configure the specific encoder/predictor architecture.
-    
-    Parameters
-    ----------
-    input_size : int
-        Dimensionality of input features (after backbone if used).
-    annotations : Annotations
-        Concept annotations with labels, cardinalities, and distributions.
-    task_names : Union[List[str], str]
-        Names of task variables (subset of annotation labels).
-    lightning : bool, default False
-        If True, adds Lightning training capabilities.
-        If False (default), works as pure PyTorch module.
-    **kwargs
-        Additional arguments passed to BaseModel, including:
-        
-        - **backbone** : Feature extraction module (e.g., ResNet)
-        - **latent_encoder** : Custom encoder for latent space
-        - **latent_encoder_kwargs** : Arguments for latent encoder
-        
-        Lightning Training (when lightning=True):
-        
-        - **loss** : Loss function (nn.Module)
-        - **metrics** : ConceptMetrics or dict of MetricCollections
-        - **optim_class** : Optimizer class (e.g., torch.optim.Adam)
-        - **optim_kwargs** : Optimizer arguments (e.g., {'lr': 0.001})
-        - **scheduler_class** : LR scheduler class
-        - **scheduler_kwargs** : Scheduler arguments
-    
-    Attributes
-    ----------
-    task_names : List[str]
-        Task variable names.
-    model : BipartiteModel
-        The underlying bipartite graph model.
-    inference : BaseInference
-        Active inference engine (property). Returns ``train_inference``
-        when in train mode, ``eval_inference`` when in eval mode.
-    eval_inference : BaseInference
-        Inference engine used during evaluation.
-    train_inference : BaseInference
-        Inference engine used during training (may be None).
-    graph_levels : List[List[str]]
-        Concept names organized by topological level.
-    roots : List[str]
-        Root concept names (first level).
+class BipartiteMixin:
+    """Mixin that derives a bipartite concept→task graph from ``task_names``.
+
+    Consumes a ``task_names`` keyword at construction, stores it, and overrides
+    :meth:`_resolve_graph` to build the adjacency where every concept points to
+    every task and tasks have no outgoing edges. Mix this in *before* a
+    :class:`~torch_concepts.nn.modules.high.base.graph.GraphModel` subclass so
+    its ``_resolve_graph`` takes precedence in the MRO.
     """
-    
-    def __init__(
-        self,
-        input_size: int,
-        annotations: Annotations,
-        task_names: Union[List[str], str],
-        **kwargs
-    ):
-        super().__init__(
-            input_size=input_size,
-            annotations=annotations,
-            **kwargs
+
+    def __init__(self, *args, task_names: Union[List[str], str], **kwargs):
+        self.task_names: List[str] = ensure_list(task_names)
+        super().__init__(*args, **kwargs)
+
+    @property
+    def intermediate_concept_names(self) -> List[str]:
+        """Concept (non-task) labels, in annotation order."""
+        return [c for c in self.concept_names if c not in self.task_names]
+
+    def _resolve_graph(self) -> ConceptGraph:
+        """Build the bipartite graph: every concept points to every task."""
+        labels = list(self.concept_names)
+        missing = [t for t in self.task_names if t not in labels]
+        assert not missing, (
+            f"All task_names must be annotation labels; {missing} are not in {labels}."
         )
-        
-        # Store task names for later use
-        self.task_names = ensure_list(task_names)
+        adjacency = pd.DataFrame(0, index=labels, columns=labels)
+        adjacency.loc[:, self.task_names] = 1            # concepts -> tasks
+        adjacency.loc[self.task_names, self.task_names] = 0  # tasks do not self-loop
+        return ConceptGraph(
+            torch.FloatTensor(adjacency.values),
+            node_names=labels,
+        )
+
+
+class BipartiteModel(BipartiteMixin, DirectedGraphModel, ABC):
+    """Abstract base for bipartite concept→task models (parent of CBM and CEM).
+
+    Combines the bipartite graph assumption (:class:`BipartiteMixin`, which derives
+    the concept→task graph from ``task_names``) with the directed-graph
+    (Bayesian network) lifecycle (:class:`DirectedGraphModel`).
+
+    It deliberately does **not** assemble the probabilistic model: concrete
+    subclasses implement :meth:`_build_probabilistic_model` themselves so that the
+    mid-level elements they construct (variables, CPDs, the Bayesian network) are
+    visible directly in the model class. The shared :meth:`setup_inference` wiring is inherited.
+    """

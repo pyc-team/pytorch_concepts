@@ -8,14 +8,10 @@ seeding for reproducibility, and numerical stability checks.
 import importlib
 import os
 from collections import Counter
-from copy import deepcopy
-from typing import Dict, Union, List, Mapping, Optional
+from typing import Dict, Union, List, Optional
 import torch, math
 import logging
 from pytorch_lightning import seed_everything as pl_seed_everything
-
-from .annotations import Annotations, AxisAnnotation
-from .nn.modules.utils import GroupConfig
 
 
 def resolve_hf_token() -> Optional[str]:
@@ -287,222 +283,6 @@ def _check_tensors(tensors):
             raise ValueError("All tensors must have the same requires_grad setting.")
 
 
-def _get_type_group(metadata: Dict, cardinality: int) -> str:
-    """Classify a concept into 'binary', 'categorical', or 'continuous' based on metadata type and cardinality.
-    
-    Args:
-        metadata: Per-concept metadata dict (must contain 'type' key).
-        cardinality: Cardinality of the concept.
-
-    Returns:
-        One of 'binary', 'categorical', or 'continuous'.
-
-    Raises:
-        ValueError: If the combination of type and cardinality is not recognized.
-    """
-    concept_type = metadata.get('type', 'discrete')
-    if concept_type == 'discrete' and cardinality == 1:
-        return 'binary'
-    elif concept_type == 'discrete' and cardinality > 1:
-        return 'categorical'
-    elif concept_type == 'continuous':
-        return 'continuous'
-    else:
-        raise ValueError(f"Unrecognized type/cardinality combination: type={concept_type!r}, cardinality={cardinality}")
-
-
-def add_property_to_annotations(
-        annotations: Union[Annotations, AxisAnnotation],
-        values: Union[GroupConfig, Mapping[str, object]],
-        property_name: str,
-    ) -> Union[Annotations, AxisAnnotation]:
-    """Add a metadata property (e.g. 'distribution' or 'activation') to annotations.
-
-    Accepts either a ``GroupConfig`` (keyed by type group: binary/categorical/continuous)
-    or a ``Mapping`` (keyed by concept name).
-    Accepts either a ``GroupConfig`` (keyed by type group: binary/categorical/continuous)
-    or a ``Mapping`` (keyed by concept name).
-
-    Args:
-        annotations: Annotations or AxisAnnotation to update.
-        values: A ``GroupConfig`` or ``Mapping`` providing the property value per concept.
-        property_name: Metadata key to write (e.g. ``'distribution'``, ``'activation'``).
-
-    Returns:
-        Updated annotations with the property added to each concept's metadata.
-    """
-    if isinstance(annotations, Annotations):
-        axis_annotation = annotations.get_axis_annotation(1)
-    elif isinstance(annotations, AxisAnnotation):
-        axis_annotation = annotations
-    else:
-        raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
-
-    new_metadata = deepcopy(axis_annotation.metadata)
-    cardinalities = axis_annotation.cardinalities
-
-    if isinstance(values, GroupConfig):
-        for (concept_name, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
-            group = _get_type_group(metadata, cardinality)
-            try:
-                entry = values[group]
-            except KeyError:
-                raise ValueError(
-                    f"No {property_name} config for type group '{group}' "
-                    f"(concept '{concept_name}'). "
-                )
-
-            # entry is either a bare class/value or [class, {kwargs}]
-            kwargs_key = 'dist_kwargs' if property_name == 'distribution' else f'{property_name}_kwargs'
-            if isinstance(entry, (list, tuple)):
-                new_metadata[concept_name][property_name] = entry[0]
-                if len(entry) > 1 and isinstance(entry[1], dict):
-                    new_metadata[concept_name][kwargs_key] = dict(entry[1])
-            else:
-                new_metadata[concept_name][property_name] = entry
-    elif isinstance(values, Mapping):
-        for concept_name in axis_annotation.metadata.keys():
-            value = values.get(concept_name, None)
-            if value is None:
-                raise ValueError(f"No {property_name} config found for concept '{concept_name}'.")
-            new_metadata[concept_name][property_name] = value
-    else:
-        raise ValueError(f"{property_name} must be a GroupConfig or a Mapping.")
-
-    axis_annotation.metadata = new_metadata
-    if isinstance(annotations, Annotations):
-        annotations[1] = axis_annotation
-        return annotations
-    else:
-        return axis_annotation
-
-
-def add_distribution_to_annotations(
-        annotations: Union[Annotations, AxisAnnotation],
-        distributions: Union[GroupConfig, Mapping[str, object]],
-    ) -> Union[Annotations, AxisAnnotation]:
-    """Add distribution classes to annotation metadata.
-
-    Args:
-        annotations: Annotations or AxisAnnotation to update.
-        distributions: Distribution classes per concept. Either a
-            ``GroupConfig`` (keyed by type group: ``'binary'``, ``'categorical'``,
-            ``'continuous'``) or a ``Mapping`` from concept names to distribution
-            classes.
-
-    Returns:
-        Updated annotations with ``'distribution'`` added to each concept's metadata.
-
-    Example:
-        >>> from torch.distributions import Bernoulli, OneHotCategorical
-        >>> from torch_concepts import GroupConfig
-        >>> distributions = GroupConfig(binary=Bernoulli, categorical=OneHotCategorical)
-        >>> annotations = add_distribution_to_annotations(annotations, distributions)
-    """
-    return add_property_to_annotations(annotations, distributions, 'distribution')
-
-
-def add_activation_to_annotations(
-        annotations: Union[Annotations, AxisAnnotation],
-        activations: Union[GroupConfig, Mapping[str, object]],
-    ) -> Union[Annotations, AxisAnnotation]:
-    """Add activation functions to annotation metadata.
-
-    Args:
-        annotations: Annotations or AxisAnnotation to update.
-        activations: Activation functions per concept. Either a
-            ``GroupConfig`` (keyed by type group: ``'binary'``, ``'categorical'``,
-            ``'continuous'``) or a ``Mapping`` from concept names to callables.
-
-    Returns:
-        Updated annotations with ``'activation'`` added to each concept's metadata.
-
-    Example:
-        >>> from functools import partial
-        >>> from torch_concepts import GroupConfig
-        >>> activations = GroupConfig(binary=torch.sigmoid, categorical=partial(torch.softmax, dim=-1))
-        >>> annotations = add_activation_to_annotations(annotations, activations)
-    """
-    return add_property_to_annotations(annotations, activations, 'activation')
-
-
-def add_default_properties(
-        annotations: Union[Annotations, AxisAnnotation],
-    ) -> Union[Annotations, AxisAnnotation]:
-    """Fill in default distributions and activations for concepts that lack them.
-
-    For each concept missing a ``'distribution'``, assigns a default based on
-    the concept's type group (binary/categorical/continuous) using
-    :data:`~torch_concepts.nn.modules.mid.models.variable._DEFAULT_DISTRIBUTIONS`.
-
-    For each concept missing an ``'activation'`` (but having a ``'distribution'``),
-    assigns a default using
-    :data:`~torch_concepts.nn.modules.mid.models.variable._DEFAULT_ACTIVATIONS`.
-
-    If no default can be determined for a concept, a ``ValueError`` is raised
-    asking the user to add the property to the annotation object explicitly
-    (e.g. via :func:`add_property_to_annotations`).
-
-    Args:
-        annotations: Annotations or AxisAnnotation with per-concept metadata.
-
-    Returns:
-        Updated annotations with defaults filled in.
-
-    Raises:
-        ValueError: If a concept is missing a distribution or activation and
-            no default exists for its type group / distribution class.
-    """
-    from .nn.modules.mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_ACTIVATIONS, _DEFAULT_DIST_KWARGS
-
-    if isinstance(annotations, Annotations):
-        axis_annotation = annotations.get_axis_annotation(1)
-    elif isinstance(annotations, AxisAnnotation):
-        axis_annotation = annotations
-    else:
-        raise ValueError("annotations must be either Annotations or AxisAnnotation instance.")
-
-    cardinalities = axis_annotation.cardinalities
-
-    # --- Default distributions ---
-    for (label, metadata), cardinality in zip(axis_annotation.metadata.items(), cardinalities):
-        if 'distribution' not in metadata:
-            group = _get_type_group(metadata, cardinality)
-            if group in _DEFAULT_DISTRIBUTIONS:
-                dist = _DEFAULT_DISTRIBUTIONS[group]
-                metadata['distribution'] = dist
-                if 'dist_kwargs' not in metadata and dist in _DEFAULT_DIST_KWARGS:
-                    metadata['dist_kwargs'] = dict(_DEFAULT_DIST_KWARGS[dist])
-            else:
-                raise ValueError(
-                    f"No default distribution for type group '{group}' "
-                    f"(concept '{label}'). Please add a 'distribution' to the "
-                    f"annotation metadata, e.g. via "
-                    f"add_property_to_annotations()."
-                )
-
-    # --- Default activations ---
-    for label in axis_annotation.labels:
-        meta = axis_annotation.metadata[label]
-        if 'activation' not in meta:
-            dist = meta.get('distribution')
-            if dist is not None and dist in _DEFAULT_ACTIVATIONS:
-                meta['activation'] = _DEFAULT_ACTIVATIONS[dist]
-            elif dist is not None:
-                raise ValueError(
-                    f"No default activation for distribution "
-                    f"{dist.__name__} of concept '{label}'. "
-                    f"Please add an 'activation' to the annotation metadata, "
-                    f"e.g. via add_property_to_annotations()."
-                )
-
-    if isinstance(annotations, Annotations):
-        annotations[1] = axis_annotation
-        return annotations
-    else:
-        return axis_annotation
-
-
 def get_from_string(class_path: str):
     """Import and return a class from its fully qualified string path.
 
@@ -514,7 +294,8 @@ def get_from_string(class_path: str):
 
     Example:
         >>> Adam = get_from_string('torch.optim.Adam')
-        >>> optimizer = Adam(model.parameters(), lr=0.001)
+        >>> Adam.__name__
+        'Adam'
     """
     module_path, class_name = class_path.rsplit('.', 1)
     module = importlib.import_module(module_path)

@@ -12,7 +12,7 @@ structural equations expressed with :class:`CallableConceptToConcept`
 (``use_bias=False`` so the equation is exact), except ``genotype`` which is a
 learnable Sigmoid-linear of the exogenous ``input`` noise.
 
-:class:`AncestralInference` draws a reparameterised (straight-through) sample
+:class:`AncestralSamplingInference` draws a reparameterised (straight-through) sample
 per variable in topological order, so ``out.samples`` holds a hard 0/1
 realisation of every node.
 """
@@ -22,7 +22,7 @@ from torch.distributions import Bernoulli
 
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
-from torch_concepts.nn import ParametricCPD, BayesianNetwork, AncestralInference, \
+from torch_concepts.nn import ParametricCPD, BayesianNetwork, AncestralSamplingInference, \
     CallableConceptToConcept, LearnablePrior
 
 
@@ -65,7 +65,7 @@ def main():
     )
 
     # Inference: ancestral sampling through the structural equations.
-    inference_engine = AncestralInference(concept_model)
+    inference_engine = AncestralSamplingInference(concept_model)
     initial_input = {'input': torch.randn((n_samples, 1))}
     query_concepts = ["genotype", "smoking", "tar", "cancer"]
 
