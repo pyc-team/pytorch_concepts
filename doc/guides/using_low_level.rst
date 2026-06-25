@@ -23,153 +23,166 @@ comfortable with PyTorch and want to assemble interpretable architectures by han
 
 The core building blocks of this API level are:
 
-- **Data representations** — the two kinds of tensors that flow through the layers.
-- **Layers** — interpretable encoders and predictors, plus a few special-purpose layers.
-- **Models** — standard |pytorch_logo| PyTorch containers that wire the layers together.
+- **Annotations** — give names and types to the concepts on a tensor axis.
+- **Annotated Tensors** — tensors that carry their concept annotations along.
+- **PyC layers** — interpretable encoders and predictors you wire together.
 - **Interventions** — context managers that temporarily override concept activations.
+- **Functionals** — stateless operations and evaluation metrics.
 
-Each block is described below, followed by an example of how to use it.
-
-
-Data Representations
---------------------
-
-|pyc_logo| PyC layers operate on two types of data representations:
-
-- **Embeddings**: vector representations of the input, not yet associated with specific
-  concept variables.
-- **Concepts**: scalar-valued activation scores — one per concept variable. These form the
-  interpretable bottleneck.
-
-Keeping the two apart is what makes the architecture interpretable: every concept score
-corresponds to a named, human-understandable variable.
-
-**Example.** A small batch with an embedding tensor and a (ground-truth) concept tensor:
-
-.. code-block:: python
-
-   import torch
-
-   batch_size, input_dim, n_concepts = 32, 64, 5
-
-   embeddings = torch.randn(batch_size, input_dim)            # embedding representation
-   concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()  # concept scores
+Expand each block below for an explanation and an example of how to use it.
 
 
-Layers
-------
+.. dropdown:: Annotations
+    :icon: tag
 
-Layers are the heart of the Low-Level API. They come in two interpretable flavours plus a
-few special-purpose layers:
+    :class:`~torch_concepts.Annotations` give semantic meaning to the concept dimension of a
+    tensor. They store the ordered ``labels``, their ``cardinalities`` (``1`` for binary, ``>1``
+    for categorical), their ``types``, and optional per-label ``metadata``. This is what lets you
+    refer to a concept by name instead of by column index.
 
-- ``Encoder`` layers map embeddings to concept scores (or to a new embedding). They **never**
-  take concept scores as input.
-- ``Predictor`` layers take concept scores (and optionally embeddings) as input and produce
-  task or concept predictions.
-- **Special layers** (e.g. graph learners, memory selectors) perform operations that do not
-  follow the encoder/predictor interface.
+    .. code-block:: python
 
-**Naming convention.** Layer names follow the pattern ``<OperationType><InputType>To<OutputType>``:
+       import torch_concepts as pyc
 
-- ``OperationType``: the computation performed — ``Linear``, ``Hyperlinear``, ``Mix``, ``Selector``, …
-- ``InputType``: ``Embedding`` for vector inputs, ``Concept`` for concept scores.
-- ``OutputType``: ``Concept`` for score outputs, ``Embedding`` for vector outputs.
+       annotations = pyc.Annotations(
+           labels=["smoking", "genotype", "tar", "cancer"],
+           cardinalities=[1, 3, 1, 1],
+           types=["binary", "categorical", "continuous", "binary"],
+       )
 
-So ``LinearEmbeddingToConcept`` is a linear **encoder** (embedding → concepts) and
-``LinearConceptToConcept`` is a linear **predictor** (concepts → concepts/tasks).
-
-**Example.** A linear encoder and a linear predictor:
-
-.. code-block:: python
-
-   import torch_concepts.nn as pyc_nn
-
-   encoder = pyc_nn.LinearEmbeddingToConcept(in_embeddings=64, out_concepts=5)
-   predictor = pyc_nn.LinearConceptToConcept(in_concepts=5, out_concepts=3)
-
-   concept_logits = encoder(embeddings)              # (32, 5)
-   task_logits = predictor(concepts=concept_logits)  # (32, 3)
-
-**Example (special layer).** Graph learners discover relationships between concepts:
-
-.. code-block:: python
-
-   wanda = pyc_nn.WANDAGraphLearner(
-       row_labels=['c1', 'c2', 'c3'],
-       col_labels=['task A', 'task B', 'task C'],
-   )
-   print(wanda.weighted_adj.shape)  # learnable adjacency tensor
+       # Access a single concept's properties by name
+       genotype = annotations.concept("genotype")
+       print(genotype.cardinality, genotype.type)   # 3 categorical
 
 
-Models
-------
+.. dropdown:: Annotated Tensors
+    :icon: package
 
-A model is built as in standard |pytorch_logo| PyTorch — for example with ``ModuleDict`` or
-``Sequential`` — and may freely mix standard PyTorch layers with |pyc_logo| PyC layers. A
-Concept Bottleneck Model simply routes predictions through an interpretable concept layer.
+    An :class:`~torch_concepts.AnnotatedTensor` pairs a plain :class:`torch.Tensor` with an
+    :class:`~torch_concepts.Annotations` describing its second axis (axis 1). You can then slice
+    columns **by concept name** or **by type**, and any operation that leaves the concept axis
+    unchanged keeps the annotation attached.
 
-**Example.** A Concept Bottleneck Model and a manual training step:
+    .. code-block:: python
 
-.. code-block:: python
+       import torch
+       import torch_concepts as pyc
 
-   import torch
-   import torch.nn.functional as F
-   from torch.nn import ModuleDict
-   import torch_concepts.nn as pyc_nn
+       tensor = pyc.AnnotatedTensor(
+           data=torch.randn(10, 6),   # (batch_size, sum(cardinalities))
+           annotation=annotations,
+       )
 
-   batch_size, input_dim, n_concepts, n_tasks = 32, 64, 5, 3
-   x = torch.randn(batch_size, input_dim)
-   concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()
-   task_labels = torch.randint(0, 2, (batch_size, n_tasks)).float()
-
-   model = ModuleDict({
-       'encoder': pyc_nn.LinearEmbeddingToConcept(in_embeddings=input_dim, out_concepts=n_concepts),
-       'predictor': pyc_nn.LinearConceptToConcept(in_concepts=n_concepts, out_concepts=n_tasks),
-   })
-
-   optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-
-   # Forward pass — outputs are raw logits
-   concept_preds = model['encoder'](x)
-   task_preds = model['predictor'](concepts=concept_preds)
-
-   # Train with logit-stable losses
-   concept_loss = F.binary_cross_entropy_with_logits(concept_preds, concept_labels)
-   task_loss = F.binary_cross_entropy_with_logits(task_preds, task_labels)
-   loss = concept_loss + 0.5 * task_loss
-
-   loss.backward()
-   optimizer.step()
+       smoking = tensor["smoking"]              # slice by concept name
+       binary = tensor.split_by_type("binary")  # slice by concept type
 
 
-Interventions
--------------
+.. dropdown:: PyC layers
+    :icon: stack
 
-Interventions let you **edit concept activations at inference time** and observe the effect on
-downstream predictions. The ``intervention`` context manager temporarily replaces an encoder:
+    Layers are the heart of the Low-Level API. They come in two interpretable flavours, plus a
+    few special-purpose layers:
 
-- a **strategy** decides *how* the targeted concepts are overridden (e.g. set to ground truth,
-  or to a constant);
-- a **policy** decides *which* concepts are targeted.
+    - ``Encoder`` layers map **embeddings** (vector representations of the input) to **concept**
+      scores. They never take concept scores as input.
+    - ``Predictor`` layers take concept scores (and optionally embeddings) as input and produce
+      task or concept predictions.
+    - **Special layers** (e.g. graph learners) perform operations that do not follow the
+      encoder/predictor interface.
 
-**Example.** Force two concepts to their ground-truth values:
+    Layer names follow the pattern ``<OperationType><InputType>To<OutputType>``, so
+    ``LinearEmbeddingToConcept`` is a linear encoder (embedding → concepts) and
+    ``LinearConceptToConcept`` is a linear predictor (concepts → concepts/tasks). You wire them
+    together with standard |pytorch_logo| PyTorch containers such as ``ModuleDict`` — a Concept
+    Bottleneck Model is just an encoder feeding a predictor:
 
-.. code-block:: python
+    .. code-block:: python
 
-   import torch
-   from torch_concepts.nn import GroundTruthIntervention, UniformPolicy, intervention
+       import torch
+       import torch.nn.functional as F
+       from torch.nn import ModuleDict
+       import torch_concepts.nn as pyc_nn
 
-   ground_truth = torch.logit(concept_labels, eps=1e-6)
-   strategy = GroundTruthIntervention(model=model['encoder'], ground_truth=ground_truth)
-   policy = UniformPolicy(out_concepts=n_concepts)
+       batch_size, input_dim, n_concepts, n_tasks = 32, 64, 5, 3
+       x = torch.randn(batch_size, input_dim)
+       concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()
+       task_labels = torch.randint(0, 2, (batch_size, n_tasks)).float()
 
-   with intervention(
-       policies=policy,
-       strategies=strategy,
-       target_concepts=[0, 2],   # intervene on the 1st and 3rd concepts
-   ) as intervened_encoder:
-       concept_preds = intervened_encoder(x)
+       model = ModuleDict({
+           'encoder': pyc_nn.LinearEmbeddingToConcept(in_embeddings=input_dim, out_concepts=n_concepts),
+           'predictor': pyc_nn.LinearConceptToConcept(in_concepts=n_concepts, out_concepts=n_tasks),
+       })
+
+       # Forward pass — outputs are raw logits
+       concept_preds = model['encoder'](x)
        task_preds = model['predictor'](concepts=concept_preds)
+
+       # Train with logit-stable losses
+       optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+       loss = F.binary_cross_entropy_with_logits(concept_preds, concept_labels) \
+              + 0.5 * F.binary_cross_entropy_with_logits(task_preds, task_labels)
+       loss.backward()
+       optimizer.step()
+
+    Graph learners are special layers that discover relationships between concepts:
+
+    .. code-block:: python
+
+       wanda = pyc_nn.WANDAGraphLearner(
+           row_labels=['c1', 'c2', 'c3'],
+           col_labels=['task A', 'task B', 'task C'],
+       )
+       print(wanda.weighted_adj.shape)   # learnable adjacency tensor
+
+
+.. dropdown:: Interventions
+    :icon: tools
+
+    Interventions let you **edit concept activations at inference time** and observe the effect on
+    downstream predictions. The ``intervention`` context manager temporarily replaces an encoder:
+
+    - a **strategy** decides *how* the targeted concepts are overridden (e.g. set to ground truth,
+      or to a constant);
+    - a **policy** decides *which* concepts are targeted.
+
+    .. code-block:: python
+
+       import torch
+       from torch_concepts.nn import GroundTruthIntervention, UniformPolicy, intervention
+
+       ground_truth = torch.logit(concept_labels, eps=1e-6)
+       strategy = GroundTruthIntervention(model=model['encoder'], ground_truth=ground_truth)
+       policy = UniformPolicy(out_concepts=n_concepts)
+
+       with intervention(
+           policies=policy,
+           strategies=strategy,
+           target_concepts=[0, 2],   # intervene on the 1st and 3rd concepts
+       ) as intervened_encoder:
+           concept_preds = intervened_encoder(x)
+           task_preds = model['predictor'](concepts=concept_preds)
+
+
+.. dropdown:: Functionals
+    :icon: zap
+
+    :mod:`torch_concepts.nn.functional` collects **stateless operations** used inside and
+    alongside PyC layers: interpretable read-outs (linear-equation and logic-rule evaluation),
+    differentiable selection, and post-hoc evaluation metrics such as concept completeness and the
+    Average Causal Effect.
+
+    .. code-block:: python
+
+       import torch
+       from torch_concepts.nn import functional as F
+
+       # Differentiable soft selection over an options axis
+       values = torch.randn(32, 5)
+       selected = F.soft_select(values, temperature=0.1, dim=1)
+
+       # Post-hoc evaluation: Average Causal Effect of a concept on a task
+       # (task predictions with the concept forced to 0 vs to 1)
+       ace = F.cace_score(y_pred_c0, y_pred_c1)
 
 
 Next Steps
