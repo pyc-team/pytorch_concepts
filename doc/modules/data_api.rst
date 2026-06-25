@@ -1,17 +1,42 @@
 Data
-========
+====
 
-Data APIs provide utilities for loading, preprocessing, and managing datasets.
+Datasets and Lightning data modules for concept-based learning. The docstrings of each class
+below document their parameters and behaviour.
 
-.. toctree::
-   :maxdepth: 1
+.. currentmodule:: torch_concepts.data
 
-   data.base
-   data.dataloaders
-   data.datasets
-   data.preprocessing
-   data.scalers
-   data.splitters
-   data.backbone
-   data.io
-   data.utils
+Datasets
+--------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ToyDataset
+   ToyDAGDataset
+   BnLearnDataset
+   CompletenessDataset
+   CelebADataset
+   PendulumDataset
+   MNISTArithmeticDataset
+   DSpritesRegressionDataset
+   AWA2Dataset
+   CUBDataset
+
+Data Modules
+------------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ToyDAGDataModule
+   BnLearnDataModule
+   CompletenessDataModule
+   CelebADataModule
+   PendulumDataModule
+   MNISTArithmeticDataModule
+   DSpritesRegressionDataModule
+   AWA2DataModule
+   CUBDataModule

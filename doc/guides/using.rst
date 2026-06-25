@@ -6,17 +6,9 @@
    :width: 20px
    :align: middle
 
-.. |hydra_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg
-   :width: 20px
-   :align: middle
-
 .. |pl_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg
     :width: 20px
     :align: middle
-
-.. |wandb_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/wandb.svg
-   :width: 20px
-   :align: middle
 
 .. |conceptarium_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg
    :width: 20px
@@ -26,116 +18,102 @@
 User Guide
 ==========
 
-Welcome to the |pyc_logo| PyC User Guide! This guide will help you get started with PyTorch Concepts and build interpretable deep learning models.
+Welcome to the |pyc_logo| PyC User Guide! This guide walks you through building
+interpretable and causally transparent deep learning models with PyTorch Concepts.
 
 
-Explore Based on Your Background
---------------------------------
+Three API Levels
+----------------
 
-|pyc_logo| PyC is designed to accommodate users with different backgrounds and expertise levels.
-Pick the best entry point based on your experience:
+|pyc_logo| PyC exposes **three API levels**. They share the same primitives but offer
+increasing amounts of abstraction, so you can pick the entry point that matches your
+background and how much control you want over the model.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 35 45
+
+   * - API level
+     - Best for
+     - What you work with
+   * - :doc:`Low-Level API <using_low_level>`
+     - Users comfortable with plain |pytorch_logo| PyTorch
+     - Composable interpretable layers (encoders, predictors) wired together by hand.
+   * - :doc:`Mid-Level API <using_mid_level>`
+     - Users who think in probabilistic and causal models
+     - Random variables, factors and inference engines that form a probabilistic graphical model.
+   * - :doc:`High-Level API <using_high_level>`
+     - Users who want state-of-the-art models out of the box
+     - Pre-built models trained in one line with |pl_logo| PyTorch Lightning.
+
+Choose your entry point based on your experience:
 
 .. grid:: 1 1 3 3
     :margin: 3 0 0 0
     :gutter: 2
     :padding: 0
 
-    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Pure torch user?
+    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Pure PyTorch user?
         :link: using_low_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Low-Level API to build models from basic interpretable layers.
+        Start from the **Low-Level API** to build models from basic interpretable layers.
 
-    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic modeling user?
-        :link: using_mid_level_proba
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic / causal modeling user?
+        :link: using_mid_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Mid-Level API to build custom probabilistic models.
+        Start from the **Mid-Level API** to build custom probabilistic and causal models.
 
-    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
-        :link: using_mid_level_causal
-        :link-type: doc
-        :shadow: lg
-        :class-card: sd-border-primary
-
-        Start from the Mid-Level API to build Structural Equation Models for causal inference.
-
-.. grid:: 1 1 2 2
-    :margin: 3 0 0 0
-    :gutter: 2
-    :padding: 0
-
-    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Just want to use state-of-the-art models out-of-the-box?
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Want models out-of-the-box?
         :link: using_high_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the High-Level API to use pre-defined models with one line of code.
+        Start from the **High-Level API** to use pre-defined models with one line of code.
 
-    .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` No experience with programming?
+.. grid:: 1
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  |conceptarium_logo| No experience with programming, or benchmarking at scale?
         :link: using_conceptarium
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Use |conceptarium_logo| Conceptarium, a no-code framework built on top of |pyc_logo| PyC for running large-scale experiments on concept-based models.
+        Use |conceptarium_logo| **Conceptarium**, a no-code framework built on top of
+        |pyc_logo| PyC for running large-scale experiments on concept-based models.
 
 
+How the levels relate
+---------------------
 
-Quick Start Example
--------------------
+The three levels are layered on top of each other:
 
-Here's a minimal example using the low-Level API:
+- The **High-Level API** builds its models out of **Mid-Level** probabilistic models.
+- The **Mid-Level API** parameterises its factors with **Low-Level** interpretable layers.
+- The **Low-Level API** is plain |pytorch_logo| PyTorch, so every layer composes with the
+  rest of the ecosystem.
 
-.. code-block:: python
+Because of this, you can mix and match: drop a low-level layer into a high-level model, or
+reuse a mid-level inference engine inside your own training loop.
 
-   import torch
-   import torch_concepts as pyc
 
-   # Create a concept bottleneck model
-   model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearLatentToConcept(
-           in_latent=64,
-           out_concepts=5
-       ),
-       'predictor': pyc.nn.LinearConceptToConcept(
-           in_concepts=5,
-           out_concepts=1
-       ),
-   })
-
-   # Forward pass
-   x = torch.randn(32, 64)
-   concepts = model['encoder'](latent=x)
-   predictions = model['predictor'](concepts=concepts)
-
-For complete examples with training, interventions, and evaluation, see the individual API guides above.
-
-Additional Resources
---------------------
-
-**Examples**
-    Check out `complete examples <https://github.com/pyc-team/pytorch_concepts/tree/master/examples>`_ for real-world use cases.
-
-Need Help?
-----------
-
-- **Issues**: `GitHub Issues <https://github.com/pyc-team/pytorch_concepts/issues>`_
-- **Discussions**: `GitHub Discussions <https://github.com/pyc-team/pytorch_concepts/discussions>`_
-- **Contributing**: :doc:`Contributor Guide </guides/contributing>`
-
+Each of the following pages opens with a diagram of the API level, explains its core
+building blocks, and shows how to use each of them.
 
 .. toctree::
    :maxdepth: 2
    :hidden:
 
    using_low_level
-   using_mid_level_proba
-   using_mid_level_causal
+   using_mid_level
    using_high_level
    using_conceptarium

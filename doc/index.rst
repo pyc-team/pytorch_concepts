@@ -73,7 +73,7 @@ Get Started
 
 
 Explore Based on Your Background
-^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 PyC is designed to accommodate users with different backgrounds and expertise levels.
 Pick the best entry point based on your experience:
@@ -91,34 +91,26 @@ Pick the best entry point based on your experience:
 
         Start from the Low-Level API to build models from basic interpretable layers.
 
-    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic modeling user?
-        :link: guides/using_mid_level_proba
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic / causal modeling user?
+        :link: guides/using_mid_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Mid-Level API to build custom probabilistic models.
+        Start from the Mid-Level API to build custom probabilistic and causal models.
 
-    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
-        :link: guides/using_mid_level_causal
-        :link-type: doc
-        :shadow: lg
-        :class-card: sd-border-primary
-
-        Start from the Mid-Level API to build Structural Equation Models for causal inference.
-
-.. grid:: 1 1 2 2
-    :margin: 3 0 0 0
-    :gutter: 2
-    :padding: 0
-
-    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Just want to use state-of-the-art models out-of-the-box?
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Want models out-of-the-box?
         :link: guides/using_high_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
         Start from the High-Level API to use pre-defined models with one line of code.
+
+.. grid:: 1
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
 
     .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` Benchmarking or no experience with programming?
         :link: guides/using_conceptarium
@@ -277,7 +269,7 @@ External Contributors
 
 
 Cite this library
-----------------
+-----------------
 
 If you found this library useful for your research article, blog post, or product, we would be grateful if you would cite it using the following bibtex entry:
 
