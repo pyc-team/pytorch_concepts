@@ -7,8 +7,8 @@
    :align: middle
 
 
-Mid-Level API
-=============
+Interpretable Probabilistic Models
+==================================
 
 The Mid-Level API lets you describe a model as a **probabilistic graphical model**: a set of
 random variables connected by factors, queried through an inference engine. It is the right

@@ -26,56 +26,51 @@ Three API Levels
 ----------------
 
 |pyc_logo| PyC exposes **three API levels**. They share the same primitives but offer
-increasing amounts of abstraction, so you can pick the entry point that matches your
-background and how much control you want over the model.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 35 45
-
-   * - API level
-     - Best for
-     - What you work with
-   * - :doc:`Low-Level API <using_low_level>`
-     - Users comfortable with plain |pytorch_logo| PyTorch
-     - Composable interpretable layers (encoders, predictors) wired together by hand.
-   * - :doc:`Mid-Level API <using_mid_level>`
-     - Users who think in probabilistic and causal models
-     - Random variables, factors and inference engines that form a probabilistic graphical model.
-   * - :doc:`High-Level API <using_high_level>`
-     - Users who want state-of-the-art models out of the box
-     - Pre-built models trained in one line with |pl_logo| PyTorch Lightning.
-
-Choose your entry point based on your experience:
+increasing amounts of abstraction, and they build on top of one another: the high level is
+assembled from mid-level probabilistic models, whose factors are in turn parameterised by
+low-level layers. Pick the entry point that matches your background.
 
 .. grid:: 1 1 3 3
     :margin: 3 0 0 0
     :gutter: 2
     :padding: 0
 
-    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Pure PyTorch user?
+    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Interpretable Layers and Interventions (Low)
         :link: using_low_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the **Low-Level API** to build models from basic interpretable layers.
+        Assemble interpretable architectures by hand from composable encoder and predictor
+        layers, and edit concept activations at inference time with interventions — all in
+        plain |pytorch_logo| PyTorch. These layers are the building blocks the higher levels
+        are made of.
 
-    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic / causal modeling user?
+        **Best for:** users comfortable with PyTorch who want full control over the architecture.
+
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Interpretable Probabilistic Models (Mid)
         :link: using_mid_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the **Mid-Level API** to build custom probabilistic and causal models.
+        Describe a model as a probabilistic graphical model — random variables, factors and
+        inference engines — and run probabilistic or causal queries over it. Each factor is
+        parameterised by the low-level layers.
 
-    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Want models out-of-the-box?
+        **Best for:** users who think in probabilistic and causal models.
+
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Out-of-the-box Models (High)
         :link: using_high_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the **High-Level API** to use pre-defined models with one line of code.
+        Use state-of-the-art concept-based models with one line of code. These models are
+        assembled from mid-level probabilistic models and train automatically with
+        |pl_logo| PyTorch Lightning.
+
+        **Best for:** users who just want a model that works out of the box.
 
 .. grid:: 1
     :margin: 3 0 0 0
@@ -90,20 +85,6 @@ Choose your entry point based on your experience:
 
         Use |conceptarium_logo| **Conceptarium**, a no-code framework built on top of
         |pyc_logo| PyC for running large-scale experiments on concept-based models.
-
-
-How the levels relate
----------------------
-
-The three levels are layered on top of each other:
-
-- The **High-Level API** builds its models out of **Mid-Level** probabilistic models.
-- The **Mid-Level API** parameterises its factors with **Low-Level** interpretable layers.
-- The **Low-Level API** is plain |pytorch_logo| PyTorch, so every layer composes with the
-  rest of the ecosystem.
-
-Because of this, you can mix and match: drop a low-level layer into a high-level model, or
-reuse a mid-level inference engine inside your own training loop.
 
 
 Each of the following pages opens with a diagram of the API level, explains its core

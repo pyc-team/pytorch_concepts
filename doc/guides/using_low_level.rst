@@ -7,8 +7,8 @@
    :align: middle
 
 
-Low-Level API
-=============
+Interpretable Layers and Interventions
+======================================
 
 The Low-Level API provides composable building blocks for concept-based neural networks,
 using a pure |pytorch_logo| PyTorch interface. It is the right entry point if you are

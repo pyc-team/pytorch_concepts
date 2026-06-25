@@ -7,8 +7,8 @@
     :align: middle
 
 
-High-Level API
-==============
+Out-of-the-box Models
+=====================
 
 The High-Level API gives you state-of-the-art concept-based models out of the box. You
 describe your concepts once, pick a model, and train it — manually or in one line with
