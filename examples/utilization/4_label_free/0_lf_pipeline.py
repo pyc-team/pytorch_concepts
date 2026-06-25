@@ -9,10 +9,11 @@ preprocessed split consumed by ``CUBDataset``. Its ``build()`` runs the pipeline
 """
 
 import argparse
-import importlib
+import hashlib
 import json
 import os
 import pickle
+import tarfile
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -25,6 +26,13 @@ from torch_concepts.data.annotators import CLIPAnnotator
 from torch_concepts.data.base import ConceptSupervisionPipeline
 from torch_concepts.data.concept_generators import LLMConceptGenerator
 from torch_concepts.data.datasets import CUBDataset
+
+
+CUB_URL = (
+    "https://data.caltech.edu/records/65de6-vp158/files/"
+    "CUB_200_2011.tgz?download=1"
+)
+CUB_MD5 = "97eceeb196236b17998738112f37df78"
 
 
 PROMPT = """
@@ -46,7 +54,9 @@ Rules:
 
 
 def gemini_llm(prompt: str, **kwargs) -> str:
-    """Send a prompt to Gemini using its REST API."""
+    """Send a prompt to Gemini using its REST API.
+    TODO: generalize this (look for libraries that support multiple LLMs)
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -115,12 +125,54 @@ def parse_args():
     return parser.parse_args()
 
 
+def prepare_cub(data_root):
+    """Download and extract the official CUB archive when needed."""
+    data_root = Path(data_root).expanduser()
+    cub_root = data_root / "CUB_200_2011"
+    if (cub_root / "images.txt").is_file():
+        return cub_root
+
+    archive_path = data_root / "CUB_200_2011.tgz"
+    data_root.mkdir(parents=True, exist_ok=True)
+    if not archive_path.is_file():
+        print(f"Downloading CUB-200-2011 to {archive_path}...")
+        urllib.request.urlretrieve(CUB_URL, archive_path)
+
+    check_md5(archive_path, CUB_MD5)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        safe_extract(archive, data_root)
+
+    if not (cub_root / "images.txt").is_file():
+        raise RuntimeError(
+            f"CUB extraction did not create the expected directory: {cub_root}"
+        )
+    return cub_root
+
+
+def check_md5(path, expected_md5):
+    digest = hashlib.md5()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_md5 = digest.hexdigest()
+    if actual_md5 != expected_md5:
+        raise RuntimeError(
+            f"MD5 mismatch for {path}: expected {expected_md5}, got {actual_md5}"
+        )
+
+
+def safe_extract(archive, destination):
+    destination = destination.resolve()
+    for member in archive.getmembers():
+        member_path = (destination / member.name).resolve()
+        if destination not in member_path.parents and member_path != destination:
+            raise RuntimeError(f"Refusing to extract unsafe path: {member.name}")
+    archive.extractall(destination)
+
+
 def prepare_cub_dataset(data_root, num_samples):
     """Download CUB and create the pickle consumed by CUBDataset."""
-    clip_example = importlib.import_module(
-        "examples.utilization.4_label_free.1_clip_concept_annotator"
-    )
-    cub_root = clip_example.prepare_cub(data_root)
+    cub_root = prepare_cub(data_root)
 
     images = _read_indexed_file(cub_root / "images.txt")
     labels = _read_indexed_file(
@@ -201,13 +253,27 @@ def save_annotation_preview(
         class_index = int(dataset.data[index]["class_label"])
         class_name = dataset.task_names[class_index].replace("_", " ")
         scores = values[index]
-        lines = []
-        for position in scores.argsort(descending=True).tolist():
-            decision = "yes" if scores[position] >= 0.5 else "no"
-            lines.append(
-                f"{concept_names[position]}: {scores[position]:.3f} "
-                f"({decision})"
-            )
+        positive = [
+            position
+            for position in scores.argsort(descending=True).tolist()
+            if scores[position] >= 0.5
+        ]
+        negative = [
+            position
+            for position in scores.argsort().tolist()
+            if scores[position] < 0.5
+        ]
+        lines = ["PRESENT:"]
+        lines.extend(
+            f"+ {concept_names[position]}: {scores[position]:.3f}"
+            for position in positive
+        )
+        lines.append("")
+        lines.append("ABSENT:")
+        lines.extend(
+            f"- {concept_names[position]}: {scores[position]:.3f}"
+            for position in negative
+        )
 
         image_axis.imshow(image)
         image_axis.set_title(class_name)
@@ -228,6 +294,14 @@ def save_annotation_preview(
     plt.close(figure)
 
 
+def clip_binary_prompt(concept_name):
+    """Turn a binary concept label into a natural CLIP image prompt."""
+    concept = concept_name.strip().rstrip(".")
+    if concept.lower().startswith("has "):
+        concept = concept[4:]
+    return f"a bird with {concept}"
+
+
 def main():
     args = parse_args()
     cub_root = prepare_cub_dataset(args.data_root, args.num_samples)
@@ -236,14 +310,19 @@ def main():
         llm=gemini_llm,
         prompt=PROMPT,
         llm_kwargs={
-            "temperature": 0.2,
+            "temperature": 0.5,
         },
     )
 
     annotator = CLIPAnnotator(
         model_name="ViT-B-32",
         pretrained="openai",
-        output="probability",
+        output="binary",
+        prompt_template=[
+            "a photo of {}",
+            "a close-up photo of {}",
+        ],
+        binary_prompt_formatter=clip_binary_prompt,
         input_transform=prepare_cub_image,
     )
 
@@ -257,30 +336,31 @@ def main():
         root=cub_root,
         split="train",
         concept_pipeline=pipeline,
-        use_as_gt=True,
+        use_as_gt=False,
         concept_pipeline_kwargs={"num_concepts": args.num_concepts},
     )
 
-    output_name = next(iter(dataset.generated_concepts))
-    generated_axis = dataset.generated_annotations[output_name]
+    annotator_name = next(iter(dataset.generated_concepts))
+    concept_vocabulary = dataset.generated_concepts[annotator_name]
     sample = dataset[0]
 
     print("Image shape:", tuple(sample["inputs"]["x"].shape))
     print("Native concepts shape:", tuple(sample["concepts"]["native"].shape))
     print(
-        "Generated concepts shape:",
-        tuple(sample["concepts"]["generated"][output_name].shape),
+        "Generated annotations shape:",
+        tuple(sample["concepts"]["generated"][annotator_name].shape),
     )
     print(
         "Ground-truth concepts shape:",
         tuple(sample["concepts"]["ground_truth"].shape),
     )
-    print("Generated concept names:", generated_axis.labels)
+    print("Number of generated concepts:", len(concept_vocabulary.labels))
+    print("Generated concept names:", concept_vocabulary.labels)
 
     save_annotation_preview(
         dataset=dataset,
-        values=dataset.generated_concepts[output_name],
-        concept_names=generated_axis.labels,
+        values=dataset.generated_annotations[annotator_name],
+        concept_names=concept_vocabulary.labels,
         output_path=args.preview_output,
         num_preview=args.num_preview,
     )
