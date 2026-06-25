@@ -15,7 +15,7 @@ from torch_concepts import seed_everything, ConceptVariable
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
     ParametricCPD, BayesianNetwork, LearnablePrior,
-    AncestralInference, ImportanceSampling, MutilatedNetworkProposal,
+    AncestralSamplingInference, ImportanceSampling, MutilatedNetworkProposal,
     PyroImportanceSampling,
 )
 
@@ -56,7 +56,7 @@ def main():
 
     # ---- Training: forward with ancestral sampling (teacher-forced) ----------
     # Parameters are logits, so the loss operates on logits directly.
-    engine    = AncestralInference(model, p_int=1.0)
+    engine    = AncestralSamplingInference(model, p_int=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.05)
     bce       = nn.BCEWithLogitsLoss()
 

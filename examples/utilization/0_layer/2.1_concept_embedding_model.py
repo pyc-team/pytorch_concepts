@@ -35,7 +35,7 @@ def main():
     n_features = x_train.shape[1]
     n_concepts = c_train.shape[1]
     n_tasks = y_train.shape[1]
-    concept_annotations = pyc.AxisAnnotation.empty(n_concepts, types=['discrete', 'continuous'])
+    concept_annotations = pyc.Annotations.empty(n_concepts, types=['binary', 'continuous'])
 
     # Build model using low-level layers
     latent_encoder = torch.nn.Sequential(
@@ -84,7 +84,7 @@ def main():
 
         # Compute loss
         c_pred_dict = c_encoder.annotate(c_pred, concept_annotations).split_by_type()
-        concept_loss = (loss_fn_discrete(c_pred_dict['discrete'], c_train_dict['discrete']) +
+        concept_loss = (loss_fn_discrete(c_pred_dict['binary'], c_train_dict['binary']) +
                         loss_fn_continuous(c_pred_dict['continuous'], c_train_dict['continuous']))
         task_loss = loss_fn_discrete(y_pred, y_train)
         loss = concept_loss + concept_reg * task_loss
@@ -94,7 +94,7 @@ def main():
 
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
-            concept_accuracy = accuracy_score(c_train_dict['discrete'], c_pred_dict['discrete'].detach() > 0.)
+            concept_accuracy = accuracy_score(c_train_dict['binary'], c_pred_dict['binary'].detach() > 0.)
             concept_mse = mean_squared_error(c_train_dict['continuous'], c_pred_dict['continuous'].detach())
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | "
                   f"Concept Acc: {concept_accuracy:.2f} | Concept MSE: {concept_mse:.2f}")

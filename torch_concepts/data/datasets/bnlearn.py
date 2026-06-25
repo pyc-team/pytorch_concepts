@@ -6,7 +6,7 @@ import torch
 import logging
 from typing import List, Optional
 
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -132,22 +132,15 @@ class BnLearnDataset(ConceptDataset):
 
         # get concept annotations
         concept_names = list(self.bn_model.nodes())
-        # get concept metadata, store as many objects as you need.
-        # at least store the variable 'type'! ('discrete' or 'continuous')
-        concept_metadata = {
-            node: {'type': 'discrete'} for node in concept_names
-        }
-        
         cardinalities = [int(self.bn_model.get_cardinality()[node]) for node in concept_names]
         # categorical concepts with card=2 will be treated as Bernoulli (card=1)
         cardinalities = [1 if card == 2 else card for card in cardinalities]
+        # all bnlearn nodes are discrete: card==1 -> binary, card>1 -> categorical
+        types = ['binary' if card == 1 else 'categorical' for card in cardinalities]
 
-        annotations = Annotations({
-            # 0: batch axis, do not need to annotate
-            # 1: concepts axis, always annotate
-            1: AxisAnnotation(labels=concept_names,
-                              cardinalities=cardinalities,
-                              metadata=concept_metadata)})
+        annotations = Annotations(labels=concept_names,
+                          cardinalities=cardinalities,
+                          types=types)
         
         # get the graph for the endogenous concepts
         graph = self.bn_model_dict['adjmat']

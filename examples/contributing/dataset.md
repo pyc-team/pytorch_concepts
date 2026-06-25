@@ -29,7 +29,7 @@ import os
 import torch
 import pandas as pd
 from typing import List, Mapping, Optional
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 
@@ -147,10 +147,10 @@ def build(self):
     # Step 5: Create concept annotations
     concept_names = list(concept_columns)
     
-    # Define metadata for each concept (REQUIRED: must include 'type')
-    # type can be 'discrete' or 'continuous' ('continuous' is not yet supported)
+    #Define each concept type. Each can be 'binary' / 'categorical' or 'continuous'
+    types = ['categorical', 'categorical', 'binary', 'binary'] # Example: 2 categorical and 2 binary concepts
     concept_metadata = {
-        name: {'type': 'discrete'} for name in concept_names
+        name: {'metadata key': ...} for name in concept_names
     }
     
     # Define cardinalities (number of possible values)
@@ -167,15 +167,12 @@ def build(self):
               [label_1, label_2]] # state labels for concept 4
 
     # Create annotations object
-    annotations = Annotations({
-        # Axis 0 is batch (usually not annotated)
-        # Axis 1 is concepts (MUST be annotated)
-        1: AxisAnnotation(
-            labels=concept_names,
-            cardinalities=cardinalities,
-            metadata=concept_metadata
-        )
-    })
+    annotations = Annotations(
+        labels=concept_names,
+        cardinalities=cardinalities,
+        types=types,
+        metadata=concept_metadata
+    )
     
     # Step 6 (optional): If the dataset has a causal graph structure, create it here
     # skip this step if no graph is available, graph defaults is `None`

@@ -1,20 +1,15 @@
 """
-AxisAnnotation Utilities - Efficient cached index lookups for concept tensors.
+Annotations Utilities - Efficient cached index lookups for concept tensors.
 """
 
 import torch
-from torch_concepts.annotations import AxisAnnotation
+from torch_concepts.annotations import Annotations
 
 # Mixed concept types: binary, categorical (3-class, 2-class), continuous
-axis = AxisAnnotation(
+axis = Annotations(
     labels=['is_big', 'color', 'shape', 'temperature'],
     cardinalities=[1, 3, 2, 1],
-    metadata={
-        'is_big': {'type': 'discrete'},
-        'color': {'type': 'discrete'},
-        'shape': {'type': 'discrete'},
-        'temperature': {'type': 'continuous'}
-    }
+    types=['binary', 'categorical', 'categorical', 'continuous'],
 )
 
 tensor = torch.arange(7).unsqueeze(0).float().expand(4, -1)  # Shape: [4, 7]

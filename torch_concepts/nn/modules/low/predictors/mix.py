@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
 from typing import List, Union
@@ -34,34 +34,24 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     Example:
         >>> import torch
         >>> from torch_concepts.nn import MixConceptEmbeddingToConcept
+        >>> from torch_concepts import Annotations
         >>>
-        >>> # Create predictor with 10 concepts, 20 embedding dims, 3 output concepts
+        >>> # Create predictor: 3 concepts (cardinalities 3, 4, 3), 10 embedding dims, 2 outputs
+        >>> in_ann = Annotations(labels=['color', 'shape', 'size'], cardinalities=[3, 4, 3])
         >>> predictor = MixConceptEmbeddingToConcept(
-        ...     in_concepts=10,
+        ...     in_concepts=in_ann,
         ...     in_embeddings=10,
-        ...     out_concepts=3,
-        ...     cardinalities=[2, 4, 4],  # 3 groups summing to 10
+        ...     out_concepts=2,
         ... )
         >>>
         >>> # Generate random inputs
-        >>> concepts = torch.randn(4, 10)  # batch_size=4, n_concepts=10
-        >>> embeddings = torch.randn(4, 10, 20)  # (batch, n_concepts, emb_size)
+        >>> concepts = torch.randn(4, 10)  # batch_size=4, total logits (3+4+3=10)
+        >>> embeddings = torch.randn(4, 10, 10)  # (batch, total_cardinality, emb_size)
         >>>
         >>> # Forward pass
         >>> output = predictor(concepts=concepts, embeddings=embeddings)
-        >>> print(output.shape)  # torch.Size([4, 3])
-        >>>
-        >>> # With concept groups (e.g., color has 3 values, shape has 4, etc.)
-        >>> predictor_grouped = MixConceptEmbeddingToConcept(
-        ...     in_concepts=10,
-        ...     in_embeddings=20, # Must be equal to embedding size when cardinalities are provided
-        ...     out_concepts=3,
-        ...     cardinalities=[3, 4, 3]  # 3 groups summing to 10
-        ... )
-        >>>
-        >>> # Forward pass with grouped concepts
-        >>> output = predictor_grouped(concepts=concepts, embeddings=embeddings)
-        >>> print(output.shape)  # torch.Size([4, 3])
+        >>> print(output.shape)
+        torch.Size([4, 2])
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -70,9 +60,9 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     """
     def __init__(
         self,
-        in_concepts: AxisAnnotation,
-        in_embeddings: Union[int, AxisAnnotation],
-        out_concepts: Union[int, AxisAnnotation],
+        in_concepts: Annotations,
+        in_embeddings: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
         **kwargs,
     ):
         super().__init__(
@@ -82,7 +72,7 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
         )
         # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
         self.cardinalities_expanded = torch.tensor(in_concepts.cardinalities)
-        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) == 'discrete')
+        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) != 'continuous')
         cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
         start_positions = cumsum - self.cardinalities_expanded
         bernoulli_mask = self.cardinalities_expanded == 1 & self.binary_mask
@@ -164,13 +154,21 @@ class MixSumConceptEmbeddingToConcept(MixConceptEmbeddingToConcept):
         bias: bool = True,
         **kwargs
     ):
+        # FIXME: update to use Annotations for in_concepts and out_concepts, 
+        # and remove cardinalities
         if cardinalities is None:
             cardinalities = [1] * in_concepts
+        n_groups = len(cardinalities)
+        types = ['binary' if c == 1 else 'categorical' for c in cardinalities]
+        annotation = Annotations(
+            labels=[f"c{i}" for i in range(n_groups)],
+            cardinalities=cardinalities,
+            types=types,
+        )
         super().__init__(
-            in_concepts=in_concepts,
+            in_concepts=annotation,
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
-            cardinalities=cardinalities,
             **kwargs,
         )
         self.predictor = torch.nn.Linear(in_embeddings, out_concepts, bias=bias)

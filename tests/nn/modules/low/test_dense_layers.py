@@ -368,3 +368,64 @@ class TestLayerComparison(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
+
+
+# ===========================================================================
+# Sequential extra tests
+# ===========================================================================
+import sys
+sys.path.insert(0, '/Users/gdefelice/Project_local/PyC/forks/pytorch_concepts')
+import torch
+import torch.nn as nn
+from torch_concepts.nn.modules.low.sequential import Sequential
+from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
+
+
+class TestSequential:
+    def test_single_input_passes_through_chain(self):
+        seq = Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 3))
+        x = torch.randn(2, 4)
+        out = seq(x)
+        assert out.shape == (2, 3)
+
+    def test_empty_container_returns_input(self):
+        seq = Sequential()
+        x = torch.randn(2, 4)
+        out = seq(x)
+        assert out is x
+
+    def test_empty_container_multi_input_returns_none(self):
+        seq = Sequential()
+        out = seq(torch.randn(2, 4), torch.randn(2, 3))
+        assert out is None
+
+    def test_multi_input_first_layer(self):
+        class CatLayer(nn.Module):
+            def forward(self, a, b):
+                return torch.cat([a, b], dim=1)
+        seq = Sequential(CatLayer(), nn.Linear(7, 3))
+        a, b = torch.randn(2, 4), torch.randn(2, 3)
+        out = seq(a, b)
+        assert out.shape == (2, 3)
+
+    def test_annotate_with_stored_annotation(self):
+        ann = Annotations(labels=['a', 'b', 'c'])
+        seq = Sequential(nn.Linear(4, 3), out_concepts=ann)
+        x = torch.randn(2, 3)
+        result = seq.annotate(x)
+        assert isinstance(result, AnnotatedTensor)
+
+    def test_annotate_with_explicit_annotation(self):
+        seq = Sequential(nn.Linear(4, 3))
+        ann = Annotations(labels=['x', 'y', 'z'])
+        x = torch.randn(2, 3)
+        result = seq.annotate(x, out_concepts=ann)
+        assert isinstance(result, AnnotatedTensor)
+
+    def test_annotate_without_annotation_returns_tensor(self):
+        seq = Sequential(nn.Linear(4, 3))
+        x = torch.randn(2, 3)
+        result = seq.annotate(x)
+        assert isinstance(result, torch.Tensor)
+        assert not isinstance(result, AnnotatedTensor)

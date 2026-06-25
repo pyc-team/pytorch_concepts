@@ -442,3 +442,158 @@ class TestCPDIntegration:
         params = cpd.root_params(batch_size=4)
         a_params = cpd.select(params, "a")
         assert torch.allclose(a_params["probs"], torch.full((4, 1), 0.3))
+
+
+# ===========================================================================
+# 10. ParametricCPD.__new__ edge cases (factor.py + cpd.py missing lines)
+# ===========================================================================
+
+class TestParametricCPDNewEdgeCases:
+    """Cover __new__ paths not yet exercised."""
+
+    def test_non_variable_non_list_raises(self):
+        # cpd.py line 112: variable is not a Variable and not a list
+        with pytest.raises(TypeError, match="must be a Variable or a list"):
+            ParametricCPD(variable="not_a_variable", parametrization=nn.Linear(4, 1))
+
+    def test_list_with_dict_parametrization_deep_copies(self):
+        # cpd.py line 131: list path with dict parametrization
+        vs = ConceptVariable(["c1", "c2"], distribution=dist.Bernoulli, size=1)
+        param_dict = {"probs": nn.Linear(4, 1)}
+        result = ParametricCPD(variable=vs, parametrization=param_dict)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        # Modules should be deep-copied (distinct objects)
+        mod0 = list(result[0].parametrization.values())[0]
+        mod1 = list(result[1].parametrization.values())[0]
+        assert id(mod0) != id(mod1)
+
+    def test_list_with_invalid_parametrization_type_raises(self):
+        # cpd.py line 135: list path with parametrization that is not Module/dict/list
+        vs = ConceptVariable(["c1", "c2"], distribution=dist.Bernoulli, size=1)
+        with pytest.raises(TypeError, match="must be an nn.Module"):
+            ParametricCPD(variable=vs, parametrization="invalid")
+
+    def test_single_variable_with_invalid_parametrization_type_raises(self):
+        # cpd.py line 192: single Variable path with non-None/non-Module/non-dict
+        v = _bernoulli_var()
+        with pytest.raises(TypeError, match="must be None, an nn.Module"):
+            ParametricCPD(variable=v, parametrization=42)
+
+
+# ===========================================================================
+# 11. ParametricFactor aggregate dict and edge cases (factor.py missing lines)
+# ===========================================================================
+
+class TestParametricFactorAggregate:
+    """Cover aggregate=dict and error paths in ParametricFactor.__init__."""
+
+    def test_aggregate_dict_valid(self):
+        # factor.py lines 125-132: aggregate as a valid dict mapping param -> callable
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+        custom_agg = lambda inputs: torch.cat(list(inputs.values()), dim=-1)
+        cpd = ParametricCPD(
+            variable=c,
+            parametrization={"probs": nn.Sequential(nn.Linear(4, 1), nn.Sigmoid())},
+            parents=[x],
+            aggregate={"probs": custom_agg},
+        )
+        B = 3
+        out = cpd(parent_values={"x": torch.randn(B, 4)})
+        assert "probs" in out
+        assert out["probs"].shape == (B, 1)
+
+    def test_aggregate_dict_non_callable_raises(self):
+        # factor.py line 126-131: aggregate dict contains non-callable value
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+        with pytest.raises(TypeError, match="non-callable"):
+            ParametricCPD(
+                variable=c,
+                parametrization={"probs": nn.Linear(4, 1)},
+                parents=[x],
+                aggregate={"probs": "not_callable"},
+            )
+
+    def test_aggregate_invalid_type_raises(self):
+        # factor.py lines 133-137: aggregate is not None/callable/dict
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+        with pytest.raises(TypeError, match="must be None, a callable, or a dict"):
+            ParametricCPD(
+                variable=c,
+                parametrization={"probs": nn.Linear(4, 1)},
+                parents=[x],
+                aggregate=42,
+            )
+
+    def test_aggregate_callable_for_standard_module(self):
+        # factor.py line 199: _resolve_aggregator returns user_aggregate for standard module
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+        # A standard (non-pyc) module with a callable aggregate
+        custom_agg = lambda inputs: torch.cat(list(inputs.values()), dim=-1)
+        cpd = ParametricCPD(
+            variable=c,
+            parametrization={"probs": nn.Sequential(nn.Linear(4, 1), nn.Sigmoid())},
+            parents=[x],
+            aggregate=custom_agg,
+        )
+        B = 2
+        out = cpd(parent_values={"x": torch.randn(B, 4)})
+        assert "probs" in out
+
+    def test_split_by_type_invalid_variable_type_raises(self):
+        # factor.py lines 222-228: _split_by_type raises for invalid variable_type
+        import torch.distributions as dist
+        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+
+        # Create a CPD with a parent, then monkey-patch parent's variable_type
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+
+        # Need a pyc-style module to trigger _pyc_aggregate -> _split_by_type.
+        # We'll use an EmbeddingVariable with a modified variable_type.
+        from torch_concepts.nn.modules.mid.models.variable import EmbeddingVariable
+        e = EmbeddingVariable("e", distribution=dist.Normal, size=4)
+        # Monkey-patch to an invalid type so _split_by_type raises
+        e.__class__ = type("BrokenVar", (EmbeddingVariable,), {"variable_type": property(lambda self: "invalid")})
+
+        # Build CPD with embedding parent to get pyc-style aggregation
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+        from torch_concepts.nn.modules.low.lazy import LazyConstructor
+        cpd = ParametricCPD(
+            variable=c,
+            parametrization={"probs": nn.Sequential(nn.Linear(4, 1), nn.Sigmoid())},
+            parents=[x],
+        )
+        # Directly call _split_by_type with the patched parent
+        cpd.parents = [e]
+        with pytest.raises(ValueError, match="invalid type"):
+            cpd._split_by_type({e: torch.randn(2, 4)})
+
+
+# ===========================================================================
+# 12. LazyConstructor already-built path (factor.py line 162)
+# ===========================================================================
+
+class TestLazyConstructorAlreadyBuilt:
+    def test_already_built_lazy_is_unwrapped(self):
+        # factor.py line 162: LazyConstructor with module already set is unwrapped
+        from torch_concepts.nn.modules.low.lazy import LazyConstructor
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+
+        x = _delta_var(size=4)
+        c = _bernoulli_var(size=1)
+
+        lazy = LazyConstructor(LinearConceptToConcept)
+        # Pre-build the lazy constructor so module is not None
+        lazy.build(out_concepts=1, in_concepts=4)
+        assert lazy.module is not None  # pre-condition
+
+        # Now pass the already-built lazy to CPD — it should unwrap to the inner module
+        cpd = ParametricCPD(variable=c, parametrization={"probs": lazy}, parents=[x])
+        # The parametrization should contain the concrete module, not the LazyConstructor
+        mod = cpd.parametrization["probs"]
+        assert not isinstance(mod, LazyConstructor)

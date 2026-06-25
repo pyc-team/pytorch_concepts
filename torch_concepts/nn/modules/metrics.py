@@ -27,7 +27,7 @@ class ConceptMetrics(nn.Module):
 
     Args:
         annotations (Annotations): Concept annotations (axis 1) with labels,
-            cardinalities, and metadata specifying ``'discrete'`` types.
+            cardinalities, and types (``'binary'``, ``'categorical'``, or ``'continuous'``).
         binary: Metric specs for binary concepts (cardinality 1).
         categorical: Metric specs for categorical concepts (cardinality > 1).
         continuous: Metric specs for continuous concepts (not yet supported).
@@ -72,15 +72,14 @@ class ConceptMetrics(nn.Module):
         self.per_concept = per_concept
         
         # Extract and validate annotations
-        annotations = annotations.get_axis_annotation(axis=1)
         self.concept_annotations = annotations
         self.concept_names = annotations.labels
         self.n_concepts = len(self.concept_names)
         self.cardinalities = annotations.cardinalities
         self.metadata = annotations.metadata
-        self.types = [self.metadata[name]['type'] for name in self.concept_names]
-        
-        # Use cached type_groups from AxisAnnotation
+        self.types = list(annotations.types)
+
+        # Use cached type_groups from Annotations
         self.groups = annotations.type_groups
         
         # Validate that continuous concepts are not used
@@ -260,10 +259,10 @@ class ConceptMetrics(nn.Module):
             card = self.cardinalities[c_idx]
             
             concept_metrics = {}
-            if c_type == 'discrete' and card == 1:
+            if c_type == 'binary':
                 for name, spec in self.fn_collection.get('binary', {}).items():
                     concept_metrics[name] = self._instantiate_metric(spec)
-            elif c_type == 'discrete' and card > 1:
+            elif c_type == 'categorical':
                 for name, spec in self.fn_collection.get('categorical', {}).items():
                     concept_metrics[name] = self._instantiate_metric(
                         spec, concept_specific_kwargs={'num_classes': card}
@@ -335,11 +334,10 @@ class ConceptMetrics(nn.Module):
             logits_slice = self.concept_annotations.get_slice(concept_name)
             c_idx = self.concept_annotations.get_index(concept_name)
             c_type = self.types[c_idx]
-            card = self.cardinalities[c_idx]
-            
-            if c_type == 'discrete' and card == 1:
+
+            if c_type == 'binary':
                 collection.update(preds[:, logits_slice], target[:, c_idx:c_idx+1].float())
-            elif c_type == 'discrete' and card > 1:
+            elif c_type == 'categorical':
                 collection.update(preds[:, logits_slice], target[:, c_idx].long())
             elif c_type == 'continuous':
                 collection.update(preds[:, logits_slice], target[:, c_idx:c_idx+1])
@@ -402,7 +400,7 @@ def compute_cace(
 
     Example::
 
-        >>> cace = compute_cace(
+        >>> cace = compute_cace(  # doctest: +SKIP
         ...     model=cbm,
         ...     dataloader=test_loader,
         ...     source_concept="c1",

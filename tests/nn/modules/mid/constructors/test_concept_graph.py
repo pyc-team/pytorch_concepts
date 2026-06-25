@@ -251,3 +251,183 @@ class TestConceptGraphCacheInvalidation(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestConceptGraphModuleFunctions(unittest.TestCase):
+    """Test module-level functions in concept_graph.py."""
+
+    def setUp(self):
+        self.adj = torch.tensor([[0., 1., 1.], [0., 0., 1.], [0., 0., 0.]])
+        self.names = ['A', 'B', 'C']
+        self.graph = ConceptGraph(self.adj, node_names=self.names)
+
+    def test_dense_to_sparse_empty_graph(self):
+        """Empty graph returns empty tensors."""
+        from torch_concepts.concept_graph import dense_to_sparse
+        zero = torch.zeros(3, 3)
+        g = ConceptGraph(zero, node_names=['X', 'Y', 'Z'])
+        ei, ew = dense_to_sparse(g)
+        self.assertEqual(ei.shape[1], 0)
+        self.assertEqual(ew.shape[0], 0)
+
+    def test_dense_to_sparse_tensor_input(self):
+        from torch_concepts.concept_graph import dense_to_sparse
+        ei, ew = dense_to_sparse(self.adj)
+        self.assertEqual(ei.shape[0], 2)
+        self.assertEqual(ew.shape[0], 3)
+
+    def test_to_networkx_graph_function(self):
+        from torch_concepts.concept_graph import to_networkx_graph
+        G = to_networkx_graph(self.graph)
+        self.assertTrue(G.has_edge('A', 'B'))
+
+    def test_to_networkx_graph_with_threshold(self):
+        from torch_concepts.concept_graph import to_networkx_graph
+        adj = torch.tensor([[0., 0.1, 1.], [0., 0., 1.], [0., 0., 0.]])
+        G = to_networkx_graph(adj, node_names=self.names, threshold=0.5)
+        self.assertFalse(G.has_edge('A', 'B'))  # 0.1 <= 0.5 threshold
+        self.assertTrue(G.has_edge('A', 'C'))   # 1.0 > 0.5
+
+    def test_to_networkx_graph_tensor_default_names(self):
+        from torch_concepts.concept_graph import to_networkx_graph
+        adj = torch.tensor([[0., 1.], [0., 0.]])
+        G = to_networkx_graph(adj)  # no names → integer indices
+        self.assertIn(0, G.nodes())
+        self.assertIn(1, G.nodes())
+
+    def test_get_root_nodes_function(self):
+        from torch_concepts.concept_graph import get_root_nodes
+        roots = get_root_nodes(self.graph)
+        self.assertEqual(roots, ['A'])
+
+    def test_get_root_nodes_from_tensor(self):
+        from torch_concepts.concept_graph import get_root_nodes
+        roots = get_root_nodes(self.adj, node_names=self.names)
+        self.assertIn('A', roots)
+
+    def test_get_root_nodes_from_networkx(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_root_nodes
+        G = nx.DiGraph()
+        G.add_edges_from([('X', 'Y'), ('X', 'Z')])
+        roots = get_root_nodes(G)
+        self.assertEqual(roots, ['X'])
+
+    def test_get_leaf_nodes_function(self):
+        from torch_concepts.concept_graph import get_leaf_nodes
+        leaves = get_leaf_nodes(self.graph)
+        self.assertEqual(leaves, ['C'])
+
+    def test_get_leaf_nodes_from_tensor(self):
+        from torch_concepts.concept_graph import get_leaf_nodes
+        leaves = get_leaf_nodes(self.adj, node_names=self.names)
+        self.assertIn('C', leaves)
+
+    def test_get_leaf_nodes_from_networkx(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_leaf_nodes
+        G = nx.DiGraph()
+        G.add_edges_from([('X', 'Y'), ('X', 'Z')])
+        leaves = get_leaf_nodes(G)
+        self.assertIn('Y', leaves)
+
+    def test_topological_sort_function(self):
+        from torch_concepts.concept_graph import topological_sort
+        order = topological_sort(self.graph)
+        self.assertLess(order.index('A'), order.index('B'))
+
+    def test_topological_sort_from_tensor(self):
+        from torch_concepts.concept_graph import topological_sort
+        order = topological_sort(self.adj, node_names=self.names)
+        self.assertLess(order.index('A'), order.index('C'))
+
+    def test_topological_sort_from_networkx(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import topological_sort
+        G = nx.DiGraph()
+        G.add_edges_from([('X', 'Y')])
+        order = topological_sort(G)
+        self.assertLess(order.index('X'), order.index('Y'))
+
+    def test_get_predecessors_function_from_networkx(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_predecessors
+        G = nx.DiGraph()
+        G.add_edges_from([('A', 'C'), ('B', 'C')])
+        preds = set(get_predecessors(G, 'C'))
+        self.assertEqual(preds, {'A', 'B'})
+
+    def test_get_predecessors_from_tensor(self):
+        from torch_concepts.concept_graph import get_predecessors
+        preds = set(get_predecessors(self.adj, 'C', node_names=self.names))
+        self.assertIn('A', preds)
+
+    def test_get_successors_function_from_networkx(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_successors
+        G = nx.DiGraph()
+        G.add_edges_from([('A', 'B'), ('A', 'C')])
+        succs = set(get_successors(G, 'A'))
+        self.assertEqual(succs, {'B', 'C'})
+
+    def test_get_successors_from_tensor(self):
+        from torch_concepts.concept_graph import get_successors
+        succs = set(get_successors(self.adj, 'A', node_names=self.names))
+        self.assertIn('B', succs)
+
+    def test_get_predecessors_int_node_with_names(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_predecessors
+        G = nx.DiGraph()
+        G.add_edges_from([('A', 'B')])
+        # int node with node_names provided
+        preds = get_predecessors(G, 1, node_names=['A', 'B'])
+        self.assertEqual(preds, ['A'])
+
+    def test_get_successors_int_node_with_names(self):
+        import networkx as nx
+        from torch_concepts.concept_graph import get_successors
+        G = nx.DiGraph()
+        G.add_edges_from([('A', 'B')])
+        succs = get_successors(G, 0, node_names=['A', 'B'])
+        self.assertEqual(succs, ['B'])
+
+    def test_get_levels_function(self):
+        levels = self.graph.get_levels()
+        # A is at level 0 (root), B and C after
+        self.assertIn('A', levels[0])
+
+    def test_from_sparse_node_name_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            ConceptGraph.from_sparse(
+                torch.tensor([[0], [1]]),
+                torch.tensor([1.0]),
+                n_nodes=3,
+                node_names=['X', 'Y'],  # only 2 names for 3 nodes
+            )
+
+    def test_node_to_index_invalid_type_raises(self):
+        with self.assertRaises(TypeError):
+            self.graph._node_to_index(3.14)
+
+    def test_node_to_index_out_of_range_raises(self):
+        with self.assertRaises(IndexError):
+            self.graph._node_to_index(99)
+
+    def test_node_to_index_unknown_string_raises(self):
+        with self.assertRaises(ValueError):
+            self.graph._node_to_index('ZZ')
+
+    def test_getitem_dense_fallback(self):
+        # row-wise index returns the full row from dense matrix
+        row = self.graph[0]
+        self.assertEqual(row.shape[0], 3)
+
+    def test_get_levels_isolated_nodes(self):
+        """Isolated (no-edge) node defaults to depth 0."""
+        adj = torch.zeros(2, 2)
+        g = ConceptGraph(adj, node_names=['X', 'Y'])
+        levels = g.get_levels()
+        all_nodes = [n for level in levels for n in level]
+        self.assertIn('X', all_nodes)
+        self.assertIn('Y', all_nodes)

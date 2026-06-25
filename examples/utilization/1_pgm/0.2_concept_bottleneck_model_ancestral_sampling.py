@@ -8,7 +8,7 @@ from torch_concepts.distributions import Delta
 from torch.distributions import RelaxedBernoulli
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept, \
-    ParametricCPD, BayesianNetwork, AncestralInference, LearnablePrior, Sequential
+    ParametricCPD, BayesianNetwork, AncestralSamplingInference, LearnablePrior, Sequential
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
     )
 
     # Inference Initialization
-    inference_engine = AncestralInference(concept_model)
+    inference_engine = AncestralSamplingInference(concept_model)
     evidence = {'input': x_train}
     query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
 
