@@ -921,7 +921,7 @@ class CUBDataset(ConceptDataset):
                 'native': self.concepts[idx],
                 'generated': {
                     name: values[idx]
-                    for name, values in self.generated_concepts.items()
+                    for name, values in self.generated_annotations.items()
                 },
             },
         }

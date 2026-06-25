@@ -39,10 +39,10 @@ class ConceptDataset(Dataset):
         input_data (Tensor): Input features/images.
         concepts (Tensor, optional): Native concept annotations originally
             provided by the dataset.
-        generated_concepts (dict[str, Tensor]): Generated concept supervision
-            keyed by pipeline output name.
-        generated_annotations (dict[str, AxisAnnotation]): Axis annotations for
-            generated concept tensors.
+        generated_concepts (dict[str, AxisAnnotation]): Generated concept
+            vocabularies keyed by pipeline output name.
+        generated_annotations (dict[str, Tensor]): Sample-level annotations
+            binding dataset samples to generated concept values.
         ground_truth (Tensor, optional): Concept supervision selected for model
             training.
 
@@ -97,8 +97,8 @@ class ConceptDataset(Dataset):
         self.concept_pipeline = concept_pipeline
         self.use_as_gt = use_as_gt
         self.concepts: Optional[Tensor] = None
-        self.generated_concepts: Dict[str, Tensor] = {}
-        self.generated_annotations: Dict[str, AxisAnnotation] = {}
+        self.generated_concepts: Dict[str, AxisAnnotation] = {}
+        self.generated_annotations: Dict[str, Tensor] = {}
         self.ground_truth: Optional[Tensor] = None
         self._ground_truth_annotation: Optional[AxisAnnotation] = None
 
@@ -218,7 +218,7 @@ class ConceptDataset(Dataset):
                 ),
                 'generated': {
                     name: values[item]
-                    for name, values in self.generated_concepts.items()
+                    for name, values in self.generated_annotations.items()
                 },
             },
             # TODO: add scalers when these are set
@@ -318,7 +318,7 @@ class ConceptDataset(Dataset):
 
     @property
     def has_generated_concepts(self) -> bool:
-        """Whether generated concept tensors have been attached."""
+        """Whether generated concept vocabularies are available."""
         return bool(self.generated_concepts)
 
     @property
@@ -403,30 +403,30 @@ class ConceptDataset(Dataset):
         """
         if self.concept_pipeline is None:
             raise RuntimeError("No concept_pipeline configured.")
-        values, annotations = self.concept_pipeline(
+        annotation_values, concepts = self.concept_pipeline(
             self,
             class_names=class_names,
             **kwargs,
         )
-        self.set_generated_concepts(values, annotations)
-        return values, annotations
+        self.set_generated_concepts(concepts, annotation_values)
+        return annotation_values, concepts
 
     def set_generated_concepts(
         self,
-        values: Dict[str, Tensor],
-        annotations: Dict[str, AxisAnnotation],
+        concepts: Dict[str, AxisAnnotation],
+        annotations: Dict[str, Tensor],
     ) -> None:
-        """Attach generated concept tensors and update training supervision.
+        """Store generated vocabularies and their sample annotations.
 
         Args:
-            values: Generated concept tensors keyed by pipeline output name.
-            annotations: Axis annotations keyed like ``values``.
+            concepts: Generated concept vocabularies keyed by pipeline output.
+            annotations: Sample-level concept values keyed like ``concepts``.
         """
-        self.generated_concepts = dict(values)
+        self.generated_concepts = dict(concepts)
         self.generated_annotations = dict(annotations)
         if set(self.generated_concepts) != set(self.generated_annotations):
             raise ValueError(
-                "Generated concept values and annotations must use the same keys."
+                "Generated concepts and annotations must use the same keys."
             )
         self._resolve_ground_truth()
 
@@ -434,15 +434,15 @@ class ConceptDataset(Dataset):
         """Resolve the tensor and annotation used as training supervision."""
         if self.use_as_gt and self.generated_concepts:
             name = next(iter(self.generated_concepts))
-            self.ground_truth = self.generated_concepts[name]
-            self._ground_truth_annotation = self.generated_annotations[name]
+            self.ground_truth = self.generated_annotations[name]
+            self._ground_truth_annotation = self.generated_concepts[name]
         elif self.concepts is not None:
             self.ground_truth = self.concepts
             self._ground_truth_annotation = self._annotations[1]
         elif self.generated_concepts:
             name = next(iter(self.generated_concepts))
-            self.ground_truth = self.generated_concepts[name]
-            self._ground_truth_annotation = self.generated_annotations[name]
+            self.ground_truth = self.generated_annotations[name]
+            self._ground_truth_annotation = self.generated_concepts[name]
         else:
             self.ground_truth = None
             self._ground_truth_annotation = None
