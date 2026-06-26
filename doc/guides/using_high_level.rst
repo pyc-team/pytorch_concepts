@@ -2,6 +2,10 @@
    :width: 20px
    :align: middle
 
+.. |pytorch_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg
+   :width: 20px
+   :align: middle
+
 .. |pl_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg
     :width: 20px
     :align: middle
@@ -10,10 +14,8 @@
 Out-of-the-box Models
 =====================
 
-The High-Level API gives you state-of-the-art concept-based models out of the box. You
-describe your concepts once, pick a model, and train it — manually or in one line with
-|pl_logo| PyTorch Lightning. It is the right entry point if you just want to use a model
-without assembling it yourself.
+The High-Level API gives you concept-based models out-of-the-box. 
+It is the right entry point if you just want a model that works without assembling it yourself.
 
 .. image:: /_static/img/api_levels/high_level.png
    :alt: Overview of the PyC High-Level API
@@ -24,13 +26,12 @@ without assembling it yourself.
 
 Working at this level involves three building blocks:
 
-- **Models** — ready-to-use concept-based models such as the Concept Bottleneck Model.
-- **Losses & Metrics** — type-aware objectives and metrics that route automatically.
+- **Models** — ready-to-use interpretable concept-based models.
+- **Losses & Metrics** — objectives and metrics with automatic type-aware routing.
 - **Training** — a manual |pyc_logo| PyTorch loop, or automatic |pl_logo| Lightning training.
 
 All of them are configured with :class:`~torch_concepts.Annotations`, which describe your
-concepts and tasks (see :doc:`Annotations <using_low_level>`). Most datasets expose them
-directly as ``dataset.annotations``.
+concepts (see :doc:`Annotations <using_low_level>`).
 
 Expand each block below for an explanation and an example.
 
@@ -38,63 +39,125 @@ Expand each block below for an explanation and an example.
 .. dropdown:: Models
     :icon: rocket
 
-    |pyc_logo| PyC provides ready-to-use models that are instantiated with minimal configuration.
-    The available models include:
+    |pyc_logo| PyC provides ready-to-use interpretable models. Each wraps a mid-level
+    probabilistic model with a backbone; more models will be added over time.
 
     - :class:`~torch_concepts.nn.ConceptBottleneckModel` — the standard CBM.
-    - :class:`~torch_concepts.nn.ConceptEmbeddingModel` — an expressive CBM with concept embeddings.
-    - :class:`~torch_concepts.nn.GraphConceptBottleneckModel` and
-      :class:`~torch_concepts.nn.CausallyReliableConceptBottleneckModel` — graph-structured variants.
-    - :class:`~torch_concepts.nn.BlackBox` — a non-interpretable baseline for comparison.
+    - :class:`~torch_concepts.nn.ConceptEmbeddingModel` — expressive CBM with concept embeddings (CEM).
+    - :class:`~torch_concepts.nn.GraphConceptBottleneckModel` — graph-structured CBM.
+    - :class:`~torch_concepts.nn.CausallyReliableConceptBottleneckModel` — causally reliable CBM variant.
+    - :class:`~torch_concepts.nn.BlackBox` — non-interpretable baseline for comparison.
 
-    A model is created from an ``input_size``, the ``annotations``, and the ``task_names``; the
-    remaining concepts are treated as intermediate concepts. You then query it for any subset of
-    variables. The output exposes per-variable logits in ``out.params[name]['logits']``.
+    All models take an ``input_size``, ``annotations``, and model-specific parameters.
+    A forward pass returns a :class:`~torch_concepts.nn.ModelOutput` — a structured object
+    whose ``params`` dict maps each queried variable name to its distribution parameters
+    (e.g. ``{'logits': ...}`` for binary/categorical, ``{'loc': ..., 'scale': ...}`` for
+    Normal). A ``query`` list controls which variables are computed.
 
     .. code-block:: python
 
        import torch
+       import torch_concepts as pyc
        from torch_concepts.nn import ConceptBottleneckModel, MLP
+
+       annotations = pyc.Annotations(
+           labels=["smoking", "genotype", "tar"],
+           cardinalities=[1, 3, 1],
+           types=["binary", "categorical", "continuous"],
+       )
+       n_features = 64
 
        model = ConceptBottleneckModel(
            input_size=n_features,
            annotations=annotations,
-           task_names=['xor'],
+           task_names=['cancer'],
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
-           latent_size=128,   # output size of the backbone
+           latent_size=128,
        )
 
-       query = ['c1', 'c2', 'xor']
-       with torch.no_grad():
-           out = model(input=x, query=query)
-       xor_logits = out.params['xor']['logits']
+       x = torch.randn(16, n_features)
+       out = model(input=x, query=['smoking', 'genotype', 'tar', 'cancer'])
+       smoking_logits = out.params['smoking']['logits']    # (16, 1)
+       genotype_logits = out.params['genotype']['logits']  # (16, 3)
+       cancer_logits  = out.params['cancer']['logits']     # (16, 1)
 
 
 .. dropdown:: Losses & Metrics
     :icon: flame
 
     :class:`~torch_concepts.nn.ConceptLoss` and :class:`~torch_concepts.nn.ConceptMetrics` are
-    **type-aware**: given the annotations, they automatically route each concept to the right
-    objective/metric based on whether it is binary, categorical, or continuous — so a single object
-    handles mixed concept spaces.
+    **type-aware**: they automatically route each concept to the right objective/metric based on
+    its type (binary, categorical, continuous).
+
+    **Basic usage.** Pass one loss per type:
 
     .. code-block:: python
 
        import torch
-       from torchmetrics.classification import BinaryAccuracy
-       from torch_concepts.nn import ConceptLoss, ConceptMetrics
+       from torch_concepts.nn import ConceptLoss
 
        loss = ConceptLoss(
            annotations=annotations,
            binary=torch.nn.BCEWithLogitsLoss(),
            categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
        )
+
+    **Composing losses.** Pass a list of terms per type and optional per-term weights.
+    Terms are summed with those weights. Here binary concepts are supervised with BCE
+    and additionally regularised with an L1 penalty at weight 0.01:
+
+    .. code-block:: python
+
+       from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
+
+       loss = ConceptLoss(
+           annotations=annotations,
+           binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=1.0)],
+           binary_weights=[1.0, 0.01],
+           categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
+       )
+
+    **Weighting concepts vs tasks differently.** :class:`~torch_concepts.nn.WeightedConceptLoss`
+    splits the loss into a concept term and a task term, each with its own scalar weight:
+
+    .. code-block:: python
+
+       from torch_concepts.nn import WeightedConceptLoss
+
+       loss = WeightedConceptLoss(
+           annotations=annotations,
+           concept_weight=0.5,
+           task_weight=1.0,
+           task_names=['cancer'],
+           binary=torch.nn.BCEWithLogitsLoss(),
+           categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
+       )
+
+    **Metrics.** :class:`~torch_concepts.nn.ConceptMetrics` follows the same type-aware pattern.
+    Each type accepts a ``dict`` of ``name → torchmetrics.Metric`` — any
+    `torchmetrics <https://torchmetrics.readthedocs.io>`_ metric works (or custom metrics can be designed). 
+    For categorical concepts, pass a ``(MetricClass, kwargs)`` tuple so the right ``num_classes`` is
+    inferred automatically from the annotations:
+
+    .. code-block:: python
+
+       from torchmetrics.classification import BinaryAccuracy, BinaryAUROC, MulticlassAccuracy
+       from torch_concepts.nn import ConceptMetrics
 
        metrics = ConceptMetrics(
            annotations=annotations,
-           binary={'accuracy': BinaryAccuracy()},
-           summary=True,       # aggregate per type
-           per_concept=True,   # also track each concept individually
+           binary={
+               'accuracy': BinaryAccuracy(),
+               'auroc':    BinaryAUROC(),
+           },
+           categorical={
+               'accuracy': (MulticlassAccuracy, {'average': 'micro'}),
+           },
+           per_concept=True,   # a MetricCollection per individual concept
+           summary=True,       # also a MetricCollection per type (SUMMARY-binary_*, ...)
        )
 
 
@@ -132,8 +195,9 @@ Expand each block below for an explanation and an example.
            loss.backward()
            optimizer.step()
 
-    **PyTorch Lightning.** Pass ``lightning=True`` together with a ``loss``, optional ``metrics``,
-    and an optimizer; then hand the model and a datamodule to a ``Trainer``:
+    **PyTorch Lightning.** Pass ``lightning=True`` together with a ``loss`` (either a standard
+    |pytorch_logo| PyTorch loss or a |pyc_logo| :class:`~torch_concepts.nn.ConceptLoss`),
+    optional ``metrics``, and an optimizer; then hand the model and a datamodule to a ``Trainer``:
 
     .. code-block:: python
 
@@ -156,7 +220,7 @@ Expand each block below for an explanation and an example.
        trainer.fit(model, datamodule=datamodule)
 
 
-.. dropdown:: Putting It Together
+.. dropdown:: Putting It Together: Concept Bottleneck Model
     :icon: package
 
     A complete, end-to-end Lightning pipeline on a toy dataset:
@@ -209,5 +273,5 @@ Next Steps
 ----------
 
 - Browse the full :doc:`High-Level API reference </modules/high_level_api>`.
-- Customise the probabilistic model behind these models with the :doc:`Mid-Level API <using_mid_level>`.
+- Customise the :doc:`Interpretable Probabilistic Models <using_mid_level>` behind these models.
 - Run experiments without code using :doc:`Conceptarium <using_conceptarium>`.

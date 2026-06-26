@@ -1,9 +1,66 @@
+.. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg
+   :width: 20px
+   :align: middle
+
 Contributing Guide
 ==================
 
-We welcome contributions to PyC! This guide will help you contribute effectively.
+We welcome contributions to |pyc_logo| PyC! This guide covers the workflow and standards for contributing to the library.
+The links below walk you through contributing a specific new component — a model, dataset, loss, or metric.
 
-Thank you for your interest in contributing! The PyC Team welcomes all contributions, whether small bug fixes or major features.
+.. grid:: 1 1 2 2
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  :octicon:`stack;1em;sd-text-primary` New Layer
+        :link: contributing_layer
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Add a new semantics-aware Low-Level API layer.
+
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` New Model
+        :link: contributing_model
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Add a new concept-based model to the High-Level API.
+
+    .. grid-item-card::  :octicon:`database;1em;sd-text-primary` New Dataset
+        :link: contributing_dataset
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Add a new dataset and datamodule with concept annotations.
+
+    .. grid-item-card::  :octicon:`flame;1em;sd-text-primary` New Loss
+        :link: contributing_loss
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Add a custom loss term compatible with :class:`~torch_concepts.nn.ConceptLoss`.
+
+    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` New Metric
+        :link: contributing_metric
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Add a custom metric compatible with :class:`~torch_concepts.nn.ConceptMetrics`.
+
+.. toctree::
+   :hidden:
+
+   contributing_layer
+   contributing_model
+   contributing_dataset
+   contributing_loss
+   contributing_metric
 
 
 Join Our Community

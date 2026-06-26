@@ -7,11 +7,12 @@
    :align: middle
 
 
-Interpretable Probabilistic Models
+Interpretable Probabilistic Graphical Models
 ==================================
 
-The Mid-Level API lets you describe a model as a **probabilistic graphical model**: a set of
-random variables connected by factors, queried through an inference engine. It is the right
+The Mid-Level API lets you describe any interpretable deep learning model 
+as a **probabilistic graphical model** (PGM): a set of random variables connected by factors.
+Different probabilistic inferences can be performed on the PGM. It is the right
 entry point if you think in terms of probabilistic or causal models.
 
 .. image:: /_static/img/api_levels/mid_level.png
@@ -24,8 +25,8 @@ entry point if you think in terms of probabilistic or causal models.
 A mid-level model is assembled from four building blocks:
 
 - **Variables** — the random variables (concepts, embeddings) that make up the model.
-- **Factors** — conditional distributions wiring each variable to its parents.
-- **ProbabilisticModel** — the container that collects variables and factors into a graph.
+- **Factors** — conditional distributions or potential functions wiring variable together.
+- **ProbabilisticModel** — the container that collects variables and factors into a PGM.
 - **Inference** — engines that answer queries over the model.
 
 Expand each block below for an explanation and an example. The running example builds a
@@ -44,65 +45,103 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
       latent representation), typically given a :class:`~torch_concepts.distributions.Delta`
       distribution.
 
-    A variable is defined by its name, its ``distribution`` type, and its ``size`` (the number of
-    states / dimensions). Edges of the graph are declared later, on the factors.
+    A variable is defined by its name, its ``distribution`` (torch.distributions), and
+    its ``size`` (scalar) or ``shape`` (multi-dimensional, e.g. an image tensor).
 
     .. code-block:: python
 
-       import torch
-       from torch.distributions import Bernoulli, OneHotCategorical
-
+       import torch_concepts as pyc
+       from torch.distributions import Bernoulli, OneHotCategorical, Normal
        from torch_concepts import EmbeddingVariable, ConceptVariable
        from torch_concepts.distributions import Delta
 
-       input_var = EmbeddingVariable("input", distribution=Delta, size=64)
-       latent_var = EmbeddingVariable("latent", distribution=Delta, size=10)
-       concepts = ConceptVariable(["c1", "c2"], distribution=Bernoulli)        # two binary concepts
-       task = ConceptVariable("xor", distribution=OneHotCategorical, size=2)   # one categorical task
+       input_var = EmbeddingVariable("input", distribution=Delta, shape=(3, 224, 224))  # RGB image
+       latent_var = EmbeddingVariable("latent", distribution=Delta, size=64)
+       smoking  = ConceptVariable("smoking",  distribution=Bernoulli)
+       genotype = ConceptVariable("genotype", distribution=OneHotCategorical, size=3)
+       tar      = ConceptVariable("tar",      distribution=Normal)
+       cancer   = ConceptVariable("cancer",   distribution=Bernoulli)
+
+    Passing a list of names creates **independent variables** (one node per concept in the
+    graph). To group several concepts under a **single node** — one factor covers all of them
+    — use a *plate* variable with ``members``:
+
+    .. code-block:: python
+
+       # One graph node; members are addressed individually for fine-grained parent wiring
+       binary_concepts = ConceptVariable("binary_concepts", distribution=Bernoulli,
+                                         members=["smoking", "cancer"])
+
+       smoking_handle = binary_concepts.member("smoking")   # parent handle for downstream factors
 
 
 .. dropdown:: Factors
     :icon: gear
 
-    A factor turns the values of a variable's parents into the parameters of that variable's
-    distribution. :class:`~torch_concepts.nn.ParametricFactor` is the abstract base class; the one
-    you will use is :class:`~torch_concepts.nn.ParametricCPD`, a **conditional probability
-    distribution** ``p(variable | parents)`` parameterised by a |pyc_logo| PyC or |pytorch_logo|
-    PyTorch module.
+    A factor encodes a relationship over a set of variables and it is the building block that
+    gives a PGM its structure. The abstract base class is
+    :class:`~torch_concepts.nn.ParametricFactor`; different subclasses encode different kinds of
+    relationship (conditional distributions for directed graphs, potential functions for
+    undirected ones, etc.).
 
-    Each ``ParametricCPD`` declares its ``parents``, which is exactly how the graph structure is
-    defined. Parent-less (root) variables use a prior such as
+    Currently, the only implemented factor is :class:`~torch_concepts.nn.ParametricCPD` — a
+    **conditional probability distribution** ``p(variable | parents)`` parameterised by a
+    |pyc_logo| PyC or |pytorch_logo| PyTorch module. Support for undirected factors (potentials)
+    is planned for the near future.
+
+    Each ``ParametricCPD`` declares its ``parents``, which is exactly how the directed graph
+    structure is defined. The ``parametrization`` dict keys must match the distribution's
+    constructor arguments (e.g., ``logits`` for a Bernoulli distribution). Parent-less (root) variables use a prior such as
     :class:`~torch_concepts.nn.LearnablePrior`.
 
     .. code-block:: python
 
-       from torch_concepts.nn import (
-           ParametricCPD, LearnablePrior, Sequential,
-           LinearEmbeddingToConcept, LinearConceptToConcept,
+       from torch_concepts.nn import ParametricCPD, LearnablePrior, Sequential, LinearConceptToConcept, LinearEmbeddingToConcept
+       import torch.nn as nn
+
+       # Input —> root, generally provided as evidence at inference time
+       input_cpd = ParametricCPD(
+            input_var, 
+            parents=[], 
+            parametrization=LearnablePrior(size=1)
+        )
+
+       # Latent | Input —> Delta (deterministic backbone)
+       latent_cpd = ParametricCPD(
+           latent_var, 
+           parents=[input_var], 
+           parametrization=nn.Sequential(nn.Flatten(), nn.Linear(3 * 224 * 224, 64), nn.ReLU())
        )
 
-       # Root prior over the input embedding (no parents)
-       input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(64), parents=[])
-
-       # A plain torch backbone: input -> latent
-       backbone = ParametricCPD(
-           latent_var,
-           parametrization=torch.nn.Sequential(torch.nn.Linear(64, 10), torch.nn.LeakyReLU()),
-           parents=[input_var],
-       )
-
-       # Concept encoder: latent -> concept logits
-       c_encoder = ParametricCPD(
-           concepts,
-           parametrization={'logits': Sequential(LinearEmbeddingToConcept(in_embeddings=10, out_concepts=1))},
+       # Genotype | Latent —> OneHotCategorical, parametrize logits
+       genotype_cpd = ParametricCPD(
+           genotype, 
            parents=[latent_var],
+           parametrization={'logits': LinearEmbeddingToConcept(in_embeddings=64, out_concepts=3)},
        )
 
-       # Task predictor: concepts -> task logits
-       y_predictor = ParametricCPD(
-           task,
-           parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2))},
-           parents=[*concepts],
+       # Smoking | Genotype —> Bernoulli, parametrize logits
+       smoking_cpd = ParametricCPD(
+           smoking, 
+           parents=[genotype],
+           parametrization={'logits': LinearConceptToConcept(in_concepts=3, out_concepts=1)},
+       )
+
+       # Tar | Smoking —> Normal, both loc and scale must be parametrized; scale must be positive
+       tar_cpd = ParametricCPD(
+           tar, 
+           parents=[smoking],
+           parametrization={
+               'loc':   LinearConceptToConcept(in_concepts=1, out_concepts=1),
+               'scale': Sequential(LinearConceptToConcept(in_concepts=1, out_concepts=1), nn.Softplus()),
+           },
+       )
+
+       # Cancer | Genotype, Tar —> Bernoulli, parametrize logits
+       cancer_cpd = ParametricCPD(
+           cancer, 
+           parents=[genotype, tar],
+           parametrization={'logits': LinearConceptToConcept(in_concepts=4, out_concepts=1)},
        )
 
 
@@ -113,16 +152,13 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
     models. The concrete class you instantiate is :class:`~torch_concepts.nn.BayesianNetwork`, a
     directed model that wires a list of variables to a list of factors (one factor per variable).
 
-    Because ``concepts`` and ``c_encoder`` each declare several entries, they are spread with ``*``
-    when collected.
-
     .. code-block:: python
 
        from torch_concepts.nn import BayesianNetwork
 
        model = BayesianNetwork(
-           variables=[input_var, latent_var, *concepts, task],
-           factors=[input_cpd, backbone, *c_encoder, y_predictor],
+           variables=[input_var, latent_var, genotype, smoking, tar, cancer],
+           factors=[input_cpd, latent_cpd, genotype_cpd, smoking_cpd, tar_cpd, cancer_cpd],
        )
 
 
@@ -144,7 +180,8 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
 
     ``query`` accepts a **list** of variable names (predict them) or a **dict** mapping names to
     observed values (clamp them as evidence, e.g. for teacher forcing during training). The result
-    exposes per-variable distribution parameters in ``out.params[name]``.
+    exposes per-variable distribution parameters in ``out.params[name]`` and samples (when applicable)
+    in ``out.samples[name]``.
 
     .. code-block:: python
 
@@ -152,153 +189,58 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
 
        inference = DeterministicInference(model, activate_before_propagation=True)
 
-       x = torch.randn(16, 64)
-       out = inference.query(query=["c1", "c2", "xor"], evidence={'input': x})
+       x = torch.randn(16, 3, 224, 224)
+       out = inference.query(query=["genotype", "smoking", "tar", "cancer"], evidence={'input': x})
 
-       c1_logits = out.params['c1']['logits']    # (16, 1)
-       xor_logits = out.params['xor']['logits']  # (16, 2)
+       genotype_logits = out.params['genotype']['logits']   # (16, 3)
+       cancer_logits   = out.params['cancer']['logits']     # (16, 1)
 
 
-.. dropdown:: Putting It Together
+.. dropdown:: Putting it Together: Concept Bottleneck Model
     :icon: rocket
 
-    The blocks above form a complete, trainable Concept Bottleneck Model. During training we pass
-    the **observed** concept/task values as the query dict so they are clamped as evidence:
-
-    .. code-block:: python
-
-       import torch
-       from torch.distributions import Bernoulli, OneHotCategorical
-
-       from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
-       from torch_concepts.distributions import Delta
-       from torch_concepts.data import ToyDataset
-       from torch_concepts.nn import (
-           LinearEmbeddingToConcept, LinearConceptToConcept, ParametricCPD,
-           BayesianNetwork, DeterministicInference, LearnablePrior, Sequential,
-       )
-
-       seed_everything(42)
-
-       dataset = ToyDataset(dataset='xor', seed=42, n_gen=1000)
-       x_train = dataset.input_data
-       concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
-       task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-       c_train = dataset.concepts[:, concept_idx]
-       y_train = dataset.concepts[:, task_idx]
-       y_train = torch.cat([y_train, 1 - y_train], dim=1)
-
-       # Variables
-       input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
-       latent_var = EmbeddingVariable("latent", distribution=Delta, size=10)
-       concepts = ConceptVariable(["c1", "c2"], distribution=Bernoulli)
-       task = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
-
-       # Factors
-       input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(x_train.shape[1]), parents=[])
-       backbone = ParametricCPD(
-           latent_var,
-           parametrization=torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], 10), torch.nn.LeakyReLU()),
-           parents=[input_var],
-       )
-       c_encoder = ParametricCPD(
-           concepts,
-           parametrization={'logits': Sequential(LinearEmbeddingToConcept(in_embeddings=10, out_concepts=1))},
-           parents=[latent_var],
-       )
-       y_predictor = ParametricCPD(
-           task,
-           parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2))},
-           parents=[*concepts],
-       )
-
-       # Model + inference
-       model = BayesianNetwork(
-           variables=[input_var, latent_var, *concepts, task],
-           factors=[input_cpd, backbone, *c_encoder, y_predictor],
-       )
-       inference = DeterministicInference(model, activate_before_propagation=True)
-
-       evidence = {'input': x_train}
-       query = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
-
-       optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-       loss_fn = torch.nn.BCEWithLogitsLoss()
-       model.train()
-       for epoch in range(500):
-           optimizer.zero_grad()
-           pred = inference.query(query=query, evidence=evidence)
-           c_pred = torch.cat([pred.params['c1']['logits'], pred.params['c2']['logits']], dim=1)
-           y_pred = pred.params['xor']['logits']
-           loss = loss_fn(c_pred, c_train) + 0.5 * loss_fn(y_pred, y_train)
-           loss.backward()
-           optimizer.step()
-
-
-.. dropdown:: Causal Models (SEMs)
-    :icon: beaker
-
-    The same primitives express **Structural Equation Models**: each variable's factor is a
-    structural equation over its parents, and :class:`~torch_concepts.nn.AncestralSamplingInference`
-    draws a realisation of every node in topological order. Deterministic mechanisms are convenient
-    to write with :class:`~torch_concepts.nn.CallableConceptToConcept`.
+    The blocks above assemble into a full CBM. During training, pass observed concept and task
+    values as the query dict — they are clamped as evidence for teacher forcing:
 
     .. code-block:: python
 
        import torch
        from torch.distributions import Bernoulli
-
-       from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
+       from torch_concepts import EmbeddingVariable, ConceptVariable
        from torch_concepts.distributions import Delta
        from torch_concepts.nn import (
-           ParametricCPD, BayesianNetwork, AncestralSamplingInference,
-           CallableConceptToConcept, LearnablePrior,
+           LinearEmbeddingToConcept, LinearConceptToConcept,
+           ParametricCPD, BayesianNetwork, DeterministicInference, LearnablePrior,
        )
 
-       seed_everything(42)
+       x_var = EmbeddingVariable("x", distribution=Delta, size=16)
+       c_var = ConceptVariable(["c1", "c2"], distribution=Bernoulli)
+       y_var = ConceptVariable("y", distribution=Bernoulli)
 
-       # genotype -> smoking, genotype & smoking -> tar -> cancer
-       input_var = EmbeddingVariable("input", distribution=Delta, size=1)
-       genotype = ConceptVariable("genotype", distribution=Bernoulli)
-       smoking = ConceptVariable("smoking", distribution=Bernoulli)
-       tar = ConceptVariable("tar", distribution=Bernoulli)
-       cancer = ConceptVariable("cancer", distribution=Bernoulli)
+       model = BayesianNetwork(
+           variables=[x_var, *c_var, y_var],
+           factors=[
+               ParametricCPD(x_var, parents=[], parametrization=LearnablePrior(size=1)),
+               ParametricCPD(c_var, parents=[x_var],
+                             parametrization={'logits': LinearEmbeddingToConcept(16, out_concepts=1)}),
+               ParametricCPD(y_var, parents=[*c_var],
+                             parametrization={'logits': LinearConceptToConcept(2, out_concepts=1)}),
+           ],
+       )
+       inference = DeterministicInference(model, activate_before_propagation=True)
 
-       factors = [
-           ParametricCPD(input_var, parametrization=LearnablePrior(1), parents=[]),
-           ParametricCPD(genotype,
-                         parametrization=torch.nn.Sequential(torch.nn.Linear(1, 1), torch.nn.Sigmoid()),
-                         parents=[input_var]),
-           ParametricCPD(smoking,
-                         parametrization=CallableConceptToConcept(lambda g: (g > 0.5).float(), use_bias=False),
-                         parents=[genotype]),
-           ParametricCPD(tar,
-                         parametrization=CallableConceptToConcept(
-                             lambda gs: torch.logical_or(gs[:, 0] > 0.5, gs[:, 1] > 0.5).float().unsqueeze(-1),
-                             use_bias=False),
-                         parents=[genotype, smoking]),
-           ParametricCPD(cancer,
-                         parametrization=CallableConceptToConcept(lambda t: t, use_bias=False),
-                         parents=[tar]),
-       ]
-
-       sem = BayesianNetwork(variables=[input_var, genotype, smoking, tar, cancer], factors=factors)
-       inference = AncestralSamplingInference(sem)
-
-       evidence = {'input': torch.randn((1000, 1))}
-       results = inference.query(["genotype", "smoking", "tar", "cancer"], evidence=evidence)
-       print("P(cancer=1) ≈", results.samples["cancer"].mean().item())
-
-    .. note::
-
-       Do-interventions and causal-effect estimation (e.g. the CACE score) for the mid-level
-       ``BayesianNetwork`` are on the roadmap. For interventions today, see the
-       :doc:`Low-Level API <using_low_level>` ``intervention`` context manager.
+       # At training time, pass observed labels as query to clamp them as evidence
+       x = torch.randn(32, 16)
+       c_true = torch.randint(0, 2, (32, 2)).float()
+       y_true = torch.randint(0, 2, (32, 1)).float()
+       pred = inference.query(query={"c1": c_true[:, 0], "c2": c_true[:, 1], "y": y_true},
+                              evidence={"x": x})
 
 
 Next Steps
 ----------
 
 - Browse the full :doc:`Mid-Level API reference </modules/mid_level_api>`.
-- Drop down to the :doc:`Low-Level API <using_low_level>` to customise the layers behind each factor.
-- Move up to the :doc:`High-Level API <using_high_level>` for the same models, pre-assembled.
+- Drop down to the :doc:`Semantic primitives and Interventions <using_low_level>` to customise the layers behind each factor.
+- Move up to the :doc:`Out-of-the-box Models <using_high_level>` for the same models, pre-assembled.
+- Check out the mid-level `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/1_pgm>`_.
