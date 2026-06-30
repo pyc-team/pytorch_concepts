@@ -57,7 +57,7 @@ __all__ = [
     "utils",
     "backbone",
     "io",
-    
+
     # Datasets
     "BnLearnDataset",
     "ToyDataset",

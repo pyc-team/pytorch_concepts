@@ -8,10 +8,15 @@ import os
 import numpy as np
 import pandas as pd
 import logging
-from typing import Any, List, Sequence, Union
+from typing import Sequence, Union
 import torch
 import random
 from torch import Tensor
+
+# Re-export for backward compatibility – the canonical definition lives in
+# torch_concepts.utils so that nn modules can import it without pulling in
+# the data package.
+from ..utils import ensure_list
 
 logger = logging.getLogger(__name__)
 
@@ -28,42 +33,6 @@ def _import_torchvision():
         ) from exc
 
 
-def ensure_list(value: Any) -> List:
-    """
-    Ensure a value is converted to a list. If the value is iterable (but not a 
-    string or dict), converts it to a list. Otherwise, wraps it in a list.
-
-    Args:
-        value: Any value to convert to list.
-
-    Returns:
-        List: The value as a list.
-    
-    Examples:
-        >>> ensure_list([1, 2, 3])
-        [1, 2, 3]
-        >>> ensure_list((1, 2, 3))
-        [1, 2, 3]
-        >>> ensure_list(5)
-        [5]
-        >>> ensure_list("hello")
-        ['hello']
-        >>> ensure_list({'a': 1, 'b': 2})  # doctest: +SKIP
-        TypeError: Cannot convert dict to list. Use list(dict.values()) 
-        or list(dict.keys()) explicitly.
-    """
-    # Explicitly reject dictionaries to avoid silent conversion to keys
-    if isinstance(value, dict):
-        raise TypeError(
-            "Cannot convert dict to list. Use list(dict.values()) or " \
-            "list(dict.keys()) explicitly to make your intent clear."
-        )
-    
-    # Check for iterables (but not strings)
-    if hasattr(value, '__iter__') and not isinstance(value, str):
-        return list(value)
-    else:
-        return [value]
 
 def files_exist(files: Sequence[str]) -> bool:
     """
