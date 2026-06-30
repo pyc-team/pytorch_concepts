@@ -8,10 +8,41 @@ seeding for reproducibility, and numerical stability checks.
 import importlib
 import os
 from collections import Counter
-from typing import Dict, Union, List, Optional
+from typing import Any, Dict, Union, List, Optional
 import torch, math
 import logging
 from pytorch_lightning import seed_everything as pl_seed_everything
+
+
+def ensure_list(value: Any) -> List:
+    """
+    Ensure a value is converted to a list. If the value is iterable (but not a
+    string or dict), converts it to a list. Otherwise, wraps it in a list.
+
+    Args:
+        value: Any value to convert to list.
+
+    Returns:
+        List: The value as a list.
+
+    Examples:
+        >>> ensure_list([1, 2, 3])
+        [1, 2, 3]
+        >>> ensure_list((1, 2, 3))
+        [1, 2, 3]
+        >>> ensure_list(5)
+        [5]
+        >>> ensure_list("hello")
+        ['hello']
+    """
+    if isinstance(value, dict):
+        raise TypeError(
+            "Cannot convert dict to list. Use list(dict.values()) or "
+            "list(dict.keys()) explicitly to make your intent clear."
+        )
+    if hasattr(value, '__iter__') and not isinstance(value, str):
+        return list(value)
+    return [value]
 
 
 def resolve_hf_token() -> Optional[str]:
