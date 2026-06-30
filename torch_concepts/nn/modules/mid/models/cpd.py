@@ -391,4 +391,5 @@ class ParametricCPD(ParametricFactor):
             slot = value[..., columns]
             value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
         return value
+    
 
