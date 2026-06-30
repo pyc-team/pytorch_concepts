@@ -40,7 +40,7 @@ Configuration-Driven Experimentation
 Conceptarium uses YAML configuration files to define all experiment parameters. No Python coding required:
 
 - **Models**: Select and configure any |pyc_logo| PyC model (CBM, CEM, CGM, BlackBox)
-- **Datasets**: Use built-in datasets (CUB-200, CelebA) or add custom ones
+- **Datasets**: Use built-in datasets (CUB-200, CelebA, ...) or add custom ones
 - **Training**: Configure optimizer, scheduler, and Lightning Trainer settings
 - **Tracking**: Automatic logging to |wandb_logo| W&B for visualization and comparison
 
