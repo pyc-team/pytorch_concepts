@@ -4,11 +4,14 @@ LazyConstructor module for delayed module instantiation.
 This module provides a wrapper that delays the instantiation of neural network
 modules until the required dimensions are known, enabling flexible model construction.
 """
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 
 import inspect
+
+from torch_concepts import Annotations
+
 
 def _filter_kwargs_for_ctor(cls, **kwargs):
     """
@@ -103,20 +106,19 @@ class LazyConstructor(torch.nn.Module):
     Example:
         >>> import torch
         >>> from torch_concepts.nn import LazyConstructor
-        >>> from torch_concepts.nn import LinearCC
+        >>> from torch_concepts.nn import LinearConceptToConcept
         >>>
         >>> # Create a propagator for a predictor
         >>> lazy_constructor = LazyConstructor(
-        ...     LinearCC,
+        ...     LinearConceptToConcept,
         ...     activation=torch.sigmoid
         ... )
         >>>
         >>> # Build the module when dimensions are known
         >>> module = lazy_constructor.build(
-        ...     out_features=3,
-        ...     in_features_endogenous=5,
-        ...     in_features=None,
-        ...     in_features_exogenous=None
+        ...     out_concepts=3,
+        ...     in_concepts=5,
+        ...     in_embeddings=None,
         ... )
         >>>
         >>> # Use the module
@@ -149,10 +151,9 @@ class LazyConstructor(torch.nn.Module):
         self.module = None
 
     def build(self,
-              out_features: int,
-              in_features_endogenous: Optional[int],
-              in_features: Optional[int],
-              in_features_exogenous: Optional[int],
+              out_concepts: int,
+              in_concepts: Optional[Union[int, Annotations]] = None,
+              in_embeddings: Optional[Union[int, Annotations]] = None,
               **kwargs
               ) -> torch.nn.Module:
         """
@@ -162,10 +163,9 @@ class LazyConstructor(torch.nn.Module):
         feature dimensions and any additional arguments.
 
         Args:
-            out_features: Number of output features.
-            in_features_endogenous: Number of input logit features (optional).
-            in_features: Number of input latent features (optional).
-            in_features_exogenous: Number of exogenous input features (optional).
+            out_concepts: Number of output concepts.
+            in_concepts: Number of input concepts (optional).
+            in_embeddings: Number of input embedding features (optional).
             **kwargs: Additional keyword arguments for the module.
 
         Returns:
@@ -177,28 +177,32 @@ class LazyConstructor(torch.nn.Module):
         Example:
             >>> import torch
             >>> from torch_concepts.nn import LazyConstructor
-            >>> from torch_concepts.nn import LinearCC
+            >>> from torch_concepts.nn import LinearConceptToConcept
             >>>
-            >>> lazy_constructor = LazyConstructor(LinearCC)
+            >>> lazy_constructor = LazyConstructor(LinearConceptToConcept)
             >>> module = lazy_constructor.build(
-            ...     out_features=3,
-            ...     in_features_endogenous=5,
-            ...     in_features=None,
-            ...     in_features_exogenous=None
+            ...     out_concepts=3,
+            ...     in_concepts=5,
+            ...     in_embeddings=None,
             ... )
             >>> print(type(module).__name__)
-            LinearCC
+            LinearConceptToConcept
         """
         # Instantiate the module using the stored class and kwargs
         # The module is instantiated with the provided arguments
+        # We provide both torch_concepts naming and PyTorch standard naming
+        # to support both custom and standard PyTorch modules
         self.module = instantiate_adaptive(
             self._module_cls,
             *self._module_args,
             **{
-                "in_features": in_features,
-                "in_features_endogenous": in_features_endogenous,
-                "in_features_exogenous": in_features_exogenous,
-                "out_features": out_features,
+                # torch_concepts naming
+                "in_embeddings": in_embeddings,
+                "in_concepts": in_concepts,
+                "out_concepts": out_concepts,
+                # PyTorch standard naming (e.g., for nn.Linear compatibility)
+                "in_features": in_embeddings,
+                "out_features": out_concepts,
                 **self._module_kwargs,  # user-provided extras
                 **kwargs,  # additional kwargs if provided
             }
@@ -228,15 +232,14 @@ class LazyConstructor(torch.nn.Module):
         Example:
             >>> import torch
             >>> from torch_concepts.nn import LazyConstructor
-            >>> from torch_concepts.nn import LinearCC
+            >>> from torch_concepts.nn import LinearConceptToConcept
             >>>
             >>> # Create and build propagator
-            >>> lazy_constructor = LazyConstructor(LinearCC)
-            >>> lazy_constructor.build(
-            ...     out_features=3,
-            ...     in_features_endogenous=5,
-            ...     in_features=None,
-            ...     in_features_exogenous=None
+            >>> lazy_constructor = LazyConstructor(LinearConceptToConcept)
+            >>> _ = lazy_constructor.build(
+            ...     out_concepts=3,
+            ...     in_concepts=5,
+            ...     in_embeddings=None,
             ... )
             >>>
             >>> # Forward pass
@@ -247,7 +250,7 @@ class LazyConstructor(torch.nn.Module):
         """
         if self.module is None:
             raise RuntimeError(
-                "LazyConstructor module not built. Call .build(in_features, annotations) first."
+                "LazyConstructor module not built. Call .build(...) first."
             )
 
         # Forward calls the *instantiated* module instance

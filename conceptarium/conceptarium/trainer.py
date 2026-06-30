@@ -52,7 +52,7 @@ def _get_logger(cfg: DictConfig):
         logger = WandbLogger(
             project=PROJECT_NAME,
             entity=WANDB_ENTITY,
-            log_model=True,
+            log_model=cfg.trainer.get("log_model", False), # Automatically log checkpoints from ModelCheckpoint callback
             id=generate_id(),
             save_dir=HydraConfig.get().runtime.output_dir,
             name=name,
@@ -110,10 +110,10 @@ class Trainer(_Trainer_):
                     dirpath="checkpoints",
                     every_n_epochs=None,
                     monitor=cfg.trainer.monitor,
-                    save_top_k=1,
+                    save_top_k=cfg.trainer.get("save_top_k", 1),
                     mode="min",
-                    save_last=True,
-                    save_weights_only=False,
+                    save_last=cfg.trainer.get("save_last", False),
+                    save_weights_only=cfg.trainer.get("save_weights_only", True),
                 )
             )
         callbacks.append(
@@ -131,7 +131,7 @@ class Trainer(_Trainer_):
         trainer_kwargs = {
             k: v
             for k, v in cfg.trainer.items()
-            if k not in ["monitor", "patience", "logger"]
+            if k not in ["monitor", "patience", "logger", "log_model", "save_top_k", "save_last", "save_weights_only"]
         }
         super().__init__(
             callbacks=callbacks,

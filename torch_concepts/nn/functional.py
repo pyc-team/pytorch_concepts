@@ -7,7 +7,7 @@ exogenous mixture, and evaluation metrics for concept-based models.
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
-from typing import Callable, List, Union, Dict
+from typing import Callable, List, Optional, Union, Dict
 from torch.nn import Linear
 import warnings
 import numbers
@@ -24,7 +24,7 @@ _bounds_keys = {"lb", "ub", "keep_feasible"}
 from .modules.low.semantic import CMRSemantic
 
 
-def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
+def _default_concept_names(n_concepts: int) -> Dict[int, List[str]]:
     """
     Generate default concept names for a given shape.
 
@@ -35,11 +35,79 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
         Dict mapping dimension index to list of concept names.
     """
     concept_names = {}
-    for dim in range(len(shape)):
+    for dim in range(n_concepts):
         concept_names[dim+1] = [
-            f"concept_{dim+1}_{i}" for i in range(shape[dim])
+            f"concept_{dim+1}_{i}" for i in range(n_concepts)
         ]
     return concept_names
+
+
+def replace_expand_cols(c_emb: torch.Tensor, idx, c_emb_split: torch.Tensor):
+    """
+    Works for:
+      c_emb: [B, D]        with c_emb_split: [B, m, k]
+      c_emb: [B, D, E]     with c_emb_split: [B, m, k, E]
+
+    idx:         (m,) indices in D to replace (any order)
+    c_emb_split: replacement blocks in SAME order as idx
+    returns:     [B, D - m + m*k] or [B, D - m + m*k, E]
+    """
+    if c_emb.dim() not in (2, 3):
+        raise ValueError(f"c_emb must be 2D or 3D, got shape {tuple(c_emb.shape)}")
+
+    B, D = c_emb.shape[:2]
+    tail_shape = c_emb.shape[2:]              # () for 2D, (E,) for 3D
+
+    idx = torch.as_tensor(idx, device=c_emb.device, dtype=torch.long)
+    idx_sorted, perm = idx.sort()
+    m = idx.numel()
+
+    # infer k from c_emb_split
+    if c_emb.dim() == 2:
+        # c_emb_split: [B, m, k]
+        k = c_emb_split.size(2)
+        c_emb_split_flat = c_emb_split[:, perm, :].reshape(B, m * k)              # [B, m*k]
+    else:
+        # c_emb_split: [B, m, k, E]
+        k = c_emb_split.size(2)
+        c_emb_split_flat = c_emb_split[:, perm, :, :].reshape(B, m * k, *tail_shape)  # [B, m*k, E]
+
+    # counts per original column: 1 for kept, k for replaced
+    counts = torch.ones(D, device=c_emb.device, dtype=torch.long)
+    counts[idx_sorted] = k
+    L = int(counts.sum().item())
+
+    # output position -> original D index
+    orig = torch.arange(D, device=c_emb.device).repeat_interleave(counts)  # [L]
+
+    # offset within expanded block
+    start = torch.cumsum(counts, 0) - counts                               # [D]
+    off = torch.arange(L, device=c_emb.device) - start[orig]               # [L]
+
+    # map original column -> replacement block id (0..m-1), or -1 if not replaced
+    col2block = torch.full((D,), -1, device=c_emb.device, dtype=torch.long)
+    col2block[idx_sorted] = torch.arange(m, device=c_emb.device)
+
+    is_rep = col2block[orig] >= 0
+    rep_col = col2block[orig] * k + off                                    # invalid where ~is_rep
+    rep_col_safe = torch.where(is_rep, rep_col, rep_col.new_zeros(rep_col.shape))
+
+    if c_emb.dim() == 2:
+        # gather originals
+        out = c_emb.gather(1, orig.view(1, L).expand(B, L))                 # [B, L]
+        # gather replacements (safe)
+        rep = c_emb_split_flat.gather(1, rep_col_safe.view(1, L).expand(B, L))
+        # overwrite
+        out[:, is_rep] = rep[:, is_rep]
+        return out
+    else:
+        # gather originals
+        out = c_emb.gather(1, orig.view(1, L, 1).expand(B, L, *tail_shape)) # [B, L, E]
+        # gather replacements (safe)
+        rep = c_emb_split_flat.gather(1, rep_col_safe.view(1, L, 1).expand(B, L, *tail_shape))
+        # overwrite
+        out[:, is_rep, :] = rep[:, is_rep, :]
+        return out
 
 
 def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
@@ -86,19 +154,12 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
         >>>
         >>> # Apply grouped mixture
         >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
-        >>> print(mixed.shape)  # torch.Size([4, 3, 10])
-        >>> # Output shape: (batch_size, n_groups, emb_size // 2)
-        >>>
-        >>> # Singleton groups use two-half mixture
-        >>> # Multi-concept groups use weighted average of base exogenous
+        >>> print(mixed.shape)
+        torch.Size([4, 3, 20])
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
-    assert D % 2 == 0, f"exogenous dim must be even (two halves). Current dim: {D}"
-    E = D // 2
 
-    # Split concept exogenous into two halves
-    emb_a, emb_b = c_emb[..., :E], c_emb[..., E:]         # [B, C, E], [B, C, E]
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
     # Build group ids per concept: [0,0,...,0, 1,1,...,1, ...]
@@ -107,14 +168,12 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     gs = torch.as_tensor(groups, device=device)
     group_id = torch.repeat_interleave(torch.arange(G, device=device), gs)  # [C]
 
-    # For singleton groups, do the two-half mixture; otherwise use emb_a weighted by the score
-    is_singleton_concept = (gs == 1)[group_id].view(1, C, 1)               # [1, C, 1], bool
-    eff = torch.where(is_singleton_concept, s * emb_a + (1 - s) * emb_b,   # singleton: two-half mix
-                      s * emb_a)                                           # multi: weight base embedding
+    # Weight base embedding by concept scores: [B, C, emb_size]
+    eff = s * c_emb
 
     # Sum weighted exogenous within each group (no loops)
-    out = torch.zeros(B, G, E, device=device, dtype=eff.dtype)
-    index = group_id.view(1, C, 1).expand(B, C, E)                         # [B, C, E]
+    out = torch.zeros(B, G, D, device=device, dtype=eff.dtype)
+    index = group_id.view(1, C, 1).expand(B, C, D)                         # [B, C, E]
     out = out.scatter_add(1, index, eff)                                   # [B, G, E]
     return out
 
@@ -482,21 +541,26 @@ def completeness_score(
     scorer=roc_auc_score,
     average='macro',
 ):
-    """
-    Calculate the completeness score for the given predictions and true labels.
+    """Calculate the completeness score for the given predictions and true labels.
+
+    Measures how well a concept-based (whitebox) model explains the
+    predictions of a blackbox model.  A score of 1.0 indicates that
+    the whitebox model fully captures the blackbox's performance.
+
     Main reference: `"On Completeness-aware Concept-Based Explanations in
     Deep Neural Networks" <https://arxiv.org/abs/1910.07969>`_
 
-    Parameters:
+    Args:
         y_true (torch.Tensor): True labels.
         y_pred_blackbox (torch.Tensor): Predictions from the blackbox model.
-        y_pred_whitebox (torch.Tensor): Predictions from the whitebox model.
-        scorer (function): Scoring function to evaluate predictions. Default is
-            roc_auc_score.
-        average (str): Type of averaging to use. Default is 'macro'.
+        y_pred_whitebox (torch.Tensor): Predictions from the whitebox
+            (concept-based) model.
+        scorer (callable): Scoring function to evaluate predictions.
+            Default is ``roc_auc_score``.
+        average (str): Type of averaging to use. Default is ``'macro'``.
 
     Returns:
-        float: Completeness score.
+        float: Completeness score (whitebox_score / blackbox_score).
     """
     # Convert to numpy for sklearn metrics
     y_true_np = y_true.cpu().detach().numpy()
@@ -521,33 +585,34 @@ def intervention_score(
     average: str = 'macro',
     auc: bool = True,
 ) -> Union[float, List[float]]:
-    """
-    Compute the effect of concept interventions on downstream task predictions.
+    """Compute the effect of concept interventions on downstream task predictions.
 
-    Given  set of intervention groups, the intervention score measures the
+    Given a set of intervention groups, the intervention score measures the
     effectiveness of each intervention group on the model's task predictions.
 
     Main reference: `"Concept Bottleneck
     Models" <https://arxiv.org/abs/2007.04612>`_
 
-    Parameters:
+    Args:
         y_predictor (torch.nn.Module): Model that predicts downstream task
-            abels.
+            labels.
         c_pred (torch.Tensor): Predicted concept values.
         c_true (torch.Tensor): Ground truth concept values.
         y_true (torch.Tensor): Ground truth task labels.
-        intervention_groups (List[List[int]]): List of intervention groups.
+        intervention_groups (List[List[int]]): List of intervention groups,
+            where each group is a list of concept indices to intervene on.
         activation (Callable): Activation function to apply to the model's
-            predictions. Default is torch.sigmoid.
-        scorer (Callable): Scoring function to evaluate predictions. Default is
-            roc_auc_score.
-        average (str): Type of averaging to use. Default is 'macro'.
-        auc (bool): Whether to return the average score across all intervention
-            groups. Default is True.
+            predictions. Default is ``torch.sigmoid``.
+        scorer (Callable): Scoring function to evaluate predictions. Default
+            is ``roc_auc_score``.
+        average (str): Type of averaging to use. Default is ``'macro'``.
+        auc (bool): Whether to return the average score across all
+            intervention groups. Default is ``True``.
 
     Returns:
         Union[float, List[float]]: The intervention effectiveness for each
-            intervention group or the average score across all groups.
+            intervention group, or the average score across all groups when
+            ``auc=True``.
     """
     # Convert to numpy for sklearn metrics
     y_true_np = y_true.cpu().detach().numpy()
@@ -577,26 +642,235 @@ def intervention_score(
     return intervention_effectiveness
 
 
-def cace_score(y_pred_c0, y_pred_c1):
-    """
-    Compute the Average Causal Effect (ACE) also known as the Causal Concept
-    Effect (CaCE) score.
+def _concept_group_ids(
+    cardinalities: List[int],
+    num_cols: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Map each weight column to its concept index given per-concept cardinalities.
 
-    The ACE/CaCE score measures the causal effect of a concept on the
-    predictions of a model. It is computed as the absolute difference between
-    the expected predictions when the concept is inactive (c0) and active (c1).
+    A scalar (binary/continuous) concept has cardinality 1 and occupies a single
+    column; a categorical concept of cardinality ``m`` occupies ``m`` consecutive
+    columns. Returns a ``(num_cols,)`` long tensor of concept ids in ``[0, G)``
+    where ``G == len(cardinalities)``.
+    """
+    cards = [int(c) for c in cardinalities]
+    if any(c < 1 for c in cards):
+        raise ValueError(
+            f"cardinalities must be positive integers, got {cardinalities}"
+        )
+    total = sum(cards)
+    if total != num_cols:
+        raise ValueError(
+            f"cardinalities sum to {total} but weight has {num_cols} columns"
+        )
+    return torch.repeat_interleave(
+        torch.arange(len(cards), device=device),
+        torch.as_tensor(cards, device=device),
+    )
+
+
+def number_of_effective_concepts(
+    weight: torch.Tensor,
+    threshold: float = 0.0,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Effective Concepts (NEC) of a linear layer.
+
+    NEC measures the average number of concepts each class relies on for its
+    prediction, serving as both a **sparsity** and an **information-leakage
+    control** metric: a smaller NEC constrains how much unintended information
+    the bottleneck can encode in the downstream prediction.
+
+    Formally, for a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`
+    with :math:`C` classes and :math:`k` concepts:
+
+    .. math::
+        \\text{NEC}(W_F) = \\frac{1}{C} \\sum_{i=1}^{C} \\sum_{j=1}^{k}
+        \\mathbf{1}[(W_F)_{ij} \\neq 0]
+
+    Main reference: `"VLG-CBM: Training Concept Bottleneck Models with
+    Vision-Language Guidance" <https://arxiv.org/abs/2408.01432>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities`` so each concept is counted once: a class is
+    deemed to rely on a concept if **any** of that concept's columns is nonzero.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        threshold (float): Absolute weight magnitude below which a weight is
+            treated as zero.  Use ``0.0`` (default) for weights that have
+            been pruned to exact zero (e.g. via elastic-net / GLM-SAGA).
+            Set a small positive value (e.g. ``1e-6``) when using standard
+            L1 regularisation without hard pruning.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.cardinalities``.
+
+    Returns:
+        float: Average number of concepts each class relies on.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 0.0, -0.5],
+        ...                   [0.0, 0.3,  0.0]])
+        >>> number_of_effective_concepts(W)  # (2 + 1) / 2
+        1.5
+        >>> # columns 1-2 form one categorical concept: class 0 uses both
+        >>> # concepts (2), class 1 uses only the categorical one (1) -> mean 1.5
+        >>> number_of_effective_concepts(W, cardinalities=[1, 2])
+        1.5
+    """
+    mask = (weight.abs() > threshold).float()  # (C, k)
+    if cardinalities is None:
+        return mask.sum(dim=1).mean().item()
+
+    group_ids = _concept_group_ids(cardinalities, mask.size(1), mask.device)
+    num_concepts = len(cardinalities)
+    grouped = torch.zeros(
+        mask.size(0), num_concepts, device=mask.device, dtype=mask.dtype
+    ).index_add(1, group_ids, mask)
+    return (grouped > 0).float().sum(dim=1).mean().item()
+
+
+def number_of_contributing_concepts(
+    weight: torch.Tensor,
+    concept_activations: torch.Tensor,
+    coverage: float = 0.95,
+    predicted_class_only: bool = False,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Contributing Concepts (NCC) of a concept layer.
+
+    NCC is a **decision-level** sparsity (and information-leakage control)
+    metric that generalises :func:`number_of_effective_concepts` (NEC).
+    Whereas NEC counts nonzero *weights* per class, NCC counts how many
+    concepts are actually needed to *explain* each decision, by ranking
+    concepts by their **contribution** — the magnitude of the concept logit
+    times its class weight — and counting how many top contributors are
+    required to cover a fraction :math:`\\tau` of the total contribution.
+
+    For a concept logit vector :math:`g(a^{(i)}) \\in \\mathbb{R}^{k}` for
+    image :math:`i` and a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`,
+    the absolute contribution of concept :math:`j` to class :math:`r` is
+
+    .. math::
+        u^{(i)}_{j,r} = \\left| [g(a^{(i)})]_{j} \\, (W_F)_{r,j} \\right|.
+
+    Letting :math:`u^{(i)}_{(s),r}` denote the :math:`s`-th largest absolute
+    contribution for class :math:`r`, NCC at coverage level
+    :math:`\\tau \\in [0, 1]` is
+
+    .. math::
+        \\text{NCC}_\\tau = \\frac{1}{|D|\\,C} \\sum_{i=1}^{|D|}
+        \\sum_{r=1}^{C} \\min \\Big\\{ \\kappa \\in \\{0, \\dots, k\\} :
+        \\sum_{s=1}^{\\kappa} u^{(i)}_{(s),r} \\geq \\tau
+        \\sum_{j=1}^{k} u^{(i)}_{j,r} \\Big\\}.
+
+    At :math:`\\tau = 1` NCC reduces to NEC. Lower NCC means more concise,
+    less leakage-prone explanations.
+
+    Main reference: `"Learning Concept Bottleneck Models from Mechanistic
+    Explanations" (M-CBM, ICLR 2026)
+    <https://openreview.net/forum?id=gdEWoxhb70>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities``; the absolute contributions of a concept's
+    columns are **summed** into a single per-concept contribution before ranking.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        concept_activations (torch.Tensor): Concept logits / activations of
+            shape ``(N, k)`` for N samples (the inputs to the final layer).
+        coverage (float): Fraction :math:`\\tau \\in [0, 1]` of the per-class
+            absolute contribution that the top concepts must cover.
+            Default: ``0.95``.
+        predicted_class_only (bool): If True, average only over each sample's
+            predicted class (``argmax`` of the logits) instead of over all C
+            classes. Default: ``False``.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.cardinalities``.
+
+    Returns:
+        float: Average number of concepts needed to explain a fraction
+        ``coverage`` of each decision.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 1.0, 0.0],
+        ...                   [0.0, 0.0, 2.0]])
+        >>> a = torch.tensor([[1.0, 1.0, 1.0]])
+        >>> number_of_contributing_concepts(W, a, coverage=1.0)  # == NEC
+        1.5
+    """
+    # Absolute contributions u: (N, C, k) = |activation * weight|.
+    contrib = (concept_activations.unsqueeze(1) * weight.unsqueeze(0)).abs()
+    if cardinalities is not None:
+        # Sum each categorical concept's column contributions into one concept.
+        group_ids = _concept_group_ids(
+            cardinalities, contrib.size(-1), contrib.device
+        )
+        num_concepts = len(cardinalities)
+        contrib = torch.zeros(
+            contrib.size(0), contrib.size(1), num_concepts,
+            device=contrib.device, dtype=contrib.dtype,
+        ).index_add(2, group_ids, contrib)
+    # Sort contributions per (sample, class) in descending order.
+    sorted_contrib, _ = torch.sort(contrib, dim=-1, descending=True)
+    cumsum = sorted_contrib.cumsum(dim=-1)  # (N, C, k)
+    # Use the cumulative total (same accumulation order) so that tau=1 is exact.
+    total = cumsum[..., -1:]  # (N, C, 1)
+    target = coverage * total
+    # Smallest kappa whose top-kappa cumulative sum reaches the target.
+    kappa = (cumsum < target).sum(dim=-1) + 1  # (N, C)
+    # Degenerate decisions (zero total contribution) need no concepts.
+    kappa = torch.where(
+        total.squeeze(-1) <= 0, torch.zeros_like(kappa), kappa
+    )
+
+    if predicted_class_only:
+        logits = concept_activations @ weight.t()  # (N, C)
+        pred = logits.argmax(dim=1, keepdim=True)  # (N, 1)
+        kappa = kappa.gather(1, pred)  # (N, 1)
+
+    return kappa.float().mean().item()
+
+
+def cace_score(y_pred_c0, y_pred_c1):
+    """Compute the Average Causal Effect (ACE) / Causal Concept Effect (CaCE) score.
+
+    Measures the causal effect of a concept on model predictions:
+    ``E[Y | do(C=1)] - E[Y | do(C=0)]``.
 
     Main reference: `"Explaining Classifiers with Causal Concept Effect
     (CaCE)" <https://arxiv.org/abs/1907.07165>`_
 
-    Parameters:
-        y_pred_c0 (torch.Tensor): Predictions of the model when the concept is
-            inactive. Shape: (batch_size, num_classes).
-        y_pred_c1 (torch.Tensor): Predictions of the model when the concept is
-            active. Shape: (batch_size, num_classes).
+    Args:
+        y_pred_c0 (torch.Tensor): Predictions when the concept is inactive
+            (``do(C=0)``). Shape: ``(batch_size, num_classes)``.
+        y_pred_c1 (torch.Tensor): Predictions when the concept is active
+            (``do(C=1)``). Shape: ``(batch_size, num_classes)``.
 
     Returns:
-        torch.Tensor: The ACE/CaCE score for each class. Shape: (num_classes,).
+        torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
+
+    Example:
+        >>> import torch
+        >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
+        >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
+        >>> cace_score(y_c0, y_c1)
+        tensor([ 0.5000, -0.5000])
     """
     if y_pred_c0.shape != y_pred_c1.shape:
         raise RuntimeError(
@@ -607,11 +881,29 @@ def cace_score(y_pred_c0, y_pred_c1):
 
 
 def residual_concept_causal_effect(cace_before, cace_after):
-    """
-    Compute the residual concept causal effect between two concepts.
+    """Compute the residual concept causal effect.
+
+    Quantifies how much of a concept's causal effect remains after
+    intervening on another (inner) concept.  A value close to 1
+    indicates that the inner intervention had little impact; values
+    close to 0 indicate that the original effect was mostly mediated
+    through the inner concept.
+
     Args:
-        cace_metric_before: ConceptCausalEffect metric before the do-intervention on the inner concept
-        cace_metric_after: ConceptCausalEffect metric after do-intervention on the inner concept
+        cace_before (torch.Tensor): CaCE score **before** the
+            do-intervention on the inner concept.
+        cace_after (torch.Tensor): CaCE score **after** the
+            do-intervention on the inner concept.
+
+    Returns:
+        torch.Tensor: Element-wise ratio ``cace_after / cace_before``.
+
+    Example::
+
+        >>> before = torch.tensor([0.5, 0.4])
+        >>> after  = torch.tensor([0.1, 0.3])
+        >>> residual_concept_causal_effect(before, after)
+        tensor([0.2000, 0.7500])
     """
     return cace_after / cace_before
 
@@ -1036,8 +1328,14 @@ def minimize_constr(
             )
         original_fun = constr["fun"]
         original_jac = constr["jac"]
-        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy()
-        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy()
+        # scipy's SLSQP backend requires float64 inputs/outputs throughout.
+        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        x0_np = x0_np.astype("float64")
+        f_slsqp = f_with_jac
+        f_with_jac = lambda x: tuple(
+            v.astype("float64") for v in f_slsqp(x)
+        )
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",

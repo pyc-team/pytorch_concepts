@@ -1,275 +1,343 @@
-"""
-Comprehensive tests for torch_concepts.nn.modules.mid.models
+"""Comprehensive tests for BayesianNetwork and ProbabilisticModel.
 
-Tests for Variable, ParametricCPD, and ProbabilisticModel.
+BayesianNetwork is the concrete subclass of ProbabilisticModel used throughout
+the codebase. All public API goes through it.
 """
-import unittest
+import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
-from torch_concepts.nn.modules.mid.models.variable import Variable
+import torch.distributions as dist
+
+from torch_concepts.nn.modules.mid.models.variable import ConceptVariable, EmbeddingVariable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
 from torch_concepts.distributions import Delta
-from torch_concepts.nn.modules.mid.models.probabilistic_model import (
-    _reinitialize_with_new_param,
-    ProbabilisticModel,
-)
-
-class TestProbabilisticModel(unittest.TestCase):
-    """Test ProbabilisticModel class."""
-
-    def test_initialization(self):
-        """Test probabilistic model initialization."""
-        model = ProbabilisticModel(variables=[], parametric_cpds=[])
-        self.assertEqual(len(model.variables), 0)
-        self.assertEqual(len(model.parametric_cpds), 0)
-
-    def test_add_single_variable(self):
-        """Test adding a single variable."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[])
-        self.assertEqual(len(model.variables), 1)
-
-    def test_add_multiple_variables(self):
-        """Test adding multiple variables."""
-        vars_list = [
-            Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['B'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['C'], parents=[], distribution=Bernoulli, size=1)
-        ]
-        model = ProbabilisticModel(variables=vars_list, parametric_cpds=[])
-        self.assertEqual(len(model.variables), 3)
-
-    def test_add_cpds(self):
-        """Test adding cpds to model."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-        self.assertEqual(len(model.parametric_cpds), 1)
-
-    def test_variables_and_cpds_linkage(self):
-        """Test that variables and cpds are properly linked."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-        self.assertIsNotNone(model)
-
-    def test_hierarchical_structure(self):
-        """Test hierarchical variable structure."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
-
-        parent_cpd = ParametricCPD(concepts='parent', parametrization=nn.Linear(10, 1))
-        child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(1, 1))
-
-        model = ProbabilisticModel(
-            variables=[parent, child],
-            parametric_cpds=[parent_cpd, child_cpd]
-        )
-        self.assertEqual(len(model.variables), 2)
-        self.assertEqual(len(model.parametric_cpds), 2)
-
-    def test_multiple_parents(self):
-        """Test variable with multiple parents."""
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent1, parent2], distribution=Bernoulli, size=1)
-
-        model = ProbabilisticModel(variables=[parent1, parent2, child], parametric_cpds=[])
-        self.assertEqual(len(model.variables), 3)
-
-    def test_categorical_variable(self):
-        """Test with categorical variables."""
-        var = Variable(concepts=['color'], parents=[], distribution=Categorical, size=3)
-        cpd = ParametricCPD(concepts='color', parametrization=nn.Linear(10, 3))
-
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-        self.assertIsNotNone(model)
-
-    def test_delta_distribution(self):
-        """Test with Delta (deterministic) distribution."""
-        var = Variable(concepts=['feature'], parents=[], distribution=Delta, size=1)
-        cpd = ParametricCPD(concepts='feature', parametrization=nn.Linear(10, 1))
-
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-        self.assertIsNotNone(model)
-
-    def test_concept_to_variable_mapping(self):
-        """Test concept name to variable mapping."""
-        vars_list = [
-            Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1),
-            Variable(concepts=['B'], parents=[], distribution=Categorical, size=3)
-        ]
-        model = ProbabilisticModel(variables=vars_list, parametric_cpds=[])
-        # Model should create mapping from concept names to variables
-        self.assertEqual(len(model.variables), 2)
-
-    def test_get_module_of_concept(self):
-        """Test get_module_of_concept method."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-
-        module = model.get_module_of_concept('A')
-        self.assertIsNotNone(module)
-        self.assertEqual(module.concepts, ['A'])
-
-    def test_get_module_of_nonexistent_concept(self):
-        """Test get_module_of_concept with non-existent concept."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        model = ProbabilisticModel(variables=[var], parametric_cpds=[cpd])
-
-        module = model.get_module_of_concept('B')
-        self.assertIsNone(module)
-
-    def test_multiple_parent_combinations(self):
-        """Test cpd with multiple parents."""
-        parent1 = Variable(concepts=['p1'], parents=[], distribution=Bernoulli, size=1)
-        parent2 = Variable(concepts=['p2'], parents=[], distribution=Bernoulli, size=1)
-        child = Variable(concepts=['child'], parents=[parent1, parent2], distribution=Bernoulli, size=1)
-
-        p1_cpd = ParametricCPD(concepts='p1', parametrization=nn.Linear(10, 1))
-        p2_cpd = ParametricCPD(concepts='p2', parametrization=nn.Linear(10, 1))
-        child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(2, 1))
-
-        model = ProbabilisticModel(
-            variables=[parent1, parent2, child],
-            parametric_cpds=[p1_cpd, p2_cpd, child_cpd]
-        )
-
-        self.assertEqual(len(model.variables), 3)
 
 
-class TestVariableParametricCPDIntegration(unittest.TestCase):
-    """Test integration between Variables and ParametricCPDs."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    def test_cpd_output_matches_variable_size(self):
-        """Test that cpd output size matches variable size."""
-        var = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        cpd = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
+def _bvar(name, size=1):
+    return ConceptVariable(name, distribution=dist.Bernoulli, size=size)
 
-        x = torch.randn(4, 10)
-        output = cpd(input=x)
-        self.assertEqual(output.shape[1], var.out_features)
+def _dvar(name, size=4):
+    return ConceptVariable(name, distribution=Delta, size=size)
 
-    def test_parent_child_feature_matching(self):
-        """Test that child input features match parent output features."""
-        parent = Variable(concepts=['parent'], parents=[], distribution=Categorical, size=3)
-        child = Variable(concepts=['child'], parents=[parent], distribution=Bernoulli, size=1)
+def _root_cpd(var):
+    return ParametricCPD(variable=var, parametrization={"logits": LearnablePrior(var.size)})
 
-        child_cpd = ParametricCPD(concepts='child', parametrization=nn.Linear(3, 1))
+def _nonroot_cpd(var, parents, in_size=None):
+    in_size = in_size or sum(p.size for p in parents)
+    return ParametricCPD(variable=var, parametrization=nn.Linear(in_size, var.size), parents=parents)
 
-        parent_output = torch.randn(4, 3)
-        child_output = child_cpd(input=parent_output)
-        self.assertEqual(child_output.shape, (4, 1))
+def _simple_model():
+    """x (root, delta) -> c (bernoulli)."""
+    x = _dvar("x")
+    c = _bvar("c")
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(x.size)})
+    cpd_c = _nonroot_cpd(c, [x])
+    return BayesianNetwork(variables=[x, c], factors=[cpd_x, cpd_c])
 
-    def test_complex_hierarchy(self):
-        """Test complex hierarchical structure."""
-        var_a = Variable(concepts=['A'], parents=[], distribution=Bernoulli, size=1)
-        var_b = Variable(concepts=['B'], parents=[var_a], distribution=Bernoulli, size=1)
-        var_c = Variable(concepts=['C'], parents=[var_a], distribution=Bernoulli, size=1)
-        var_d = Variable(concepts=['D'], parents=[var_b, var_c], distribution=Bernoulli, size=1)
-
-        cpd_a = ParametricCPD(concepts='A', parametrization=nn.Linear(10, 1))
-        cpd_b = ParametricCPD(concepts='B', parametrization=nn.Linear(1, 1))
-        cpd_c = ParametricCPD(concepts='C', parametrization=nn.Linear(1, 1))
-        cpd_d = ParametricCPD(concepts='D', parametrization=nn.Linear(2, 1))
-
-        model = ProbabilisticModel(
-            variables=[var_a, var_b, var_c, var_d],
-            parametric_cpds=[cpd_a, cpd_b, cpd_c, cpd_d]
-        )
-        self.assertEqual(len(model.variables), 4)
-        self.assertEqual(var_d.in_features, 2)
-
-    def test_mixed_distributions(self):
-        """Test model with mixed distribution types."""
-        var_delta = Variable(concepts=['emb'], parents=[], distribution=Delta, size=10)
-        var_bern = Variable(concepts=['binary'], parents=[var_delta], distribution=Bernoulli, size=1)
-        var_cat = Variable(concepts=['multi'], parents=[var_delta], distribution=Categorical, size=3)
-
-        cpd_delta = ParametricCPD(concepts='emb', parametrization=nn.Identity())
-        cpd_bern = ParametricCPD(concepts='binary', parametrization=nn.Linear(10, 1))
-        cpd_cat = ParametricCPD(concepts='multi', parametrization=nn.Linear(10, 3))
-
-        model = ProbabilisticModel(
-            variables=[var_delta, var_bern, var_cat],
-            parametric_cpds=[cpd_delta, cpd_bern, cpd_cat]
-        )
-        self.assertEqual(len(model.variables), 3)
+def _chain_model():
+    """x -> a -> b -> c."""
+    x = _dvar("x", size=4)
+    a = _bvar("a")
+    b = _bvar("b")
+    c = _bvar("c")
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+    cpd_a = _nonroot_cpd(a, [x])
+    cpd_b = _nonroot_cpd(b, [a])
+    cpd_c = _nonroot_cpd(c, [b])
+    return BayesianNetwork(variables=[x, a, b, c], factors=[cpd_x, cpd_a, cpd_b, cpd_c])
 
 
-def test_reinitialize_parametric_cpd_parametrization_changed():
-    orig = ParametricCPD(concepts='a', parametrization=nn.Linear(3, 1))
-    new_param = nn.Linear(5, 1)
-    new = _reinitialize_with_new_param(orig, 'parametrization', new_param)
-    assert isinstance(new, ParametricCPD)
-    assert new.parametrization.in_features == 5
+# ===========================================================================
+# 1. Construction
+# ===========================================================================
+
+class TestBayesianNetworkConstruction:
+    def test_simple_construction(self):
+        m = _simple_model()
+        assert isinstance(m, BayesianNetwork)
+
+    def test_variables_is_dict(self):
+        m = _simple_model()
+        assert isinstance(m.variables, dict)
+
+    def test_variables_keys(self):
+        m = _simple_model()
+        assert set(m.variables.keys()) == {"x", "c"}
+
+    def test_variables_values_are_variable_objects(self):
+        m = _simple_model()
+        for v in m.variables.values():
+            assert isinstance(v, ConceptVariable)
+
+    def test_factors_is_moduledict(self):
+        m = _simple_model()
+        assert isinstance(m.factors, nn.ModuleDict)
+
+    def test_factors_keys(self):
+        m = _simple_model()
+        assert set(m.factors.keys()) == {"x", "c"}
+
+    def test_factors_values_are_cpds(self):
+        m = _simple_model()
+        for f in m.factors.values():
+            assert isinstance(f, ParametricCPD)
+
+    def test_dict_access_variable(self):
+        m = _simple_model()
+        assert m.variables["x"].name == "x"
+        assert m.variables["c"].name == "c"
+
+    def test_dict_access_factor(self):
+        m = _simple_model()
+        assert m.factors["c"].variable.name == "c"
+
+    def test_guides_registered_initially_empty(self):
+        m = _simple_model()
+        assert len(m.guides) == 0
+
+    def test_parameters_include_cpd_weights(self):
+        m = _simple_model()
+        params = list(m.parameters())
+        assert len(params) > 0
+
+    def test_wrong_factor_count_raises(self):
+        x = _dvar("x")
+        with pytest.raises(ValueError, match="exactly one factor per variable"):
+            BayesianNetwork(variables=[x], factors=[])
+
+    def test_duplicate_variable_names_raise(self):
+        x1 = _dvar("x")
+        x2 = _dvar("x")
+        cpd1 = ParametricCPD(variable=x1, parametrization={"value": LearnablePrior(4)})
+        cpd2 = ParametricCPD(variable=x2, parametrization={"value": LearnablePrior(4)})
+        with pytest.raises(ValueError, match="Duplicate"):
+            BayesianNetwork(variables=[x1, x2], factors=[cpd1, cpd2])
+
+    def test_factor_for_unregistered_variable_raises(self):
+        x = _dvar("x")
+        c = _bvar("c")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_c = _nonroot_cpd(c, [x])
+        # 2 factors but only 1 variable registered — BN rejects mismatched counts
+        with pytest.raises(ValueError):
+            BayesianNetwork(variables=[x], factors=[cpd_x, cpd_c])
+
+    def test_duplicate_factor_raises(self):
+        x = _dvar("x")
+        cpd1 = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd2 = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        # 2 factors for 1 variable — BN rejects the count mismatch
+        with pytest.raises(ValueError):
+            BayesianNetwork(variables=[x], factors=[cpd1, cpd2])
 
 
-def test_probabilistic_model_no_parents_build_cpt_and_potential_delta():
-    # Variable with no parents, deterministic (Delta)
-    var = Variable(concepts='x', parents=[], distribution=Delta, size=1)
-    # parametrization expects input size equal to its in_features
-    module = nn.Linear(in_features=2, out_features=1)
-    pcpd = ParametricCPD(concepts='x', parametrization=module)
+# ===========================================================================
+# 2. Topological sort and levels
+# ===========================================================================
 
-    model = ProbabilisticModel(variables=[var], parametric_cpds=[pcpd])
+class TestBayesianNetworkTopologicalOrder:
+    def test_sorted_variables_length(self):
+        m = _chain_model()
+        assert len(m.sorted_variables) == 4
 
-    cpts = model.build_cpts()
-    pots = model.build_potentials()
+    def test_sorted_variables_root_first(self):
+        m = _chain_model()
+        # x is the only root; it must come first
+        assert m.sorted_variables[0].name == "x"
 
-    assert 'x' in cpts
-    assert 'x' in pots
+    def test_chain_sorted_order(self):
+        m = _chain_model()
+        names = [v.name for v in m.sorted_variables]
+        # chain x -> a -> b -> c must be in topological order
+        assert names.index("x") < names.index("a")
+        assert names.index("a") < names.index("b")
+        assert names.index("b") < names.index("c")
 
-    # For Delta, CPT should equal the module output for a zero input of appropriate size
-    cpt = cpts['x']
-    pot = pots['x']
-    assert isinstance(cpt, torch.Tensor)
-    assert isinstance(pot, torch.Tensor)
-    # shapes: for our setup, input batch is 1 and out_features is 1
-    assert cpt.shape[-1] >= 1
-    assert pot.shape[-1] >= 1
+    def test_levels_chain(self):
+        m = _chain_model()
+        levels = m.levels
+        assert len(levels) == 4
+        assert levels[0][0].name == "x"
+        assert levels[1][0].name == "a"
+        assert levels[2][0].name == "b"
+        assert levels[3][0].name == "c"
+
+    def test_levels_diamond(self):
+        x = _dvar("x", size=4)
+        a = _bvar("a")
+        b = _bvar("b")
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_a = _nonroot_cpd(a, [x])
+        cpd_b = _nonroot_cpd(b, [x])
+        cpd_c = ParametricCPD(variable=c, parametrization=nn.Linear(2, 1), parents=[a, b])
+        m = BayesianNetwork(variables=[x, a, b, c], factors=[cpd_x, cpd_a, cpd_b, cpd_c])
+        levels = m.levels
+        assert len(levels) == 3
+        assert levels[0][0].name == "x"
+        assert {v.name for v in levels[1]} == {"a", "b"}
+        assert levels[2][0].name == "c"
+
+    def test_levels_parallel_roots(self):
+        a = _bvar("a")
+        b = _bvar("b")
+        cpd_a = ParametricCPD(variable=a, parametrization={"logits": LearnablePrior(1)})
+        cpd_b = ParametricCPD(variable=b, parametrization={"logits": LearnablePrior(1)})
+        m = BayesianNetwork(variables=[a, b], factors=[cpd_a, cpd_b])
+        levels = m.levels
+        assert len(levels) == 1
+        assert {v.name for v in levels[0]} == {"a", "b"}
+
+    def test_levels_cached(self):
+        m = _simple_model()
+        lev1 = m.levels
+        lev2 = m.levels
+        assert lev1 is lev2  # same object (cached)
+
+    def test_cycle_detection(self):
+        a = _bvar("a")
+        b = _bvar("b")
+        cpd_a = _nonroot_cpd(a, [b])
+        cpd_b = _nonroot_cpd(b, [a])
+        with pytest.raises(ValueError, match="cycle"):
+            BayesianNetwork(variables=[a, b], factors=[cpd_a, cpd_b])
 
 
-def test_probabilistic_model_with_parent_bernolli_and_helpers():
-    # Parent variable (Bernoulli) and child depending on parent
-    parent = Variable(concepts='p', parents=[], distribution=Bernoulli, size=1)
-    child = Variable(concepts='c', parents=['p'], distribution=Bernoulli, size=1)
+# ===========================================================================
+# 3. queryable_names and resolve
+# ===========================================================================
 
-    # parametrizations: parent has no parents, so its module.in_features can be 1
-    parent_module = nn.Linear(in_features=1, out_features=1)
-    child_module = nn.Linear(in_features=1, out_features=1)  # expects parent.out_features == 1
+class TestBayesianNetworkQueryable:
+    def test_queryable_names_includes_variables(self):
+        m = _simple_model()
+        assert "x" in m.queryable_names
+        assert "c" in m.queryable_names
 
-    parent_pcpd = ParametricCPD(concepts='p', parametrization=parent_module)
-    child_pcpd = ParametricCPD(concepts='c', parametrization=child_module)
+    def test_queryable_names_is_frozenset(self):
+        m = _simple_model()
+        assert isinstance(m.queryable_names, frozenset)
 
-    model = ProbabilisticModel(variables=[parent, child], parametric_cpds=[parent_pcpd, child_pcpd])
+    def test_resolve_returns_variable(self):
+        m = _simple_model()
+        v = m.resolve("c")
+        assert v.name == "c"
+        assert v is m.variables["c"]
 
-    # get_by_distribution
-    bern_vars = model.get_by_distribution(Bernoulli)
-    assert any(v.concepts[0] == 'p' for v in bern_vars)
-    assert any(v.concepts[0] == 'c' for v in bern_vars)
+    def test_resolve_plate_name(self):
+        plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
+        x = _dvar("x")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_g = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        m = BayesianNetwork(variables=[x, plate], factors=[cpd_x, cpd_g])
+        assert m.resolve("g") is plate
 
-    # get_variable_parents resolves string parent to Variable
-    parents_of_c = model.get_variable_parents('c')
-    assert len(parents_of_c) == 1
-    assert parents_of_c[0].concepts[0] == 'p'
+    def test_resolve_member_name_returns_plate(self):
+        plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
+        x = _dvar("x")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_g = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        m = BayesianNetwork(variables=[x, plate], factors=[cpd_x, cpd_g])
+        assert m.resolve("m1") is plate
+        assert m.resolve("m2") is plate
 
-    # get_module_of_concept returns the ParametricCPD module
-    mod_c = model.get_module_of_concept('c')
-    assert isinstance(mod_c, ParametricCPD)
+    def test_queryable_names_includes_plate_members(self):
+        plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
+        x = _dvar("x")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_g = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        m = BayesianNetwork(variables=[x, plate], factors=[cpd_x, cpd_g])
+        assert "m1" in m.queryable_names
+        assert "m2" in m.queryable_names
+        assert "g" in m.queryable_names
 
-    # Build CPT for child should succeed
-    cpts = model.build_cpts()
-    assert 'c' in cpts
-    # For Bernoulli, CPT rows include parent state and probability column
-    cpt_c = cpts['c']
-    assert cpt_c.shape[1] >= 1
+
+# ===========================================================================
+# 4. _validate_graph — parent validation
+# ===========================================================================
+
+class TestBayesianNetworkValidation:
+    def test_unknown_parent_raises(self):
+        z = _bvar("z")
+        c = _bvar("c")
+        cpd_c = _nonroot_cpd(c, [z])  # z not in variables
+        cpd_z = ParametricCPD(variable=z, parametrization={"logits": LearnablePrior(1)})
+        with pytest.raises(ValueError, match="not in variables list"):
+            BayesianNetwork(variables=[c], factors=[cpd_c])
+
+    def test_wrong_variable_instance_raises(self):
+        x1 = _dvar("x")
+        x2 = _dvar("x")  # same name, different object
+        c = _bvar("c")
+        cpd_x1 = ParametricCPD(variable=x1, parametrization={"value": LearnablePrior(4)})
+        cpd_c = _nonroot_cpd(c, [x2])  # x2 not the registered x1
+        with pytest.raises(ValueError, match="different Variable instance"):
+            BayesianNetwork(variables=[x1, c], factors=[cpd_x1, cpd_c])
+
+    def test_member_handle_parent_valid(self):
+        x = _dvar("x")  # create x first so the same object is used in cpd_plate
+        plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
+        c = _bvar("c")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_plate = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        # c depends on just m1 of the plate
+        m1_handle = plate.member("m1")
+        cpd_c = _nonroot_cpd(c, [m1_handle])
+        m = BayesianNetwork(variables=[x, plate, c], factors=[cpd_x, cpd_plate, cpd_c])
+        assert m is not None  # no exception
+
+    def test_member_handle_unregistered_plate_raises(self):
+        other_plate = ConceptVariable("other", members=["m1"], distribution=dist.Bernoulli)
+        c = _bvar("c")
+        # registered plate is g, but parent is a member of 'other'
+        plate = ConceptVariable("g", members=["m1"], distribution=dist.Bernoulli)
+        cpd_plate = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 1), nn.Sigmoid())})
+        m1 = other_plate.member("m1")
+        cpd_c = _nonroot_cpd(c, [m1])
+        with pytest.raises(ValueError):
+            BayesianNetwork(variables=[plate, c], factors=[cpd_plate, cpd_c])
+
+    def test_duplicate_parent_deduped(self):
+        x = _dvar("x")
+        c = _bvar("c")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_c = ParametricCPD(variable=c, parametrization=nn.Linear(4, 1), parents=[x, x])
+        m = BayesianNetwork(variables=[x, c], factors=[cpd_x, cpd_c])
+        assert len(m.factors["c"].parents) == 1  # deduped
 
 
-if __name__ == '__main__':
-    unittest.main()
+# ===========================================================================
+# 5. Plate-aware levels
+# ===========================================================================
+
+class TestBayesianNetworkPlateHandling:
+    def test_plate_treated_as_single_variable_in_levels(self):
+        x = _dvar("x")
+        plate = ConceptVariable("g", members=["a", "b", "c"], distribution=dist.Bernoulli)
+        y = _bvar("y")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_g = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 3), nn.Sigmoid())}, parents=[x])
+        cpd_y = ParametricCPD(variable=y, parametrization=nn.Linear(3, 1), parents=[plate])
+        m = BayesianNetwork(variables=[x, plate, y], factors=[cpd_x, cpd_g, cpd_y])
+        levels = m.levels
+        assert len(levels) == 3
+        assert levels[1][0].name == "g"
+        assert levels[2][0].name == "y"
+
+    def test_plate_member_as_parent_in_levels(self):
+        x = _dvar("x")
+        plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
+        y = _bvar("y")
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": LearnablePrior(4)})
+        cpd_g = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+        # y depends on member 'a' only
+        a_handle = plate.member("a")
+        cpd_y = _nonroot_cpd(y, [a_handle])
+        m = BayesianNetwork(variables=[x, plate, y], factors=[cpd_x, cpd_g, cpd_y])
+        levels = m.levels
+        assert len(levels) == 3  # x, g, y

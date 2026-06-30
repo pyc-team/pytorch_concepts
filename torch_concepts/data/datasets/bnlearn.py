@@ -5,10 +5,8 @@ import pandas as pd
 import torch
 import logging
 from typing import List, Optional
-import bnlearn as bn
-from pgmpy.sampling import BayesianModelSampling
 
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,19 @@ from ..preprocessing.autoencoder import extract_embs_from_autoencoder
 from ..io import download_url
 
 BUILTIN_DAGS = ['asia', 'alarm', 'andes', 'sachs', 'water']
+
+
+def _import_bnlearn():
+    """Lazily import bnlearn (and pgmpy's sampler), raising a clear error if not installed."""
+    try:
+        import bnlearn as bn
+        from pgmpy.sampling import BayesianModelSampling
+        return bn, BayesianModelSampling
+    except ImportError as exc:
+        raise ImportError(
+            "BnLearnDataset requires the `bnlearn` package (which pulls in pgmpy). "
+            "Install it with: pip install bnlearn"
+        ) from exc
 
 class BnLearnDataset(ConceptDataset):
     """Dataset class for the Asia dataset from bnlearn.
@@ -99,6 +110,7 @@ class BnLearnDataset(ConceptDataset):
             os.unlink(gz_path)
 
     def build(self):
+        bn, BayesianModelSampling = _import_bnlearn()
         self.maybe_download()
         if self.name in BUILTIN_DAGS:
             self.bn_model_dict = bn.import_DAG(self.name)
@@ -120,22 +132,15 @@ class BnLearnDataset(ConceptDataset):
 
         # get concept annotations
         concept_names = list(self.bn_model.nodes())
-        # get concept metadata, store as many objects as you need.
-        # at least store the variable 'type'! ('discrete' or 'continuous')
-        concept_metadata = {
-            node: {'type': 'discrete'} for node in concept_names
-        }
-        
         cardinalities = [int(self.bn_model.get_cardinality()[node]) for node in concept_names]
         # categorical concepts with card=2 will be treated as Bernoulli (card=1)
         cardinalities = [1 if card == 2 else card for card in cardinalities]
+        # all bnlearn nodes are discrete: card==1 -> binary, card>1 -> categorical
+        types = ['binary' if card == 1 else 'categorical' for card in cardinalities]
 
-        annotations = Annotations({
-            # 0: batch axis, do not need to annotate
-            # 1: concepts axis, always annotate
-            1: AxisAnnotation(labels=concept_names,
-                              cardinalities=cardinalities,
-                              metadata=concept_metadata)})
+        annotations = Annotations(labels=concept_names,
+                          cardinalities=cardinalities,
+                          types=types)
         
         # get the graph for the endogenous concepts
         graph = self.bn_model_dict['adjmat']

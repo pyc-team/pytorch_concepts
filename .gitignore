@@ -85,4 +85,11 @@ data/
 !tests/data/
 
 # conceptarium logs
+runs.csv
+conceptarium/results/
 outputs/
+
+# analysis
+conceptarium/visualize.py
+conceptarium/run_analysis.py
+conceptarium/conf/benchmark.yaml

@@ -10,46 +10,38 @@ Tests the interaction between:
 This ensures that all high-level components work together correctly.
 """
 import unittest
+import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli
 from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.annotations import Annotations
 from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
+
+
+def _logits(out, names):
+    """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
+    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
 
 
 class TestHighLevelIntegration(unittest.TestCase):
     """Test integration of high-level components."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         # Mixed binary and categorical concepts
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 3, 1, 4],
-                metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Categorical},
-                    'c3': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Categorical}
-                }
+                types=['binary', 'categorical', 'binary', 'categorical'],
             )
-        })
-        
-        self.loss_config = GroupConfig(
-            binary=nn.BCEWithLogitsLoss(),
-            categorical=nn.CrossEntropyLoss()
-        )
-        
-        self.metrics_config = GroupConfig(
-            binary={'accuracy': BinaryAccuracy()},
-            categorical={'accuracy': MulticlassAccuracy(num_classes=4)}
-        )
-    
+
+        self.loss_binary = nn.BCEWithLogitsLoss()
+        self.loss_categorical = nn.CrossEntropyLoss()
+
     def test_model_loss_integration(self):
         """Test that model outputs work with ConceptLoss."""
         model = ConceptBottleneckModel(
@@ -57,30 +49,34 @@ class TestHighLevelIntegration(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
-        
-        loss_fn = ConceptLoss(annotations=self.ann, fn_collection=self.loss_config)
-        
+
+        loss_fn = ConceptLoss(
+            annotations=self.ann,
+            binary=self.loss_binary,
+            categorical=self.loss_categorical,
+        )
+
         # Forward pass
         x = torch.randn(8, 16)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(x, query=query)
-        
-        # Create targets matching output shape
+        out = model(query=query, input=x)
+
+        # Create concept-level targets (one integer per concept)
         target = torch.cat([
-            torch.randint(0, 2, (8, 1)),  # c1: binary
-            torch.randint(0, 3, (8, 1)),  # c2: categorical
-            torch.randint(0, 2, (8, 1)),  # c3: binary
-            torch.randint(0, 4, (8, 1))   # task: categorical
+            torch.randint(0, 2, (8, 1)),   # c1: binary
+            torch.randint(0, 3, (8, 1)),   # c2: 3-class
+            torch.randint(0, 2, (8, 1)),   # c3: binary
+            torch.randint(0, 4, (8, 1)),   # task: 4-class
         ], dim=1).float()
-        
-        # Filter for loss
-        filtered = model.filter_output_for_loss(out, target)
-        loss_value = loss_fn(**filtered)
-        
+
+        # Attach target and compute ConceptLoss
+        out.target = target
+        loss_value = loss_fn(out)
+
         self.assertIsInstance(loss_value, torch.Tensor)
         self.assertEqual(loss_value.shape, ())
-        self.assertTrue(loss_value >= 0)
-    
+        self.assertGreaterEqual(loss_value.item(), 0)
+
     def test_model_metrics_integration(self):
         """Test that model outputs work with ConceptMetrics."""
         model = ConceptBottleneckModel(
@@ -88,173 +84,134 @@ class TestHighLevelIntegration(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
-        
+
         metrics = ConceptMetrics(
             annotations=self.ann,
-            fn_collection=self.metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True,
         )
-        
+
         # Forward pass
         x = torch.randn(8, 16)
         query = ['c1', 'c2', 'c3', 'task']
-        out = model(x, query=query)
-        
-        # Create targets
+        out = model(query=query, input=x)
+
+        # Create concept-level integer targets
         target = torch.cat([
             torch.randint(0, 2, (8, 1)),
             torch.randint(0, 3, (8, 1)),
             torch.randint(0, 2, (8, 1)),
-            torch.randint(0, 4, (8, 1))
-        ], dim=1).int()
-        
-        # Update metrics  
-        filtered = model.filter_output_for_metrics(out, target)
-        metrics.update(**filtered, split='train')
-        
-        # Compute metrics
-        results = metrics.compute('train')
+            torch.randint(0, 4, (8, 1)),
+        ], dim=1).float()
+
+        out.target = target
+        metrics.update(out)
+
+        results = metrics.compute()
         self.assertIsInstance(results, dict)
-    
+
     def test_model_loss_metrics_full_pipeline(self):
         """Test full training pipeline with model, loss, and metrics."""
         model = ConceptBottleneckModel(
             input_size=16,
             annotations=self.ann,
             task_names=['task'],
-            latent_encoder_kwargs={'hidden_size': 32}
         )
-        
-        loss_fn = ConceptLoss(annotations=self.ann, fn_collection=self.loss_config)
-        
+
+        loss_fn = ConceptLoss(
+            annotations=self.ann,
+            binary=self.loss_binary,
+            categorical=self.loss_categorical,
+        )
+
         metrics = ConceptMetrics(
             annotations=self.ann,
-            fn_collection=self.metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True,
         )
-        
+
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        
-        # Training loop
+
         model.train()
         for epoch in range(3):
             x = torch.randn(16, 16)
             query = ['c1', 'c2', 'c3', 'task']
-            
-            # Create targets
+
             target = torch.cat([
                 torch.randint(0, 2, (16, 1)),
                 torch.randint(0, 3, (16, 1)),
                 torch.randint(0, 2, (16, 1)),
-                torch.randint(0, 4, (16, 1))
-            ], dim=1)
-            
+                torch.randint(0, 4, (16, 1)),
+            ], dim=1).float()
+
             optimizer.zero_grad()
-            
-            # Forward
-            out = model(x, query=query)
-            
-            # Loss
-            filtered_loss = model.filter_output_for_loss(out, target.float())
-            loss_value = loss_fn(**filtered_loss)
-            
-            # Backward
+            out = model(query=query, input=x)
+            out.target = target
+            loss_value = loss_fn(out)
             loss_value.backward()
             optimizer.step()
-            
-            # Metrics
-            filtered_metrics = model.filter_output_for_metrics(out, target.int())
-            metrics.update(**filtered_metrics, split='train')
-        
-        # Compute final metrics
-        results = metrics.compute('train')
+
+            metrics.update(out)
+
+        results = metrics.compute()
         self.assertIsInstance(results, dict)
 
 
 class TestAnnotationsWithComponents(unittest.TestCase):
     """Test that annotations work correctly with all high-level components."""
-    
+
     def test_annotations_with_distributions_in_metadata(self):
-        """Test using annotations with distributions in metadata."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        """Test that binary annotations initialize model, loss, and metrics correctly."""
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'binary', 'distribution': Bernoulli},
-                    'c2': {'type': 'binary', 'distribution': Bernoulli}
-                }
+                types=['binary', 'binary'],
             )
-        })
-        
-        # Model
+
         model = ConceptBottleneckModel(
             input_size=8,
             annotations=ann,
             task_names=['c2']
         )
-        
-        # Loss
-        loss_config = GroupConfig(binary=nn.BCEWithLogitsLoss())
-        loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
-        
-        # Metrics
-        metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
+
+        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
+
         metrics = ConceptMetrics(
             annotations=ann,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            summary=True,
         )
-        
-        # All should initialize without errors
+
         self.assertIsNotNone(model)
         self.assertIsNotNone(loss)
         self.assertIsNotNone(metrics)
-    
+
     def test_annotations_with_variable_distributions(self):
-        """Test using annotations without distributions (provide separately)."""
-        ann_no_dist = Annotations({
-            1: AxisAnnotation(
+        """Test that per-type variable_distributions override works on the model."""
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
+                types=['binary', 'binary'],
             )
-        })
-        
-        variable_distributions = {
-            'c1': Bernoulli,
-            'c2': Bernoulli
-        }
-        
-        # Model adds distributions internally
+
+        # Model with explicit per-type distribution override
         model = ConceptBottleneckModel(
             input_size=8,
-            annotations=ann_no_dist,
-            variable_distributions=variable_distributions,
-            task_names=['c2']
+            annotations=ann,
+            task_names=['c2'],
+            variable_distributions={'binary': Bernoulli},
         )
-        
-        # Use full annotations for loss and metrics
-        ann_with_dist = Annotations({
-            1: model.concept_annotations
-        })
-        
-        # Loss
-        loss_config = GroupConfig(binary=nn.BCEWithLogitsLoss())
-        loss = ConceptLoss(annotations=ann_with_dist, fn_collection=loss_config)
-        
-        # Metrics
-        metrics_config = GroupConfig(binary={'accuracy': BinaryAccuracy()})
+
+        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
+
         metrics = ConceptMetrics(
-            annotations=ann_with_dist,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            annotations=ann,
+            binary={'accuracy': BinaryAccuracy()},
+            summary=True,
         )
-        
-        # All should initialize without errors
+
         self.assertIsNotNone(model)
         self.assertIsNotNone(loss)
         self.assertIsNotNone(metrics)
@@ -265,17 +222,11 @@ class TestTwoTrainingModes(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.ann = Annotations({
-            1: AxisAnnotation(
+        self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli}
-                }
+                types=['binary', 'binary', 'binary'],
             )
-        })
     
     def test_manual_pytorch_training(self):
         """Test manual PyTorch training mode."""
@@ -296,24 +247,25 @@ class TestTwoTrainingModes(unittest.TestCase):
         y = torch.randint(0, 2, (4, 3)).float()
         
         optimizer.zero_grad()
-        out = model(x, query=['c1', 'c2', 'task'])
-        loss = loss_fn(out, y)
+        out = model(query=['c1', 'c2', 'task'], input=x)
+        loss = loss_fn(_logits(out, ['c1', 'c2', 'task']), y)
         loss.backward()
         optimizer.step()
-        
+
         self.assertTrue(loss.requires_grad or loss.grad_fn is not None or True)  # Loss was computed
-    
+
     def test_models_are_compatible_across_modes(self):
-        """Test that model architecture is same regardless of training mode."""
-        # Manual mode
+        """Test that model architecture is same regardless of lightning mode."""
+        # Manual mode (pure PyTorch)
         model1 = ConceptBottleneckModel(
             input_size=8,
             annotations=self.ann,
             task_names=['task']
         )
-        
-        # Lightning mode
+
+        # Lightning mode (with lightning=True)
         model2 = ConceptBottleneckModel(
+            lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names=['task'],
@@ -321,70 +273,67 @@ class TestTwoTrainingModes(unittest.TestCase):
             optim_class=torch.optim.Adam,
             optim_kwargs={'lr': 0.001}
         )
-        
+
         # Same architecture
         self.assertEqual(model1.concept_names, model2.concept_names)
         self.assertEqual(model1.latent_size, model2.latent_size)
-        
+
         # Forward pass produces same shapes
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
-        
+
         with torch.no_grad():
-            out1 = model1(x, query=query)
-            out2 = model2(x, query=query)
-        
-        self.assertEqual(out1.shape, out2.shape)
+            out1 = model1(query=query, input=x)
+            out2 = model2(query=query, input=x)
+
+        self.assertEqual(
+            _logits(out1, query).shape,
+            _logits(out2, query).shape,
+        )
 
 
 class TestDistributionHandling(unittest.TestCase):
     """Test distribution handling across components."""
-    
+
     def test_mixed_distribution_types(self):
         """Test handling of mixed distribution types."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['binary1', 'cat1', 'binary2', 'cat2'],
                 cardinalities=[1, 3, 1, 4],
-                metadata={
-                    'binary1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'cat1': {'type': 'discrete', 'distribution': Categorical},
-                    'binary2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'cat2': {'type': 'discrete', 'distribution': Categorical}
-                }
+                types=['binary', 'categorical', 'binary', 'categorical'],
             )
-        })
-        
+
         model = ConceptBottleneckModel(
             input_size=16,
             annotations=ann,
             task_names=['cat2']
         )
-        
-        loss_config = GroupConfig(
+
+        loss = ConceptLoss(
+            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
-            categorical=nn.CrossEntropyLoss()
+            categorical=nn.CrossEntropyLoss(),
         )
-        loss = ConceptLoss(annotations=ann, fn_collection=loss_config)
-        
-        metrics_config = GroupConfig(
-            binary={'accuracy': BinaryAccuracy()},
-            categorical={'accuracy': MulticlassAccuracy(num_classes=4)}
-        )
+
         metrics = ConceptMetrics(
             annotations=ann,
-            fn_collection=metrics_config,
-            summary_metrics=True
+            binary={'accuracy': BinaryAccuracy()},
+            categorical={'accuracy': (MulticlassAccuracy, {"average": "micro"})},
+            summary=True,
         )
-        
+
         # Forward pass
         x = torch.randn(8, 16)
         query = ['binary1', 'cat1', 'binary2', 'cat2']
-        out = model(x, query=query)
-        
-        # Verify output shape
+        out = model(query=query, input=x)
+
+        # Verify output shape via per-variable logits
         expected_shape = (8, 1 + 3 + 1 + 4)  # sum of cardinalities
-        self.assertEqual(out.shape, expected_shape)
+        self.assertEqual(_logits(out, query).shape, expected_shape)
+
+        # Verify loss and metrics can be used
+        self.assertIsNotNone(loss)
+        self.assertIsNotNone(metrics)
 
 
 if __name__ == '__main__':

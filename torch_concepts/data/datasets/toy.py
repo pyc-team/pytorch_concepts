@@ -9,7 +9,7 @@ from sklearn.datasets import make_spd_matrix, make_low_rank_matrix
 from typing import List, Optional, Union
 
 from ..base.dataset import ConceptDataset
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,8 @@ class ToyDataset(ConceptDataset):
         Root directory to store/load the dataset files. If None, defaults to
         './data/toy_datasets/{dataset_name}'. Default: None
     seed : int, optional
-        Random seed for reproducible data generation. Default: 42
+        Random seed for reproducible data *generation* (also determines the
+        on-disk cache filename). Default: 42
     n_gen : int, optional
         Number of samples to generate. Default: 10000
     concept_subset : list of str, optional
@@ -210,7 +211,7 @@ class ToyDataset(ConceptDataset):
     --------
     Basic usage with XOR dataset:
 
-    >>> from torch_concepts.data.datasets import ToyDataset
+    >>> from torch_concepts.data import ToyDataset
     >>>
     >>> # Create XOR dataset with 1000 samples
     >>> dataset = ToyDataset(dataset='xor', seed=42, n_gen=1000)
@@ -312,18 +313,13 @@ class ToyDataset(ConceptDataset):
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * len(concept_names))  # All binary concepts
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                cardinalities=cardinalities,
-                metadata=concept_metadata
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=['binary'] * len(concept_names),
+        )
 
         # Save all data
         logger.info(f"Saving dataset to {self.root_dir}")
@@ -426,12 +422,12 @@ def _complete(
         y = torch.sigmoid(torch.FloatTensor(y)).squeeze(-1)
         y = (y >= 0.5) * 1.0
     else:
-        y = torch.argmax(torch.FloatTensor(y), dim=-1)
+        y = torch.argmax(torch.FloatTensor(y), dim=-1).float()
 
     u = c[:, :n_concepts]
     X = torch.FloatTensor(X)
     u = torch.FloatTensor(u)
-    y = torch.FloatTensor(y)
+    # y is already a FloatTensor at this point
 
     uy = torch.cat([u, y.unsqueeze(-1)], dim=-1)
     uy_names = [f'C{i}' for i in range(n_concepts)] + ['y']
@@ -468,7 +464,8 @@ class CompletenessDataset(ConceptDataset):
         Root directory to store/load the dataset files. If None, defaults to
         './data/completeness_datasets/{name}'. Default: None
     seed : int, optional
-        Random seed for reproducible data generation. Default: 42
+        Random seed for reproducible data *generation* (also determines the
+        on-disk cache filename). Default: 42
     n_gen : int, optional
         Number of samples to generate. Default: 10000
     p : int, optional
@@ -510,7 +507,7 @@ class CompletenessDataset(ConceptDataset):
     --------
     Basic usage with complete bottleneck:
 
-    >>> from torch_concepts.data.datasets import CompletenessDataset
+    >>> from torch_concepts.data import CompletenessDataset
     >>>
     >>> # Create dataset with complete bottleneck (no hidden concepts)
     >>> dataset = CompletenessDataset(
@@ -526,7 +523,7 @@ class CompletenessDataset(ConceptDataset):
 
     Creating incomplete bottleneck with hidden concepts:
 
-    >>> from torch_concepts.data.datasets import CompletenessDataset
+    >>> from torch_concepts.data import CompletenessDataset
     >>>
     >>> # Create dataset with incomplete bottleneck
     >>> dataset = CompletenessDataset(
@@ -621,18 +618,15 @@ class CompletenessDataset(ConceptDataset):
         )
 
         # Create annotations
-        concept_metadata = {
-            name: {'type': 'discrete'} for name in concept_names
-        }
         cardinalities = tuple([1] * self._n_concepts) + tuple([self._n_tasks])
+        task_type = 'binary' if self._n_tasks == 1 else 'categorical'
+        types = ['binary'] * self._n_concepts + [task_type]
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                cardinalities=cardinalities,
-                metadata=concept_metadata
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Save all data
         logger.info(f"Saving dataset to {self.root_dir}")

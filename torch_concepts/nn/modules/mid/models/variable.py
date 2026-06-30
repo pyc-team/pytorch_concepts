@@ -1,512 +1,360 @@
 """
-Variable representation for concept-based Probabilistic Models.
-
-This module defines the Variable class, which represents random variables in
-concept-based models. Variables can have different probability distributions
-and support hierarchical concept structures.
+This script defines the abstract base class ``Variable``
+and its concrete subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
+which represent random variables in a Probabilistic Graphical Model.
 """
+
+from __future__ import annotations
+
+import copy
+import math
+from abc import ABC, abstractmethod
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union
+from functools import partial
+
 import torch
-from torch.distributions import Distribution, Bernoulli, Categorical, RelaxedBernoulli, RelaxedOneHotCategorical
-from typing import List, Dict, Any, Union, Optional, Type
+import torch.nn as nn
+import torch.distributions as dist
 
-from .....distributions import Delta
+from .....distributions.delta import Delta
 
 
-class Variable:
+# ---------------------------------------------------------------------------
+# Per-parameter dimension lookup table.
+# ---------------------------------------------------------------------------
+PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
+    Delta:                         {"value": lambda size: size},
+    dist.Bernoulli:                {"probs": lambda size: size, "logits": lambda size: size},
+    dist.RelaxedBernoulli:         {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Categorical:              {"probs": lambda size: size, "logits": lambda size: size},
+    dist.OneHotCategorical:        {"probs": lambda size: size, "logits": lambda size: size},
+    dist.RelaxedOneHotCategorical: {"probs": lambda size: size, "logits": lambda size: size},
+    dist.Normal:                   {"loc": lambda size: size, "scale": lambda size: size},
+    dist.MultivariateNormal:       {"loc": lambda size: size,
+                                    "scale_tril": lambda size: size * (size + 1) // 2},
+}
+
+_DEFAULT_DISTRIBUTIONS = {
+    'binary': dist.Bernoulli,
+    'categorical': dist.OneHotCategorical,
+    'continuous': dist.Normal,
+}
+
+_DEFAULT_DIST_KWARGS = {
+    dist.RelaxedBernoulli: {'temperature': 0.5},
+    dist.RelaxedOneHotCategorical: {'temperature': 0.5},
+}
+
+# Per-parameter activation mapping a raw network output to a valid distribution
+# parameter, keyed by distribution family and then by the parameter name the
+# CPD produced.
+DEFAULT_ACTIVATIONS = {
+    Delta:                         {"value": lambda x: x},
+    dist.Bernoulli:                {"probs": lambda x: x, "logits": torch.sigmoid},
+    dist.RelaxedBernoulli:         {"probs": lambda x: x, "logits": torch.sigmoid},
+    dist.Categorical:              {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.OneHotCategorical:        {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.RelaxedOneHotCategorical: {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
+    dist.Normal:                   {"loc": lambda x: x, "scale": lambda x: x},
+    dist.MultivariateNormal:       {"loc": lambda x: x, "scale_tril": lambda x: x},
+}
+
+def _broadcast(value, n: int, name: str):
+    """Return a list of length ``n``: broadcast scalar or check list length.
+    
+    This is used to construct multiple independent variables with a single constructor call.
     """
-    Represents a random variable in a concept-based Probabilistic Model.
-
-    A Variable encapsulates one or more concepts along with their associated
-    probability distribution, parent variables, and metadata. It supports
-    multiple distribution types including Delta (deterministic), Bernoulli,
-    Categorical, and Normal distributions.
-
-    The Variable class implements a special __new__ method that allows creating
-    multiple Variable instances when initialized with multiple concepts, or a
-    single instance for a single concept.
-
-    Attributes:
-        concepts (List[str]): List of concept names represented by this variable.
-        parents (List[Variable]): List of parent variables in the graphical model.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Size/cardinality of the variable (e.g., number of classes for Categorical).
-        metadata (Dict[str, Any]): Additional metadata associated with the variable.
-
-    Properties:
-        out_features (int): Number of output features this variable produces.
-        in_features (int): Total input features from all parent variables.
-
-    Example:
-        >>> import torch
-        >>> from torch.distributions import Bernoulli, Categorical, Normal
-        >>> from torch_concepts import Variable
-        >>> from torch_concepts.distributions import Delta
-        >>>
-        >>> # Create a binary concept variable
-        >>> var_binary = Variable(
-        ...     concepts='has_wheels',
-        ...     parents=[],
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> print(var_binary.concepts)  # ['has_wheels']
-        >>> print(var_binary.out_features)  # 1
-        >>>
-        >>> # Create a categorical variable with 3 color classes
-        >>> var_color = Variable(
-        ...     concepts=['color'],
-        ...     parents=[],
-        ...     distribution=Categorical,
-        ...     size=3  # red, green, blue
-        ... )
-        >>> print(var_color.out_features)  # 3
-        >>>
-        >>> # Create a deterministic (Delta) variable
-        >>> var_delta = Variable(
-        ...     concepts=['continuous_feature'],
-        ...     parents=[],
-        ...     distribution=Delta,
-        ...     size=1
-        ... )
-        >>>
-        >>> # Create multiple variables at once
-        >>> vars_list = Variable(
-        ...     concepts=['A', 'B', 'C'],
-        ...     parents=[],
-        ...     distribution=Delta,
-        ...     size=1
-        ... )
-        >>> print(len(vars_list))  # 3
-        >>> print(vars_list[0].concepts)  # ['A']
-        >>> print(vars_list[1].concepts)  # ['B']
-        >>>
-        >>> # Create variables with parent dependencies
-        >>> parent_var = Variable(
-        ...     concepts=['parent_concept'],
-        ...     parents=[],
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> child_var = Variable(
-        ...     concepts=['child_concept'],
-        ...     parents=[parent_var],
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> print(child_var.in_features)  # 1 (from parent)
-        >>> print(child_var.out_features)  # 1
-    """
-
-    def __new__(cls, concepts: Union[List[str]], parents: List[Union['Variable', str]],
-                distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                size: Union[int, List[int]] = 1, metadata: Optional[Dict[str, Any]] = None):
-        """
-        Create new Variable instance(s).
-
-        If concepts is a list with multiple elements, returns a list of Variable
-        instances (one per concept). Otherwise, returns a single Variable instance.
-
-        Args:
-            concepts: Single concept name or list of concept names.
-            parents: List of parent Variable instances.
-            distribution: Distribution type or list of distribution types.
-            size: Size parameter(s) for the distribution.
-            metadata: Optional metadata dictionary.
-
-        Returns:
-            Variable instance or list of Variable instances.
-        """
-        if isinstance(concepts, str):
-            assert not isinstance(distribution, list)
-            assert isinstance(size, int)
-            return object.__new__(cls)
-
-        n_concepts = len(concepts)
-
-        # If single concept in list, normalize parameters and return single instance
-        if n_concepts == 1:
-            # This will return a new instance and Python will automatically call __init__
-            # We don't call __init__ manually - just return the instance
-            return object.__new__(cls)
-
-        # Standardize distribution: single value -> list of N values
-        if distribution is None:
-            distribution_list = [Delta] * n_concepts
-        elif not isinstance(distribution, list):
-            distribution_list = [distribution] * n_concepts
-        else:
-            distribution_list = distribution
-
-        # Standardize size: single value -> list of N values
-        if not isinstance(size, list):
-            size_list = [size] * n_concepts
-        else:
-            size_list = size
-
-        # Validation checks for list lengths
-        if len(distribution_list) != n_concepts or len(size_list) != n_concepts:
+    if isinstance(value, list):
+        if len(value) != n:
             raise ValueError(
-                "If concepts list has length N > 1, distribution and size must either be single values or lists of length N.")
-
-        # Create and return a list of individual Variable instances
-        new_vars = []
-        for i in range(n_concepts):
-            # Use object.__new__(cls) to bypass this __new__ logic for the sub-creation
-            instance = object.__new__(cls)
-            instance.__init__(
-                concepts=[concepts[i]],  # Pass as single-element list
-                parents=parents,
-                distribution=distribution_list[i],
-                size=size_list[i],
-                metadata=metadata.copy() if metadata else None
+                f"{name}: expected a single value or a list of length {n}, "
+                f"got list of length {len(value)}."
             )
-            new_vars.append(instance)
-        return new_vars
+        return list(value)
+    return [value] * n
 
-    def __init__(self, concepts: Union[str, List[str]],
-                 parents: List[Union['Variable', str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
-        """
-        Initialize a Variable instance.
 
-        Args:
-            concepts: Single concept name or list of concept names.
-            parents: List of parent Variable instances.
-            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
-            size: Size parameter for the distribution.
-            metadata: Optional metadata dictionary.
+class Variable(ABC):
+    """Abstract random variable.
 
-        Raises:
-            ValueError: If Categorical variable doesn't have size > 1.
-            ValueError: If Bernoulli variable doesn't have size=1.
-        """
-        # Ensure concepts is a list (important if called internally after __new__ splitting)
-        if isinstance(concepts, str):
-            concepts = [concepts]
+    Holds the node name (``name``), its distribution family (``distribution``),
+    its event ``shape``, and any extra distribution kwargs.  ``size`` is a
+    read-only property equal to ``math.prod(shape)``.
 
-        # Handle case where distribution/size are lists with single element (for single concept)
-        if len(concepts) == 1:
-            if isinstance(distribution, list) and len(distribution) == 1:
-                distribution = distribution[0]
-            if isinstance(size, list) and len(size) == 1:
-                size = size[0]
+    Passing a list of names to the constructor returns a list of independent
+    ``Variable`` instances (one per name); ``distribution``, ``shape``, and
+    ``dist_kwargs`` may then be a single value (broadcast) or a per-name list.
 
-        # Original validation logic
-        if distribution is None:
-            distribution = Delta
-
-        if distribution is Categorical:
-            if len(concepts) != 1:
-                # This validation is slightly tricky now, but generally still relevant
-                # if a single Variable is constructed with multiple concepts and is Categorical.
-                pass
-            if size <= 1:
-                raise ValueError("Categorical Variable must have a size > 1 (number of classes).")
-
-        if distribution is Bernoulli and size != 1:
-            raise ValueError("Bernoulli Variable must have size=1 as it represents a binary outcome per concept.")
-
-        self.concepts = concepts
-        self.concept_to_var = {c: self for c in concepts}
-        self.parents = parents
-        self.distribution = distribution
-        self.size = size
-        self.metadata = metadata if metadata is not None else {}
-        self._out_features = None
+    Concrete subclasses must implement :attr:`variable_type`.
+    """
 
     @property
-    def out_features(self) -> int:
+    @abstractmethod
+    def variable_type(self) -> str:
+        """Short string tag identifying the variable kind.
+
+        Defined by each concrete subclass; not set on the abstract base.
         """
-        Calculate the number of output features for this variable.
 
-        The calculation depends on the distribution type:
-        - Delta/Normal: size * n_concepts
-        - Bernoulli: n_concepts (binary per concept)
-        - Categorical: size (single multi-class variable)
+    def __new__(
+        cls,
+        names: Union[str, List[str]],
+        distribution=None,
+        shape: Union[int, Tuple, "torch.Size", List] = None,
+        dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
+        size: Optional[Union[int, List[int]]] = None,
+        members: Optional[List[str]] = None,
+    ):
+        if isinstance(names, str):
+            # Single variable — possibly a plate of named ``members``.
+            return super().__new__(cls)
+        if members is not None:
+            raise TypeError(
+                "`members` is only valid with a single (string) name — it makes that "
+                "variable a plate of named members. Pass a list of names to create "
+                "several independent variables instead."
+            )
+        if not isinstance(names, list) or not all(
+            isinstance(n, str) for n in names
+        ):
+            raise TypeError(
+                "`names` must be a string or a list of strings, "
+                f"got {type(names).__name__}."
+            )
+        n = len(names)
+        dists = _broadcast(distribution, n, "distribution")
+        shapes = _broadcast(shape, n, "shape")
+        sizes = _broadcast(size, n, "size")
+        kwargs_list = _broadcast(dist_kwargs, n, "dist_kwargs")
+        return [
+            cls(
+                name,
+                distribution=dists[i],
+                shape=shapes[i],
+                size=sizes[i],
+                dist_kwargs=copy.deepcopy(kwargs_list[i]),
+            )
+            for i, name in enumerate(names)
+        ]
 
-        Returns:
-            int: Number of output features.
-        """
-        if self._out_features is not None:
-            return self._out_features
+    def __init__(
+        self,
+        names: Union[str, List[str]],
+        distribution=None,
+        shape: Union[int, Tuple, "torch.Size"] = None,
+        dist_kwargs: Optional[Union[dict, List[Optional[dict]]]] = None,
+        size: Optional[Union[int, List[int]]] = None,
+        members: Optional[List[str]] = None,
+    ):
+        if not isinstance(names, str):
+            return
+        self.name: str = names
 
-        n_concepts = len(self.concepts)
-        if self.distribution in [Delta, torch.distributions.Normal]:
-            self._out_features = self.size * n_concepts
-        elif self.distribution is Bernoulli:
-            self._out_features = n_concepts
-        elif self.distribution is Categorical:
-            self._out_features = self.size
+        if members is not None:
+            # Plate: a single variable holding several named members. ``size`` is
+            # the per-member size (default 1); the total event width is
+            # ``len(members) * member_size``, stacked on the last dimension.
+            if shape is not None:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `members` and `shape` are mutually "
+                    "exclusive — use `size` for the per-member size."
+                )
+            if (not isinstance(members, (list, tuple)) or not members
+                    or not all(isinstance(m, str) for m in members)):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `members` must be a non-empty "
+                    "list of strings."
+                )
+            if len(set(members)) != len(members):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): duplicate member names in {members}."
+                )
+            member_size = 1 if size is None else size
+            if not isinstance(member_size, int) or member_size <= 0:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): per-member `size` must be a "
+                    f"positive int, got {size!r}."
+                )
+            self._is_plate: bool = True
+            self.members: List[str] = list(members)
+            self.member_size: int = member_size
+            total = len(self.members) * member_size
+            # Per-member addressing slices a contiguous block of every parameter,
+            # so each parameter must be laid out one-scalar-per-event-element
+            # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
+            # is triangular (size*(size+1)/2), so its members aren't sliceable —
+            # model those as separate variables instead.
+            if distribution in PARAM_DIM and not all(
+                fn(total) == total for fn in PARAM_DIM[distribution].values()
+            ):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): plate `members` need a distribution "
+                    f"with per-element parameters; {distribution.__name__} has a "
+                    "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
+                    "Model these members as separate variables instead."
+                )
+            shape = torch.Size([total])
         else:
-            self._out_features = self.size * n_concepts
-
-        return self._out_features
-
-    @property
-    def in_features(self) -> int:
-        """
-        Calculate total input features from all parent variables.
-
-        Returns:
-            int: Sum of out_features from all parent variables.
-
-        Raises:
-            TypeError: If any parent is not a Variable instance.
-        """
-        total_in = 0
-        for parent in self.parents:
-            if isinstance(parent, Variable):
-                total_in += parent.out_features
+            # Ordinary variable: one member coinciding with the variable name.
+            if shape is not None and size is not None:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
+                    "exclusive — provide one or the other, not both."
+                )
+            if size is not None:
+                if not isinstance(size, int) or size <= 0:
+                    raise ValueError(
+                        f"{type(self).__name__}({names!r}): `size` must be a positive int, "
+                        f"got {size!r}."
+                    )
+                shape = torch.Size([size])
+            elif shape is None:
+                shape = torch.Size([1])  # default
+            elif isinstance(shape, int):
+                shape = torch.Size([shape])
             else:
-                raise TypeError(f"Parent '{parent}' is not a Variable object. ProbabilisticModel initialization error.")
-        return total_in
+                shape = torch.Size(shape)
+            if len(shape) == 0:
+                raise ValueError("shape must be non-empty.")
+            if any(s <= 0 for s in shape):
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): all shape dimensions must be "
+                    f"positive, got {tuple(shape)}."
+                )
+            self._is_plate: bool = False
+            self.members = [self.name]
+            self.member_size = math.prod(shape)
 
-    def __getitem__(self, key: Union[str, List[str]]) -> 'Variable':
-        """
-        Slice the variable to create a new variable with subset of concepts.
-
-        Args:
-            key: Single concept name or list of concept names.
-
-        Returns:
-            Variable: New variable instance with specified concepts.
-
-        Raises:
-            ValueError: If concepts not found in this variable.
-            ValueError: If slicing a Categorical variable with multiple concepts.
-        """
-        if isinstance(key, str):
-            concepts = [key]
-        else:
-            concepts = key
-
-        if not all(c in self.concepts for c in concepts):
-            raise ValueError(f"Concepts {concepts} not found in variable {self.concepts}")
-
-        if self.distribution is Categorical and len(concepts) != 1:
+        if distribution is None:
             raise ValueError(
-                "Slicing a Categorical Variable into a new Variable is not supported as it must represent a single, multi-class concept.")
+                f"{type(self).__name__}({names!r}): `distribution` is required. "
+                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
+                "or dist.Delta)."
+            )
+        self.distribution = distribution
+        self._shape: torch.Size = shape
+        # Column span of each member within the event (last) dimension.
+        self._column: Dict[str, slice] = {
+            m: slice(i * self.member_size, (i + 1) * self.member_size)
+            for i, m in enumerate(self.members)
+        }
+        self.dist_kwargs: dict = dict(dist_kwargs) if dist_kwargs else {}
+        self.metadata: dict = {
+            "variable_type": self.variable_type,
+        }
+        # Set on a member view returned by ``member()``; points back to the plate.
+        self._plate: Optional["Variable"] = None
 
-        # This call will hit __new__, but since len(concepts) is <= 1, it proceeds to single instance creation
-        new_var = Variable(
-            concepts=concepts,
-            parents=self.parents,
+    @property
+    def is_plate(self) -> bool:
+        """Whether this variable was created with explicit named members."""
+        return self._is_plate
+
+    @property
+    def plate(self) -> "Variable":
+        """The plate this variable belongs to.
+
+        For a member handle (from :meth:`member`) this is the owning plate; for an
+        ordinary variable or a plate itself it is the variable. Graph code uses
+        ``p.plate.name`` to find the node an edge from ``p`` originates at.
+        """
+        return self._plate if self._plate is not None else self
+
+    def column_of(self, member: str) -> slice:
+        """Column span of ``member`` within this variable's event (last) dimension."""
+        return self._column[member]
+
+    def member(self, name: str) -> "Variable":
+        """A handle to a single member, usable as a parent (an edge to that member only).
+
+        A child can then depend on just this member of the plate; the engine
+        slices the member's column out of the plate's output. The handle carries
+        the member's name, per-member size and the plate's distribution, plus a
+        back-reference to the owning plate so the graph routes the edge from it.
+        """
+        if name not in self._column:
+            raise KeyError(
+                f"{type(self).__name__}({self.name!r}) has no member {name!r}; "
+                f"members are {self.members}."
+            )
+        view = type(self)(
+            name,
             distribution=self.distribution,
-            size=self.size,
-            metadata=self.metadata.copy()
+            size=self.member_size,
+            dist_kwargs=copy.deepcopy(self.dist_kwargs),
         )
-        n_concepts = len(concepts)
+        view._plate = self
+        return view
 
-        if self.distribution in [Delta, torch.distributions.Normal]:
-            new_var._out_features = self.size * n_concepts
-        elif self.distribution in [Bernoulli, RelaxedBernoulli]:
-            new_var._out_features = n_concepts
-        elif self.distribution is [Categorical, RelaxedOneHotCategorical]:
-            new_var._out_features = self.size
-        else:
-            new_var._out_features = self.size * n_concepts
+    @property
+    def shape(self) -> torch.Size:
+        """Event shape as a :class:`torch.Size`, e.g. ``torch.Size([4])`` or ``torch.Size([3, 4])``."""
+        return self._shape
 
-        return new_var
+    @property
+    def size(self) -> int:
+        """Total number of scalar elements: ``math.prod(self.shape)``."""
+        return math.prod(self._shape)
 
-    def __repr__(self):
+    @property
+    def param_sizes(self) -> Dict[str, int]:
+        """Per-parameter output sizes for this variable's distribution.
+
+        Maps each distribution-parameter name (e.g. ``"loc"``/``"scale"`` for
+        ``Normal``, ``"probs"``/``"logits"`` for ``Bernoulli``) to the true
+        number of scalar network outputs needed to produce it. Most equal
+        :attr:`size` (one scalar per event element); the exceptions are encoded
+        in :data:`PARAM_DIM` — e.g. ``MultivariateNormal``'s ``scale_tril``
+        needs ``size * (size + 1) // 2`` lower-triangular Cholesky entries.
+
+        Raises
+        ------
+        ValueError
+            If the distribution family has no :data:`PARAM_DIM` entry.
         """
-        Return string representation of the Variable.
+        if self.distribution not in PARAM_DIM:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): distribution "
+                f"{self.distribution.__name__} has no PARAM_DIM entry; cannot "
+                "resolve per-parameter sizes."
+            )
+        return {
+            param: fn(self.size)
+            for param, fn in PARAM_DIM[self.distribution].items()
+        }
 
-        Returns:
-            str: String representation including concepts, distribution, size, and metadata.
-        """
-        meta_str = f", metadata={self.metadata}" if self.metadata else ""
-        return f"Variable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{meta_str})"
+    def __repr__(self) -> str:
+        s = (
+            f"{type(self).__name__}(name={self.name!r}, "
+            f"distribution={self.distribution.__name__}, shape={tuple(self.shape)}"
+        )
+        # Show members only when they differ from the variable name (a plate).
+        if self.members != [self.name]:
+            s += f", members={self.members}"
+        return s + ")"
 
 
-class EndogenousVariable(Variable):
+class ConceptVariable(Variable):
+    """An interpretable random variable.
+
+    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
+    decides on a per-call basis whether the variable is observed.
     """
-    Represents an endogenous variable in a concept-based model.
-    
-    Endogenous variables are observable and supervisable concepts that can be
-    directly measured or annotated in the data. These are typically the concepts
-    that we want to learn and predict, such as object attributes, semantic features,
-    or intermediate representations that have ground truth labels.
-    
-    Attributes:
-        concepts (List[str]): List of concept names represented by this variable.
-        parents (List[Variable]): List of parent variables in the graphical model.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Size/cardinality of the variable.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'endogenous'.
-        
-    Example:
-        >>> from torch.distributions import Bernoulli, Categorical
-        >>> from torch_concepts import EndogenousVariable
-        >>> # Observable binary concept
-        >>> has_wings = EndogenousVariable(
-        ...     concepts='has_wings',
-        ...     parents=[],
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> 
-        >>> # Observable categorical concept (e.g., color)
-        >>> color = EndogenousVariable(
-        ...     concepts=['color'],
-        ...     parents=[],
-        ...     distribution=Categorical,
-        ...     size=3  # red, green, blue
-        ... )
-    """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 parents: List[Union['Variable', str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
-        """
-        Initialize an EndogenousVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            parents: List of parent Variable instances.
-            distribution: Distribution type (Delta, Bernoulli, Categorical, or Normal).
-            size: Size parameter for the distribution.
-            metadata: Optional metadata dictionary.
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'endogenous'
-        super().__init__(concepts, parents, distribution, size, metadata)
+
+    @property
+    def variable_type(self) -> str:
+        return "concept"
 
 
-class ExogenousVariable(Variable):
+class EmbeddingVariable(Variable):
+    """A non-interpretable embedding variable.
+
+    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
+    decides on a per-call basis whether the variable is observed.
     """
-    Represents an exogenous variable in a concept-based model.
-    
-    Exogenous variables are high-dimensional representations related to a single
-    endogenous variable. They capture rich, detailed information about a specific
-    concept (e.g., image patches, embeddings, or feature vectors) that can be used
-    to predict or explain the corresponding endogenous concept.
-    
-    Attributes:
-        concepts (List[str]): List of concept names represented by this variable.
-        parents (List[Variable]): List of parent variables in the graphical model.
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Dimensionality of the high-dimensional representation.
-        endogenous_var (Optional[EndogenousVariable]): The endogenous variable this exogenous variable is related to.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'exogenous'.
-        
-    Example:
-        >>> from torch.distributions import Normal, Bernoulli
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts import EndogenousVariable, ExogenousVariable
-        >>> # Endogenous concept
-        >>> has_wings = EndogenousVariable(
-        ...     concepts='has_wings',
-        ...     parents=[],
-        ...     distribution=Bernoulli,
-        ...     size=1
-        ... )
-        >>> 
-        >>> # Exogenous high-dim representation for has_wings
-        >>> wings_features = ExogenousVariable(
-        ...     concepts='wings_exogenous',
-        ...     parents=[],
-        ...     distribution=Delta,
-        ...     size=128,  # 128-dimensional exogenous
-        ... )
-    """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 parents: List[Union['Variable', str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 endogenous_var: Optional['EndogenousVariable'] = None,
-                 metadata: Dict[str, Any] = None):
-        """
-        Initialize an ExogenousVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            parents: List of parent Variable instances.
-            distribution: Distribution type (typically Delta or Normal for continuous representations).
-            size: Dimensionality of the high-dimensional representation.
-            endogenous_var: Optional reference to the related endogenous variable.
-            metadata: Optional metadata dictionary.
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'exogenous'
-        if endogenous_var is not None:
-            metadata['endogenous_var'] = endogenous_var
-        super().__init__(concepts, parents, distribution, size, metadata)
-        self.endogenous_var = endogenous_var
-    
-    def __repr__(self):
-        """Return string representation including endogenous variable reference."""
-        meta_str = f", metadata={self.metadata}" if self.metadata else ""
-        endo_str = f", endogenous={self.endogenous_var.concepts if self.endogenous_var else None}"
-        return f"ExogenousVariable(concepts={self.concepts}, dist={self.distribution.__name__}, size={self.size}, out_features={self.out_features}{endo_str}{meta_str})"
+
+    @property
+    def variable_type(self) -> str:
+        return "embedding"
 
 
-class InputVariable(Variable):
-    """
-    Represents a latent variable in a concept-based model.
-    
-    Latent variables are high-dimensional global representations of the whole input
-    object (e.g., raw input images, text, or sensor data). They capture the complete
-    information about the input before it is decomposed into specific concepts.
-    These are typically unobserved, learned representations that encode all relevant
-    information from the raw input.
-    
-    Attributes:
-        concepts (List[str]): List of concept names represented by this variable.
-        parents (List[Variable]): List of parent variables in the graphical model (typically empty).
-        distribution (Type[Distribution]): PyTorch distribution class for this variable.
-        size (int): Dimensionality of the latent representation.
-        metadata (Dict[str, Any]): Additional metadata. Automatically includes 'variable_type': 'input'.
-        
-    Example:
-        >>> from torch_concepts.distributions import Delta
-        >>> from torch_concepts import InputVariable
-        >>> # Global latent representation from input image
-        >>> image_latent = InputVariable(
-        ...     concepts='global_image_features',
-        ...     parents=[],
-        ...     distribution=Delta,
-        ...     size=512  # 512-dimensional global latent
-        ... )
-        >>> 
-        >>> # Multiple latent variables for hierarchical representation
-        >>> low_level_features = InputVariable(
-        ...     concepts='low_level_features',
-        ...     parents=[],
-        ...     distribution=Delta,
-        ...     size=256
-        ... )
-        >>> high_level_features = InputVariable(
-        ...     concepts='high_level_features',
-        ...     parents=[low_level_features],
-        ...     distribution=Delta,
-        ...     size=512
-        ... )
-    """
-    
-    def __init__(self, concepts: Union[str, List[str]],
-                 parents: List[Union['Variable', str]],
-                 distribution: Union[Type[Distribution], List[Type[Distribution]]] = None,
-                 size: Union[int, List[int]] = 1,
-                 metadata: Dict[str, Any] = None):
-        """
-        Initialize a InputVariable instance.
-        
-        Args:
-            concepts: Single concept name or list of concept names.
-            parents: List of parent Variable instances (often empty for root latent variables).
-            distribution: Distribution type (typically Delta or Normal for continuous representations).
-            size: Dimensionality of the latent representation.
-            metadata: Optional metadata dictionary.
-        """
-        if metadata is None:
-            metadata = {}
-        metadata['variable_type'] = 'input'
-        super().__init__(concepts, parents, distribution, size, metadata)

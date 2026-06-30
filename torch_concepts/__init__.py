@@ -7,10 +7,11 @@ from ._version import __version__
 from importlib import import_module
 from typing import Any
 
-from .annotations import Annotations, AxisAnnotation
+from .annotations import Annotations
+from .tensor import AnnotatedTensor
 from .nn.modules.utils import GroupConfig
-from .nn.modules.mid.constructors.concept_graph import ConceptGraph
-from .nn.modules.mid.models.variable import Variable, InputVariable, ExogenousVariable, EndogenousVariable
+from .concept_graph import ConceptGraph
+from .nn.modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
 from . import nn, distributions
 from . import data
@@ -26,7 +27,7 @@ __all__ = [
 
     # Data properties
     "Annotations",
-    "AxisAnnotation",
+    "AnnotatedTensor",
     "ConceptGraph",
 
     # Configuration
@@ -34,9 +35,8 @@ __all__ = [
 
     # Variables
     "Variable",
-    "InputVariable",
-    "ExogenousVariable",
-    "EndogenousVariable",
+    "ConceptVariable",
+    "EmbeddingVariable",
 
     "seed_everything",
 

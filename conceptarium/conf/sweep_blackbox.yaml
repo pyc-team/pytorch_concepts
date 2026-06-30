@@ -8,12 +8,12 @@ hydra:
   sweeper:
     params:
       seed: 42
-      dataset: insurance
-      model: blackbox
+      dataset: dag_asia, celeba
+      model: blackbox, blackbox_task
       loss: standard
 
 dataset:
-  batch_size: 4096
+  batch_size: 2048
 
 model:
   optim_kwargs:
@@ -25,13 +25,13 @@ model:
     dropout: 0.1
 
 metrics:
-  summary_metrics: false
-  perconcept_metrics: true #${dataset.default_task_names}
+  summary: false
+  per_concept: true #${dataset.default_task_names}
 
 trainer:
   # logger: wandb
-  max_epochs: 2000
-  patience: 50
+  max_epochs: 200
+  patience: 20
 
 matmul_precision: medium
 

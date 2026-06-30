@@ -1,0 +1,115 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: torch_concepts.data.datamodules.awa2.AWA2DataModule
+
+name: awa2
+
+seed: ${seed}
+
+# the incomplete version of the AWA2 dataset is obtained selecting 
+# the same concepts as in "Avoiding Leakage Poisoning: Concept Interventions Under Distribution Shifts"
+# link: https://arxiv.org/pdf/2504.17921v1.
+concept_subset: [black, gray, stripes, hairless, flippers, paws, plains, fierce, solitary, class] # include the task label
+
+# backbone handling and embedding precomputation
+backbone: resnet50
+precompute_embs: true
+force_recompute: false
+
+# Task label - animal name (50 classes)
+default_task_names: [class]
+
+# splitter - no official split exists for AwA2, so the datamodule splits randomly
+splitter:
+  _target_: torch_concepts.data.splitters.random.RandomSplitter
+
+# Concept descriptions for the 85 binary attributes + class
+label_descriptions:
+  black: "Animal has black coloration"
+  white: "Animal has white coloration"
+  blue: "Animal has blue coloration"
+  brown: "Animal has brown coloration"
+  gray: "Animal has gray coloration"
+  orange: "Animal has orange coloration"
+  red: "Animal has red coloration"
+  yellow: "Animal has yellow coloration"
+  patches: "Animal has patchy fur pattern"
+  spots: "Animal has spotted fur pattern"
+  stripes: "Animal has striped fur pattern"
+  furry: "Animal has furry body"
+  hairless: "Animal is hairless"
+  toughskin: "Animal has tough skin"
+  big: "Animal is big in size"
+  small: "Animal is small in size"
+  bulbous: "Animal has a bulbous body shape"
+  lean: "Animal has a lean body shape"
+  flippers: "Animal has flippers"
+  hands: "Animal has hands"
+  hooves: "Animal has hooves"
+  pads: "Animal has paw pads"
+  paws: "Animal has paws"
+  longleg: "Animal has long legs"
+  longneck: "Animal has a long neck"
+  tail: "Animal has a tail"
+  chewteeth: "Animal has chewing teeth"
+  meatteeth: "Animal has meat-eating teeth"
+  buckteeth: "Animal has buck teeth"
+  strainteeth: "Animal has straining teeth"
+  horns: "Animal has horns"
+  claws: "Animal has claws"
+  tusks: "Animal has tusks"
+  smelly: "Animal is smelly"
+  flys: "Animal can fly"
+  hops: "Animal hops"
+  swims: "Animal swims"
+  tunnels: "Animal tunnels"
+  walks: "Animal walks"
+  fast: "Animal is fast"
+  slow: "Animal is slow"
+  strong: "Animal is strong"
+  weak: "Animal is weak"
+  muscle: "Animal is muscular"
+  bipedal: "Animal moves on two legs"
+  quadrapedal: "Animal moves on four legs"
+  active: "Animal is active"
+  inactive: "Animal is inactive"
+  nocturnal: "Animal is nocturnal"
+  hibernate: "Animal hibernates"
+  agility: "Animal is agile"
+  fish: "Animal eats fish"
+  meat: "Animal eats meat"
+  plankton: "Animal eats plankton"
+  vegetation: "Animal eats vegetation"
+  insects: "Animal eats insects"
+  forager: "Animal is a forager"
+  grazer: "Animal is a grazer"
+  hunter: "Animal is a hunter"
+  scavenger: "Animal is a scavenger"
+  skimmer: "Animal skims for food"
+  stalker: "Animal is a stalker"
+  newworld: "Animal is from the New World"
+  oldworld: "Animal is from the Old World"
+  arctic: "Animal lives in arctic regions"
+  coastal: "Animal lives in coastal areas"
+  desert: "Animal lives in deserts"
+  bush: "Animal lives in bush/scrub"
+  plains: "Animal lives in plains"
+  forest: "Animal lives in forests"
+  fields: "Animal lives in fields"
+  jungle: "Animal lives in jungles"
+  mountains: "Animal lives in mountains"
+  ocean: "Animal lives in oceans"
+  ground: "Animal lives on the ground"
+  water: "Animal lives in/near water"
+  tree: "Animal lives in trees"
+  cave: "Animal lives in caves"
+  fierce: "Animal is fierce"
+  timid: "Animal is timid"
+  smart: "Animal is smart"
+  group: "Animal lives in groups"
+  solitary: "Animal is solitary"
+  nestspot: "Animal has a nest spot"
+  domestic: "Animal can be domesticated"
+  class: "Animal species"

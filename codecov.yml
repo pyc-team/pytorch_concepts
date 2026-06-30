@@ -31,4 +31,12 @@ ignore:
   - "setup.py"
   - "**/__pycache__"
   - "**/*.pyc"
+  # Steerling integration depends on the optional `steerling` package and
+  # large Hub checkpoints; exclude it from coverage.
+  - "torch_concepts/steerling/"
+  - "**/steerling/**"
+  # Data loaders depend on fetching & storing external datasets (and pretrained
+  # backbones); exclude the whole data subpackage from coverage.
+  - "torch_concepts/data/"
+  - "**/data/**"
 

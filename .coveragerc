@@ -1,11 +1,12 @@
 # Configuration for coverage.py
+#
+# File/path exclusions live in codecov.yml (`ignore`) — the single source of
+# truth that gates PRs and the Codecov dashboard. This file only configures
+# measurement and the line-level exclusions that coverage.py alone expresses.
 
 [run]
 branch = True
-source = template
-include = */template/*
-omit =
-    */setup.py
+source = torch_concepts
 
 [report]
 exclude_lines =

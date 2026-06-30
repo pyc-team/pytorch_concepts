@@ -314,6 +314,46 @@ class TestSemanticBatchOperations(unittest.TestCase):
         self.assertEqual(disj_result.shape, (2, 10))
 
 
+class TestSemanticAbstractMethods(unittest.TestCase):
+    """Cover the abstract Semantic.conj/disj/neg NotImplementedError raises."""
+
+    def test_conj_raises_not_implemented(self):
+        """Semantic.conj raises NotImplementedError (line 38)."""
+        class _S(Semantic):
+            def conj(self, *tensors):
+                return super().conj(*tensors)
+            def disj(self, *tensors):
+                return tensors[0]
+            def neg(self, tensor):
+                return tensor
+        with self.assertRaises(NotImplementedError):
+            _S().conj(torch.tensor([0.5]))
+
+    def test_disj_raises_not_implemented(self):
+        """Semantic.disj raises NotImplementedError (line 54)."""
+        class _S(Semantic):
+            def conj(self, *tensors):
+                return tensors[0]
+            def disj(self, *tensors):
+                return super().disj(*tensors)
+            def neg(self, tensor):
+                return tensor
+        with self.assertRaises(NotImplementedError):
+            _S().disj(torch.tensor([0.5]))
+
+    def test_neg_raises_not_implemented(self):
+        """Semantic.neg raises NotImplementedError (line 89)."""
+        class _S(Semantic):
+            def conj(self, *tensors):
+                return tensors[0]
+            def disj(self, *tensors):
+                return tensors[0]
+            def neg(self, tensor):
+                return super().neg(tensor)
+        with self.assertRaises(NotImplementedError):
+            _S().neg(torch.tensor([0.5]))
+
+
 if __name__ == '__main__':
     unittest.main()
 

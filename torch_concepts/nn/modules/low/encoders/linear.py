@@ -1,52 +1,44 @@
 """
-Linear encoder modules for concept prediction from latent features.
+Linear encoder modules for concept prediction from embeddings.
 
-This module provides encoder layers that transform latent or exogenous
-variables into concept representations.
+These modules provide encoder layers that transform embeddings into concept representations.
 """
+from typing import Union
+
 import torch
 
-from ..base.layer import BaseEncoder
+from torch_concepts import Annotations
+from ..base.layer import BaseConceptLayer
 
 
-class LinearZC(BaseEncoder):
+class LinearEmbeddingToConcept(BaseConceptLayer):
     """
-    Encoder that predicts concept activations from latent.
+    Encoder that predicts concept representations from embeddings.
 
-    This encoder transforms input latent into concept endogenous using a
-    linear layer. It's typically used as the first layer in concept bottleneck
-    models to extract concepts from neural network input.
+    This encoder transforms an embedding into concept representations using 
+    a linear layer.
 
     Attributes:
-        in_features (int): Number of input latent features.
-        out_features (int): Number of output concept features.
-        encoder (nn.Sequential): The encoding network.
+        in_embeddings (int): Number of input embedding features.
+        out_concepts (int): Number of output concept representations.
 
     Args:
-        in_features: Number of input latent features.
-        out_features: Number of output concept features.
+        in_embeddings: Number of input embedding features.
+        out_concepts: Number of output concept representations.
         *args: Additional arguments for torch.nn.Linear.
         **kwargs: Additional keyword arguments for torch.nn.Linear.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import LinearZC
+        >>> from torch_concepts.nn import LinearEmbeddingToConcept
         >>>
-        >>> # Create encoder
-        >>> encoder = LinearZC(
-        ...     in_features=128,
-        ...     out_features=10
+        >>> encoder = LinearEmbeddingToConcept(
+        ...     in_embeddings=128,
+        ...     out_concepts=10
         ... )
-        >>>
-        >>> # Forward pass with latent from a neural network
-        >>> latent = torch.randn(4, 128)  # batch_size=4, latent_dim=128
-        >>> concept_endogenous = encoder(latent)
-        >>> print(concept_endogenous.shape)
-        torch.Size([4, 10])
-        >>>
-        >>> # Apply sigmoid to get probabilities
-        >>> concept_probs = torch.sigmoid(concept_endogenous)
-        >>> print(concept_probs.shape)
+        >>> embeddings = torch.randn(4, 128)  # batch_size=4, embedding_dim=128
+        >>> concepts = encoder(embeddings)
+        >>> print(concepts.shape)
         torch.Size([4, 10])
 
     References:
@@ -55,126 +47,43 @@ class LinearZC(BaseEncoder):
     """
     def __init__(
         self,
-        in_features: int,
-        out_features: int,
+        in_embeddings: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
         *args,
         **kwargs,
     ):
         """
-        Initialize the latent encoder.
+        Initialize the encoder.
 
         Args:
-            in_features: Number of input latent features.
-            out_features: Number of output concept features.
+            in_embeddings: Number of input embedding features.
+            out_concepts: Number of output concept representations.
             *args: Additional arguments for torch.nn.Linear.
             **kwargs: Additional keyword arguments for torch.nn.Linear.
         """
         super().__init__(
-            in_features=in_features,
-            out_features=out_features,
+            in_embeddings=in_embeddings,
+            out_concepts=out_concepts,
         )
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features,
-                out_features,
-                *args,
-                **kwargs,
-            ),
-            torch.nn.Unflatten(-1, (out_features,)),
+        # (..., in_embeddings) -> (..., out_concepts)
+        self.encoder = torch.nn.Linear(
+            self.in_embeddings_shape,
+            self.out_concepts_shape,
+            *args,
+            **kwargs,
         )
 
     def forward(
         self,
-        input: torch.Tensor,
+        embeddings: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Encode latent into concept endogenous.
+        Encode embeddings into concept representations.
 
         Args:
-            input: Input input of shape (batch_size, in_features).
+            embeddings: Input embeddings of shape (..., in_embeddings).
 
         Returns:
-            torch.Tensor: Concept endogenous of shape (batch_size, out_features).
+            torch.Tensor: Concept representations of shape (..., out_concepts).
         """
-        return self.encoder(input)
-
-
-class LinearUC(BaseEncoder):
-    """
-    Encoder that extracts concepts from exogenous variables.
-
-    This encoder processes exogenous latent variables to produce
-    concept representations. It requires at least one exogenous variable per concept.
-
-    Attributes:
-        in_features_exogenous (int): Number of exogenous input features.
-        n_exogenous_per_concept (int): Number of exogenous vars per concept.
-        encoder (nn.Sequential): The encoding network.
-
-    Args:
-        in_features_exogenous: Number of exogenous input features.
-        n_exogenous_per_concept: Number of exogenous variables per concept (default: 1).
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import LinearUC
-        >>>
-        >>> # Create encoder with 2 exogenous vars per concept
-        >>> encoder = LinearUC(
-        ...     in_features_exogenous=5,
-        ...     n_exogenous_per_concept=2
-        ... )
-        >>>
-        >>> # Forward pass with exogenous variables
-        >>> # Expected input shape: (batch, out_features, in_features * n_exogenous_per_concept)
-        >>> exog_vars = torch.randn(4, 3, 10)  # batch=4, concepts=3, exog_features=5*2
-        >>> concept_endogenous = encoder(exog_vars)
-        >>> print(concept_endogenous.shape)
-        torch.Size([4, 3])
-
-    References:
-        Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the Accuracy-Explainability Trade-Off", NeurIPS 2022.
-        https://arxiv.org/abs/2209.09056
-    """
-    def __init__(
-        self,
-        in_features_exogenous: int,
-        n_exogenous_per_concept: int = 1
-    ):
-        """
-        Initialize the exogenous encoder.
-
-        Args:
-            in_features_exogenous: Number of exogenous input features.
-            out_features: Number of output concept features.
-            n_exogenous_per_concept: Number of exogenous variables per concept.
-        """
-        self.n_exogenous_per_concept = n_exogenous_per_concept
-        in_features_exogenous = in_features_exogenous * n_exogenous_per_concept
-        super().__init__(
-            in_features_exogenous=in_features_exogenous,
-            out_features=-1,
-        )
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features_exogenous,
-                1
-            ),
-            torch.nn.Flatten(),
-        )
-
-    def forward(
-        self,
-        exogenous: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Encode exogenous variables into concept endogenous.
-
-        Args:
-            exogenous: Exogenous variables of shape
-                      (batch_size, out_features, in_features_exogenous).
-
-        Returns:
-            torch.Tensor: Concept endogenous of shape (batch_size, out_features).
-        """
-        return self.encoder(exogenous)
+        return self.encoder(embeddings)

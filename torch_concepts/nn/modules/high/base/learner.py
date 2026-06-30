@@ -1,24 +1,28 @@
 """PyTorch Lightning training engine for concept-based models.
 
-This module provides the Predictor class, which orchestrates the training, 
-validation, and testing of concept-based models. It handles:
+This module provides the BaseLearner class, which handle training, validation, and testing 
+of concept-based models. Specifically, it allows to use utilities of PyTorch Lightning 
+for updating model parameters, computing and logging metrics, and configuring optimizers and schedulers.
+The training and evaluation logic is instead delegated to the 'inference' object of the model.
+
+It handles:
 - Loss computation with type-aware losses (binary/categorical/continuous)
 - Metric tracking (summary and per-concept)
 - Optimizer and scheduler configuration
 - Batch preprocessing and transformations
-- Concept interventions (experimental)
+- Model evaluation
 """
 
-from typing import Optional, Mapping, Union
-from abc import abstractmethod
+from typing import Optional, Mapping
+from functools import cached_property
 
-from torch import nn
 import torch
-from torchmetrics import MetricCollection
+from torch import nn
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
-from .....nn.modules.metrics import ConceptMetrics
+from ...metrics import ConceptMetrics
+from ...outputs import ModelOutput, logits_from_params
 
 
 class BaseLearner(pl.LightningModule):
@@ -28,8 +32,10 @@ class BaseLearner(pl.LightningModule):
     Handles loss, metrics, optimizer, scheduler, batch validation, and logging.
 
     Args:
-        loss (nn.Module, optional): Loss function.
-        metrics (ConceptMetrics or dict, optional): Metrics for evaluation.
+        loss (nn.Module, optional): Loss function for training.  Use per-type composition via ``ConceptLoss``
+            to combine multiple terms (see ``binary``, ``binary_weights``,
+            etc.).
+        metrics (ConceptMetrics, optional): Metrics for evaluation.
         optim_class (Optimizer, optional): Optimizer class.
         optim_kwargs (dict, optional): Optimizer arguments.
         scheduler_class (LRScheduler, optional): Scheduler class.
@@ -42,7 +48,7 @@ class BaseLearner(pl.LightningModule):
     """
     def __init__(self,
                 loss: Optional[nn.Module] = None,
-                metrics: Optional[Union[ConceptMetrics, Mapping[str, MetricCollection]]] = None,
+                metrics: Optional[ConceptMetrics] = None,
                 optim_class: Optional[Optimizer] = None,
                 optim_kwargs: Optional[Mapping] = None,
                 scheduler_class: Optional[LRScheduler] = None,
@@ -53,6 +59,16 @@ class BaseLearner(pl.LightningModule):
 
         # loss function
         self.loss = loss
+        self._loss_takes_model_output = False
+        if loss is not None:
+            import inspect
+            sig = inspect.signature(loss.forward)
+            n_pos = sum(
+                1 for p in sig.parameters.values()
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                              inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            )
+            self._loss_takes_model_output = (n_pos == 1)
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -60,19 +76,16 @@ class BaseLearner(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs
 
-        # metrics object
-        self.metrics = metrics
-        # Create pointers to individual collections for consistent interface
-        # Both dict.get() and ConceptMetrics.get() return None if key doesn't exist
-        if metrics is not None:
-            if isinstance(metrics, dict):
-                # Validate dict keys are correct
-                assert all(key in ['train_metrics', 'val_metrics', 'test_metrics'] for key in metrics), (
-                    "metrics dict keys must be 'train_metrics', 'val_metrics', and/or 'test_metrics'."
-                )
-            self.train_metrics = metrics.get('train_metrics')
-            self.val_metrics = metrics.get('val_metrics')
-            self.test_metrics = metrics.get('test_metrics')
+        # Create pointers to train, val and test collections
+        if isinstance(metrics, ConceptMetrics) and metrics.collection:
+            self.setup_metrics(metrics)
+        elif metrics is not None:
+            assert isinstance(metrics, ConceptMetrics), (
+                f"metrics must be a ConceptMetrics instance, got {type(metrics)}"
+            )
+            self.train_metrics = None
+            self.val_metrics = None
+            self.test_metrics = None
         else:
             self.train_metrics = None
             self.val_metrics = None
@@ -82,61 +95,56 @@ class BaseLearner(pl.LightningModule):
         scheduler_name = self.scheduler_class.__name__ if self.scheduler_class else None
         return (f"{self.__class__.__name__}(n_concepts={self.n_concepts}, "
                 f"optimizer={self.optim_class.__name__}, scheduler={scheduler_name})")
+    
+    def setup_metrics(self, metrics: ConceptMetrics):
+        self.train_metrics = metrics.clone(prefix="train")
+        self.val_metrics = metrics.clone(prefix="val")
+        self.test_metrics = metrics.clone(prefix="test") 
 
-    def update_metrics(self, preds: torch.Tensor, target: torch.Tensor, step: str):
-        """Update metrics with predictions and targets.
-        
-        Args:
-            preds (torch.Tensor): Model predictions.
-            target (torch.Tensor): Ground truth labels.
-            step (str): Which split to update ('train', 'val', or 'test').
-        """
-        if self.metrics is None:
-            return
-            
-        if isinstance(self.metrics, dict):
-            # Update the appropriate MetricCollection directly
-            collection = getattr(self, f"{step}_metrics", None)
-            if collection is not None:
-                collection.update(preds, target)
-        elif isinstance(self.metrics, ConceptMetrics):
-            # ConceptMetrics handles split internally
-            self.metrics.update(preds, target, step)
-        else:
-            raise ValueError("Metrics must be either a ConceptMetrics object \
-                             or a dict of MetricCollections.")
-
-    def update_and_log_metrics(self, metrics_args: Mapping, step: str, batch_size: int):
+    def update_and_log_metrics(self, out: ModelOutput, step: str, batch_size: int):
         """Update metrics and log them.
         
         Args:
-            metrics_args (Mapping): Dict with 'preds' and 'target' for metrics.
-                This is the standard signature for torchmetrics Metrics.
+            out (ModelOutput): Model output containing logits and target.
             step (str): Which split to update ('train', 'val', or 'test').
             batch_size (int): Batch size for metric logging.
         """
-        preds = metrics_args['preds']
-        target = metrics_args['target']
-        self.update_metrics(preds, target, step)
+        self.update_metrics(out, step)
         
         # Get the collection to log
         collection = getattr(self, f"{step}_metrics", None)
         if collection is not None:
             self.log_metrics(collection, batch_size=batch_size)
 
+    def update_metrics(self, out: ModelOutput, step: str):
+        """Update metrics with model output.
+        
+        Args:
+            out (ModelOutput): Model output containing logits and target.
+            step (str): Which split to update ('train', 'val', or 'test').
+        """
+        collection = getattr(self, f"{step}_metrics", None)
+        if collection is not None:
+            collection.update(out)
+        
     def log_metrics(self, metrics, **kwargs):
         """Log metrics to logger (W&B) at epoch end.
         
         Args:
-            metrics: MetricCollection or dict of metrics to log.
+            metrics: MetricCollection, ConceptMetrics, or dict of metrics.
             **kwargs: Additional arguments passed to self.log_dict.
         """
-        self.log_dict(metrics, 
-                      on_step=False, 
-                      on_epoch=True, 
-                      logger=True, 
-                      prog_bar=False, 
-                      **kwargs)
+        if isinstance(metrics, ConceptMetrics):
+            for coll in metrics.collection.values():
+                self.log_dict(
+                    coll, on_step=False, on_epoch=True,
+                    logger=True, prog_bar=False, **kwargs
+                )
+        else:
+            self.log_dict(
+                metrics, on_step=False, on_epoch=True,
+                logger=True, prog_bar=False, **kwargs
+            )
 
     def log_loss(self, name, loss, **kwargs):
         """Log loss to logger and progress bar at epoch end.
@@ -146,13 +154,15 @@ class BaseLearner(pl.LightningModule):
             loss (torch.Tensor): Loss value to log.
             **kwargs: Additional arguments passed to self.log.
         """
-        self.log(name + "_loss",
-                 loss.detach(),
-                 on_step=False,
-                 on_epoch=True,
-                 logger=True,
-                 prog_bar=True,
-                 **kwargs)
+        self.log(
+            name + "_loss",
+            loss.detach(),
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            prog_bar=True,
+            **kwargs
+        )
 
     def _check_batch(self, batch):
         """Validate batch structure and required keys.
@@ -225,7 +235,76 @@ class BaseLearner(pl.LightningModule):
     #                 out = transf.inverse_transform(forward_out)
     #     return out
 
-    @abstractmethod
+    @cached_property
+    def concept_variables(self):
+        """List of concept variable names (plate names or individual concepts)."""
+        return [var.name for var in self.pgm.variables.values() if var.variable_type == 'concept']
+
+
+    def shared_step(self, batch, step):
+        """Shared logic for train/val/test steps.
+        
+        Parameters
+        ----------
+        batch : dict
+            Batch dictionary with 'inputs' and 'concepts' keys.
+        step : str
+            One of 'train', 'val', or 'test'.
+            
+        Returns
+        -------
+        torch.Tensor
+            Scalar loss value.
+        """
+        inputs, concepts, transforms = self.unpack_batch(batch)
+        batch_size = batch['inputs']['x'].size(0)
+        c = c_loss = concepts.get('c', None)
+
+        # TODO: implement scaling only for continuous concepts 
+        # inputs = self.maybe_apply_preprocessing(preprocess_inputs_flag, 
+        #                                         inputs, 
+        #                                         transforms)
+
+        # TODO: add option to semi-supervise a subset of concepts?
+        # TODO: handle backbone kwargs when present
+
+        # --- Model forward ---
+        # Observe ALL concepts. Evidence is only the raw input var.
+        query = self.build_query(c)
+        out = self.forward(query=query, evidence={"input": inputs['x']})
+
+        # Attach target to the output (prepare_target handles slicing for
+        # models like BlackBoxTaskOnly that predict a subset of concepts).
+        out.target = self.prepare_target(c_loss)
+
+        # TODO: implement scaling only for continuous concepts
+        # out = self.maybe_apply_postprocessing(not scale_concepts_flag,
+        #                                       out,
+        #                                       transforms)
+        # if scale_concepts_flag:
+        #     c_loss = batch.transform['c'].transform(c)
+        #     c_hat = batch.transform['c'].inverse_transform(c_hat)
+
+        # --- Compute loss ---
+        loss = None
+        if self.loss is not None:
+            if self._loss_takes_model_output:
+                # ConceptLoss-style: consumes the ModelOutput (reads out.params).
+                loss = self.loss(out)
+            else:
+                # Plain loss(logits, target), e.g. BCEWithLogitsLoss: assemble the
+                # queried concepts' logits from out.params and align the target with
+                # build_query's per-variable tensors (same keys/order -> they line up,
+                # and the query values are already the one-hot-expanded ground truth).
+                logits = logits_from_params(out.params, keys=list(query))
+                target = torch.cat([query[v] for v in query], dim=-1)
+                loss = self.loss(logits, target)
+            self.log_loss(step, loss, batch_size=batch_size)
+
+        # --- Update and log metrics ---
+        self.update_and_log_metrics(out, step, batch_size)
+        return loss
+
     def training_step(self, batch):
         """Training step called by PyTorch Lightning.
         
@@ -235,9 +314,10 @@ class BaseLearner(pl.LightningModule):
         Returns:
             torch.Tensor: Training loss.
         """
-        pass
+        # TODO: train interventions using the context manager 'with ...'
+        loss = self.shared_step(batch, step='train')
+        return loss
 
-    @abstractmethod
     def validation_step(self, batch):
         """Validation step called by PyTorch Lightning.
         
@@ -247,9 +327,9 @@ class BaseLearner(pl.LightningModule):
         Returns:
             torch.Tensor: Validation loss.
         """
-        pass
+        loss = self.shared_step(batch, step='val')
+        return loss
     
-    @abstractmethod    
     def test_step(self, batch):
         """Test step called by PyTorch Lightning.
         
@@ -259,7 +339,14 @@ class BaseLearner(pl.LightningModule):
         Returns:
             torch.Tensor: Test loss.
         """
-        pass
+        loss = self.shared_step(batch, step='test')
+        
+        # TODO: test-time interventions
+        # self.test_intervention(batch)
+        # if 'Qualified' in self.c_names:
+        #     self.test_intervention_fairness(batch)
+
+        return loss
 
     # TODO: custom predict_step?
     # @abstractmethod

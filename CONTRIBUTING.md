@@ -1,8 +1,6 @@
 # Contributing to PyC
 
-We welcome contributions to PyC! This guide will help you contribute effectively.
-
-Thank you for your interest in contributing! The PyC Team welcomes all contributions, whether small bug fixes or major features.
+Thank you for your interest in contributing! The PyC Team welcomes all contributions, from small bug fixes to major features.
 
 ## Join Our Community
 
@@ -10,39 +8,44 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 
 [![Slack](https://img.shields.io/badge/Slack-Join%20Us-4A154B?style=for-the-badge&logo=slack)](https://join.slack.com/t/pyc-yu37757/shared_invite/zt-3jdcsex5t-LqkU6Plj5rxFemh5bRhe_Q)
 
-## How to Contribute
+## Ways to Contribute
 
-1. **Fork the repository** - Create your own fork of the PyC repository on GitHub.
-2. **Use the** `dev` **branch** - Write and test your contributions locally on the `dev` branch.
-3. **Create a new branch** - Make a new branch for your specific contribution.
-4. **Make your changes** - Implement your changes with clear, descriptive commit messages.
-5. **Use Gitmoji** - Add emojis to your commit messages using [Gitmoji](https://gitmoji.dev/) for better clarity.
-6. **Write documentation and tests** - Ensure your contributions include appropriate documentation and tests.
-7. **Run all tests** - Make sure all tests pass before submitting your pull request.
-8. **Submit a Pull Request** - Open a PR to the `main` branch describing your changes.
+- **Report a bug or request a feature** — open an issue (see [Reporting Issues](#reporting-issues)).
+- **Improve the documentation** — fix typos, clarify docstrings, or expand the guides.
+- **Add a new component** — PyC is built to be extended. Each component type has a step-by-step implementation guide in the documentation:
+  - [**New Layer**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_layer.html) — a semantics-aware Low-Level API layer.
+  - [**New Model**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_model.html) — a concept-based model for the High-Level API.
+  - [**New Dataset**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_dataset.html) — a dataset and datamodule with concept annotations.
+  - [**New Loss**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_loss.html) — a loss compatible with `ConceptLoss`.
+  - [**New Metric**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_metric.html) — a metric compatible with `ConceptMetrics`.
 
-## Development Setup
+## Development Workflow
 
-### Prerequisites
+1. **Set up your environment** — install PyC in editable mode with all dependencies:
 
-- Python 3.9 or higher
-- PyTorch (latest stable version)
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
+   cd pytorch_concepts
+   git remote add upstream https://github.com/pyc-team/pytorch_concepts.git
+   # create and activate the conda environment (use environment_silicon.yaml on Apple Silicon)
+   conda env create -f conceptarium/environment.yaml
+   conda activate conceptarium
+   # install your local pyc in editable mode
+   pip install -e .
+   ```
 
-### Installation
+2. **Branch from `dev`** — base your work on the latest upstream `dev`:
 
-Install PyC and its dependencies:
+   ```bash
+   git fetch upstream
+   git checkout -b my-feature upstream/dev
+   ```
 
-```bash
-pip install --pre pytorch-concepts
-```
+3. **Make your changes** — write clear, descriptive commit messages. We use [Gitmoji](https://gitmoji.dev/) (e.g., `✨ Add new feature`). If you are adding a component, follow its [implementation guide](#ways-to-contribute).
 
-For development, you may want to install in editable mode:
+4. **Add tests and docs** — add unit tests, update docstrings and `.rst` files, and verify everything passes locally.
 
-```bash
-git clone https://github.com/pyc-team/pytorch_concepts.git
-cd pytorch_concepts
-pip install -e .
-```
+5. **Open a pull request** — push your branch and open a PR targeting `dev` (not `master`).
 
 ## Reporting Issues
 
@@ -59,21 +62,13 @@ When reporting issues, please include:
 
 Please follow these guidelines when contributing code:
 
-- **PEP 8** - Follow [PEP 8](https://pep8.org/) style guidelines for Python code.
-- **Type hints** - Use type hints where appropriate to improve code clarity.
-- **Docstrings** - Write clear docstrings for all public functions and classes.
-- **Tests** - Write tests for new features and bug fixes when possible.
-- **Documentation** - Update documentation to reflect your changes.
-
-## Pull Request Process
-
-1. Ensure your code follows the style guidelines above.
-2. Update the documentation if you've made changes to the API.
-3. Add tests for new functionality.
-4. Make sure all tests pass locally.
-5. Write a clear PR description explaining what changes you made and why.
-6. Link any related issues in your PR description.
-7. Wait for review from the maintainers.
+| Guideline | Description |
+|-----------|-------------|
+| **PEP 8** | Follow [PEP 8](https://pep8.org/) style guidelines for Python code. |
+| **Type hints** | Use type hints where appropriate to improve code clarity. |
+| **Docstrings** | Write clear docstrings for all public functions and classes. |
+| **Tests** | Write tests for new features and bug fixes. |
+| **Documentation** | Update documentation to reflect your changes. |
 
 ## Thank You!
 
@@ -84,3 +79,8 @@ Thanks to all our contributors! 🧡
 <a href="https://github.com/pyc-team/pytorch_concepts/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=pyc-team/pytorch_concepts" alt="Contributors" />
 </a>
+
+### External Contributors
+
+- [Sonia Laguna](https://sonialagunac.github.io/), ETH Zurich (CH).
+- [Moritz Vandenhirtz](https://mvandenhi.github.io/), ETH Zurich (CH).

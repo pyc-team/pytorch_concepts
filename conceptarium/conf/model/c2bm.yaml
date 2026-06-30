@@ -1,0 +1,9 @@
+defaults:
+  - _commons
+  - _self_
+
+_target_: "torch_concepts.nn.CausallyReliableConceptBottleneckModel"
+
+exogenous_size: 8
+hypernet_hidden_size: 8
+hypernet_use_bias: false

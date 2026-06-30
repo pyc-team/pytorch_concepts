@@ -1,9 +1,3 @@
-Interpretable Layers and Interventions
-==================================================
-
-The Low-Level API provides building blocks to create concept-based models using
-interpretable layers and perform interventions using a PyTorch-like interface.
-
 .. |pyc_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg
    :width: 20px
    :align: middle
@@ -12,270 +6,232 @@ interpretable layers and perform interventions using a PyTorch-like interface.
    :width: 20px
    :align: middle
 
-Design Principles
---------------
 
-Overview of Data Representations
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-In |pyc_logo| PyC, we distinguish between three types of data representations:
+Semantic primitives and Interventions
+======================================
 
-- **Input**: High-dimensional representations where exogenous and endogenous information is entangled
-- **Exogenous**: Representations that are direct causes of endogenous variables
-- **Endogenous**: Representations of observable quantities of interest
+The Low-Level API provides composable building blocks for concept-based neural networks,
+using a pure |pytorch_logo| PyTorch interface. It is the right entry point if you are
+comfortable with PyTorch and want to assemble interpretable architectures by hand.
 
+.. image:: /_static/img/api_levels/low_level.png
+   :alt: Overview of the PyC Low-Level API
+   :align: center
+   :width: 100%
 
-Layer Types
-^^^^^^^^^^^
+|
 
-In |pyc_logo| PyC you will find three types of layers whose interfaces reflect the distinction between data representations:
+The core building blocks of this API level are:
 
-- ``Encoder`` layers: Never take as input endogenous variables
-- ``Predictor`` layers: Must take as input a set of endogenous variables
-- Special layers: Perform operations like memory selection or graph learning
+- **Annotations** — give names and types to the concepts on a tensor axis.
+- **Annotated Tensors** — tensors that carry their concept annotations along.
+- **PyC layers** — semntics-aware layers that produce concepts.
+- **Interventions** — modules to temporarily override layers.
+- **Functionals** — evaluation metrics and loss functions.
 
-
-Layer Naming Standard
-^^^^^^^^^^^^^^^^^^^^^
-
-In order to easily identify the type of layer, |pyc_logo| PyC uses a consistent standard to assign names to layers.
-Each layer name follows the format:
-
-``<LayerType><InputType><OutputType>``
-
-where:
-
-- ``LayerType``: describes the type of layer (e.g., Linear, HyperLinear, Selector, Transformer, etc...)
-- ``InputType`` and ``OutputType``: describe the type of data representations the layer takes as input and produces as output. |pyc_logo| PyC uses the following abbreviations:
-
-  - ``Z``: Input
-  - ``U``: Exogenous
-  - ``C``: Endogenous
+Expand each block below for an explanation and an example of how to use it.
 
 
-For instance, a layer named ``LinearZC`` is a linear layer that takes as input an
-``Input`` representation and produces an ``Endogenous`` representation. Since it does not take
-as input any endogenous variables, it is an encoder layer.
+.. dropdown:: Annotations
+    :icon: tag
 
-.. code-block:: python
+    :class:`~torch_concepts.Annotations` give semantic meaning to the concept dimension of a
+    tensor. They store the ordered ``labels``, their ``cardinalities`` (``1`` for binary, ``>1``
+    for categorical), their ``types`` (``binary``, ``categorical`` or ``continuous``), and optional per-label ``metadata``. This is what lets you
+    refer to a concept by name instead of by column index.
 
- pyc.nn.LinearZC(in_features=10, out_features=3)
+    .. code-block:: python
 
-As another example, a layer named ``HyperLinearCUC`` is a hyper-network layer that
-takes as input both ``Endogenous`` and ``Exogenous`` representations and produces an
-``Endogenous`` representation. Since it takes as input endogenous variables, it is a predictor layer.
+       import torch_concepts as pyc
 
-.. code-block:: python
+       annotations = pyc.Annotations(
+           labels=["smoking", "genotype", "tar", "cancer"],
+           cardinalities=[1, 3, 1, 1],
+           types=["binary", "categorical", "continuous", "binary"],
+       )
 
- pyc.nn.HyperLinearCUC(
-    in_features_endogenous=10,
-    in_features_exogenous=7,
-    embedding_size=24,
-    out_features=3
- )
-
-As a final example, graph learners are a special layers that learn relationships between concepts.
-They do not follow the standard naming convention of encoders and predictors, but their purpose should be
-clear from their name.
-
-.. code-block:: python
-
- wanda = pyc.nn.WANDAGraphLearner(
-    ['c1', 'c2', 'c3'],
-    ['task A', 'task B', 'task C']
- )
+       # Access a single concept's properties by name
+       genotype = annotations.concept("genotype")
+       print(genotype.cardinality, genotype.type)   # 3 categorical
 
 
-Detailed Guides
-------------------------------
-
-
-.. dropdown:: Concept Bottleneck Model
+.. dropdown:: Annotated Tensors
     :icon: package
 
-    **Import Libraries**
-
-    To get started, import |pyc_logo| PyC and |pytorch_logo| PyTorch:
+    An :class:`~torch_concepts.AnnotatedTensor` pairs a plain :class:`torch.Tensor` with an
+    :class:`~torch_concepts.Annotations` describing its second axis (axis 1). You can then slice
+    columns **by concept name** or **by type**. Any operation that leaves the concept axis
+    unchanged keeps the annotation attached.
 
     .. code-block:: python
 
        import torch
        import torch_concepts as pyc
 
-    **Create Sample Data**
+       tensor = pyc.AnnotatedTensor(
+           data=torch.randn(10, 6),   # (batch_size, sum(cardinalities))
+           annotation=annotations,
+       )
 
-    Generate random inputs and targets for demonstration:
+       smoking = tensor["smoking"]              # slice by concept name
+       binary = tensor.split_by_type("binary")  # slice by concept type
 
-    .. code-block:: python
 
-       batch_size = 32
-       input_dim = 64
-       n_concepts = 5
-       n_tasks = 3
+.. dropdown:: PyC layers
+    :icon: stack
 
-       # Random input
-       x = torch.randn(batch_size, input_dim)
+    Layers are the heart of the Low-Level API. All layers extend ``BaseConceptLayer``: they
+    accept **concept scores** and/or **embeddings** as input (both optional) and always return
+    **concept scores**. Passing ``Annotations`` instead of an integer for ``in_concepts`` or
+    ``out_concepts`` makes the layer **semantics-aware**: it knows concept names, cardinalities,
+    and types, and can annotate its output as an ``AnnotatedTensor``.
 
-       # Random concept labels (binary)
-       concept_labels = torch.randint(0, 2, (batch_size, n_concepts)).float()
-
-       # Random task labels
-       task_labels = torch.randint(0, n_tasks, (batch_size,))
-
-    **Build a Concept Bottleneck Model**
-
-    Use a ModuleDict to combine encoder and predictor:
+    Layer names follow the pattern ``<OperationType><InputType>To<OutputType>``, so
+    ``LinearEmbeddingToConcept`` maps embeddings to concepts and
+    ``LinearConceptToConcept`` maps concepts to concepts:
 
     .. code-block:: python
 
-       # Create model using ModuleDict
-       model = torch.nn.ModuleDict({
-           'encoder': pyc.nn.LinearZC(
-               in_features=input_dim,
-               out_features=n_concepts
-           ),
-           'predictor': pyc.nn.LinearCC(
-               in_features_endogenous=n_concepts,
-               out_features=n_tasks
-           ),
-       })
+       import torch
+       import torch_concepts as pyc
+
+       encoder = pyc.nn.LinearEmbeddingToConcept(in_embeddings=64, out_concepts=5)
+       predictor = pyc.nn.LinearConceptToConcept(in_concepts=5, out_concepts=1)
+
+       x = torch.randn(32, 64)
+       concepts = encoder(embeddings=x)
+       tasks = predictor(concepts=concepts)
+
+    ``MixConceptEmbeddingToConcept`` can be used to mix concept activations with concept embeddings. 
+    It requires ``Annotations`` for ``in_concepts`` — this makes
+    it inherently **type-aware**, grouping columns by cardinality and concept type:
+
+    .. code-block:: python
+
+       import torch
+       import torch_concepts as pyc
+       from torch_concepts.nn import MixConceptEmbeddingToConcept
+
+       annotations = pyc.Annotations(
+           labels=["smoking", "genotype", "tar", "cancer"],
+           cardinalities=[1, 3, 1, 1],
+           types=["binary", "categorical", "continuous", "binary"],
+       )
+       predictor = MixConceptEmbeddingToConcept(
+           in_concepts=annotations,   # type-aware: uses cardinalities and types
+           in_embeddings=16,
+           out_concepts=1,
+       )
+       concepts   = torch.randn(32, 6)        # (batch, sum(cardinalities))
+       embeddings = torch.randn(32, 6, 16)    # (batch, sum(cardinalities), emb_size)
+       tasks = predictor(concepts=concepts, embeddings=embeddings)
+
+    ``pyc.nn.Sequential`` extends ``torch.nn.Sequential`` so that its **first module can accept
+    multiple inputs** (e.g. ``concepts`` and ``embeddings``). Every subsequent module still
+    receives a single tensor. It also accepts an optional ``out_concepts: Annotations`` to
+    annotate its output as an ``AnnotatedTensor``:
+
+    .. code-block:: python
+
+       annotations = pyc.Annotations(labels=["c1", "c2"], cardinalities=[1, 1])
+       pipeline = pyc.nn.Sequential(
+           pyc.nn.MixConceptEmbeddingToConcept(in_concepts=annotations, in_embeddings=16, out_concepts=2),
+           torch.nn.ReLU(),
+           out_concepts=annotations,   # output is an AnnotatedTensor
+       )
+       out = pipeline(concepts=concepts, embeddings=embeddings)   # first layer takes both inputs
+
+    Graph learners are special layers that discover relationships between concepts:
+
+    .. code-block:: python
+
+       wanda = pyc.nn.WANDAGraphLearner(
+           row_labels=['c1', 'c2', 'c3'],
+           col_labels=['task A', 'task B', 'task C'],
+       )
+       print(wanda.weighted_adj.shape)   # learnable adjacency tensor
 
 
-.. dropdown:: Inference and Training
+.. dropdown:: Putting it Together: Concept Bottleneck Model
     :icon: rocket
 
-    **Inference**
-
-    Once a concept bottleneck model is built, we can perform inference by first obtaining
-    concept activations from the encoder, and then task predictions from the predictor:
+    A CBM is an encoder feeding a predictor. During training, supervise both
+    concept and task predictions:
 
     .. code-block:: python
 
-       # Get concept endogenous from input
-       concept_endogenous = model['encoder'](input=x)
-
-       # Get task predictions from concept endogenous
-       task_endogenous = model['predictor'](endogenous=concept_endogenous)
-
-       print(f"Concept endogenous shape: {concept_endogenous.shape}")  # [32, 5]
-       print(f"Task endogenous shape: {task_endogenous.shape}")        # [32, 3]
-
-    **Compute Loss and Train**
-
-    Train with both concept and task supervision:
-
-    .. code-block:: python
-
+       import torch
        import torch.nn.functional as F
+       import torch_concepts as pyc
 
-       # Compute losses
-       concept_loss = F.binary_cross_entropy(torch.sigmoid(concept_endogenous), concept_labels)
-       task_loss = F.cross_entropy(task_endogenous, task_labels)
-       total_loss = task_loss + 0.5 * concept_loss
+       encoder   = pyc.nn.LinearEmbeddingToConcept(in_embeddings=64, out_concepts=5)
+       predictor = pyc.nn.LinearConceptToConcept(in_concepts=5, out_concepts=1)
 
-       # Backpropagation
-       total_loss.backward()
+       x      = torch.randn(32, 64)
+       c_true = torch.randint(0, 2, (32, 5)).float()
+       y_true = torch.randint(0, 2, (32, 1)).float()
 
-       print(f"Concept loss: {concept_loss.item():.4f}")
-       print(f"Task loss: {task_loss.item():.4f}")
+       concepts = encoder(embeddings=x)
+       tasks    = predictor(concepts=concepts)
+       loss = F.binary_cross_entropy_with_logits(concepts, c_true) \
+            + F.binary_cross_entropy_with_logits(tasks, y_true)
 
 
 .. dropdown:: Interventions
     :icon: tools
 
-    Intervene using the ``intervention`` context manager which replaces the encoder layer temporarily.
-    The context manager takes two main arguments: **strategies** and **policies**.
+    ``InterventionModule`` wraps any layer as a **drop-in replacement**. The replacement 
+    has the same call signature, but concepts are selectively modified at inference time.
 
-    - Intervention strategies define how the layer behaves during the intervention, e.g., setting concept endogenous to ground truth values.
-    - Intervention policies define the priority/order of concepts to intervene on.
+    - A **strategy** decides *how* to intervene. Two kinds are supported:
 
-    .. code-block:: python
+      - **Concept strategies** (``BaseConceptInterventionStrategy``): override the layer's
+        *output* concept values — e.g. ``DoIntervention`` (set to a constant) or
+        ``GroundTruthIntervention`` (set to ground-truth labels).
+      - **Mechanism strategies** (``BaseModuleInterventionStrategy``): modify the layer's
+        *weights and connections* — e.g. ``PositiveWeightsIntervention`` (force positive
+        weights, making the layer monotonic).
 
-       from torch_concepts.nn import GroundTruthIntervention, UniformPolicy
-       from torch_concepts.nn import intervention
-
-       ground_truth = 10 * torch.rand_like(concept_endogenous)
-       strategy = GroundTruthIntervention(model=model['encoder'], ground_truth=ground_truth)
-       policy = UniformPolicy(out_features=n_concepts)
-
-       # Apply intervention to encoder
-       with intervention(
-           policies=policy,
-           strategies=strategy,
-           target_concepts=[0, 2]
-       ) as new_encoder_layer:
-           intervened_concepts = new_encoder_layer(input=x)
-           intervened_tasks = model['predictor'](endogenous=intervened_concepts)
-
-       print(f"Original concept endogenous: {concept_endogenous[0]}")
-       print(f"Original task predictions: {task_endogenous[0]}")
-       print(f"Intervened concept endogenous: {intervened_concepts[0]}")
-       print(f"Intervened task predictions: {intervened_tasks[0]}")
-
-
-.. dropdown:: (Advanced) Graph Learning
-    :icon: workflow
-
-    Add a graph learner to discover concept relationships:
+    - A **policy** decides *which* concepts are targeted — e.g. ``UniformPolicy`` (all),
+      ``UncertaintyPolicy`` (least certain), ``GradientPolicy`` (most influential).
 
     .. code-block:: python
 
-       # Define concept and task names
-       concept_names = ['round', 'smooth', 'bright', 'large', 'centered']
+       from torch_concepts.nn import InterventionModule, DoIntervention, UniformPolicy
 
-       # Create WANDA graph learner
-       graph_learner = pyc.nn.WANDAGraphLearner(
-           row_labels=concept_names,
-           col_labels=concept_names
+       intervened = InterventionModule(
+           original_module=encoder,
+           intervention_strategy=DoIntervention(constants=1.0),
+           intervention_policy=UniformPolicy(out_concepts=5),
+           out_concepts_to_intervene_on=[0, 2],   # target concepts 0 and 2
        )
-
-       print(f"Learned graph shape: {graph_learner.weighted_adj}")
-
-
-    The ``graph_learner.weighted_adj`` tensor contains a learnable adjacency matrix representing relationships
-    between concepts.
+       concepts = intervened(embeddings=x)   # same interface as encoder
+       tasks = predictor(concepts=concepts)
 
 
-.. dropdown:: (Advanced) Verifiable Concept-Based Models
-    :icon: shield-check
+.. dropdown:: Functionals
+    :icon: zap
 
-    To design more complex concept-based models, you can combine multiple interpretable layers.
-    For example, to build a verifiable concept-based model we can use an encoder to predict concept activations,
-    a selector to select relevant exogenous information, and a hyper-network predictor to make final predictions
-    based on both concept activations and exogenous information.
+    :mod:`torch_concepts.nn.functional` collects **stateless operations** used inside and
+    alongside PyC layers: interpretable read-outs, differentiable selection, and post-hoc
+    evaluation metrics.
 
     .. code-block:: python
 
-       from torch_concepts.nn import LinearZC, SelectorZU, HyperLinearCUC
+       from torch_concepts.nn import functional as F
 
-       memory_size = 7
-       exogenous_size = 16
-       embedding_size = 5
+       # CaCE: causal effect of concept 0 on task predictions
+       concepts_c0 = concepts.clone(); concepts_c0[:, 0] = -1e6   # do(C_0 = 0)
+       concepts_c1 = concepts.clone(); concepts_c1[:, 0] =  1e6   # do(C_0 = 1)
+       cace = F.cace_score(predictor(concepts=concepts_c0), predictor(concepts=concepts_c1))
 
-       # Create model using ModuleDict
-       model = torch.nn.ModuleDict({
-           'encoder': LinearZC(
-               in_features=input_dim,
-               out_features=n_concepts
-           ),
-           'selector': SelectorZU(
-               in_features=input_dim,
-               memory_size=memory_size,
-               exogenous_size=exogenous_size,
-               out_features=n_tasks
-           ),
-           'predictor': HyperLinearCUC(
-               in_features_endogenous=n_concepts,
-               in_features_exogenous=exogenous_size,
-               embedding_size=embedding_size,
-           )
-       })
-
+       # NCC: average number of concepts that explain 95% of each prediction
+       ncc = F.number_of_contributing_concepts(predictor.predictor.weight, concepts)
 
 
 Next Steps
 ----------
 
-- Explore the full :doc:`Low-Level API documentation </modules/low_level_api>`
-- Try the :doc:`Mid-Level API </guides/using_mid_level_proba>` for probabilistic modeling
-- Try the :doc:`Mid-Level API </guides/using_mid_level_causal>` for causal modeling
-- Check out :doc:`example notebooks <https://github.com/pyc-team/pytorch_concepts/tree/master/examples>`
+- Browse the full :doc:`Low-Level API reference </modules/low_level_api>`.
+- Move up to compose layers into :doc:`Interpretable Probabilistic Models <using_mid_level>`.
+- Check out the low-level `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/0_layer>`_.

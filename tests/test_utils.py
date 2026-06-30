@@ -20,8 +20,7 @@ from torch_concepts.utils import (
     seed_everything,
 )
 
-from torch_concepts import GroupConfig
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 class TestUtils(unittest.TestCase):
@@ -302,44 +301,6 @@ class TestUtils(unittest.TestCase):
         # Should not raise on same device
         _check_tensors([t1, t2])
 
-    def test_add_distribution_to_annotations_with_dict(self):
-        """Test add_distribution_to_annotations function."""
-        from torch_concepts.utils import add_distribution_to_annotations
-
-        # Create simple annotations with proper metadata
-        metadata = {
-            'color': {'type': 'discrete'},
-            'shape': {'type': 'discrete'}
-        }
-        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
-
-        variable_distributions = {
-            'color': torch.distributions.Bernoulli,
-            'shape': torch.distributions.Categorical
-        }
-
-        result = add_distribution_to_annotations(annotations, variable_distributions)
-        self.assertIsInstance(result, AxisAnnotation)
-
-    def test_add_distribution_to_annotations_with_groups(self):
-        """Test add_distribution_to_annotations function."""
-        from torch_concepts.utils import add_distribution_to_annotations
-
-        # Create simple annotations with proper metadata
-        metadata = {
-            'color': {'type': 'discrete'},
-            'shape': {'type': 'discrete'}
-        }
-        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
-
-        variable_distributions = GroupConfig(
-            binary=torch.distributions.Bernoulli,
-            categorical=torch.distributions.Categorical
-        )
-
-        result = add_distribution_to_annotations(annotations, variable_distributions)
-        self.assertIsInstance(result, AxisAnnotation)
-
     def test_compute_temperature_edge_cases(self):
         """Test compute_temperature with edge cases."""
         # Zero epochs
@@ -535,6 +496,136 @@ class TestSeedEverything(unittest.TestCase):
                                msg="Loss should be identical with same seed")
         self.assertTrue(torch.allclose(weights_1, weights_2, atol=1e-6),
                         "Model weights should be identical with same seed")
+
+
+class TestUtilsCoverage(unittest.TestCase):
+    """Additional tests to reach 100% coverage on torch_concepts/utils.py."""
+
+    # --- numerical_stability_check: warning branch + except block ---
+
+    def test_numerical_stability_check_triggers_warning(self):
+        """Matrix needing large epsilon triggers logging.warning (line 183)."""
+        import logging
+        device = torch.device('cpu')
+        # Negative definite matrix: eigenvalues are all -1.
+        # Needs many epsilon doublings (sum > 1) to become PD,
+        # which makes num_added >> 0.0001 and triggers the warning.
+        cov = -torch.eye(3)
+        with self.assertLogs(level=logging.WARNING):
+            result = numerical_stability_check(cov, device, epsilon=1e-4)
+        # Should now be stable
+        torch.linalg.cholesky(result)
+
+    def test_numerical_stability_check_batch_non_pd(self):
+        """Batched non-PD matrix goes through the 3-dim except branch (lines 189-192)."""
+        device = torch.device('cpu')
+        # Batch of negative-definite matrices – not positive definite
+        cov = -torch.eye(3).unsqueeze(0).expand(2, -1, -1).clone()
+        result = numerical_stability_check(cov, device, epsilon=1e-4)
+        self.assertEqual(result.shape, (2, 3, 3))
+        # Should be stable for every batch element
+        for i in range(result.shape[0]):
+            torch.linalg.cholesky(result[i])
+
+    # --- _check_tensors: 1-D tensor, device, requires_grad ---
+
+    def test_check_tensors_1d_tensor_raises(self):
+        """A 1-D tensor should raise with 'at least 2 dims' (line 231)."""
+        from torch_concepts.utils import _check_tensors
+        t1 = torch.randn(4)  # 1-D
+        with self.assertRaises(ValueError) as ctx:
+            _check_tensors([t1])
+        self.assertIn('at least 2 dims', str(ctx.exception))
+
+    def test_check_tensors_different_requires_grad(self):
+        """Tensors with different requires_grad should raise (line 258)."""
+        from torch_concepts.utils import _check_tensors
+        t1 = torch.randn(4, 3, requires_grad=True)
+        t2 = torch.randn(4, 2, requires_grad=False)
+        with self.assertRaises(ValueError) as ctx:
+            _check_tensors([t1, t2])
+        self.assertIn('requires_grad', str(ctx.exception))
+
+    def test_check_tensors_different_device(self):
+        """Tensors on different devices should raise (line 256)."""
+        from torch_concepts.utils import _check_tensors
+        t1 = torch.randn(4, 3, device='cpu')
+        # Create tensor on 'meta' device (always available, no real storage)
+        t2 = torch.randn(4, 2, device='meta')
+        with self.assertRaises(ValueError) as ctx:
+            _check_tensors([t1, t2])
+        self.assertIn('device', str(ctx.exception))
+
+    def test_compute_output_size_unknown_value_type(self):
+        """Value that is neither int nor list is silently skipped (branch 101->97)."""
+        # Tuple is neither int nor list, so neither branch fires
+        concept_names = {0: [], 1: ('a', 'b')}
+        size = compute_output_size(concept_names)
+        self.assertEqual(size, 1)  # only the batch dim skipped; tuple dim skipped too
+
+class TestResolveHfToken(unittest.TestCase):
+    """Test suite for resolve_hf_token (env-var precedence + conceptarium fallback)."""
+
+    # Empty strings disable a var (os.environ.get(...) -> "" is falsy).
+    _EMPTY = {"HF_TOKEN": "", "HUGGINGFACE_HUB_TOKEN": "", "HUGGINGFACEHUB_TOKEN": ""}
+
+    def test_hf_token_wins(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HF_TOKEN": "tok1"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok1")
+
+    def test_huggingface_hub_token_second(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACE_HUB_TOKEN": "tok2"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok2")
+
+    def test_huggingfacehub_token_third(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACEHUB_TOKEN": "tok3"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok3")
+
+    @staticmethod
+    def _fake_conceptarium(token):
+        """Build fake ``conceptarium``/``conceptarium.env`` modules for sys.modules.
+
+        Keeps the test independent of whether the real (non-installed)
+        ``conceptarium`` package is importable — it isn't in CI.
+        """
+        import types
+        pkg = types.ModuleType("conceptarium")
+        pkg.__path__ = []
+        env = types.ModuleType("conceptarium.env")
+        env.HUGGINGFACEHUB_TOKEN = token
+        pkg.env = env
+        return {"conceptarium": pkg, "conceptarium.env": env}
+
+    def test_falls_back_to_conceptarium_env(self):
+        import sys
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        # The three vars must be ABSENT (not empty) so setdefault can seed them.
+        with mock.patch.dict(sys.modules, self._fake_conceptarium("cfg_tok")), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            for key in self._EMPTY:
+                os.environ.pop(key, None)
+            self.assertEqual(resolve_hf_token(), "cfg_tok")
+            # Fallback also seeds the canonical env vars.
+            self.assertEqual(os.environ.get("HF_TOKEN"), "cfg_tok")
+
+    def test_returns_none_when_nothing_available(self):
+        import sys
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        # conceptarium.env present but with an empty token -> falls through to None.
+        with mock.patch.dict(sys.modules, self._fake_conceptarium("")), \
+             mock.patch.dict(os.environ, self._EMPTY, clear=False):
+            self.assertIsNone(resolve_hf_token())
 
 
 if __name__ == '__main__':

@@ -20,6 +20,7 @@ from .wandb import (
     iter_runs,
 )
 from .hydra import target_classname, parse_hyperparams
+from .registry import register_run, load_registry
 from .resolvers import register_custom_resolvers
 
 __all__ = [
@@ -43,4 +44,8 @@ __all__ = [
     "target_classname",
     "parse_hyperparams",
     "register_custom_resolvers",
+
+    # Registry
+    "register_run",
+    "load_registry",
 ]

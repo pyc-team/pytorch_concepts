@@ -4,46 +4,46 @@ Linear predictor modules for concept-based models.
 This module provides linear prediction layers that transform concept
 representations into new concept representations using a linear layer.
 """
+from typing import Union
+
 import torch
 
-from ..base.layer import BasePredictor
-from typing import Callable
+from torch_concepts import Annotations
+from ..base.layer import BaseConceptLayer
 
 from ....functional import prune_linear_layer
 
 
-class LinearCC(BasePredictor):
+class LinearConceptToConcept(BaseConceptLayer):
     """
     Linear concept predictor.
 
-    This predictor transforms input concept endogenous into other concept
-    endogenous using a linear layer followed by activation.
+    This predictor transforms input concept representations into other concept
+    representations using a linear layer.
 
     Attributes:
-        in_features_endogenous (int): Number of input logit features.
-        out_features (int): Number of output concept features.
-        in_activation (Callable): Activation function for inputs (default: sigmoid).
+        in_concepts (int): Number of input concept representations.
+        out_concepts (int): Number of output concept representations.
         predictor (nn.Sequential): The prediction network.
 
     Args:
-        in_features_endogenous: Number of input logit features.
-        out_features: Number of output concept features.
-        in_activation: Activation function to apply to input endogenous (default: torch.sigmoid).
+        in_concepts: Number of input concept representations.
+        out_concepts: Number of output concept representations.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import LinearCC
+        >>> from torch_concepts.nn import LinearConceptToConcept
         >>>
         >>> # Create predictor
-        >>> predictor = LinearCC(
-        ...     in_features_endogenous=10,
-        ...     out_features=5
+        >>> predictor = LinearConceptToConcept(
+        ...     in_concepts=10,
+        ...     out_concepts=5
         ... )
         >>>
         >>> # Forward pass
-        >>> in_endogenous = torch.randn(2, 10)  # batch_size=2, in_features=10
-        >>> out_endogenous = predictor(in_endogenous)
-        >>> print(out_endogenous.shape)
+        >>> in_concepts = torch.rand(2, 10)  # batch_size=2, in_concepts=10
+        >>> out_concepts = predictor(in_concepts)
+        >>> print(out_concepts.shape)
         torch.Size([2, 5])
 
     References:
@@ -53,47 +53,44 @@ class LinearCC(BasePredictor):
 
     def __init__(
         self,
-        in_features_endogenous: int,
-        out_features: int,
-        in_activation: Callable = torch.sigmoid
+        in_concepts: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
+        *args,
+        **kwargs,
     ):
         """
-        Initialize the probabilistic predictor.
+        Initialize the predictor.
 
         Args:
-            in_features_endogenous: Number of input logit features.
-            out_features: Number of output concept features.
-            in_activation: Activation function for inputs (default: torch.sigmoid).
+            in_concepts: Number of input concept representations.
+            out_concepts: Number of output concept representations.
         """
         super().__init__(
-            in_features_endogenous=in_features_endogenous,
-            out_features=out_features,
-            in_activation=in_activation,
+            in_concepts=in_concepts,
+            out_concepts=out_concepts,
         )
-        self.predictor = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features_endogenous,
-                out_features
-            ),
-            torch.nn.Unflatten(-1, (out_features,)),
+        self.predictor = torch.nn.Linear(
+            in_concepts,
+            out_concepts,
+            *args,
+            **kwargs,
         )
 
     def forward(
         self,
-        endogenous: torch.Tensor
+        concepts: torch.Tensor
     ) -> torch.Tensor:
         """
         Forward pass through the predictor.
 
         Args:
-            endogenous: Input endogenous of shape (batch_size, in_features_endogenous).
+            concepts: Input concepts of shape (..., in_concepts).
 
         Returns:
-            torch.Tensor: Predicted concept probabilities of shape (batch_size, out_features).
+            torch.Tensor: Predicted concept probabilities of shape (..., out_concepts).
         """
-        in_probs = self.in_activation(endogenous)
-        probs = self.predictor(in_probs)
-        return probs
+        return self.predictor(concepts)
+        
 
     def prune(self, mask: torch.Tensor):
         """
@@ -102,24 +99,24 @@ class LinearCC(BasePredictor):
         Removes input features where mask is False/0, reducing model complexity.
 
         Args:
-            mask: Binary mask of shape (in_features_endogenous,) indicating which
+            mask: Binary mask of shape (in_concepts,) indicating which
                   features to keep (True/1) or remove (False/0).
 
         Example:
             >>> import torch
-            >>> from torch_concepts.nn import LinearCC
+            >>> from torch_concepts.nn import LinearConceptToConcept
             >>>
-            >>> predictor = LinearCC(in_features_endogenous=10, out_features=5)
+            >>> predictor = LinearConceptToConcept(in_concepts=10, out_concepts=5)
             >>>
             >>> # Prune first 3 features
             >>> mask = torch.tensor([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], dtype=torch.bool)
             >>> predictor.prune(mask)
             >>>
             >>> # Now only accepts 7 input features
-            >>> endogenous = torch.randn(2, 7)
-            >>> probs = predictor(endogenous)
+            >>> concepts = torch.randn(2, 7)
+            >>> probs = predictor(concepts)
             >>> print(probs.shape)
             torch.Size([2, 5])
         """
-        self.in_features_endogenous = sum(mask.int())
-        self.predictor[0] = prune_linear_layer(self.predictor[0], mask, dim=0)
+        self.in_concepts = sum(mask.int())
+        self.predictor = prune_linear_layer(self.predictor, mask, dim=0)

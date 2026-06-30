@@ -3,7 +3,7 @@ import warnings
 import logging
 import torch
 
-from ...annotations import AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,13 @@ class GroupConfig:
         >>> default_loss = MSELoss()
         >>> binary_loss = loss_config['binary']
         >>> loss_config.get('continuous', default_loss)
+        MSELoss()
         >>>
         >>> # Check what's configured
         >>> 'binary' in loss_config
+        True
         >>> list(loss_config.keys())
+        ['binary', 'categorical', 'continuous']
     """
     
     def __init__(
@@ -119,7 +122,7 @@ class GroupConfig:
         return cls(**config_dict)
     
     
-def check_collection(annotations: AxisAnnotation, 
+def check_collection(annotations: Annotations, 
                      collection: GroupConfig,
                      collection_name: str) -> GroupConfig:
     """Validate loss/metric configurations against concept annotations.
@@ -130,7 +133,7 @@ def check_collection(annotations: AxisAnnotation,
     3. Unused configurations are warned about
     
     Args:
-        annotations (AxisAnnotation): Concept annotations with metadata.
+        annotations (Annotations): Concept annotations with metadata.
         collection (GroupConfig): Configuration object with losses or metrics.
         collection_name (str): Either 'loss' or 'metrics' for error messages.
         
@@ -144,19 +147,15 @@ def check_collection(annotations: AxisAnnotation,
     Example:
         >>> from torch_concepts.nn.modules.utils import GroupConfig, check_collection
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
-        >>> from torch_concepts import AxisAnnotation
+        >>> from torch_concepts import Annotations
         >>> loss_config = GroupConfig(
         ...     binary=BCEWithLogitsLoss(),
         ...     categorical=CrossEntropyLoss()
         ... )
-        >>> concept_annotations = AxisAnnotation(
+        >>> concept_annotations = Annotations(
         ...     labels=['c1', 'c2', 'c3'],
-        ...     metadata={
-        ...         'c1': {'type': 'discrete'},
-        ...         'c2': {'type': 'discrete'},
-        ...         'c3': {'type': 'discrete'}
-        ...     },
         ...     cardinalities=[1, 3, 2],
+        ...     types=['binary', 'categorical', 'categorical'],
         ... )
         >>> filtered_config = check_collection(
         ...     concept_annotations,
@@ -164,32 +163,20 @@ def check_collection(annotations: AxisAnnotation,
         ...     'loss'
         ... )
     """
-    assert collection_name in ['loss', 'metrics'], f"collection_name must be \
-        either 'loss' or 'metrics', got '{collection_name}'"
+    assert collection_name in ['loss', 'metrics'], (
+        f"collection_name must be 'loss' or 'metrics', got '{collection_name}'"
+    )
 
-    # Extract annotation properties
-    metadata = annotations.metadata
-    cardinalities = annotations.cardinalities
-    types = [c_meta['type'] for _, c_meta in metadata.items()]
+    # Use cached type_groups from Annotations
+    groups = annotations.type_groups
     
-    # Categorize concepts by type and cardinality
-    is_binary = [x == ('discrete', 1) for x in zip(types, cardinalities)]
-    is_categorical = [t == 'discrete' and card > 1 for t, card in zip(types, cardinalities)]
-    is_continuous = [t == 'continuous' for t in types]
-
-    # raise error if continuous concepts are present
-    if any(is_continuous):
+    has_binary = len(groups['binary']['labels']) > 0
+    has_categorical = len(groups['categorical']['labels']) > 0
+    has_continuous = len(groups['continuous']['labels']) > 0
+    
+    # Raise error if continuous concepts are present
+    if has_continuous:
         raise NotImplementedError("Continuous concepts not yet implemented.")
-    
-    has_binary = any(is_binary)
-    has_categorical = any(is_categorical)
-    has_continuous = any(is_continuous)
-    all_same_type = all(t == types[0] for t in types)
-    
-    # Determine required collection items
-    needs_binary = has_binary
-    needs_categorical = has_categorical
-    needs_continuous = has_continuous
     
     # Extract items from collection
     binary = collection.get('binary')
@@ -200,164 +187,52 @@ def check_collection(annotations: AxisAnnotation,
     errors = []
     
     # Check nested/dense compatibility
-    if all(is_binary):
+    all_binary = has_binary and not has_categorical and not has_continuous
+    all_categorical = has_categorical and not has_binary and not has_continuous
+    all_continuous = has_continuous and not has_binary and not has_categorical
+    
+    if all_binary:
         if annotations.is_nested:
             errors.append("Annotations for all-binary concepts should NOT be nested.")
-        if not all_same_type:
-            errors.append("Annotations for all-binary concepts should share the same type.")
-    
-    elif all(is_categorical):
+    elif all_categorical:
         if not annotations.is_nested:
             errors.append("Annotations for all-categorical concepts should be nested.")
-        if not all_same_type:
-            errors.append("Annotations for all-categorical concepts should share the same type.")
-    
-    elif all(is_continuous):
+    elif all_continuous:
         if annotations.is_nested:
             errors.append("Annotations for all-continuous concepts should NOT be nested.")
-    
     elif has_binary or has_categorical:
         if not annotations.is_nested:
             errors.append("Annotations for mixed concepts should be nested.")
     
     # Check required items are present
-    if needs_binary and binary is None:
+    if has_binary and binary is None:
         errors.append(f"{collection_name} missing 'binary' for binary concepts.")
-    if needs_categorical and categorical is None:
+    if has_categorical and categorical is None:
         errors.append(f"{collection_name} missing 'categorical' for categorical concepts.")
-    if needs_continuous and continuous is None:
+    if has_continuous and continuous is None:
         errors.append(f"{collection_name} missing 'continuous' for continuous concepts.")
     
     if errors:
         raise ValueError(f"{collection_name} validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
     
     # Warnings for unused items
-    if not needs_binary and binary is not None:
+    if not has_binary and binary is not None:
         warnings.warn(f"Binary {collection_name} will be ignored (no binary concepts).")
-    if not needs_categorical and categorical is not None:
+    if not has_categorical and categorical is not None:
         warnings.warn(f"Categorical {collection_name} will be ignored (no categorical concepts).")
-    if not needs_continuous and continuous is not None:
-        warnings.warn(f"continuous {collection_name} will be ignored (no continuous concepts).")
-    
-    # Log configuration
-    concept_types = []
-    if has_binary and has_categorical:
-        concept_types.append("mixed discrete")
-    elif has_binary:
-        concept_types.append("all binary")
-    elif has_categorical:
-        concept_types.append("all categorical")
-    
-    if has_continuous:
-        concept_types.append("continuous" if not (has_binary or has_categorical) else "with continuous")
-    
-    # TODO: discuss whether to keep these debuggin loggin lines
-    # logger.info(f"{collection_name} configuration validated ({', '.join(concept_types)}):")
-    # logger.info(f"  Binary (card=1): {binary if needs_binary else 'unused'}")
-    # logger.info(f"  Categorical (card>1): {categorical if needs_categorical else 'unused'}")
-    # logger.info(f"  continuous: {continuous if needs_continuous else 'unused'}")
+    if not has_continuous and continuous is not None:
+        warnings.warn(f"Continuous {collection_name} will be ignored (no continuous concepts).")
     
     # Build filtered GroupConfig with only needed items
     filtered = GroupConfig()
-    if needs_binary:
+    if has_binary:
         filtered['binary'] = binary
-    if needs_categorical:
+    if has_categorical:
         filtered['categorical'] = categorical
-    if needs_continuous:
+    if has_continuous:
         filtered['continuous'] = continuous
     
     return filtered
-
-
-def get_concept_groups(annotations: AxisAnnotation) -> Dict[str, list]:
-    """Compute concept grouping by type for efficient loss/metric computation.
-    
-    Creates index mappings to slice tensors by concept type. Returns indices at two levels:
-    1. Concept-level indices: Position in concept list (e.g., concept 0, 1, 2...)
-    2. Logit-level indices: Position in flattened endogenous tensor (accounting for cardinality)
-    
-    These precomputed indices avoid repeated computation during training.
-    
-    Args:
-        annotations: Concept annotations with type and cardinality metadata
-        
-    Returns:
-        Dict[str, list]: Dictionary with the following keys:
-            - 'binary_labels': List of binary concept names
-            - 'categorical_labels': List of categorical concept names
-            - 'continuous_labels': List of continuous concept names
-            - 'binary_idx': List of concept-level indices for binary concepts
-            - 'categorical_idx': List of concept-level indices for categorical concepts
-            - 'continuous_idx': List of concept-level indices for continuous concepts
-            - 'binary_endogenous_idx': List of logit-level indices for binary concepts
-            - 'categorical_endogenous_idx': List of logit-level indices for categorical concepts
-            - 'continuous_endogenous_idx': List of logit-level indices for continuous concepts
-
-    Example:
-        >>> from torch_concepts import Annotations, AxisAnnotation
-        >>> from torch_concepts.nn.modules.utils import get_concept_groups
-        >>> annotations = Annotations({1: AxisAnnotation(
-        ...     labels=['c1', 'c2', 'c3', 'c4'],
-        ...     metadata={
-        ...         'c1': {'type': 'discrete'},
-        ...         'c2': {'type': 'discrete'},
-        ...         'c3': {'type': 'continuous'},
-        ...         'c4': {'type': 'discrete'}
-        ...     },
-        ... )})
-        >>> groups = get_concept_groups(annotations.get_axis_annotation(1))
-        >>> groups['binary_endogenous_idx']  # Extract endogenous of binary concepts
-        >>> groups['binary_idx']  # Extract labels of binary concepts
-    """
-    cardinalities = annotations.cardinalities
-    
-    # Group concepts by type
-    type_groups = annotations.groupby_metadata('type', layout='labels')
-
-    # Concept-level labels: label names
-    discrete_labels = type_groups.get('discrete', [])
-    continuous_labels = type_groups.get('continuous', [])
-    
-    # Further split discrete into binary and categorical
-    binary_labels = [label for label in discrete_labels if cardinalities[annotations.get_index(label)] == 1]
-    categorical_labels = [label for label in discrete_labels if cardinalities[annotations.get_index(label)] > 1]
-
-    # Concept-level indices: position in concept list
-    discrete_idx = [annotations.get_index(label) for label in discrete_labels]
-    continuous_idx = [annotations.get_index(label) for label in continuous_labels]
-    binary_idx = [annotations.get_index(label) for label in binary_labels]
-    categorical_idx = [annotations.get_index(label) for label in categorical_labels]
-
-    # Pre-compute cumulative indices for endogenous-level(e.g., logits-level (endogenous) slicing
-    # cumulative_indices[i] gives the starting position of concept i in the flattened tensor
-    # cumulative_indices[i+1] gives the ending position (exclusive)
-    cum_idx = [0] + list(torch.cumsum(torch.tensor(cardinalities), dim=0).tolist())
-
-    # Endogenous (logit-level) indices: position in flattened tensor (accounting for cardinality)
-    # These are the actual indices in the output tensor where each concept's logits appear
-    binary_endogenous_idx = []
-    for concept_idx in binary_idx:
-        binary_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
-    
-    categorical_endogenous_idx = []
-    for concept_idx in categorical_idx:
-        categorical_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
-    
-    continuous_endogenous_idx = []
-    for concept_idx in continuous_idx:
-        continuous_endogenous_idx.extend(range(cum_idx[concept_idx], cum_idx[concept_idx + 1]))
-    
-    return {
-        'binary_labels': binary_labels,
-        'categorical_labels': categorical_labels,
-        'continuous_labels': continuous_labels,
-        'binary_idx': binary_idx,
-        'categorical_idx': categorical_idx,
-        'continuous_idx': continuous_idx,
-        'binary_endogenous_idx': binary_endogenous_idx,
-        'categorical_endogenous_idx': categorical_endogenous_idx,
-        'continuous_endogenous_idx': continuous_endogenous_idx,
-    }
 
 
 def indices_to_mask(
@@ -463,3 +338,51 @@ def indices_to_mask(
     target[:, c_idxs] = c_vals
 
     return mask, target
+
+
+
+# =============================================================================
+# Training mode utilities (reusable for other models)
+# =============================================================================
+
+from .high.base.learner import BaseLearner
+
+_CLASS_CACHE = {}
+
+
+def with_training_mode(cls, lightning: bool = False):
+    """Create a combined class with BaseLearner mixin for Lightning training.
+    
+    This utility adds the BaseLearner mixin to any model class when
+    lightning=True.  The BaseLearner provides the Lightning training
+    loop.  Inference engine selection (train vs eval) is handled
+    automatically by the ``inference`` property on BaseModel, which
+    returns ``train_inference`` or ``eval_inference`` depending on
+    the module's train/eval mode (toggled by ``.train()``/``.eval()``).
+    
+    Parameters
+    ----------
+    cls : type
+        The base model class.
+    lightning : bool, default False
+        If True, adds BaseLearner mixin for Lightning training.
+        If False, returns the original class (pure PyTorch module).
+    
+    Returns
+    -------
+    type
+        Combined class with BaseLearner mixin, or original class if lightning is False.
+    """
+    # No training mode = pure PyTorch module (no learner mixin)
+    if not lightning:
+        return cls
+    
+    # Add BaseLearner mixin for Lightning training
+    cache_key = (cls, True)
+    if cache_key not in _CLASS_CACHE:
+        _CLASS_CACHE[cache_key] = type(
+            f'{cls.__name__}_Module',
+            (cls, BaseLearner),
+            {}
+        )
+    return _CLASS_CACHE[cache_key]

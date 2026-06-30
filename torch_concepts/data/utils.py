@@ -12,9 +12,20 @@ from typing import Any, List, Sequence, Union
 import torch
 import random
 from torch import Tensor
-from torchvision.transforms import v2
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "affine_transform requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 
 def ensure_list(value: Any) -> List:
@@ -68,7 +79,7 @@ def files_exist(files: Sequence[str]) -> bool:
     files = ensure_list(files)
     return all([os.path.exists(f) for f in files])
 
-def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
+def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor, list],
                 name: str,
                 precision: Union[int, str]) -> Tensor:
     """
@@ -77,7 +88,7 @@ def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
     Supports conversion from numpy arrays, pandas DataFrames, or existing tensors.
 
     Args:
-        data: Input data as numpy array, DataFrame, or Tensor.
+        data: Input data as numpy array, DataFrame, Tensor, list.
         name: Name of the data (for error messages).
         precision: Desired numerical precision (16, 32, or 64).
 
@@ -85,16 +96,23 @@ def parse_tensor(data: Union[np.ndarray, pd.DataFrame, Tensor],
         Tensor: Converted tensor with specified precision.
 
     Raises:
-        AssertionError: If data is not in a supported format.
+        TypeError: If data is not in a supported format.
     """
     if isinstance(data, np.ndarray):
         data = torch.from_numpy(data)
+        return convert_precision(data, precision)
     elif isinstance(data, pd.DataFrame):
         data = torch.tensor(data.values)
+        return convert_precision(data, precision)
+    elif isinstance(data, Tensor):
+        return convert_precision(data, precision)
+    elif isinstance(data, list):
+        data = data
+        return data
     else:
-        assert isinstance(data, Tensor), f"{name} must be np.ndarray, \
-            pd.DataFrame, or torch.Tensor"
-    return convert_precision(data, precision)
+        raise TypeError(f"{name} must be np.ndarray, \
+            pd.DataFrame, torch.Tensor or a list of filenames, got {type(data)}.")
+    
 
 def convert_precision(tensor: Tensor,
                        precision: Union[int, str]) -> Tensor:
@@ -182,6 +200,7 @@ def affine_transform(images, degrees, scales, batch_size=512):
     Returns:
         Tensor: Transformed images with same shape as input.
     """
+    v2 = _import_torchvision().transforms.v2
     if degrees is None:
         logger.warning("Degrees for affine transformation of images not provided, setting to 0.")
         degrees = torch.zeros(images.shape[0], device=images.device)

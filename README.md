@@ -15,8 +15,12 @@
   <a href="https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html">💻 User guide</a>
 </p>
 
+> [!CAUTION]
+> Alpha software: PyC is currently under active development.
+> Public APIs may change and be unstable between releases.
+
 <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
-The library provides primitives for layers (encoders, predictors, special layers), probabilistic models, and APIs for running experiments at scale.
+The library provides primitives for annotated tensors, interpretable layers, interventions, interpretable probabilsitic graphical models, and APIs for running experiments at scale.
 
 The name of the library stands for both
 - **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
@@ -26,11 +30,13 @@ The name of the library stands for both
 
 # Quick Start
 
-You can install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC with core dependencies from [PyPI](https://pypi.org/project/pytorch-concepts/):
+Install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC from [PyPI](https://pypi.org/project/pytorch-concepts/):
 
 ```bash
-pip install --pre pytorch-concepts
+pip install --pre pytorch-concepts[data]
 ```
+
+Use `pip install --pre pytorch-concepts` for core-only (no data dependencies), or see [full installation options](https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html) for conda setup.
 
 After installation, you can import it in your Python scripts as:
 
@@ -42,12 +48,12 @@ Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides
 
 ---
 
-# <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC Software Stack
+# PyC Software Stack
 The library is organized to be modular and accessible at different levels of abstraction:
-- <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API). Use case: applications and benchmarking.** These APIs allow to easily run large-scale highly parallelized and standardized experiments by interfacing with configuration files. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
-- **High-level APIs. Use case: use out-of-the-box state-of-the-art models.** These APIs allow to instantiate use implemented models with 1 line of code. This interface is built in <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily standardize training and evaluation.
-- **Mid-level APIs. Use case: build custom interpretable and causally transparent probabilistic graphical models.** These APIs allow to build new interpretable probabilistic models and run efficient tensorial probabilistic inference.
-- **Low-level APIs. Use case: assemble custom interpretable architectures.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include metrics, losses, and datasets.
+- <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg" width="20px" align="center"> **Conceptarium (No-code API): applications and benchmarking.** These APIs allow to easily run large-scale experiments by interfacing only with configuration files. Built on top of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg" width="20px" align="center"> Hydra and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/wandb.svg" width="20px" align="center"> WandB.
+- **High-level APIs: use out-of-the-box models.** These APIs allow to instantiate models with 1 line of code. Models are available both as plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch modules (implementing `forward`, allowing custom training loops) and as <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> PyTorch Lightning modules.
+- **Mid-level APIs: interpretable probabilistic graphical models.** These APIs allow to define variables (concepts and embeddings), connect them via conditional distributions parametrized by interpretable layers, and perform probabilistic inference on the resulting graphical model.
+- **Low-level APIs: interpretable layers.** These APIs allow to build architectures from basic interpretable layers in a plain <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch-like interface. These APIs also include annotated tensors, interventions, metrics, losses, and datasets.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/pyc_software_stack.png" alt="PyC Software Stack" width="90%">

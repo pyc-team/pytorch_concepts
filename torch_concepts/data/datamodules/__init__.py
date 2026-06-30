@@ -1,7 +1,1 @@
-from .bnlearn import BnLearnDataModule
-
-__all__: list[str] = [
-    "BnLearnDataModule",
-    "CompletenessDataModule"
-]
-
+__all__: list[str] = []

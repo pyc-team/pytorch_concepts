@@ -6,19 +6,15 @@
    :width: 20px
    :align: middle
 
-.. |hydra_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg
-   :width: 20px
-   :align: middle
-
 .. |pl_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg
     :width: 20px
     :align: middle
 
-.. |wandb_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/wandb.svg
+.. |conceptarium_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg
    :width: 20px
    :align: middle
 
-.. |conceptarium_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/conceptarium.svg
+.. |hydra_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/hydra-head.svg
    :width: 20px
    :align: middle
 
@@ -26,108 +22,75 @@
 User Guide
 ==========
 
-Welcome to the |pyc_logo| PyC User Guide! This guide will help you get started with PyTorch Concepts and build interpretable deep learning models.
+Welcome to the |pyc_logo| PyC User Guide! This guide walks you through building
+interpretable and causally transparent deep learning models with PyTorch Concepts.
 
 
-Explore Based on Your Background
---------------------------------
+Three Levels of Control and Abstraction
+----------------
 
-|pyc_logo| PyC is designed to accommodate users with different backgrounds and expertise levels.
-Pick the best entry point based on your experience:
+|pyc_logo| PyC exposes **three API levels**. They share the same primitives but offer
+increasing amounts of abstraction, and they build on top of one another.
 
 .. grid:: 1 1 3 3
     :margin: 3 0 0 0
     :gutter: 2
     :padding: 0
 
-    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Pure torch user?
+    .. grid-item-card::  :octicon:`gear;1em;sd-text-primary` Semantic primitives and Interventions
         :link: using_low_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Low-Level API to build models from basic interpretable layers.
+        **(Low-level)**
 
-    .. grid-item-card::  :octicon:`graph;1em;sd-text-primary` Probabilistic modeling user?
-        :link: using_mid_level_proba
+        Extend |pytorch_logo| PyTorch tensors with concept annotations and build semantics-aware layers. 
+        Use Interventions to steer concepts and mechanisms.
+
+        **Best for:** pure PyTorch users, research in interpretable modules.
+
+    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Interpretable Probabilistic Models
+        :link: using_mid_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the Mid-Level API to build custom probabilistic models.
+        **(Mid-level)**
 
-    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Causal modeling user?
-        :link: using_mid_level_causal
-        :link-type: doc
-        :shadow: lg
-        :class-card: sd-border-primary
+        Build interpretable probabilistic graphical models from concept variables 
+        and neural factors. Run probabilistic inferences over it.
 
-        Start from the Mid-Level API to build Structural Equation Models for causal inference.
+        **Best for:** users who think in probabilistic terms, research in interpretable architectures.
 
-.. grid:: 1 1 2 2
-    :margin: 3 0 0 0
-    :gutter: 2
-    :padding: 0
-
-    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Just want to use state-of-the-art models out-of-the-box?
+    .. grid-item-card::  :octicon:`rocket;1em;sd-text-primary` Out-of-the-box Models
         :link: using_high_level
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Start from the High-Level API to use pre-defined models with one line of code.
+        **(High-level)**
 
-    .. grid-item-card::  :octicon:`beaker;1em;sd-text-primary` No experience with programming?
+        Use state-of-the-art concept-based models with one line of code. These models 
+        can be trained with |pytorch_logo| PyTorch loops or automatically with |pl_logo| Lightning.
+    
+        **Best for:** users who just want a model that works out of the box.
+
+.. grid:: 1
+    :margin: 3 0 0 0
+    :gutter: 2
+    :padding: 0
+
+    .. grid-item-card::  |conceptarium_logo| Benchmarking at scale
         :link: using_conceptarium
         :link-type: doc
         :shadow: lg
         :class-card: sd-border-primary
 
-        Use |conceptarium_logo| Conceptarium, a no-code framework built on top of |pyc_logo| PyC for running large-scale experiments on concept-based models.
+        Use |conceptarium_logo| **Conceptarium**, a configuration-based framework built on top of
+        |pyc_logo| PyC and |hydra_logo| Hydra for running large-scale experiments.
 
-
-
-Quick Start Example
--------------------
-
-Here's a minimal example using the low-Level API:
-
-.. code-block:: python
-
-   import torch
-   import torch_concepts as pyc
-
-   # Create a concept bottleneck model
-   model = torch.nn.ModuleDict({
-       'encoder': pyc.nn.LinearZC(
-           in_features=64,
-           out_features=10
-       ),
-       'predictor': pyc.nn.LinearCC(
-           in_features_endogenous=10,
-           out_features=5
-       ),
-   })
-
-   # Forward pass
-   x = torch.randn(32, 64)
-   concepts = model['encoder'](input=x)
-   predictions = model['predictor'](endogenous=concepts)
-
-For complete examples with training, interventions, and evaluation, see the individual API guides above.
-
-Additional Resources
---------------------
-
-**Examples**
-    Check out `complete examples <https://github.com/pyc-team/pytorch_concepts/tree/master/examples>`_ for real-world use cases.
-
-Need Help?
-----------
-
-- **Issues**: `GitHub Issues <https://github.com/pyc-team/pytorch_concepts/issues>`_
-- **Discussions**: `GitHub Discussions <https://github.com/pyc-team/pytorch_concepts/discussions>`_
-- **Contributing**: :doc:`Contributor Guide </guides/contributing>`
+        **Best for:** no experience with programming, benchmarking with just configurations.
 
 
 .. toctree::
@@ -135,7 +98,6 @@ Need Help?
    :hidden:
 
    using_low_level
-   using_mid_level_proba
-   using_mid_level_causal
+   using_mid_level
    using_high_level
    using_conceptarium

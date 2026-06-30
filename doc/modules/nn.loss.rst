@@ -1,14 +1,10 @@
 Loss Functions
 ===============
 
-Concept-aware loss functions with automatic routing and weighting.
+Concept-aware loss functions with automatic routing and weighting. The docstrings of each
+class below document their parameters and behaviour.
 
-.. currentmodule:: torch_concepts.nn.modules.loss
-
-Summary
--------
-
-**High-Level Losses**
+.. currentmodule:: torch_concepts.nn
 
 .. autosummary::
    :toctree: generated
@@ -16,42 +12,5 @@ Summary
 
    ConceptLoss
    WeightedConceptLoss
-
-**Low-Level Losses**
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   WeightedBCEWithLogitsLoss
-   WeightedCrossEntropyLoss
-   WeightedMSELoss
-
-
-Class Documentation
--------------------
-
-.. autoclass:: ConceptLoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: WeightedConceptLoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: WeightedBCEWithLogitsLoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: WeightedCrossEntropyLoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: WeightedMSELoss
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   DepthWeightedConceptLoss
+   L1LogitRegularizer

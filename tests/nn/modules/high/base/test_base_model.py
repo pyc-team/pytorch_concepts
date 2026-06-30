@@ -12,30 +12,18 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli
 from torch_concepts.nn.modules.high.base.model import BaseModel
-from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.nn.modules.low.dense_layers import MLP
+from torch_concepts.annotations import Annotations
 
 
 # Test Fixtures
 class ConcreteModel(BaseModel):
     """Concrete implementation of BaseModel for testing."""
-    
+
     def forward(self, x, query=None):
-        features = self.maybe_apply_backbone(x)
-        latent = self.latent_encoder(features)
-        return latent
-    
-    def filter_output_for_loss(self, forward_out, target=None):
-        if target is None:
-            return forward_out
-        return {'input': forward_out, 'target': target}
-    
-    def filter_output_for_metrics(self, forward_out, target=None):
-        if target is None:
-            return forward_out
-        return {'preds': forward_out, 'target': target}
+        return self.backbone(x)
 
 
 class DummyBackbone(nn.Module):
@@ -63,160 +51,127 @@ class DummyLatentEncoder(nn.Module):
 # Fixtures
 @pytest.fixture
 def annotations_with_distributions():
-    """Annotations with distributions in metadata."""
-    return Annotations({
-        1: AxisAnnotation(
+    """Annotations with binary concept types."""
+    return Annotations(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                'task': {'type': 'discrete', 'distribution': Bernoulli}
-            }
+            types=['binary', 'binary', 'binary'],
         )
-    })
 
 
 @pytest.fixture
 def annotations_without_distributions():
-    """Annotations without distributions but with type metadata."""
-    return Annotations({
-        1: AxisAnnotation(
+    """Annotations with binary concept types (alias of annotations_with_distributions)."""
+    return Annotations(
             labels=['c1', 'c2', 'task'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                'task': {'type': 'discrete'}
-            }
+            types=['binary', 'binary', 'binary'],
         )
-    })
 
 
 @pytest.fixture
 def mixed_annotations():
     """Annotations with mixed concept types."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['binary_c', 'cat_c'],
             cardinalities=[1, 3],
-            metadata={
-                'binary_c': {'type': 'discrete'},
-                'cat_c': {'type': 'discrete'}
-            }
+            types=['binary', 'categorical'],
         )
-    })
 
 
-@pytest.fixture
-def variable_distributions_dict():
-    """Variable distributions as dict."""
-    return {
-        'c1': Bernoulli,
-        'c2': Bernoulli,
-        'task': Bernoulli
-    }
 
-
-@pytest.fixture
-def variable_distributions_groupconfig():
-    """Variable distributions as GroupConfig."""
-    return GroupConfig(
-        binary=Bernoulli,
-        categorical=Categorical
-    )
 
 
 # Initialization Tests
 class TestBaseModelInitialization:
     """Test BaseModel initialization with various configurations."""
     
-    def test_init_with_distributions_in_annotations(self, annotations_with_distributions):
-        """Test initialization when distributions are in annotations."""
+    def test_init_defaults(self, annotations_with_distributions):
+        """Test initialization sets default distributions on the model."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         assert model.concept_names == ['c1', 'c2', 'task']
-        assert model.concept_annotations.has_metadata('distribution')
-        assert model.latent_size == 10  # No encoder, uses input_size
-    
+        assert model.variable_distributions['binary'] == Bernoulli
+
     def test_init_with_variable_distributions_dict(
-        self, annotations_without_distributions, variable_distributions_dict
+        self, annotations_without_distributions
     ):
-        """Test initialization with variable_distributions as dict."""
+        """Test initialization with variable_distributions type-keyed dict."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_without_distributions,
-            variable_distributions=variable_distributions_dict
+            variable_distributions={
+                'binary': RelaxedBernoulli,
+            },
         )
-        
+
         assert model.concept_names == ['c1', 'c2', 'task']
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['c1']['distribution'] == Bernoulli
-        assert meta['c2']['distribution'] == Bernoulli
-        assert meta['task']['distribution'] == Bernoulli
-    
-    def test_init_with_variable_distributions_groupconfig(
-        self, mixed_annotations, variable_distributions_groupconfig
+        assert model.variable_distributions['binary'] == RelaxedBernoulli
+        assert model.latent_size == 10  # No encoder, uses input_size
+
+    def test_init_with_variable_distributions_categorical(
+        self, mixed_annotations
     ):
-        """Test initialization with variable_distributions as GroupConfig."""
+        """Test initialization with per-type variable_distributions override."""
         model = ConcreteModel(
             input_size=10,
             annotations=mixed_annotations,
-            variable_distributions=variable_distributions_groupconfig
+            variable_distributions={
+                'binary': RelaxedBernoulli,
+                'categorical': OneHotCategorical,
+            },
         )
-        
+
         assert model.concept_names == ['binary_c', 'cat_c']
-        assert model.concept_annotations.has_metadata('distribution')
-        meta = model.concept_annotations.metadata
-        assert meta['binary_c']['distribution'] == Bernoulli
-        assert meta['cat_c']['distribution'] == Categorical
+        assert model.variable_distributions['binary'] == RelaxedBernoulli
+        assert model.variable_distributions['categorical'] == OneHotCategorical
+
+    def test_init_without_distributions_uses_defaults(self, annotations_without_distributions):
+        """Test that no override leaves class-level defaults in place."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_without_distributions
+        )
+        assert model.variable_distributions['binary'] == Bernoulli
     
-    def test_init_without_distributions_raises_error(self, annotations_without_distributions):
-        """Test that missing distributions raises assertion error."""
-        with pytest.raises(AssertionError, match="variable_distributions must be provided"):
-            ConcreteModel(
-                input_size=10,
-                annotations=annotations_without_distributions
-            )
-    
-    def test_init_with_latent_encoder_class(self, annotations_with_distributions):
-        """Test initialization with latent encoder class and kwargs."""
+    def test_init_with_backbone_class(self, annotations_with_distributions):
+        """Test initialization with a custom backbone instance."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 64}
+            backbone=DummyLatentEncoder(10, hidden_size=64),
+            latent_size=64,
         )
-        
-        assert isinstance(model.latent_encoder, DummyLatentEncoder)
+
+        assert isinstance(model.backbone, DummyLatentEncoder)
         assert model.latent_size == 64
-        assert model.latent_encoder.linear.in_features == 10
-        assert model.latent_encoder.linear.out_features == 64
-    
-    def test_init_with_latent_encoder_kwargs_only(self, annotations_with_distributions):
-        """Test initialization with only latent encoder kwargs (uses MLP)."""
+        assert model.backbone.linear.in_features == 10
+        assert model.backbone.linear.out_features == 64
+
+    def test_init_with_mlp_backbone(self, annotations_with_distributions):
+        """Test initialization with an MLP backbone."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 64, 'n_layers': 2}
+            backbone=MLP(input_size=10, hidden_size=64, n_layers=2),
+            latent_size=64,
         )
-        
+
         assert model.latent_size == 64
-        assert isinstance(model.latent_encoder, nn.Module)
-        assert not isinstance(model.latent_encoder, nn.Identity)
-    
-    def test_init_without_latent_encoder_uses_identity(self, annotations_with_distributions):
-        """Test that no encoder config results in Identity."""
+        assert isinstance(model.backbone, nn.Module)
+        assert not isinstance(model.backbone, nn.Identity)
+
+    def test_init_without_backbone_uses_identity(self, annotations_with_distributions):
+        """Test that no backbone results in Identity."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
-        assert isinstance(model.latent_encoder, nn.Identity)
+
+        assert isinstance(model.backbone, nn.Identity)
         assert model.latent_size == 10
 
 
@@ -228,65 +183,68 @@ class TestBaseModelBackbone:
         """Test model with custom backbone."""
         backbone = DummyBackbone(in_features=100, out_features=20)
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=20,
         )
-        
+
         assert model.backbone is not None
         assert model.backbone == backbone
         assert isinstance(model.backbone, DummyBackbone)
-    
+
     def test_model_without_backbone(self, annotations_with_distributions):
-        """Test model without backbone (pre-computed features)."""
+        """Test model without backbone (backbone defaults to Identity)."""
         model = ConcreteModel(
             input_size=20,
             annotations=annotations_with_distributions,
             backbone=None
         )
-        
-        assert model.backbone is None
-    
-    def test_maybe_apply_backbone_with_backbone(self, annotations_with_distributions):
-        """Test maybe_apply_backbone when backbone exists."""
+
+        assert isinstance(model.backbone, nn.Identity)
+
+    def test_backbone_applied_with_backbone(self, annotations_with_distributions):
+        """Test that the backbone transforms the input."""
         backbone = DummyBackbone(in_features=100, out_features=20)
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=20,
         )
-        
+
         x = torch.randn(8, 100)
-        features = model.maybe_apply_backbone(x)
-        
+        features = model.backbone(x)
+
         assert features.shape == (8, 20)
-    
-    def test_maybe_apply_backbone_without_backbone(self, annotations_with_distributions):
-        """Test maybe_apply_backbone when no backbone."""
+
+    def test_backbone_identity_without_backbone(self, annotations_with_distributions):
+        """Test that the default Identity backbone returns input unchanged."""
         model = ConcreteModel(
             input_size=20,
             annotations=annotations_with_distributions,
             backbone=None
         )
-        
+
         x = torch.randn(8, 20)
-        features = model.maybe_apply_backbone(x)
-        
+        features = model.backbone(x)
+
         # Should return input unchanged
         assert torch.equal(features, x)
-    
-    def test_maybe_apply_backbone_returns_tensor(self, annotations_with_distributions):
-        """Test maybe_apply_backbone always returns a tensor."""
+
+    def test_backbone_returns_tensor(self, annotations_with_distributions):
+        """Test the backbone always returns a tensor."""
         backbone = DummyBackbone()
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=20,
         )
-        
+
         x = torch.randn(4, 100)
-        out = model.maybe_apply_backbone(x)
-        
+        out = model.backbone(x)
+
         assert isinstance(out, torch.Tensor)
         assert out.shape[0] == 4  # Batch dimension preserved
 
@@ -300,122 +258,75 @@ class TestBaseModelForward:
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 16}
+            backbone=MLP(input_size=10, hidden_size=16),
+            latent_size=16,
         )
-        
+
         x = torch.randn(4, 10)
         out = model(x)
-        
+
         assert out.shape == (4, 16)
         assert isinstance(out, torch.Tensor)
-    
+
     def test_forward_with_backbone(self, annotations_with_distributions):
         """Test forward pass with backbone."""
         backbone = DummyBackbone(in_features=50, out_features=10)
         model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions,
-            backbone=backbone
-        )
-        
-        x = torch.randn(4, 50)
-        out = model(x)
-        
-        assert out.shape == (4, 10)
-    
-    def test_forward_with_backbone_and_encoder(self, annotations_with_distributions):
-        """Test forward pass with both backbone and encoder."""
-        backbone = DummyBackbone(in_features=100, out_features=20)
-        model = ConcreteModel(
-            input_size=20,
+            input_size=50,
             annotations=annotations_with_distributions,
             backbone=backbone,
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 32}
+            latent_size=10,
         )
-        
+
+        x = torch.randn(4, 50)
+        out = model(x)
+
+        assert out.shape == (4, 10)
+
+    def test_forward_with_backbone_maps_to_latent(self, annotations_with_distributions):
+        """Test forward pass with a backbone mapping raw input to the latent."""
+        backbone = DummyBackbone(in_features=100, out_features=32)
+        model = ConcreteModel(
+            input_size=100,
+            annotations=annotations_with_distributions,
+            backbone=backbone,
+            latent_size=32,
+        )
+
         x = torch.randn(8, 100)
         out = model(x)
-        
+
         assert out.shape == (8, 32)
-    
+
     def test_forward_preserves_batch_size(self, annotations_with_distributions):
         """Test forward pass preserves batch dimension."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 16}
+            backbone=MLP(input_size=10, hidden_size=16),
+            latent_size=16,
         )
-        
+
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 10)
             out = model(x)
             assert out.shape[0] == batch_size
 
 
-# Filter Methods Tests
-class TestBaseModelFilterMethods:
-    """Test filter_output methods."""
+# Prepare Target Tests
+class TestBaseModelPrepareTarget:
+    """Test prepare_target method."""
     
-    def test_filter_output_for_loss_with_target(self, annotations_with_distributions):
-        """Test filter_output_for_loss returns correct format with target."""
+    def test_prepare_target_returns_identity(self, annotations_with_distributions):
+        """Test prepare_target returns target unchanged for base models."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
         
-        forward_out = torch.randn(4, 3)
         target = torch.randint(0, 2, (4, 3)).float()
-        
-        filtered = model.filter_output_for_loss(forward_out, target)
-        
-        assert isinstance(filtered, dict)
-        assert 'input' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['input'], forward_out)
-        assert torch.equal(filtered['target'], target)
-    
-    def test_filter_output_for_loss_without_target(self, annotations_with_distributions):
-        """Test filter_output_for_loss without target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        filtered = model.filter_output_for_loss(forward_out)
-        
-        assert torch.equal(filtered, forward_out)
-    
-    def test_filter_output_for_metrics_with_target(self, annotations_with_distributions):
-        """Test filter_output_for_metrics returns correct format with target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        target = torch.randint(0, 2, (4, 3)).float()
-        
-        filtered = model.filter_output_for_metrics(forward_out, target)
-        
-        assert isinstance(filtered, dict)
-        assert 'preds' in filtered
-        assert 'target' in filtered
-        assert torch.equal(filtered['preds'], forward_out)
-        assert torch.equal(filtered['target'], target)
-    
-    def test_filter_output_for_metrics_without_target(self, annotations_with_distributions):
-        """Test filter_output_for_metrics without target."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        forward_out = torch.randn(4, 3)
-        filtered = model.filter_output_for_metrics(forward_out)
-        
-        assert torch.equal(filtered, forward_out)
+        prepared = model.prepare_target(target)
+        assert torch.equal(prepared, target)
 
 
 # Properties Tests
@@ -426,24 +337,26 @@ class TestBaseModelProperties:
         """Test backbone property."""
         backbone = DummyBackbone()
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=20,
         )
-        
+
         assert model.backbone == backbone
         assert isinstance(model.backbone, nn.Module)
-    
-    def test_latent_encoder_property(self, annotations_with_distributions):
-        """Test latent_encoder property."""
+
+    def test_backbone_property_with_module(self, annotations_with_distributions):
+        """Test backbone property is a callable nn.Module."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 32}
+            backbone=MLP(input_size=10, hidden_size=32),
+            latent_size=32,
         )
-        
-        assert isinstance(model.latent_encoder, nn.Module)
-        assert hasattr(model.latent_encoder, 'forward')
+
+        assert isinstance(model.backbone, nn.Module)
+        assert hasattr(model.backbone, 'forward')
     
     def test_concept_names_property(self, annotations_with_distributions):
         """Test concept_names attribute."""
@@ -461,28 +374,29 @@ class TestBaseModelProperties:
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         assert hasattr(model, 'concept_annotations')
-        assert isinstance(model.concept_annotations, AxisAnnotation)
-        assert model.concept_annotations.has_metadata('distribution')
+        assert isinstance(model.concept_annotations, Annotations)
+        assert model.concept_annotations.labels == ['c1', 'c2', 'task']
     
-    def test_latent_size_property_with_encoder(self, annotations_with_distributions):
-        """Test latent_size attribute with encoder."""
+    def test_latent_size_property_with_backbone(self, annotations_with_distributions):
+        """Test latent_size attribute with backbone."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 64}
+            backbone=MLP(input_size=10, hidden_size=64),
+            latent_size=64,
         )
-        
+
         assert model.latent_size == 64
-    
-    def test_latent_size_property_without_encoder(self, annotations_with_distributions):
-        """Test latent_size attribute without encoder."""
+
+    def test_latent_size_property_without_backbone(self, annotations_with_distributions):
+        """Test latent_size attribute without backbone."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         assert model.latent_size == 10
 
 
@@ -494,49 +408,51 @@ class TestBaseModelRepr:
         """Test __repr__ with backbone."""
         backbone = DummyBackbone()
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=20,
         )
-        
+
         repr_str = repr(model)
         assert 'ConcreteModel' in repr_str
-        assert 'DummyBackbone' in repr_str
-    
+        assert 'backbone=DummyBackbone' in repr_str
+        assert 'latent_encoder=' not in repr_str
+
     def test_repr_without_backbone(self, annotations_with_distributions):
-        """Test __repr__ without backbone."""
+        """Test __repr__ without backbone (defaults to Identity)."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions
         )
-        
+
         repr_str = repr(model)
         assert 'ConcreteModel' in repr_str
-        assert 'backbone=None' in repr_str
-    
-    def test_repr_with_encoder(self, annotations_with_distributions):
-        """Test __repr__ with latent encoder."""
+        assert 'backbone=Identity' in repr_str
+        assert 'latent_encoder=' not in repr_str
+
+    def test_repr_with_mlp_backbone(self, annotations_with_distributions):
+        """Test __repr__ with an MLP backbone."""
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 32}
+            backbone=MLP(input_size=10, hidden_size=32),
+            latent_size=32,
         )
-        
+
         repr_str = repr(model)
-        assert 'DummyLatentEncoder' in repr_str
-    
+        assert 'backbone=MLP' in repr_str
+
     def test_repr_contains_key_info(self, annotations_with_distributions):
         """Test __repr__ contains essential information."""
         backbone = DummyBackbone()
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
             backbone=backbone,
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 32}
+            latent_size=32,
         )
-        
+
         repr_str = repr(model)
         assert isinstance(repr_str, str)
         assert len(repr_str) > 0
@@ -547,31 +463,24 @@ class TestBaseModelIntegration:
     """Test model integration scenarios."""
     
     def test_full_pipeline_with_all_components(self, annotations_with_distributions):
-        """Test complete pipeline with backbone and encoder."""
-        backbone = DummyBackbone(in_features=100, out_features=20)
+        """Test complete pipeline with a backbone mapping input to latent."""
+        backbone = DummyBackbone(in_features=100, out_features=32)
         model = ConcreteModel(
-            input_size=20,
+            input_size=100,
             annotations=annotations_with_distributions,
             backbone=backbone,
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 32}
+            latent_size=32,
         )
-        
+
         # Forward pass
         x = torch.randn(8, 100)
         out = model(x)
         assert out.shape == (8, 32)
-        
-        # Filter for loss
+
+        # prepare_target returns identity for base models
         target = torch.randint(0, 2, (8, 3)).float()
-        loss_input = model.filter_output_for_loss(out, target)
-        assert isinstance(loss_input, dict)
-        assert 'input' in loss_input and 'target' in loss_input
-        
-        # Filter for metrics
-        metrics_input = model.filter_output_for_metrics(out, target)
-        assert isinstance(metrics_input, dict)
-        assert 'preds' in metrics_input and 'target' in metrics_input
+        prepared = model.prepare_target(target)
+        assert torch.equal(prepared, target)
     
     def test_minimal_model_pipeline(self, annotations_with_distributions):
         """Test minimal model with no backbone or encoder."""
@@ -592,9 +501,10 @@ class TestBaseModelIntegration:
         model = ConcreteModel(
             input_size=10,
             annotations=annotations_with_distributions,
-            latent_encoder_kwargs={'hidden_size': 16}
+            backbone=MLP(input_size=10, hidden_size=16),
+            latent_size=16,
         )
-        
+
         x = torch.randn(4, 10, requires_grad=True)
         out = model(x)
         loss = out.sum()
@@ -602,3 +512,67 @@ class TestBaseModelIntegration:
         
         assert x.grad is not None
         assert not torch.all(x.grad == 0)
+
+
+# Missing-line coverage tests
+class TestBaseModelMissingLines:
+    """Cover specific lines not reached by existing tests."""
+
+    # ------------------------------------------------------------------
+    # model.py line 261: variable_dist_kwargs per-instance override
+    # ------------------------------------------------------------------
+    def test_init_with_variable_dist_kwargs_override(self, annotations_with_distributions):
+        """Passing variable_dist_kwargs merges into the model's dict (line 261)."""
+        from torch.distributions import RelaxedBernoulli
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+            variable_dist_kwargs={RelaxedBernoulli: {'temperature': 0.5}},
+        )
+        assert RelaxedBernoulli in model.variable_dist_kwargs
+        assert model.variable_dist_kwargs[RelaxedBernoulli] == {'temperature': 0.5}
+
+    # ------------------------------------------------------------------
+    # model.py line 275: _setup_annotations early-return when None
+    # ------------------------------------------------------------------
+    def test_setup_annotations_none_is_noop(self, annotations_with_distributions):
+        """Calling _setup_annotations(None) is a no-op (line 275 early return)."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+        )
+        # Calling again with None should not overwrite existing annotations
+        prev_names = model.concept_names
+        model._setup_annotations(None)
+        assert model.concept_names == prev_names
+
+    # ------------------------------------------------------------------
+    # model.py line 309: backbone requires latent_size
+    # ------------------------------------------------------------------
+    def test_backbone_without_latent_size_raises(self, annotations_with_distributions):
+        """Providing a backbone without latent_size raises ValueError (line 309)."""
+        backbone = nn.Linear(10, 20)
+        with pytest.raises(ValueError, match="latent_size"):
+            ConcreteModel(
+                input_size=10,
+                annotations=annotations_with_distributions,
+                backbone=backbone,
+                # latent_size intentionally omitted
+            )
+
+    # ------------------------------------------------------------------
+    # model.py lines 355-358: _validate_concept_types raises for unsupported types
+    # ------------------------------------------------------------------
+    def test_validate_concept_types_raises_for_unsupported(self):
+        """A model with restricted supported_concept_types raises ValueError (lines 355-358)."""
+        class BinaryOnlyModel(ConcreteModel):
+            supported_concept_types = frozenset({"binary"})
+
+        mixed_ann = Annotations(
+                labels=['bin_c', 'cat_c'],
+                cardinalities=[1, 3],
+                types=['binary', 'categorical'],
+            )
+
+        with pytest.raises(ValueError, match="BinaryOnlyModel"):
+            BinaryOnlyModel(input_size=10, annotations=mixed_ann)
