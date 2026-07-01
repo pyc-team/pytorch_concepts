@@ -22,9 +22,10 @@ keywords like 'dinov2', 'vit-', 'beit', 'clip', 'swin', 'convnext'.
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import logging
 import warnings
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Literal
 
 from ..utils import resolve_hf_token
 
@@ -83,16 +84,18 @@ def _is_huggingface_model(name: str) -> bool:
     bool
         True if the name refers to a HuggingFace model.
     """
-    hf_keywords = ['dinov2', 'dino-', 'vit-', 'beit', 'clip', 'swin', 'convnext']
+    hf_keywords = ['dinov2', 'dino-', 'vit-', 'beit', 'clip', 'swin', 'convnext', 'bert-']
     name_lower = name.lower()
     if '/' in name:
         return True
     return any(kw in name_lower for kw in hf_keywords)
 
 
+
 def _load_huggingface_model(
-    name: str, 
-    device: torch.device
+    name: str,
+    device: torch.device,
+    input_type: Literal["image", "text"] = "image",
 ) -> Tuple[nn.Module, object]:
     """Load a HuggingFace model and processor.
 
@@ -109,9 +112,12 @@ def _load_huggingface_model(
         (model, processor) where model is the HuggingFace model in eval mode
         and processor is the AutoImageProcessor for preprocessing.
     """
-    from transformers import AutoImageProcessor, AutoModel
+    from transformers import AutoImageProcessor, AutoModel, AutoTokenizer
     token = resolve_hf_token()
-    processor = AutoImageProcessor.from_pretrained(name, token=token)
+    if input_type == "text":
+        processor = AutoTokenizer.from_pretrained(name, token=token)
+    else:
+        processor = AutoImageProcessor.from_pretrained(name, token=token)
     model = AutoModel.from_pretrained(name, token=token).to(device).eval()
     return model, processor
 
@@ -127,6 +133,7 @@ def _load_torchvision_model(
     - VGG (vgg11, vgg13, vgg16, vgg19)
     - EfficientNet (efficientnet_b0 through efficientnet_b7)
     - DenseNet (densenet121, densenet161, densenet169, densenet201)
+    - Inception (inception_v3)
 
     Parameters
     ----------
@@ -148,8 +155,13 @@ def _load_torchvision_model(
     """
     from torchvision.models import get_model, get_model_weights
 
+
     weights = get_model_weights(name).DEFAULT
     full_model = get_model(name, weights=weights)
+
+    if name.lower() == "inception_v3":
+        full_model.aux_logits = False  # Disable auxiliary classifier for feature extraction
+        full_model.AuxLogits = None  # Remove auxiliary classifier
 
     name_lower = name.lower()
     if 'resnet' in name_lower:
@@ -160,6 +172,9 @@ def _load_torchvision_model(
         model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
     elif 'densenet' in name_lower:
         model = nn.Sequential(full_model.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+    elif 'inception' in name_lower:
+        full_model.fc = nn.Identity()
+        model = full_model
     else:
         raise ValueError(f"Unsupported torchvision backbone: {name}")
 
@@ -234,9 +249,20 @@ class Backbone(nn.Module):
     _is_huggingface_model : Helper function for model type detection.
     """
 
-    def __init__(self, name: str, device: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        device: Optional[str] = None,
+        input_type: Literal["image", "text"] = "image",
+    ):
         super().__init__()
         self.name = name
+        if input_type not in {"image", "text"}:
+            raise ValueError(
+                "input_type must be one of 'image' or 'text', "
+                f"got {input_type!r}."
+            )
+        self.input_type = input_type
         self._device = _resolve_device(device)
         self._is_huggingface = _is_huggingface_model(name)
         self._model = None
@@ -254,7 +280,11 @@ class Backbone(nn.Module):
         Also computes the output feature dimension via a dummy forward pass.
         """
         if self._is_huggingface:
-            self._model, self._processor = _load_huggingface_model(self.name, self._device)
+            self._model, self._processor = _load_huggingface_model(
+                self.name,
+                self._device,
+                self.input_type,
+            )
             # Get output size from model config
             self._out_features = self._model.config.hidden_size
         else:
@@ -264,9 +294,14 @@ class Backbone(nn.Module):
             self._to_tensor = transforms.ToTensor()
             # Compute output size with dummy forward pass
             with torch.no_grad():
-                dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
-                dummy_output = self._model(dummy_input)
-                self._out_features = dummy_output.shape[-1]
+                if self.name.lower() == "inception_v3":
+                    dummy_input = torch.zeros(1, 3, 299, 299, device=self._device)
+                    dummy_output = self._model(dummy_input)
+                    self._out_features = dummy_output.shape[-1]
+                else:
+                    dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
+                    dummy_output = self._model(dummy_input)
+                    self._out_features = dummy_output.shape[-1]
 
     @property
     def device(self) -> torch.device:
@@ -295,7 +330,7 @@ class Backbone(nn.Module):
     def processor(self):
         """The preprocessing transform/processor for this backbone.
 
-        For HuggingFace models, this is an AutoImageProcessor.
+        For HuggingFace models, this is an AutoImageProcessor or AutoTokenizer.
         For torchvision models, this is a transforms.Compose pipeline.
 
         Returns
@@ -304,6 +339,11 @@ class Backbone(nn.Module):
             The preprocessor appropriate for the model type.
         """
         return self._processor
+
+    @property
+    def tokenizer(self):
+        """Return the tokenizer for text backbones, if any."""
+        return self._processor if self.input_type == "text" else None
 
     @property
     def is_huggingface(self) -> bool:
@@ -315,6 +355,14 @@ class Backbone(nn.Module):
             True if the backbone is a HuggingFace model.
         """
         return self._is_huggingface
+
+    @staticmethod
+    def _mean_pooling(outputs, attention_mask: torch.Tensor) -> torch.Tensor:
+        token_embeddings = outputs.last_hidden_state
+        mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        summed = torch.sum(token_embeddings * mask, dim=1)
+        counts = torch.clamp(mask.sum(dim=1), min=1e-9)
+        return summed / counts
 
     @property
     def filename(self) -> str:
@@ -338,7 +386,8 @@ class Backbone(nn.Module):
             Input data. Format depends on model type:
 
             - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
-            - **HuggingFace**: List of PIL Images or preprocessed tensors
+                                except for Inception which requires (B, C, H, W) with H=W=299.
+            - **HuggingFace**: List of PIL Images or list of strings when input_type="text"
 
         Returns
         -------
@@ -348,25 +397,50 @@ class Backbone(nn.Module):
 
         Notes
         -----
-        For HuggingFace models, the CLS token embedding is returned.
+        For HuggingFace models, for text inputs, the output is the mean-pooled last hidden state.
+        For HuggingFace models, for image inputs, the output is the CLS token embedding.
         For torchvision models, the output of the average pooling layer is used.
         Single images (3D tensors) are automatically batched and the result is squeezed.
         """
         if self._is_huggingface:
+            if self.input_type == "text":
+                inputs = self._processor(
+                    x,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                input_ids = inputs["input_ids"].to(self._device).long()
+                attention_mask = inputs["attention_mask"].to(self._device).long()
+                model_inputs = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                }
+                if "token_type_ids" in inputs:
+                    model_inputs["token_type_ids"] = inputs["token_type_ids"].to(self._device).long()
+                outputs = self._model(**model_inputs)
+                embeddings = self._mean_pooling(outputs, attention_mask)
+                return F.normalize(embeddings, p=2, dim=1)
+
             inputs = self._processor(images=x, return_tensors="pt")
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
             outputs = self._model(**inputs)
             return outputs.last_hidden_state[:, 0, :]  # CLS token
         else:
-            if isinstance(x, list):
-                x = torch.stack([self._to_tensor(img) for img in x])
-            x = x.to(self._device)
-            # Handle single image (3D tensor) by adding batch dimension
-            squeeze_output = False
-            if x.dim() == 3:
-                x = x.unsqueeze(0)
-                squeeze_output = True
-            x = self._processor(x)
+            if self.name.lower() == "inception_v3":
+                if isinstance(x, list):
+                    x = torch.stack([self._processor(img) for img in x]).to(self._device)
+                    squeeze_output = False
+            else:
+                if isinstance(x, list):
+                    x = torch.stack([self._to_tensor(img) for img in x])
+                x = x.to(self._device)
+                # Handle single image (3D tensor) by adding batch dimension
+                squeeze_output = False
+                if x.dim() == 3:
+                    x = x.unsqueeze(0)
+                    squeeze_output = True
+                x = self._processor(x)
             out = self._model(x)
             if squeeze_output:
                 out = out.squeeze(0)
@@ -381,5 +455,8 @@ class Backbone(nn.Module):
             Formatted string with model name, type, and device.
         """
         model_type = "HuggingFace" if self._is_huggingface else "torchvision"
-        return f"Backbone(name='{self.name}', type={model_type}, device={self._device})"
+        return (
+            f"Backbone(name='{self.name}', type={model_type}, "
+            f"input_type={self.input_type}, device={self._device})"
+        )
 
