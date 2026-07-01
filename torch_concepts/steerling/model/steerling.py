@@ -14,18 +14,20 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch.distributions import RelaxedBernoulli, RelaxedOneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical
 
+import pandas as pd
+
+import torch_concepts as pyc
 from torch_concepts.distributions import Delta
-from torch_concepts import ConceptVariable, LatentVariable, ExogenousVariable
+from torch_concepts import ConceptGraph, ConceptVariable, EmbeddingVariable
 from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     BaseInference,
     DeterministicInference,
     ModelOutput,
     ParametricCPD,
-    ProbabilisticModel,
-    SumOp,
+    ProbabilisticModel
 )
 
 from ...steerling.model.steerling_low import SteerlingLowLevelModel
@@ -111,7 +113,7 @@ class SteerlingModel(SteerlingLowLevelModel):
             raise ValueError(
                 "SteerlingModel is a test-time model; a training inference "
                 "engine is not available. Leave train_inference=None — the "
-                "evaluation engine is used for all queries."
+                "evaluation inference is used for all queries."
             )
         super().__init__(*args, **kwargs)
 
@@ -132,135 +134,110 @@ class SteerlingModel(SteerlingLowLevelModel):
                 "structure. Omit them, or build the concept heads from scratch "
                 "(drop them from pretrained_components)."
             )
-        # The low-level wrapper has resolved `use_unknown` from the merged
-        # concept config (elevated kwarg + config_source).
-        use_unknown = bool(self.concept_cfg.get("use_unknown", True))
-        self.use_unknown = use_unknown
 
-        # ── PGM variables ─────────────────────────────────────────────────
+        # ── concept names ─────────────────────────────────────────────────
         self.known_names   = load_steerling_concept_names() # list[str]
         if len(self.known_names) != self.n_known:
             raise ValueError(
                 "SteerlingModel requires n_concepts to match the "
                 f"known-concept CSV ({len(self.known_names)}), got {self.n_known}."
             )
-        if use_unknown:
-            self.unknown_names = [f"unsup_{i}" for i in range(self.unknown_concept_head.out_concepts)]
+        if self.concept_cfg['use_unknown']:
+            self.unknown_names = [f"unknow_{i}" for i in range(self.unknown_head.out_concepts)]
         else:
             self.unknown_names = []
 
         # ── High-level BaseModel API mirror ───────────────────────────────
         # SteerlingModel is not a BaseModel subclass, but exposes the same
-        # surface: a fixed (None) graph, an identity latent encoder (the
-        # backbone hidden states feed the PGM directly), and concept
+        # surface: a bipartite concept→token graph, a backbone, and concept
         # annotations built internally from the concept heads.
-        self.graph = None
-        self.latent_encoder = nn.Identity()
         self.concept_annotations = self._build_annotations()
+        self.graph = self._build_graph()
 
-        h = LatentVariable("input", size=self.latent_dim, distribution=Delta)
-        k = ConceptVariable(
-            self.known_names, 
-            distribution=RelaxedBernoulli, 
-            dist_kwargs={"temperature": 0.5}
-        )
-        k_embs = ExogenousVariable("K", size=self.embedding_dim, distribution=Delta)
-        k_mix = LatentVariable("k_hat", size=self.embedding_dim, distribution=Delta)
+         # ── PGM variables ─────────────────────────────────────────────────
+        input = EmbeddingVariable("input", size=self.vocab_size, distribution=OneHotCategorical)
+        h = EmbeddingVariable("h", size=self.latent_size, distribution=Delta)    
+        k = ConceptVariable("concepts", members=self.known_names, distribution=Bernoulli)
+        k_embs = EmbeddingVariable("embeddings", shape=(len(self.known_names), self.embedding_size), distribution=Delta)
+        k_hat = EmbeddingVariable("k_hat", size=self.embedding_size, distribution=Delta)
 
-        if use_unknown:
-            u = ConceptVariable(
-                self.unknown_names,
-                distribution=RelaxedBernoulli,
-                dist_kwargs={"temperature": 0.5},
-            )
-            u_embs = ExogenousVariable("U", size=self.embedding_dim, distribution=Delta)
-            u_mix = LatentVariable("u_hat", size=self.embedding_dim, distribution=Delta)
+        if self.concept_cfg['use_unknown']:
+            u = ConceptVariable("unknown_concepts", members=self.unknown_names, distribution=Bernoulli)
+            u_embs = EmbeddingVariable("unknown_embeddings", shape=(len(self.unknown_names), self.embedding_size), distribution=Delta)
+            u_hat = EmbeddingVariable("u_hat", size=self.embedding_size, distribution=Delta)
 
-        epsilon_var = LatentVariable("epsilon", size=self.embedding_dim, distribution=Delta)
-        h_bar = LatentVariable("h_bar", size=self.embedding_dim, distribution=Delta)
-        new_token = ConceptVariable(
-            "new_token",
-            size=self.vocab_size,
-            distribution=RelaxedOneHotCategorical,
-            dist_kwargs={"temperature": 0.5},
-        )
-
+        epsilon = EmbeddingVariable("epsilon", size=self.embedding_size, distribution=Delta)
+        h_bar = EmbeddingVariable("h_bar", size=self.embedding_size, distribution=Delta)
+        new_token = ConceptVariable("new_token", size=self.vocab_size, distribution=OneHotCategorical)
 
         # ── CPDs ──────────────────────────────────────────────────────────
-        backbone_cpd = ParametricCPD("input", parents=[], parametrization=nn.Identity())
+        input_cpd = ParametricCPD(input, parents=[], parametrization=pyc.nn.FixedPrior(self.vocab_size))
+        h_cpd = ParametricCPD(h, parents=[input], parametrization=self.backbone)
         k_cpd = ParametricCPD(
-            self.known_names, 
-            parents=["input"], 
-            parametrization=self.known_concept_head, 
-            shared=True, 
-            shared_name="known_concepts"
+            variables=self.known_names, 
+            parents=[h], 
+            parametrization=self.known_head
         )
-        k_embs_cpd = ParametricCPD("K", parents=[], parametrization=nn.Identity())
+        k_embs_cpd = ParametricCPD(
+            variables=k_embs, 
+            parents=[], 
+            parametrization=pyc.nn.FixedPrior((len(self.known_names), self.embedding_size))
+        )
         k_hat_cpd = ParametricCPD(
-            "k_hat", 
-            parents=self.known_names + ["K"], 
+            variables=k_hat, 
+            parents=[k, k_embs], 
             parametrization=self.known_concept_mixer
         )
 
-        if use_unknown:
+        if self.concept_cfg["use_unknown"]:
             u_cpd = ParametricCPD(
-                self.unknown_names,
-                parents=["input"],
-                parametrization=self.unknown_concept_head,
-                shared=True,
-                shared_name="unknown_concepts"
+                variables=self.unknown_names, 
+                parents=[input], 
+                parametrization=self.unknown_head
             )
-            u_embs_cpd = ParametricCPD("U", parents=[], parametrization=nn.Identity())
+            u_embs_cpd = ParametricCPD(
+                variables=u_embs, 
+                parents=[], 
+                parametrization=pyc.nn.FixedPrior((len(self.unknown_names), self.embedding_size))
+            )
             u_hat_cpd = ParametricCPD(
-                "u_hat",
-                parents=self.unknown_names + ["U"],
+                variables=u_hat, 
+                parents=[u, u_embs], 
                 parametrization=self.unknown_concept_mixer
             )
 
-        # The epsilon CPD owns the Steerling residual correction term.
-        # Its forward expects the concatenation of (input, k_hat, [u_hat])
-        # along the last dim and applies the four-case logic baked in at
-        # construction time.
         epsilon_cpd = ParametricCPD(
-            "epsilon",
-            parents=["input", "k_hat"] + (["u_hat"] if use_unknown else []),
+            variable=epsilon,
+            parents=[h, k_hat] + ([u_hat] if self.concept_cfg["use_unknown"] else []),
             parametrization=self.epsilon_correction,
         )
         h_bar_cpd = ParametricCPD(
-            "h_bar",
-            parents=["k_hat"] + (["u_hat"] if use_unknown else []) + ["epsilon"],
-            parametrization=SumOp(
-                input_size=self.embedding_dim,
-                n_terms=3 if use_unknown else 2,
-            ),
+            variable=h_bar,
+            parents=[k_hat] + ([u_hat] if self.concept_cfg["use_unknown"] else []) + [epsilon],
+            parametrization=torch.nn.Identity(),
+            aggregation=lambda *args: sum(args)  # sum k_hat + u_hat + epsilon
         )
-        new_token_cpd = ParametricCPD("new_token", parents=["h_bar"], parametrization=self.lm_head)
+        new_token_cpd = ParametricCPD(
+            variable=new_token,
+            parents=[h_bar],
+            parametrization=self.lm_head
+        )
 
         # ── ProbabilisticModel + inference engine ─────────────────────────
         variables = [
-            h, *k, k_embs, k_mix,
-            *([*u, u_embs, u_mix] if use_unknown else []),
-            epsilon_var, h_bar, new_token,
+            input, h, k, k_embs, k_hat,
+            *([u, u_embs, u_hat] if self.concept_cfg["use_unknown"] else []),
+            epsilon, h_bar, new_token,
         ]
         factors = [
-            backbone_cpd, k_cpd, k_embs_cpd, k_hat_cpd,
-            *([u_cpd, u_embs_cpd, u_hat_cpd] if use_unknown else []),
+            input_cpd, h_cpd, k_cpd, k_embs_cpd, k_hat_cpd,
+            *([u_cpd, u_embs_cpd, u_hat_cpd] if self.concept_cfg["use_unknown"] else []),
             epsilon_cpd, h_bar_cpd, new_token_cpd,
         ]
-        # `self.model` mirrors the high-level BaseModel attribute — the
-        # ProbabilisticModel the inference engines wrap.
         self.model = ProbabilisticModel(variables=variables, factors=factors)
-        # Test-time model: a single (evaluation) inference engine, no training
-        # engine.  `eval_inference` + the `inference` property mirror the
-        # high-level `BaseModel` contract (which selects train/eval by mode).
+        # Test-time model: a single (evaluation) inference engine, no training inference.
         self.eval_inference = inference(self.model, **(inference_kwargs or {}))
         self.train_inference = None
-
-        # The PGM wrapper modules (e.g. SumOp) are built after super().__init__
-        # returns, i.e. outside the bf16 construction context, so unify
-        # everything to the model dtype. Cheap: the (large) backbone is already
-        # bf16, so this only casts the small PGM parameters.
-        self.to(self.dtype)
 
     # ------------------------------------------------------------------
     # Core helpers
@@ -271,7 +248,7 @@ class SteerlingModel(SteerlingLowLevelModel):
         hidden = self.backbone(input_ids)
         evidence = {"input": hidden}
         evidence["K"] = self.known_embeddings
-        if self.use_unknown:
+        if self.concept_cfg["use_unknown"]:
             evidence["U"] = self.unknown_embeddings
         return evidence
 
@@ -286,8 +263,8 @@ class SteerlingModel(SteerlingLowLevelModel):
         datamodule.
 
         The ``types`` + cardinalities below describe the concepts; the model
-        itself owns how each is modelled (``RelaxedBernoulli`` / sigmoid for the
-        binary known/unknown concepts and ``RelaxedOneHotCategorical`` / softmax
+        itself owns how each is modelled (``Bernoulli`` / sigmoid for the
+        binary known/unknown concepts and ``OneHotCategorical`` / softmax
         for the categorical ``new_token``), set explicitly on its variables.
 
         Returns:
@@ -306,6 +283,26 @@ class SteerlingModel(SteerlingLowLevelModel):
             labels=labels,
             cardinalities=cardinalities,
             types=types,
+        )
+
+    def _build_graph(self) -> ConceptGraph:
+        """Build the bipartite concept→token graph.
+
+        Mirrors :class:`~torch_concepts.nn.modules.high.base.bipartite.BipartiteMixin`:
+        every concept (known + unknown) points to the single ``new_token`` task,
+        and ``new_token`` has no outgoing edges. Nodes are the concept-annotation
+        labels, in annotation order.
+
+        Returns:
+            ConceptGraph: the concept→token bipartite adjacency.
+        """
+        labels = list(self.known_names) + list(self.unknown_names) + ["new_token"]
+        adjacency = pd.DataFrame(0, index=labels, columns=labels)
+        adjacency.loc[:, "new_token"] = 1       # concepts -> new_token
+        adjacency.loc["new_token", "new_token"] = 0  # token does not self-loop
+        return ConceptGraph(
+            torch.FloatTensor(adjacency.values),
+            node_names=labels,
         )
 
     # ------------------------------------------------------------------
@@ -329,9 +326,9 @@ class SteerlingModel(SteerlingLowLevelModel):
         return [            
             ("input", self.latent_dim),
             ("known_concepts", self.n_known),
-            *([("unknown_concepts", self.n_unknown)] if self.use_unknown else []),
+            *([("unknown_concepts", self.n_unknown)] if self.concept_cfg["use_unknown"] else []),
             ("k_hat", self.embedding_dim),
-            *([("u_hat", self.embedding_dim)] if self.use_unknown else []),
+            *([("u_hat", self.embedding_dim)] if self.concept_cfg["use_unknown"] else []),
             ("epsilon", self.embedding_dim),
             ("h_bar", self.embedding_dim),
             ("new_token", self.vocab_size),
