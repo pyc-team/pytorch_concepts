@@ -14,7 +14,6 @@ known concepts, unknown concepts, and reconstructed latent features.
 import logging
 import gc
 from contextlib import contextmanager
-from typing import Any
 
 import torch
 import torch.nn as nn
@@ -25,10 +24,12 @@ from ..steerling_configs import (
     SteerlingConfigSource,
     resolve_steerling_configs,
 )
-from ..steerling_encoder import SteerlingLatentToConcept
-from torch_concepts.nn import ResidualCorrectionOp
-
-from ..steerling_predictor import MixFactorizedConceptExogenousToConcept
+from ..steerling_layers import (
+    SteerlingEmbeddingToConcept,
+    SteerlingConceptEmbeddingMixer,
+    SteerlingResidualCorrection
+)
+from ...nn import LinearEmbeddingToConcept 
 from ..steerling_utils import (
     load_steerling_weights,
     _load_lm_head_weights,
@@ -40,39 +41,6 @@ logger = logging.getLogger(__name__)
 
 # Steerling components that can be pretrained-loaded and/or frozen.
 _ALL_COMPONENTS = ("backbone", "known_head", "unknown_head", "lm_head")
-
-
-# Top-k inference is not implemented yet (see steerling_encoder.py).  These
-# are the resolved-config keys that, if non-disabled, would request it.
-_TOPK_CONFIG_KEYS = (
-    "topk",
-    "topk_features",
-    "topk_known",
-    "topk_known_features",
-    "unknown_topk",
-    "apply_topk_to_unknown",
-    "topk_on_logits",
-)
-
-
-def _is_topk_enabled(value) -> bool:
-    if value is None or value is False:
-        return False
-    try:
-        return int(value) > 0
-    except (TypeError, ValueError):
-        return bool(value)
-
-
-def _sanitize_topk(concept_cfg: dict) -> dict:
-    """Return a copy of ``concept_cfg`` with every top-k key disabled."""
-    sanitized = dict(concept_cfg)
-    for key in _TOPK_CONFIG_KEYS:
-        if key in sanitized:
-            sanitized[key] = (
-                False if key in ("apply_topk_to_unknown", "topk_on_logits") else None
-            )
-    return sanitized
 
 
 @contextmanager
@@ -89,25 +57,6 @@ def _default_dtype(dtype: torch.dtype):
         yield
     finally:
         torch.set_default_dtype(prev)
-
-
-def _resolve_dtype(dtype: torch.dtype | None, model_cfg: dict) -> torch.dtype:
-    """Resolve the construction dtype.
-
-    Precedence: explicit ``dtype`` arg → ``model_cfg['torch_dtype']`` (a
-    ``torch.dtype`` or its string name, e.g. ``"bfloat16"``) → ``bfloat16``
-    (Steerling ships bf16 weights).
-    """
-    if dtype is not None:
-        return dtype
-    cfg_dtype = model_cfg.get("torch_dtype")
-    if isinstance(cfg_dtype, torch.dtype):
-        return cfg_dtype
-    if isinstance(cfg_dtype, str):
-        resolved = getattr(torch, cfg_dtype, None)
-        if isinstance(resolved, torch.dtype):
-            return resolved
-    return torch.bfloat16
 
 
 class SteerlingLowLevelModel(nn.Module):
@@ -165,115 +114,48 @@ class SteerlingLowLevelModel(nn.Module):
 
     def __init__(
         self,
-        pretrained_components: list[str] | None = _ALL_COMPONENTS,
-        freeze_components: list[str] | None = _ALL_COMPONENTS,
         model_id: str = DEFAULT_MODEL_ID,
         config_source: SteerlingConfigSource = "hub",  # keep 'hub' to match model_id
-        # ----- common concept-config kwargs (win over concept_config_overrides when not None)
-        use_unknown: bool | None = None,
-        n_concepts: int | None = None,
-        n_unknown_concepts: int | None = None,
-        concept_dim: int | None = None,
-        use_epsilon_correction: bool | None = None,
-        # ----- raw config overrides (escape hatch for any other config key)
-        model_config_overrides: dict[str, Any] | None = None,
-        concept_config_overrides: dict[str, Any] | None = None,
-        # ----- construction dtype (defaults to the config's bf16 weights)
-        dtype: torch.dtype | None = None,
+        pretrained_components: list[str] | None = _ALL_COMPONENTS,
+        freeze_components: list[str] | None = _ALL_COMPONENTS,
+        use_epsilon_correction: bool = False,
+        # ---------- individual config overrides ----------
+        # (win over default config from 'config_source') 
     ):
         super().__init__()
-
-        # Fold the common concept-config kwargs into the user-supplied
-        # concept_config_overrides (these win).  Keep the original dict around
-        # so the topk check below sees only user input.
-        elevated = {
-            "use_unknown": use_unknown,
-            "n_concepts": n_concepts,
-            "n_unknown_concepts": n_unknown_concepts,
-            "concept_dim": concept_dim,
-            "use_epsilon_correction": use_epsilon_correction,
-        }
-        elevated = {key: value for key, value in elevated.items() if value is not None}
-        user_overrides = dict(concept_config_overrides or {})
-
-        # Top-k inference is not implemented yet — raise if the user
-        # tried to opt in via overrides. Values coming from the package's
-        # defaults / Hub config are normalized further below in '_sanitize_topk'.
-        bad_topk = [key for key in _TOPK_CONFIG_KEYS if _is_topk_enabled(user_overrides.get(key))]
-        if bad_topk:
-            raise NotImplementedError(
-                "Top-k inference is not yet implemented in the PyC "
-                "SteerlingLatentToConcept encoder. Got non-disabled top-k "
-                f"keys in `concept_config_overrides`: {bad_topk}. Pass them "
-                "as None/False (or omit them) until top-k is wired up."
-            )
-
-        merged_overrides = {**user_overrides, **elevated}
-
+        self.model_id = model_id
+        self.config_source = config_source
         self.pretrained_components = list(pretrained_components or [])
         self.freeze_components = list(freeze_components or [])
-        self.config_source = config_source
-        self.model_cfg, self.concept_cfg = resolve_steerling_configs(
+        self.use_epsilon_correction = use_epsilon_correction
+
+        # fetch steerling configs (hub JSON or local file)
+        self.model_cfg, self.concept_cfg, self.other_cfg = resolve_steerling_configs(
             config_source=config_source,
             model_id=model_id,
-            model_config_overrides=model_config_overrides,
-            concept_config_overrides=merged_overrides,
         )
+        
+        self.vocab_size = self.other_cfg.get("vocab_size")
 
-        # Top-k inference is not implemented in the encoder yet, so disable
-        # every top-k key here. The encoders build faithfully from whatever
-        # config they are handed (they do not sanitize themselves), so
-        # `self.concept_cfg` must already reflect what the modules actually
-        # run — dense — and is what we pass them below.
-        self.concept_cfg = _sanitize_topk(self.concept_cfg)
+        # put here the code to override the config with the kwargs passed to the constructor
+        #
+        #
+        #
 
-        # Resolve use_unknown from the merged config (elevated kwarg already
-        # folded in above; otherwise the config-source default wins).
-        use_unknown = bool(self.concept_cfg.get("use_unknown", True))
-        latent_dim = int(self.model_cfg["n_embd"])
-        n_known = int(self.concept_cfg["n_concepts"])
-        n_unknown_resolved = int(self.concept_cfg.get("n_unknown_concepts") or 0)
-        embedding_dim = int(self.concept_cfg["concept_dim"])
-        self.factorize_unknown = bool(self.concept_cfg.get("factorize_unknown", False))
-        self.config_use_epsilon_correction = bool(
-            self.concept_cfg.get("use_epsilon_correction", False)
-        )
-        # `h_bar` (width `embedding_dim`) is fed to the LM head, which expects
-        # `n_embd`; the residual correction also mixes `h` (`n_embd`) with the
-        # concept reconstruction. Both require `concept_dim == n_embd`, so this
-        # precondition is unconditional, not specific to epsilon correction.
-        if embedding_dim != latent_dim:
-            raise ValueError(
-                "concept_dim must match n_embd: "
-                f"{embedding_dim} != {latent_dim}."
-            )
-        self.embedding_dim = embedding_dim
-
-        # Build the (large) Steerling modules directly in the target dtype.
+        # Build the Steerling modules directly in the target dtype.
         # Steerling ships bf16 weights; constructing in float32 and loading the
         # bf16 checkpoint would transiently allocate a float32 copy of the 8B
         # backbone (~2x peak memory) plus a redundant down-cast afterwards.
-        self.dtype = _resolve_dtype(dtype, self.model_cfg)
-        with _default_dtype(self.dtype):
-            self._build_modules(
-                model_id=model_id,
-                latent_dim=latent_dim,
-                n_known=n_known,
-                n_unknown_resolved=n_unknown_resolved,
-                embedding_dim=embedding_dim,
-                use_unknown=use_unknown,
-            )
+        dtype = getattr(torch, self.other_cfg.get("torch_dtype"))
+        with _default_dtype(dtype):
+            self._build_modules()
 
-    def _build_modules(
-        self,
-        *,
-        model_id: str,
-        latent_dim: int,
-        n_known: int,
-        n_unknown_resolved: int,
-        embedding_dim: int,
-        use_unknown: bool,
-    ) -> None:
+        # Load and freeze pretrained weights.
+        self._load_steerling_weights(model_id, pretrained=self.pretrained_components)
+        self._freeze_steerling_weights(freeze=self.freeze_components)
+
+
+    def _build_modules(self,) -> None:
         """Instantiate, load, and freeze all Steerling submodules.
 
         Called from :meth:`__init__` inside a :func:`_default_dtype` context so
@@ -282,63 +164,65 @@ class SteerlingLowLevelModel(nn.Module):
         # Backbone: tokens -> hidden states.
         self.backbone = CausalDiffusionTextBackbone(
             config=self.model_cfg,
-            model_id=model_id,
+            vocab_size=self.vocab_size,
+            tokenizer_model_id=self.model_id,
         )
-        self.vocab_size = self.backbone.vocab_size
 
         # Concept encoders.
         # known (supervised): h → k dense concept logits
-        self.known_concept_head = SteerlingLatentToConcept(
-            in_latent=latent_dim,
-            out_concepts=n_known,
-            embedding_size=embedding_dim,
+        # dense + linear + topk
+        self.known_head = SteerlingEmbeddingToConcept(
+            in_embeddings=self.model_cfg['n_embd'],
+            out_concepts=self.concept_cfg['n_concepts'],
+            concept_dim=self.concept_cfg['concept_dim'],
             is_unknown=False,
-            factorize=False,
-            config=self.concept_cfg,
+            use_attention=self.concept_cfg['use_attention_known'],
+            topk=self.concept_cfg['topk_known'],
+            topk_features=self.concept_cfg['topk_known_features'],
+            block_size=self.concept_cfg['block_size'],
+            pad_multiple=self.concept_cfg['pad_multiple'],
+            store_unknown_weights=False,
+            apply_topk_to_unknown=False,
+            topk_on_logits=False, # differently from Steerling original implementation, we don't support topk on logits as the activation is a inference concern.
         )
-        # unknown (unsupervised): h → u dense concept logits
-        if use_unknown and n_unknown_resolved == 0:
-            raise ValueError("n_unknown_concepts must be set when use_unknown=True")
-        if use_unknown:
-            self.unknown_concept_head = SteerlingLatentToConcept(
-                in_latent=latent_dim,
-                out_concepts=n_unknown_resolved,
-                embedding_size=embedding_dim,
+
+        # Unknown concept head (optional)
+        # factorized + linear + topk
+        if self.concept_cfg['use_unknown']:
+            if self.concept_cfg['n_unknown_concepts'] is None:
+                raise ValueError("n_unknown_concepts must be set when use_unknown=True")
+
+            self.unknown_head: SteerlingEmbeddingToConcept | None = SteerlingEmbeddingToConcept(
+                in_embeddings=self.model_cfg['n_embd'],
+                out_concepts=self.concept_cfg['n_unknown_concepts'],
+                concept_dim=self.concept_cfg['concept_dim'],
                 is_unknown=True,
-                factorize=self.factorize_unknown,
-                config=self.concept_cfg,
+                use_attention=self.concept_cfg['use_attention_unknown'],
+                topk=self.concept_cfg['unknown_topk'],
+                block_size=self.concept_cfg['block_size'],
+                pad_multiple=self.concept_cfg['pad_multiple'],
+                store_unknown_weights=False,
+                apply_topk_to_unknown=self.concept_cfg['apply_topk_to_unknown'],
+                topk_on_logits=False, # differently from Steerling original implementation, we don't support topk on logits as the activation is a inference concern.
+                factorize=self.concept_cfg['factorize_unknown'],
+                factorize_rank=self.concept_cfg['factorize_rank'],
             )
         else:
-            self.unknown_concept_head = None
+            self.unknown_head = None
 
-        # Concept-logit + embedding mixing.
-        # We use the mixing layer, but stop at the concept embeddings without the linear head.
-        self.known_concept_mixer = MixFactorizedConceptExogenousToConcept(
-            in_concepts=n_known,
-            in_exogenous=embedding_dim,
-            out_concepts=self.vocab_size,
-            factorized=False,
-            add_linear_head=False,
-            bias=False
+        # Concept-logit + embedding mixing: reconstruct the latent feature from the
+        # concept logits and embeddings, reusing each head's blocked_mix / top-k config.
+        self.known_concept_mixer = SteerlingConceptEmbeddingMixer(
+            n_concepts=self.concept_cfg['n_concepts'],
+            head=self.known_head.head,
         )
-        if self.unknown_concept_head is not None:
-            self.unknown_concept_mixer = MixFactorizedConceptExogenousToConcept(
-                in_concepts=n_unknown_resolved,
-                in_exogenous=embedding_dim,
-                out_concepts=self.vocab_size,
-                factorized=self.factorize_unknown,
-                add_linear_head=False,
-                bias=False
+        if self.unknown_head is not None:
+            self.unknown_concept_mixer = SteerlingConceptEmbeddingMixer(
+                n_concepts=self.concept_cfg['n_unknown_concepts'],
+                head=self.unknown_head.head,
             )
         else:
             self.unknown_concept_mixer = None
-
-        # Alias the backbone's LM head.  Under upstream ``weight_sharing=True``
-        # (Steerling default) its weight is tied to ``transformer.tok_emb.weight``
-        # via ``_tie_weights``, so a single underlying Parameter is shared by
-        # ``self.lm_head``, ``self.backbone.transformer.lm_head``, and the
-        # backbone's input embedding.
-        self.lm_head = self.backbone.transformer.lm_head
 
         # Epsilon correction term for h_bar = k_hat + (u_hat) + epsilon.
         # `use_epsilon` toggles whether the residual recovers `h` exactly
@@ -351,18 +235,28 @@ class SteerlingLowLevelModel(nn.Module):
         #   (True,  False)              →  ("off",          (1,))  stop-grad on u_hat
         #   (False, True)               →  ("block_parts",  ())
         #   (False, False)              →  ("off",          ())   h_bar = k_hat
-        self.has_unknown = self.unknown_concept_head is not None
-        use_eps = self.config_use_epsilon_correction
-        self.epsilon_correction = ResidualCorrectionOp(
-            input_size=embedding_dim,
-            n_terms=2 if self.has_unknown else 1,
-            residual_mode="block_parts" if use_eps else "off",
-            stop_grad_parts=(1,) if self.has_unknown and not use_eps else (),
+        self.epsilon_correction = SteerlingResidualCorrection(
+            input_size=self.concept_cfg['concept_dim'],
+            n_terms=2 if self.unknown_head is not None else 1,
+            residual_mode="block_parts" if self.use_epsilon_correction else "off",
+            stop_grad_parts=(1,) if self.unknown_head is not None and not self.use_epsilon_correction else (),
         )
 
-        # Load and freeze pretrained weights.
-        self._load_steerling_weights(model_id, pretrained=self.pretrained_components)
-        self._freeze_steerling_weights(freeze=self.freeze_components)
+        # LM head: reconstructed latent → next-token logits
+        # Alias the backbone's LM head.  Under upstream ``weight_sharing=True``
+        # (Steerling and hub default) its weight is tied to ``transformer.tok_emb.weight``
+        # via ``_tie_weights``, so a single underlying Parameter is shared by
+        # ``self.backbone.transformer.lm_head``, and the backbone's input embedding.
+        assert self.model_cfg['n_embd'] == self.concept_cfg['concept_dim'], (
+            "Steerling constrains concept_dim == n_embd (both 4096 by default)."
+        )
+        self.lm_head = LinearEmbeddingToConcept(
+            in_embeddings=self.concept_cfg['concept_dim'], 
+                # Steerling constrains concept_dim == n_embd (both 4096 by default), so either key
+                # works here. We use concept_dim to stay in the concept-feature space.
+            out_concepts=self.vocab_size,
+            bias=False
+        )
 
 
     def _load_steerling_weights(self, model_id: str, pretrained: list | None = None):
@@ -396,22 +290,20 @@ class SteerlingLowLevelModel(nn.Module):
                     and transformer.lm_head.weight is not transformer.tok_emb.weight
                 ):
                     transformer.lm_head.weight = transformer.tok_emb.weight
-            self.backbone._model_id = model_id
-            self.backbone._tokenizer_model_id = model_id
             logger.info("Loaded pretrained weights into backbone.")
 
         if "known_head" in pretrained:
             known_sd = load_steerling_weights(model_id, "known_head", device="cpu")
-            self._load_state_dict(self.known_concept_head.head, known_sd, "known_head")
+            self._load_state_dict(self.known_head.head, known_sd, "known_head")
             self._discard_state_dict(known_sd)
             logger.info("Loaded pretrained weights into known concept head.")
 
         if "unknown_head" in pretrained:
-            if self.unknown_concept_head is None:
+            if self.unknown_head is None:
                 logger.info("Skipped unknown concept head weights because use_unknown=False.")
             else:
                 unknown_sd = load_steerling_weights(model_id, "unknown_head", device="cpu")
-                self._load_state_dict(self.unknown_concept_head.head, unknown_sd, "unknown_head")
+                self._load_state_dict(self.unknown_head.head, unknown_sd, "unknown_head")
                 self._discard_state_dict(unknown_sd)
                 logger.info("Loaded pretrained weights into unknown concept head.")
 
@@ -496,15 +388,15 @@ class SteerlingLowLevelModel(nn.Module):
             logger.info("Froze backbone parameters.")
 
         if "known_head" in freeze:
-            for p in self.known_concept_head.parameters():
+            for p in self.known_head.parameters():
                 p.requires_grad = False
             logger.info("Froze known concept head parameters.")
 
         if "unknown_head" in freeze:
-            if self.unknown_concept_head is None:
+            if self.unknown_head is None:
                 logger.info("Skipped freezing unknown concept head because use_unknown=False.")
             else:
-                for p in self.unknown_concept_head.parameters():
+                for p in self.unknown_head.parameters():
                     p.requires_grad = False
                 logger.info("Froze unknown concept head parameters.")
 
@@ -530,39 +422,32 @@ class SteerlingLowLevelModel(nn.Module):
     @property
     def n_known(self) -> int:
         """Number of supervised (known) concepts."""
-        return self.known_concept_head.out_concepts
+        return self.known_head.out_concepts
 
     @property
     def n_unknown(self) -> int:
         """Number of unsupervised (unknown) concepts."""
-        return 0 if self.unknown_concept_head is None else self.unknown_concept_head.out_concepts
+        return 0 if self.unknown_head is None else self.unknown_head.out_concepts
 
     @property
-    def latent_dim(self) -> int:
+    def latent_size(self) -> int:
         """Transformer hidden dimension (``n_embd``)."""
         return self.backbone.out_features
-
+    
     @property
+    def embedding_size(self) -> int:
+        """Concept embedding dimension (``concept_dim``)."""
+        return self.concept_cfg['concept_dim']
+
     def known_embeddings(self) -> torch.Tensor:
-        """Known concept embeddings ``(n_known, embedding_dim)``.
-
-        Computed live from the current encoder weights, so the result stays
-        in sync if the concept head is fine-tuned.
-        """
-        return self.known_concept_head.get_embeddings(factorized=False)
-
-    @property
-    def unknown_embeddings(self) -> torch.Tensor | None:
-        """Unknown concept embeddings (packed factorized when applicable).
-
-        Returns ``None`` when ``use_unknown=False``.  Computed live so the
-        result stays in sync with the unknown concept head's parameters.
-        """
-        if self.unknown_concept_head is None:
+        """Known concept embeddings ``(n_known, embedding_dim)``."""
+        return self.known_head.embeddings()
+    
+    def unknown_embeddings(self, cat_factorized: bool = False) -> torch.Tensor | None:
+        """Unknown concept embeddings (packed factorized when applicable)."""
+        if self.unknown_head is None:
             return None
-        return self.unknown_concept_head.get_embeddings(
-            factorized=self.unknown_concept_head.factorize
-        )
+        return self.unknown_head.embeddings(cat_factorized=cat_factorized)
 
     @property
     def concept_names(self) -> list[str]:
@@ -597,17 +482,21 @@ class SteerlingLowLevelModel(nn.Module):
             ``epsilon``, and ``reconstructed_latent``.
         """
         h = self.backbone(input_ids)
-        k = self.known_concept_head(h)
-        k_hat = self.known_concept_mixer(torch.sigmoid(k), self.known_embeddings)
+        k = self.known_head(h)
+        k_embs = self.known_embeddings()
+        k_hat = self.known_concept_mixer(torch.sigmoid(k), k_embs)
 
         u = u_hat = None
         if self.has_unknown:
             # Detach so unknown loss can't back-prop into the transformer.
-            u = self.unknown_concept_head(h.detach())
-            u_hat = self.unknown_concept_mixer(torch.sigmoid(u), self.unknown_embeddings)
+            u = self.unknown_head(h.detach())
+            u_embs = self.unknown_embeddings(cat_factorized=True)
+            u_hat = self.unknown_concept_mixer(torch.sigmoid(u), u_embs)
+            parts = (k_hat, u_hat)
+        else:
+            parts = (k_hat,)
 
-        parts = (k_hat,) if u_hat is None else (k_hat, u_hat)
-        epsilon = self.epsilon_correction.compute(h, *parts)
+        epsilon = self.epsilon_correction([h, *parts])
         h_bar = sum(parts) + epsilon
 
         return {
@@ -647,18 +536,6 @@ class SteerlingLowLevelModel(nn.Module):
         gen_mask = ~prompt_mask.clone()
 
         return input_ids, prompt_mask, gen_mask
-
-    def encode_concepts(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Return known-concept logits for the given token ids.
-
-        Args:
-            input_ids: Token ids, shape ``(B, T)``.
-
-        Returns:
-            Known-concept logits ``(B, T, n_known)`` before sigmoid.
-        """
-        h = self.backbone(input_ids)                # (B, T, D)
-        return self.known_concept_head(h)
 
     @torch.no_grad()
     def generate(
@@ -735,56 +612,15 @@ class SteerlingLowLevelModel(nn.Module):
 
         return generated_text
 
-    def print_config(self) -> dict:
-        """Print (and return) the resolved configuration used to build the model.
-
-        Reports the loaded/frozen components, the architecture sizes resolved
-        from the configs, the concept-bottleneck flags, and the full
-        ``model_cfg`` / ``concept_cfg`` dicts as actually used to build the
-        modules (after top-k sanitisation).
-
-        Returns:
-            dict: ``{"summary": {...}, "model_cfg": {...}, "concept_cfg": {...}}``
-            for programmatic use.
-        """
-        summary = {
-            "class": self.__class__.__name__,
-            "config_source": self.config_source,
-            "pretrained": list(self.pretrained_components),
-            "frozen": list(self.freeze_components),
-            "latent_dim": self.latent_dim,
-            "embedding_dim": self.embedding_dim,
-            "vocab_size": self.vocab_size,
-            "n_known": self.n_known,
-            "n_unknown": self.n_unknown,
-            "use_unknown": self.has_unknown,
-            "factorize_unknown": self.factorize_unknown,
-            "use_epsilon_correction": self.config_use_epsilon_correction,
-        }
-
-        lines = [f"{summary['class']} configuration", "=" * 60]
-        for key, value in summary.items():
-            if key != "class":
-                lines.append(f"{key:<24}: {value}")
-        for title, cfg in (("model_cfg", self.model_cfg), ("concept_cfg", self.concept_cfg)):
-            lines.append("-" * 60)
-            lines.append(title)
-            for key in sorted(cfg):
-                lines.append(f"  {key:<22}: {cfg[key]}")
-        lines.append("=" * 60)
-        print("\n".join(lines))
-
-        return {"summary": summary, "model_cfg": dict(self.model_cfg), "concept_cfg": dict(self.concept_cfg)}
-
     def __repr__(self) -> str:
         return (
             f"SteerlingLowLevelModel("
             f"n_known={self.n_known}, "
             f"n_unknown={self.n_unknown}, "
-            f"latent_dim={self.latent_dim}, "
+            f"latent_dim={self.latent_size}, "
             f"vocab={self.vocab_size}, "
-            f"factorize_unknown={self.factorize_unknown}, "
-            f"use_epsilon_correction={self.config_use_epsilon_correction}, "
+            f"factorize_unknown={self.concept_cfg['factorize_unknown']}, "
+            f"use_epsilon_correction={self.use_epsilon_correction}, "
             f"pretrained={self.pretrained_components}, "
             f"frozen={self.freeze_components}, "
             f"config_source={self.config_source!r})"
