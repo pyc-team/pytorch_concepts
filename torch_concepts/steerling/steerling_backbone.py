@@ -21,13 +21,11 @@ import torch.nn as nn
 from .steerling_configs import (
     DEFAULT_MODEL_ID,
     SteerlingConfigSource,
-    config_to_dict,
     resolve_steerling_configs,
 )
 from .steerling_utils import get_steerling_tokenizer
 
 logger = logging.getLogger(__name__)
-DEFAULT_VOCAB_SIZE = 100281
 
 
 def _import_steerling_transformer():
@@ -46,10 +44,10 @@ def _import_steerling_transformer():
 def _causal_diffusion_config_fields(CausalDiffusionConfig: type) -> set[str]:
     """Return fields accepted by the upstream pydantic config class."""
     if hasattr(CausalDiffusionConfig, "model_fields"):
-        return set(CausalDiffusionConfig.model_fields)
+        return set(CausalDiffusionConfig.model_fields)  # Pydantic v2
     if hasattr(CausalDiffusionConfig, "__fields__"):
-        return set(CausalDiffusionConfig.__fields__)
-    return set()
+        return set(CausalDiffusionConfig.__fields__)     # Pydantic v1
+    return set()  # unknown version: accept anything
 
 
 def _to_causal_diffusion_config_kwargs(
@@ -59,12 +57,19 @@ def _to_causal_diffusion_config_kwargs(
     """Strip HF wrapper metadata before constructing ``CausalDiffusionConfig``."""
     config = dict(config)
     if config.get("model_type") == "steerling":
-        config["model_type"] = "causal_diffusion"
-
+        config["model_type"] = "causal_diffusion"  # HF name → upstream name
+    if config.get("interpretable") == True:
+        config["interpretable"] = False  # HF bool → upstream bool
     fields = _causal_diffusion_config_fields(CausalDiffusionConfig)
-    if not fields:
-        return config
-    return {key: value for key, value in config.items() if key in fields}
+    filtered = {key: value for key, value in config.items() if key in fields}
+    # print filtered-out keys for debugging
+    ignored_keys = set(config) - set(filtered)
+    if ignored_keys:
+        logger.debug(
+            "Ignoring model keys not accepted by CausalDiffusionConfig: %s",
+            sorted(ignored_keys),
+        )
+    return filtered
 
 
 class CausalDiffusionTextBackbone(nn.Module):
@@ -74,15 +79,10 @@ class CausalDiffusionTextBackbone(nn.Module):
     returns final hidden states with shape ``(batch, sequence, n_embd)``.
 
     Args:
-        config: Optional Steerling model config as a mapping, dataclass, or
-            Pydantic-style object. If omitted, the Steerling-8B Hub config is
-            used.
         model_id: Hugging Face model id or local path used for default config,
             and tokenizer.
         config_source: Source used to resolve the default config when
             ``config`` is omitted.
-        vocab_size: Optional vocabulary size override. Defaults to the config
-            value, then to the local Steerling default vocabulary size.
 
     Attributes:
         out_features: Hidden size ``n_embd`` emitted by :meth:`forward`.
@@ -100,10 +100,11 @@ class CausalDiffusionTextBackbone(nn.Module):
 
     def __init__(
         self,
-        config: Any = None,
-        model_id: str = DEFAULT_MODEL_ID,
-        config_source: SteerlingConfigSource = "hub",
-        vocab_size: int = None,
+        config: dict[str, Any] | None = None,
+        vocab_size: int = 100281,
+        tokenizer_model_id: str = DEFAULT_MODEL_ID,
+        config_model_id: str = DEFAULT_MODEL_ID,
+        config_source: SteerlingConfigSource = "hub"
     ):
         super().__init__()
 
@@ -111,35 +112,28 @@ class CausalDiffusionTextBackbone(nn.Module):
         CausalDiffusionLM, CausalDiffusionConfig = _import_steerling_transformer()
 
         if config is None:
-            model_cfg_dict, _ = resolve_steerling_configs(
+            # fetch architecture hyperparams (hub JSON or local file)
+            config, _, _ = resolve_steerling_configs(
                 config_source=config_source,
-                model_id=model_id,
+                model_id=config_model_id,
             )
-        else:
-            model_cfg_dict = config_to_dict(config)
 
-        self._vocab_size = int(
-            vocab_size
-            if vocab_size is not None
-            else model_cfg_dict.get("vocab_size", DEFAULT_VOCAB_SIZE)
-        )
-
-        config_kwargs = _to_causal_diffusion_config_kwargs(
-            CausalDiffusionConfig,
-            model_cfg_dict,
-        )
+        # strip HF-only keys; remap model_type before passing to Pydantic
+        config_kwargs = _to_causal_diffusion_config_kwargs(CausalDiffusionConfig, config)
+        
+        # Instantiate the Pydantic config class
         config = CausalDiffusionConfig(**config_kwargs)
 
+        # Instantiate the Steerling transformer with the resolved config
         self.transformer = CausalDiffusionLM(
-            config,
-            vocab_size=self._vocab_size,
+            config=config,
+            vocab_size=vocab_size,
         )
 
-        self._out_features = int(config.n_embd)
+        self._out_features = int(config.n_embd)  # hidden dim exposed via property
 
-        self._model_id = model_id
-        self._tokenizer = None
-        self._tokenizer_model_id = model_id
+        self._tokenizer = None # lazy-loaded on first access
+        self._tokenizer_model_id = tokenizer_model_id
 
     @property
     def out_features(self) -> int:
@@ -158,11 +152,6 @@ class CausalDiffusionTextBackbone(nn.Module):
             self._tokenizer = get_steerling_tokenizer(self._tokenizer_model_id)
         return self._tokenizer
 
-    @property
-    def model_id(self) -> str:
-        """Hub model id used for default config and tokenizer."""
-        return self._model_id
-
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -171,7 +160,7 @@ class CausalDiffusionTextBackbone(nn.Module):
         return_hidden: bool = True,
     ) -> torch.Tensor:
         """
-        Forward pass.
+        Forward pass of CausalDiffusionLM.
 
         Args:
             input_ids: Token indices [B, T] (may contain mask tokens).
@@ -185,7 +174,11 @@ class CausalDiffusionTextBackbone(nn.Module):
             ``(B, T, n_embd)``. With ``return_hidden=False``, token logits with
             shape ``(B, T, vocab_size)``.
         """
-        return self.transformer(input_ids, return_hidden=return_hidden, input_embeds=input_embeds)
+        return self.transformer(
+            input_ids, 
+            return_hidden=return_hidden, 
+            input_embeds=input_embeds
+        )
 
     def __repr__(self) -> str:
         params_b = sum(p.numel() for p in self.parameters()) / 1e9
