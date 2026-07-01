@@ -14,7 +14,6 @@ from .concept_graph import ConceptGraph
 from .nn.modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
 from . import nn, distributions
-from . import data
 
 def __getattr__(name: str) -> Any:
     if name in {"data", "nn"}:

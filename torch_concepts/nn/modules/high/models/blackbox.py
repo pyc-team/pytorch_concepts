@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from typing import List, Optional, Union
 
-from .....data.utils import ensure_list
+from .....utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
 from ...loss import ConceptLoss
