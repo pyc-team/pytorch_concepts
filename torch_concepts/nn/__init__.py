@@ -91,6 +91,7 @@ from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervent
 from .modules.low.intervention.strategy.do import DoIntervention
 from .modules.low.intervention.strategy.distribution import DistributionIntervention
 from .modules.low.intervention.strategy.positive_weights import PositiveWeightsIntervention
+from .modules.low.intervention.strategy.contrastive import ContrastiveIntervention
 
 # Intervention policies
 from .modules.low.intervention.policy.uniform import UniformPolicy
@@ -187,6 +188,7 @@ __all__ = [
     "DoIntervention",
     "DistributionIntervention",
     "PositiveWeightsIntervention",
+    "ContrastiveIntervention",
     "intervention",
 
     # Intervention policies
