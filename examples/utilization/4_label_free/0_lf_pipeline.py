@@ -324,6 +324,8 @@ def main():
         ],
         binary_prompt_formatter=clip_binary_prompt,
         input_transform=prepare_cub_image,
+        temperature=0.2,
+        bias=0.2,
     )
 
     pipeline = ConceptSupervisionPipeline(

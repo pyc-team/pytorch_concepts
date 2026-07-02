@@ -220,7 +220,7 @@ class BaseLearner(pl.LightningModule):
         
         # Extract ground truth tensor from batch
         concepts = batch.get('concepts', {})
-        ground_truth = concepts.get('c', None)
+        ground_truth = concepts.get('ground_truth', None)
 
         return {
             'ground_truth': ground_truth,
@@ -276,7 +276,7 @@ class BaseLearner(pl.LightningModule):
         """
         inputs, concepts, transforms = self.unpack_batch(batch)
         batch_size = batch['inputs']['x'].size(0)
-        c = c_loss = concepts['c']
+        c = c_loss = concepts['ground_truth']
 
         # TODO: implement scaling only for continuous concepts 
         # inputs = self.maybe_apply_preprocessing(preprocess_inputs_flag, 
