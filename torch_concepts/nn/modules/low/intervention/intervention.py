@@ -1,5 +1,6 @@
 import inspect
 import functools
+from itertools import chain
 from abc import abstractmethod, ABC
 
 import torch
@@ -109,7 +110,10 @@ class BaseInterventionModule(nn.Module, ABC):
                 if original_annotations is None and not isinstance(original_annotations, Annotations):
                     raise ValueError("To use string-based concept selection, the original module must have an "
                                      "'out_concepts' attribute of type Annotations.")
-                indices = [original_annotations.label_to_index[item] for item in self.out_concepts_to_intervene_on]
+                indices = list(chain.from_iterable(
+                    range(s.start, s.stop, s.step or 1)
+                    for s in (original_annotations.concept_slices[item] for item in self.out_concepts_to_intervene_on)
+                ))
                 return torch.tensor(indices, dtype=torch.long)
             else:
                 raise ValueError("out_concepts_to_intervene_on must be a list of integers (indices) or strings (names)")
