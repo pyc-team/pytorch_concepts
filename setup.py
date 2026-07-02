@@ -57,6 +57,9 @@ EXTRAS_REQUIRE = {
         'transformers',
         'tables',
     ],
+    'llm': [
+        'litellm',
+    ],
     'tests': [
         'pytest-cov',
         'pytest',
