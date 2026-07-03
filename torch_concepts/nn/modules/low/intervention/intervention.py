@@ -110,10 +110,9 @@ class BaseInterventionModule(nn.Module, ABC):
                 if original_annotations is None and not isinstance(original_annotations, Annotations):
                     raise ValueError("To use string-based concept selection, the original module must have an "
                                      "'out_concepts' attribute of type Annotations.")
-                indices = list(chain.from_iterable(
-                    range(s.start, s.stop, s.step or 1)
-                    for s in (original_annotations.concept_slices[item] for item in self.out_concepts_to_intervene_on)
-                ))
+                indices = original_annotations.get_slice(self.out_concepts_to_intervene_on)
+                if isinstance(indices, slice):
+                    indices = list(range(indices.start, indices.stop, indices.step or 1))
                 return torch.tensor(indices, dtype=torch.long)
             else:
                 raise ValueError("out_concepts_to_intervene_on must be a list of integers (indices) or strings (names)")
