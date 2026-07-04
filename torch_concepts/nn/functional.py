@@ -1580,3 +1580,344 @@ def prediction_concept_dependency_score(
         return metric_tensor.sum()
     else:  # "none"
         return metric_tensor
+
+def compute_full_jacobian(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    Compute full Jacobian matrix efficiently.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+
+    Returns:
+        jacobian: [batch, output_dim, input_dim]
+                  jacobian[b, i, j] = ∂y_i/∂x_j for batch sample b
+
+    Performance: Very fast for output_dim ~ 10-100
+    """
+    batch_size = y.shape[0]
+    output_dim = y.shape[1] if y.ndim > 1 else 1
+    input_dim = x.shape[1] if x.ndim > 1 else 1
+
+    jacobian = []
+    for i in range(output_dim):
+        y_i = y[:, i] if output_dim > 1 else y.squeeze(-1)
+
+        grad_i = torch.autograd.grad(
+            outputs=y_i,
+            inputs=x,
+            grad_outputs=torch.ones_like(y_i),
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True
+        )[0]
+
+        if grad_i is None:
+            grad_i = torch.zeros(batch_size, input_dim, device=x.device)
+
+        jacobian.append(grad_i)
+
+    return torch.stack(jacobian, dim=1)  # [batch, output_dim, input_dim]
+
+
+def compute_full_hessian(y: torch.Tensor, x: torch.Tensor, jacobian: torch.Tensor = None) -> torch.Tensor:
+    """
+    Compute full Hessian matrices for all outputs.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+        jacobian: [batch, output_dim, input_dim] (optional, computed if not provided)
+
+    Returns:
+        hessian: [batch, output_dim, input_dim, input_dim]
+                 hessian[b, i, j, k] = ∂²y_i/∂x_j∂x_k for batch sample b
+
+    Performance: Feasible for input_dim ~ 10-50, output_dim ~ 10-50
+    """
+    if jacobian is None:
+        jacobian = compute_full_jacobian(y, x)
+
+    batch_size = y.shape[0]
+    output_dim = jacobian.shape[1]
+    input_dim = jacobian.shape[2]
+
+    hessian = []
+    for i in range(output_dim):
+        hess_i = []
+        for j in range(input_dim):
+            grad_ij = jacobian[:, i, j]  # [batch]
+
+            grad2_ij = torch.autograd.grad(
+                outputs=grad_ij,
+                inputs=x,
+                grad_outputs=torch.ones_like(grad_ij),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            if grad2_ij is None:
+                grad2_ij = torch.zeros(batch_size, input_dim, device=x.device)
+
+            hess_i.append(grad2_ij)
+
+        hessian.append(torch.stack(hess_i, dim=1))  # [batch, input_dim, input_dim]
+
+    return torch.stack(hessian, dim=1)  # [batch, output_dim, input_dim, input_dim]
+
+
+def compute_derivative_order_n(
+    y: torch.Tensor,
+    x: torch.Tensor,
+    order: int,
+    previous_derivatives: List[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Compute n-th order derivatives recursively.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+        order: Derivative order (1, 2, 3, ...)
+        previous_derivatives: List of [jacobian, hessian, ...] if already computed
+
+    Returns:
+        For order=1: [batch, output_dim, input_dim]
+        For order=2: [batch, output_dim, input_dim, input_dim]
+        For order=3: [batch, output_dim, input_dim, input_dim, input_dim]
+        etc.
+
+    Note: Higher orders (3+) are expensive. Use sparingly.
+    """
+    if order < 1:
+        raise ValueError(f"Order must be >= 1, got {order}")
+
+    if order == 1:
+        return compute_full_jacobian(y, x)
+
+    if order == 2:
+        jacobian = previous_derivatives[0] if previous_derivatives else None
+        return compute_full_hessian(y, x, jacobian)
+
+    # For order >= 3, compute recursively
+    if previous_derivatives is None or len(previous_derivatives) < order - 1:
+        # Need to compute lower order derivatives first
+        derivatives = []
+        for o in range(1, order):
+            deriv = compute_derivative_order_n(y, x, o, derivatives)
+            derivatives.append(deriv)
+        prev_deriv = derivatives[-1]
+    else:
+        prev_deriv = previous_derivatives[order - 2]
+
+    # Compute next order from previous order
+    batch_size = y.shape[0]
+    output_dim = y.shape[1] if y.ndim > 1 else 1
+    input_dim = x.shape[1] if x.ndim > 1 else 1
+
+    # prev_deriv shape: [batch, output_dim, input_dim, input_dim, ..., input_dim] (order-1 input_dim's)
+    # We need to differentiate each element w.r.t. x again
+
+    # Flatten all but last dimension for easier iteration
+    prev_shape = prev_deriv.shape
+    num_prev_dims = len(prev_shape) - 2  # Exclude batch and output_dim
+
+    next_deriv = []
+    for i in range(output_dim):
+        # Get all derivatives for output i
+        deriv_i = prev_deriv[:, i]  # [batch, input_dim, ..., input_dim]
+
+        # Flatten to [batch, -1]
+        deriv_i_flat = deriv_i.reshape(batch_size, -1)
+
+        # Compute gradient for each flattened element
+        grads = []
+        for k in range(deriv_i_flat.shape[1]):
+            elem_k = deriv_i_flat[:, k]  # [batch]
+
+            grad_k = torch.autograd.grad(
+                outputs=elem_k,
+                inputs=x,
+                grad_outputs=torch.ones_like(elem_k),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            if grad_k is None:
+                grad_k = torch.zeros(batch_size, input_dim, device=x.device)
+
+            grads.append(grad_k)
+
+        # Stack and reshape: [batch, prev_size, input_dim]
+        grads_stacked = torch.stack(grads, dim=1)  # [batch, prev_size, input_dim]
+
+        # Reshape to [batch, input_dim, ..., input_dim, input_dim] (order input_dim's)
+        new_shape = [batch_size] + [input_dim] * order
+        grads_reshaped = grads_stacked.reshape(new_shape)
+
+        next_deriv.append(grads_reshaped)
+
+    # Stack over output dimension
+    return torch.stack(next_deriv, dim=1)
+
+
+def bounded_reasoning_loss(
+    y_pred: torch.Tensor,
+    x: torch.Tensor,
+    pde: Callable,
+    reduction: str = "mean"
+) -> torch.Tensor:
+    """
+    Compute PDE-based constraint loss for neural networks.
+
+    The PDE function receives pre-computed derivatives and returns a residual
+    that should be zero when the PDE is satisfied.
+
+    Args:
+        y_pred: [batch, output_dim] - Model predictions
+        x: [batch, input_dim] - Input (must have requires_grad=True)
+        pde: Callable that takes (y, x, derivatives) and returns residual
+             Signature: pde(y, x, J, H, ...) where:
+             - y: [batch, output_dim]
+             - x: [batch, input_dim]
+             - J: [batch, output_dim, input_dim] (Jacobian, 1st order)
+             - H: [batch, output_dim, input_dim, input_dim] (Hessian, 2nd order)
+             - etc. for higher orders
+        reduction: "mean", "sum", or "none"
+
+    Returns:
+        loss: Scalar or [batch] tensor of PDE residual squared
+
+    Examples:
+        # Example 1: Smoothness constraint - limit Hessian norm
+        def smooth_pde(y, x, J, H):
+            # H is [batch, output_dim, input_dim, input_dim]
+            # Return scalar residual per batch sample
+            return (H ** 2).sum(dim=(1,2,3))  # [batch]
+
+        # Example 2: Lipschitz constraint - limit Jacobian spectral norm
+        def lipschitz_pde(y, x, J):
+            # J is [batch, output_dim, input_dim]
+            batch_residuals = []
+            for b in range(J.shape[0]):
+                spectral_norm = torch.linalg.matrix_norm(J[b], ord=2)
+                batch_residuals.append(spectral_norm)
+            return torch.stack(batch_residuals)  # [batch]
+
+        # Example 3: Element-wise gradient constraint
+        def gradient_constraint_pde(y, x, J):
+            # Limit magnitude of all partial derivatives
+            return (J ** 2).sum(dim=(1,2))  # [batch]
+    """
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    # Determine required derivative order from PDE function signature
+    import inspect
+    sig = inspect.signature(pde)
+    num_params = len(sig.parameters)
+
+    # num_params: 2 = (y, x) -> no derivatives
+    # num_params: 3 = (y, x, J) -> 1st order (Jacobian)
+    # num_params: 4 = (y, x, J, H) -> 2nd order (Hessian)
+    # etc.
+    max_order = num_params - 2
+
+    if max_order < 0:
+        raise ValueError("PDE function must have at least 2 parameters: (y, x)")
+
+    # Compute all required derivatives
+    derivatives = []
+    for order in range(1, max_order + 1):
+        deriv = compute_derivative_order_n(y_pred, x, order, derivatives)
+        derivatives.append(deriv)
+
+    # Call PDE function
+    args = [y_pred, x] + derivatives
+    residual = pde(*args)
+
+    # Residual should be [batch] or scalar
+    if residual.ndim == 0:
+        residual = residual.unsqueeze(0).expand(y_pred.shape[0])
+
+    # Compute loss
+    loss_per_sample = residual ** 2
+
+    if reduction == "mean":
+        return loss_per_sample.mean()
+    elif reduction == "sum":
+        return loss_per_sample.sum()
+    else:  # "none"
+        return loss_per_sample
+
+
+# ============================================================================
+# Helper functions for common PDE patterns
+# ============================================================================
+
+def linear_pde(strength: float = 1.0) -> Callable:
+    """
+    Create a PDE that enforces linearity: ∂²y_i/∂x_j∂x_k = 0 for all i,j,k.
+    Forces the function to be linear (affine).
+
+    Args:
+        strength: Scaling factor for the constraint
+
+    Returns:
+        PDE function that penalizes non-zero Hessian
+
+    Note: Hessian has shape [batch, output_dim, input_dim, input_dim] because:
+          - For each of output_dim outputs y_i
+          - We have a [input_dim, input_dim] matrix of second derivatives ∂²y_i/∂x_j∂x_k
+          - All batch samples: [batch, output_dim, input_dim, input_dim]
+    """
+    def pde(y, x, J, H):
+        # H: [batch, output_dim, input_dim, input_dim]
+        # Penalize any non-zero second derivatives → forces linearity
+        return strength * (H ** 2).sum(dim=(1,2,3))  # [batch]
+
+    return pde
+
+
+def quadratic_pde(strength: float = 1.0) -> Callable:
+    """
+    Create a PDE that allows quadratic functions: ∂³y_i/∂x_j∂x_k∂x_l = 0.
+    Forces the function to be at most quadratic.
+
+    Args:
+        strength: Scaling factor for the constraint
+
+    Returns:
+        PDE function that penalizes non-zero 3rd derivatives
+    """
+    def pde(y, x, J, H, T):
+        # T: [batch, output_dim, input_dim, input_dim, input_dim] - 3rd order tensor
+        # Penalize any non-zero third derivatives → allows up to quadratic
+        return strength * (T ** 2).sum(dim=(1,2,3,4))  # [batch]
+
+    return pde
+
+
+def lipschitz_pde(max_norm: float = 1.0) -> Callable:
+    """
+    Create a PDE that enforces Lipschitz continuity via Jacobian norm.
+    Limits how fast the function can change: ||∇f|| ≤ max_norm.
+
+    Args:
+        max_norm: Maximum allowed spectral norm of Jacobian
+
+    Returns:
+        PDE function that penalizes when ||J|| > max_norm
+    """
+    def pde(y, x, J):
+        # J: [batch, output_dim, input_dim]
+        batch_residuals = []
+        for b in range(J.shape[0]):
+            spectral_norm = torch.linalg.matrix_norm(J[b], ord=2)
+            residual = torch.relu(spectral_norm - max_norm)  # Only penalize if > max_norm
+            batch_residuals.append(residual)
+        return torch.stack(batch_residuals)  # [batch]
+
+    return pde
