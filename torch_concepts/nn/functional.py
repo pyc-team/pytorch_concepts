@@ -1426,3 +1426,49 @@ def shared_concept_semantics_loss(
         # For "none", we'd need to track per-sample losses, which requires refactoring
         # For now, just return the loss as-is
         return loss
+
+def shared_concept_semantics_score(
+    preds: torch.Tensor,
+    target: torch.Tensor,
+    reduction: str = "mean"
+) -> float | torch.Tensor:
+    """Compute fraction of correctly ordered pairs based on target's ordering.
+
+    Args:
+        preds: [batch, num_concepts] tensor - predicted concepts
+        target: [batch, num_concepts] tensor - target concepts (defines ordering)
+        reduction: "mean" (default), "sum", or "none"
+
+    Returns:
+        Scalar float if reduction in ("mean", "sum"), else [num_concepts] tensor
+    """
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    batch_size = preds.size(0)
+    num_concepts = preds.size(1)
+
+    # For each concept, sort predictions according to target's order
+    # Get sorted indices for each concept dimension
+    sorted_indices = torch.argsort(target, dim=0)  # [batch, num_concepts]
+
+    # Gather predictions in the sorted order for each concept
+    # This is equivalent to: pred_sorted[i, c] = preds[sorted_indices[i, c], c]
+    pred_sorted = torch.gather(preds, 0, sorted_indices)  # [batch, num_concepts]
+
+    # Check consecutive differences for all concepts at once
+    diff_pred = torch.diff(pred_sorted, dim=0)  # [batch-1, num_concepts]
+
+    # Count how many pairs are correctly ordered (diff > 0) per concept
+    correct_per_concept = (diff_pred > 0).sum(dim=0)  # [num_concepts]
+    pairs_per_concept = batch_size - 1
+
+    # Compute metric per concept
+    metric_per_concept = correct_per_concept.float() / pairs_per_concept if pairs_per_concept > 0 else torch.ones(num_concepts)
+
+    if reduction == "mean":
+        return metric_per_concept.mean().item()
+    elif reduction == "sum":
+        return metric_per_concept.sum().item()
+    else:  # "none"
+        return metric_per_concept
