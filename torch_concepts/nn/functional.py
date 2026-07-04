@@ -1472,3 +1472,111 @@ def shared_concept_semantics_score(
         return metric_per_concept.sum().item()
     else:  # "none"
         return metric_per_concept
+
+
+def _effective_rank_energy(s: torch.Tensor, fraction: float = 0.99) -> int:
+    """Smallest k such that the top-k singular values capture ``fraction``
+    of the squared Frobenius norm.
+
+    More principled than an ``rtol`` cutoff when the spectrum decays
+    smoothly (no clean cliff to find). Equivalent to the "99% energy"
+    convention used in classical PCA dimensionality selection.
+
+    Args:
+        s: 1-D tensor of singular values (sorted descending).
+        fraction: Energy fraction in ``(0, 1]``.
+
+    Returns:
+        Effective rank in ``[1, len(s)]`` (or ``0`` if ``s`` is empty).
+    """
+    if s.numel() == 0:
+        return 0
+    s32 = s.float()
+    energy = (s32 ** 2).cumsum(0)
+    target = float(fraction) * float(energy[-1])
+    # First index whose cumulative energy reaches the target.
+    k = int((energy < target).sum().item()) + 1
+    return min(k, int(s.numel()))
+
+
+def prediction_concept_dependency_score(
+    preds_jacobian, concept_jacobian,
+    *,
+    method: str = "rtol",
+    rtol: float | None = None,
+    fraction: float = 0.99,
+    reduction: str = "mean",
+):
+    """Prediction-concept dependency: how much of preds_jacobian is captured by concept_jacobian?
+
+    Measures if concept_jacobian's row span contains preds_jacobian's row span.
+    Uses m² = 1 - ||Q_cᵀ Q_h||²_F / rank(Q_h) where Q_h, Q_c are orthonormal bases.
+
+    * m = 0: preds_jacobian fully contained in concept_jacobian
+    * m = 1: orthogonal subspaces
+
+    Args:
+        preds_jacobian: Shape [batch, num_outputs, input_dim]
+        concept_jacobian: Shape [batch, num_outputs, input_dim]
+        method: "rtol" or "energy" for rank truncation
+        rtol: Relative tolerance for "rtol" method
+        fraction: Energy fraction for "energy" method
+        reduction: "mean" (default), "sum", or "none" for per-sample metrics
+
+    Returns:
+        Tuple (metric, s_h, s_c):
+            - metric: scalar if reduction in ("mean", "sum"), else shape [batch]
+            - s_h: list of singular value tensors for preds_jacobian
+            - s_c: list of singular value tensors for concept_jacobian
+    """
+    if method not in ("rtol", "energy"):
+        raise ValueError(f"method must be 'rtol' or 'energy', got {method!r}.")
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    batch_size = preds_jacobian.shape[0]
+
+    def _basis(g):
+        # g has shape [num_outputs, input_dim] (single sample)
+        g_2d = g.float().reshape(-1, g.shape[-1])
+        u, s, _ = torch.linalg.svd(g_2d.T, full_matrices=False)
+        if s.numel() == 0:
+            d = g_2d.shape[-1]
+            return torch.zeros(d, 0, dtype=g_2d.dtype, device=g_2d.device), 0, s
+        if method == "energy":
+            r = _effective_rank_energy(s, fraction)
+        else:
+            tol = rtol if rtol is not None else (
+                max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
+            )
+            cutoff = float(s.max()) * tol
+            r = int((s > cutoff).sum().item())
+        return u[:, :r], r, s
+
+    metrics = []
+    s_h_list = []
+    s_c_list = []
+
+    for i in range(batch_size):
+        q_h, r_h, s_h = _basis(preds_jacobian[i])
+        q_c, _, s_c = _basis(concept_jacobian[i])
+
+        s_h_list.append(s_h)
+        s_c_list.append(s_c)
+
+        if r_h == 0:
+            # Degenerate: preds_jacobian has no signal → trivially contained.
+            metrics.append(torch.zeros((), dtype=q_h.dtype, device=q_h.device))
+        else:
+            overlap_sq = (q_c.T @ q_h).square().sum()                  # ||Q_cᵀ Q_h||²_F
+            m_sq = (1.0 - overlap_sq / float(r_h)).clamp(min=0.0)      # guard against tiny <0
+            metrics.append(m_sq.sqrt())
+
+    metric_tensor = torch.stack(metrics)
+
+    if reduction == "mean":
+        return metric_tensor.mean()
+    elif reduction == "sum":
+        return metric_tensor.sum()
+    else:  # "none"
+        return metric_tensor
