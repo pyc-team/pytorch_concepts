@@ -39,7 +39,7 @@ def resolve_steerling_configs(
     *,
     config_source: SteerlingConfigSource = "hub",
     model_id: str | None = None
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Resolve effective model/concept configs for Steerling wrappers.
 
     Picks the base configs from ``config_source`` (the
@@ -54,7 +54,7 @@ def resolve_steerling_configs(
     except ImportError as exc:
         raise ImportError(
             "loading configs requires the `steerling` package. "
-            "Install it or choose config_source='pyc' or 'hub'."
+            "Install it or choose config_source='hub'."
         ) from exc
     
     if config_source == "steerling":
@@ -64,7 +64,7 @@ def resolve_steerling_configs(
         except ImportError as exc:
             raise ImportError(
                 "config_source='steerling' requires the `steerling` package. "
-                "Install it or choose config_source='pyc' or 'hub'."
+                "Install it or choose config_source='hub'."
             ) from exc
         model_cfg = config_to_dict(CausalDiffusionConfig())
         concept_cfg = config_to_dict(ConceptConfig())
@@ -87,7 +87,9 @@ def resolve_steerling_configs(
 
         model_cfg = {k: v for k, v in cfg.items() if k in model_keys}
         concept_cfg = {k: v for k, v in cfg.items() if k in concept_keys}
-        concept_cfg['block_size'] = cfg.pop('concept_block_size')
+        concept_block_size = cfg.pop('concept_block_size', None)
+        if concept_block_size is not None:
+            concept_cfg['block_size'] = concept_block_size
         other_config = {k: v for k, v in cfg.items() if k not in model_cfg.keys() | concept_cfg.keys()}
 
     else:

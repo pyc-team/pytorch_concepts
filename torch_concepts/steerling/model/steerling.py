@@ -144,7 +144,7 @@ class SteerlingModel(SteerlingLowLevelModel):
                 f"known-concept CSV ({len(self.known_names)}), got {self.n_known}."
             )
         if self.concept_cfg['use_unknown']:
-            self.unknown_names = [f"unknow_{i}" for i in range(self.unknown_head.out_concepts)]
+            self.unknown_names = [f"unknown_{i}" for i in range(self.unknown_head.out_concepts)]
         else:
             self.unknown_names = []
 

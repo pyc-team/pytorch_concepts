@@ -146,7 +146,7 @@ class SteerlingLowLevelModel(nn.Module):
         # Steerling ships bf16 weights; constructing in float32 and loading the
         # bf16 checkpoint would transiently allocate a float32 copy of the 8B
         # backbone (~2x peak memory) plus a redundant down-cast afterwards.
-        dtype = getattr(torch, self.other_cfg.get("torch_dtype"))
+        dtype = getattr(torch, self.other_cfg.get("torch_dtype", "bfloat16"))
         with _default_dtype(dtype):
             self._build_modules()
 
