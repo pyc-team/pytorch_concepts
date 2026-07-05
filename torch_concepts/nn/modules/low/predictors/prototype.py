@@ -15,10 +15,9 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
     then uses concept weights from the encoder to produce final concept predictions.
 
     Args:
+        out_concepts: Number of output concepts (num_concepts).
         proto_samples: Tensor of shape [max_prototypes, num_concepts, n_features] - prototype feature vectors.
         proto_scores: Tensor of shape [max_prototypes, num_concepts] - scores for sorting prototypes.
-        out_concepts: Number of output concepts (num_concepts).
-        in_embeddings: Number of input embedding features (optional, inferred from proto_samples if not provided).
         learnable_prototypes: Whether prototypes should be learnable parameters.
         temperature: Temperature for backward pass (default: 1.0).
         temp_forward: Temperature for forward pass (default: 0.01).
@@ -28,27 +27,19 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
         >>> proto_samples = torch.randn(10, 100, 50)  # 10 prototypes, 100 concepts, 50 features
         >>> proto_scores = torch.randn(10, 100)
         >>> predictor = PrototypeConceptEmbeddingToConcept(
+        ...     out_concepts=100,
         ...     proto_samples=proto_samples,
         ...     proto_scores=proto_scores,
-        ...     out_concepts=100
         ... )
-        >>> concepts = torch.randn(1, 100, 10)  # From encoder
+        >>> concepts = torch.randn(10, 100)  # From encoder
         >>> embeddings = torch.randn(32, 50)  # Batch of 32
         >>> output = predictor(concepts, embeddings)  # [32, 100]
-
-    Forward:
-        Args:
-            concepts: Tensor of shape [1, num_concepts, max_prototypes] - weights from CumulativeWeightsToConcept.
-            embeddings: Tensor of shape [batch, n_features] - input embeddings.
-        Returns:
-            torch.Tensor: Tensor of shape [batch, num_concepts] - aggregated concept predictions.
     """
     def __init__(
         self,
+        out_concepts: Union[int, Annotations],
         proto_samples: torch.Tensor,
         proto_scores: torch.Tensor,
-        out_concepts: Union[int, Annotations],
-        in_embeddings: Union[int, Annotations] = None,
         learnable_prototypes: bool = False,
         temperature: float = 1.0,
         temp_forward: Optional[float] = None,
@@ -57,10 +48,8 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
         **kwargs
     ):
         max_prototypes, num_concepts, n_features = proto_samples.shape
-
-        # Infer in_embeddings if not provided
-        if in_embeddings is None:
-            in_embeddings = n_features
+        # Infer in_embeddings
+        in_embeddings = n_features
 
         super().__init__(
             out_concepts=out_concepts,
@@ -114,16 +103,16 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
         Aggregate concept weights with embeddings via prototype similarity.
 
         Args:
-            concepts: Tensor of shape [1, num_concepts, max_prototypes] - cumulative weights from encoder.
-            embeddings: Tensor of shape [batch, n_features] - input embeddings.
+            concepts: Tensor of shape [max_prototypes, num_concepts].
+            embeddings: Tensor of shape [batch, n_features].
 
         Returns:
             torch.Tensor: Tensor of shape [batch, num_concepts] - final concept predictions.
         """
-        batch_size = embeddings.shape[0]
+        assert self.max_prototypes == concepts.shape[0], \
+            f"Expected concepts to have shape [{self.max_prototypes}, {self.num_concepts}], got {concepts.shape}"
 
-        # Remove batch dimension to get [num_concepts, max_prototypes]
-        cumulative_weights = concepts.squeeze(0)  # [num_concepts, max_prototypes]
+        batch_size = embeddings.shape[0]
 
         # Compute similarities between embeddings and prototypes
         # embeddings: [batch, n_features] -> [batch, 1, 1, n_features]
@@ -154,6 +143,6 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
         # Weighted sum over prototypes
         # similarity: [batch, num_concepts, max_prototypes]
         # cumulative_weights: [num_concepts, max_prototypes]
-        output = (similarity * cumulative_weights.unsqueeze(0)).sum(dim=2)  # [batch, num_concepts]
+        output = (similarity * concepts.T.unsqueeze(0)).sum(dim=2)  # [batch, num_concepts]
 
         return output

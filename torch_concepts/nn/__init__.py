@@ -25,7 +25,7 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
-from .modules.low.encoders.prototype import CumulativeWeightsToConcept
+from .modules.low.encoders.prototype import MonotonicScoresEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
@@ -123,12 +123,14 @@ __all__ = [
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "MonotonicScoresEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
+    "PrototypeConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",

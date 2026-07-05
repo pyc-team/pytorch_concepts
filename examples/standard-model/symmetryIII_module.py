@@ -3,14 +3,14 @@ import torch.nn.functional as F
 from typing import Union, Optional
 from sklearn.metrics import accuracy_score
 
-from torch_concepts.nn import CumulativeWeightsToConcept, PrototypeConceptEmbeddingToConcept
+from torch_concepts.nn import MonotonicScoresEmbeddingToConcept, PrototypeConceptEmbeddingToConcept
 
 
 class InstanceBasedArchitecture(torch.nn.Module):
     """
     Complete instance-based architecture combining encoder and predictor.
 
-    This is a convenience wrapper that combines CumulativeWeightsToConcept
+    This is a convenience wrapper that combines MonotonicScoresEmbeddingToConcept
     and PrototypeConceptEmbeddingToConcept into a single module.
 
     Args:
@@ -43,10 +43,11 @@ class InstanceBasedArchitecture(torch.nn.Module):
 
         max_prototypes, num_concepts, n_features = proto_samples.shape
 
-        self.encoder = CumulativeWeightsToConcept(
+        self.embeddings = torch.nn.Embedding(max_prototypes, rank_dim)
+
+        self.encoder = MonotonicScoresEmbeddingToConcept(
+            in_embeddings=rank_dim,
             out_concepts=num_concepts,
-            max_prototypes=max_prototypes,
-            rank_dim=rank_dim
         )
 
         self.predictor = PrototypeConceptEmbeddingToConcept(
@@ -65,7 +66,7 @@ class InstanceBasedArchitecture(torch.nn.Module):
 
         # Expose prototypes for compatibility
         self.prototypes = self.predictor.prototypes
-        self.embedding = self.encoder.embedding
+        self.embedding = self.embeddings
         self.projection = self.encoder.projection
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -79,7 +80,7 @@ class InstanceBasedArchitecture(torch.nn.Module):
             torch.Tensor: Tensor of shape [batch, num_concepts] - concept predictions.
         """
         # Generate concept weights
-        concepts = self.encoder()  # [1, num_concepts, max_prototypes]
+        concepts = self.encoder(self.embeddings.weight)  # [1, num_concepts, max_prototypes]
 
         # Aggregate with embeddings
         output = self.predictor(concepts, x)  # [batch, num_concepts]
