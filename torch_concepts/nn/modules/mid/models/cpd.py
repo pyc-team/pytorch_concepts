@@ -339,16 +339,21 @@ class ParametricCPD(ParametricFactor):
         return result
 
     def root_params(self, batch_size: int) -> Dict[str, torch.Tensor]:
-        """Root (parent-less) params broadcast to a batch.
+        """Root (parent-less) params, broadcast to a batch by default.
 
         A root CPD's parametrization produces a single batch-less prior; this runs
         it and expands each parameter to ``(batch_size, *param_shape)`` so the
-        engine doesn't have to. Only meaningful for root CPDs.
+        engine doesn't have to. A prior module may opt out by setting
+        ``broadcast=False`` (e.g. a matrix shared across the batch that should stay
+        unbatched and broadcast downstream). Only meaningful for root CPDs.
         """
-        return {
-            key: value.unsqueeze(0).expand(batch_size, *value.shape)
-            for key, value in self(parent_values={}).items()
-        }
+        out: Dict[str, torch.Tensor] = {}
+        for key, module in self.parametrization.items():
+            value = module()
+            if getattr(module, "broadcast", True):
+                value = value.unsqueeze(0).expand(batch_size, *value.shape)
+            out[key] = value
+        return out
 
     # ---- member addressing (a plate produces all members; these slice) ------
     # ``forward`` runs once and returns the whole stacked output; the methods

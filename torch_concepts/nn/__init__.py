@@ -21,7 +21,7 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
 # Priors (root-CPD parametrizations)
-from .modules.low.priors import LearnablePrior, FixedPrior
+from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
@@ -115,6 +115,7 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+    "TiedPrior",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
