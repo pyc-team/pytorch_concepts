@@ -189,7 +189,7 @@ class TestParametricCPDForwardRoot:
 
     def test_root_fixed_probs(self):
         v = _bernoulli_var(size=2)
-        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior([0.3, 0.7])})
+        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
         out = cpd(parent_values={})
         assert "probs" in out
         assert torch.allclose(out["probs"], torch.tensor([0.3, 0.7]))
@@ -257,7 +257,7 @@ class TestParametricCPDForwardNonRoot:
 class TestRootParams:
     def test_root_params_expands_batch(self):
         v = _bernoulli_var(size=3)
-        prior = FixedPrior([0.1, 0.5, 0.9])
+        prior = FixedPrior(torch.tensor([0.1, 0.5, 0.9]))
         cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
         params = cpd.root_params(batch_size=7)
         assert "probs" in params
@@ -265,7 +265,7 @@ class TestRootParams:
 
     def test_root_params_values_correct(self):
         v = _bernoulli_var(size=2)
-        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior([0.3, 0.7])})
+        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
         params = cpd.root_params(batch_size=4)
         expected = torch.tensor([0.3, 0.7]).expand(4, 2)
         assert torch.allclose(params["probs"], expected)
@@ -438,7 +438,7 @@ class TestCPDIntegration:
 
     def test_root_params_then_select(self):
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
-        cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior([0.3, 0.7])})
+        cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
         params = cpd.root_params(batch_size=4)
         a_params = cpd.select(params, "a")
         assert torch.allclose(a_params["probs"], torch.full((4, 1), 0.3))
