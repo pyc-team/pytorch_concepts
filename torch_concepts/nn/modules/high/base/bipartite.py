@@ -21,7 +21,7 @@ import pandas as pd
 import torch
 
 from .....concept_graph import ConceptGraph
-from .....data.utils import ensure_list
+from .....utils import ensure_list
 from .graph import DirectedGraphModel
 
 

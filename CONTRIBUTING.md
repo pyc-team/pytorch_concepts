@@ -1,8 +1,6 @@
 # Contributing to PyC
 
-We welcome contributions to PyC! This guide will help you contribute effectively.
-
-Thank you for your interest in contributing! The PyC Team welcomes all contributions, whether small bug fixes or major features.
+Thank you for your interest in contributing! The PyC Team welcomes all contributions, from small bug fixes to major features.
 
 ## Join Our Community
 
@@ -10,41 +8,44 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
 
 [![Slack](https://img.shields.io/badge/Slack-Join%20Us-4A154B?style=for-the-badge&logo=slack)](https://join.slack.com/t/pyc-yu37757/shared_invite/zt-3jdcsex5t-LqkU6Plj5rxFemh5bRhe_Q)
 
-## How to Contribute
+## Ways to Contribute
 
-1. **Fork the repository** — Create your own fork of the [PyC repository](https://github.com/pyc-team/pytorch_concepts) on GitHub.
+- **Report a bug or request a feature** — open an issue (see [Reporting Issues](#reporting-issues)).
+- **Improve the documentation** — fix typos, clarify docstrings, or expand the guides.
+- **Add a new component** — PyC is built to be extended. Each component type has a step-by-step implementation guide in the documentation:
+  - [**New Layer**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_layer.html) — a semantics-aware Low-Level API layer.
+  - [**New Model**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_model.html) — a concept-based model for the High-Level API.
+  - [**New Dataset**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_dataset.html) — a dataset and datamodule with concept annotations.
+  - [**New Loss**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_loss.html) — a loss compatible with `ConceptLoss`.
+  - [**New Metric**](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_metric.html) — a metric compatible with `ConceptMetrics`.
 
-2. **Create your branch from `dev`** — Clone your fork and create a new branch based on the upstream `dev` branch to track the latest changes:
+## Development Workflow
+
+1. **Set up your environment** — install PyC in editable mode with all dependencies:
 
    ```bash
    git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
    cd pytorch_concepts
    git remote add upstream https://github.com/pyc-team/pytorch_concepts.git
+   # create and activate the conda environment (use environment_silicon.yaml on Apple Silicon)
+   conda env create -f conceptarium/environment.yaml
+   conda activate conceptarium
+   # install your local pyc in editable mode
+   pip install -e .
+   ```
+
+2. **Branch from `dev`** — base your work on the latest upstream `dev`:
+
+   ```bash
    git fetch upstream
    git checkout -b my-feature upstream/dev
    ```
 
-3. **Make your changes** — Implement your changes locally with clear, descriptive commit messages. Use [Gitmoji](https://gitmoji.dev/) for better clarity (e.g., `✨ Add new feature`).
+3. **Make your changes** — write clear, descriptive commit messages. We use [Gitmoji](https://gitmoji.dev/) (e.g., `✨ Add new feature`). If you are adding a component, follow its [implementation guide](#ways-to-contribute).
 
-4. **Write documentation & tests** — Update docstrings and `.rst` files, add unit tests, and verify all tests pass locally.
+4. **Add tests and docs** — add unit tests, update docstrings and `.rst` files, and verify everything passes locally.
 
-5. **Submit a Pull Request** — Push your branch and open a PR to the `dev` branch.
-
-## Development Setup
-
-### Installation
-
-For development, you may want to install PyC in editable mode and have the complete conda environment with all dependencies to test all functionalities:
-
-```bash
-git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
-cd pytorch_concepts
-# install and activate conda environment (use environment_silicon for Apple Silicon chips)
-conda env create -f conceptarium/environment.yaml
-conda activate conceptarium
-# install your local pyc
-pip install -e .
-```
+5. **Open a pull request** — push your branch and open a PR targeting `dev` (not `master`).
 
 ## Reporting Issues
 

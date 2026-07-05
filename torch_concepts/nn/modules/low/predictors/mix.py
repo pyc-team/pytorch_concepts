@@ -150,7 +150,7 @@ class MixSumConceptEmbeddingToConcept(MixConceptEmbeddingToConcept):
         in_concepts: int,
         in_embeddings: int,
         out_concepts: int,
-        cardinalities: list[int] | None = None,
+        cardinalities: list[int] = None,
         bias: bool = True,
         **kwargs
     ):

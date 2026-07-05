@@ -1061,7 +1061,10 @@ class TestBaseInferenceDirect:
 # ===========================================================================
 
 from torch_concepts.nn.modules.mid.inference.utils import make_temperature_schedule
-from torch_concepts.nn.modules.mid.inference.torch.utils import build_relaxed_distribution
+from torch_concepts.nn.modules.mid.inference.torch.utils import (
+    build_relaxed_distribution,
+    propagated_value,
+)
 
 
 class TestMakeTemperatureSchedule:
@@ -1095,3 +1098,89 @@ class TestMakeTemperatureSchedule:
         schedule = make_temperature_schedule(0.5, "constant", 0.0)
         assert schedule(0) == pytest.approx(0.5)
         assert schedule(100) == pytest.approx(0.5)
+
+
+# ===========================================================================
+# 19. build_relaxed_distribution — relaxed-family variables
+# ===========================================================================
+
+class TestBuildRelaxedDistribution:
+    _T = torch.tensor(0.5)
+
+    def _var(self, family, size=2, members=None):
+        return ConceptVariable("v", distribution=family, size=size, members=members)
+
+    def test_bernoulli_returns_independent(self):
+        v = self._var(dist.Bernoulli)
+        d = build_relaxed_distribution(v, {"probs": torch.full((1, 2), 0.5)}, self._T)
+        assert isinstance(d, dist.Independent)
+
+    def test_relaxed_bernoulli_declared_returns_independent(self):
+        """Variable declared as RelaxedBernoulli should yield the same surrogate."""
+        v = self._var(dist.RelaxedBernoulli)
+        d = build_relaxed_distribution(v, {"probs": torch.full((1, 2), 0.5)}, self._T)
+        assert isinstance(d, dist.Independent)
+
+    def test_onehot_categorical_returns_relaxed_onehot(self):
+        v = self._var(dist.OneHotCategorical, size=3)
+        d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
+        assert isinstance(d, dist.RelaxedOneHotCategorical)
+
+    def test_relaxed_onehot_declared_returns_relaxed_onehot(self):
+        """Variable declared as RelaxedOneHotCategorical should resolve to the same family."""
+        v = self._var(dist.RelaxedOneHotCategorical, size=3)
+        d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
+        assert isinstance(d, dist.RelaxedOneHotCategorical)
+
+    def test_categorical_raises(self):
+        v = self._var(dist.Categorical, size=3)
+        with pytest.raises(ValueError, match="OneHotCategorical"):
+            build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
+
+    def test_rsample_differentiable_bernoulli(self):
+        v = self._var(dist.Bernoulli)
+        probs = torch.full((1, 2), 0.5, requires_grad=True)
+        d = build_relaxed_distribution(v, {"probs": probs}, self._T)
+        s = d.rsample()
+        s.sum().backward()
+        assert probs.grad is not None
+
+    def test_rsample_differentiable_relaxed_bernoulli(self):
+        v = self._var(dist.RelaxedBernoulli)
+        probs = torch.full((1, 2), 0.5, requires_grad=True)
+        d = build_relaxed_distribution(v, {"probs": probs}, self._T)
+        s = d.rsample()
+        s.sum().backward()
+        assert probs.grad is not None
+
+
+# ===========================================================================
+# 20. propagated_value — new relaxed entries in _PRIMARY_PARAM
+# ===========================================================================
+
+class TestPropagatedValue:
+    def test_bernoulli_probs(self):
+        p = torch.tensor([[0.3, 0.7]])
+        assert torch.allclose(propagated_value(dist.Bernoulli, {"probs": p}), p)
+
+    def test_bernoulli_logits_fallback(self):
+        lg = torch.zeros(1, 2)
+        assert torch.allclose(propagated_value(dist.Bernoulli, {"logits": lg}), lg)
+
+    def test_relaxed_bernoulli_probs(self):
+        """RelaxedBernoulli is in _PRIMARY_PARAM — should resolve to probs."""
+        p = torch.tensor([[0.4, 0.6]])
+        assert torch.allclose(propagated_value(dist.RelaxedBernoulli, {"probs": p}), p)
+
+    def test_relaxed_onehot_probs(self):
+        """RelaxedOneHotCategorical is in _PRIMARY_PARAM — should resolve to probs."""
+        p = torch.ones(1, 3) / 3
+        assert torch.allclose(propagated_value(dist.RelaxedOneHotCategorical, {"probs": p}), p)
+
+    def test_normal_loc(self):
+        loc = torch.zeros(1, 2)
+        assert torch.allclose(propagated_value(dist.Normal, {"loc": loc}), loc)
+
+    def test_unsupported_raises(self):
+        with pytest.raises(ValueError, match="Unsupported distribution"):
+            propagated_value(dist.Poisson, {"rate": torch.ones(1, 1)})

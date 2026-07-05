@@ -57,14 +57,19 @@ def build_relaxed_distribution(
     preserves torch's global setting for callers that only ``rsample``.
     """
     D = variable.distribution
-    if issubclass(D, dist.Bernoulli):
+    # A variable may be declared with either the base family (Bernoulli,
+    # OneHotCategorical) or its relaxed counterpart — both resolve to the same
+    # reparameterised surrogate here, with the engine supplying ``temperature``
+    # (a relaxed distribution is a TransformedDistribution, not a subclass of
+    # its base, so each case must be matched explicitly).
+    if issubclass(D, (dist.Bernoulli, dist.RelaxedBernoulli)):
         # Pass whichever key the user provided (probs or logits) directly.
         # Params are flat (*batch, size); reinterpret the single size axis as
         # the event so batch_shape stays (*batch,). The variable's declared
         # shape is restored on the sampled realization, not here.
         d = dist.RelaxedBernoulli(temperature=temperature, **params, validate_args=validate_args)
         return dist.Independent(d, 1, validate_args=validate_args)
-    if issubclass(D, dist.OneHotCategorical):
+    if issubclass(D, (dist.OneHotCategorical, dist.RelaxedOneHotCategorical)):
         return dist.RelaxedOneHotCategorical(temperature=temperature, **params, validate_args=validate_args)
     if issubclass(D, dist.Categorical):
         raise ValueError(
