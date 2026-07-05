@@ -32,8 +32,8 @@ from torch_concepts.nn import (
 )
 from torch_concepts.nn.modules.outputs import logits_from_params
 
-from ...steerling.model.steerling_low import SteerlingLowLevelModel
-from ..steerling_utils import (
+from .steerling_low import SteerlingLowLevelModel
+from .steerling_utils import (
     load_steerling_concept_names,
     top_concepts,
 )

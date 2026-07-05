@@ -18,19 +18,19 @@ from contextlib import contextmanager
 import torch
 import torch.nn as nn
 
-from ..steerling_backbone import CausalDiffusionTextBackbone
-from ..steerling_configs import (
+from .steerling_backbone import CausalDiffusionTextBackbone
+from .steerling_configs import (
     DEFAULT_MODEL_ID,
     SteerlingConfigSource,
     resolve_steerling_configs,
 )
-from ..steerling_layers import (
+from .steerling_layers import (
     SteerlingEmbeddingToConcept,
     SteerlingConceptEmbeddingMixer,
     SteerlingResidualCorrection
 )
-from ...nn import LinearEmbeddingToConcept 
-from ..steerling_utils import (
+from ..... import LinearEmbeddingToConcept 
+from .steerling_utils import (
     load_steerling_weights,
     _load_lm_head_weights,
     load_steerling_concept_names,

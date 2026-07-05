@@ -16,7 +16,7 @@ Note:
 
 import torch
 import pandas as pd
-from torch_concepts.steerling import SteerlingModel, top_concepts
+from torch_concepts.nn.modules.high.models.steerling import SteerlingModel, top_concepts
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 

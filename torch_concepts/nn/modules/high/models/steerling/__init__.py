@@ -10,7 +10,7 @@ import os
 import warnings
 
 try:
-    import conceptarium.env  # noqa: F401 — seeds HF_TOKEN into os.environ
+    import conceptarium.env
 except ImportError:
     if not os.environ.get("HF_TOKEN") and not os.environ.get("HUGGINGFACE_HUB_TOKEN"):
         warnings.warn(
@@ -32,15 +32,15 @@ from .steerling_utils import (
 from .steerling_configs import (
     DEFAULT_MODEL_ID,
 )
-from .model.steerling_low import SteerlingLowLevelModel
-from .model.steerling import SteerlingModel
+from .steerling_low import SteerlingLowLevelModel
+from .steerling import SteerlingModel
 
 __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
     "KNOWN_CONCEPTS_URL",
     "top_concepts",
+    "SteerlingLowLevelModel",
     # out-of-the-box model
     "SteerlingModel",
-    "SteerlingLowLevelModel",
 ]
