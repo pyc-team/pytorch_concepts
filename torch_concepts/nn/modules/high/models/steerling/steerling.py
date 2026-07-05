@@ -18,19 +18,16 @@ from torch.distributions import Bernoulli, OneHotCategorical
 
 import pandas as pd
 
-from torch_concepts.distributions import Delta
-from torch_concepts import ConceptGraph, ConceptVariable, EmbeddingVariable
-from torch_concepts.annotations import Annotations
-from torch_concepts.nn import (
-    BaseInference,
-    BayesianNetwork,
-    DeterministicInference,
-    FixedPrior,
-    ModelOutput,
-    ParametricCPD,
-    TiedPrior,
-)
-from torch_concepts.nn.modules.outputs import logits_from_params
+from ......distributions import Delta
+from ......concept_graph import ConceptGraph
+from ......annotations import Annotations
+from ....mid.models.variable import ConceptVariable, EmbeddingVariable
+from ....mid.models.bayesian_network import BayesianNetwork
+from ....mid.models.cpd import ParametricCPD
+from ....mid.inference.base import BaseInference
+from ....mid.inference.torch.deterministic import DeterministicInference
+from ....low.priors import FixedPrior, TiedPrior
+from .....modules.outputs import ModelOutput, logits_from_params
 
 from .steerling_low import SteerlingLowLevelModel
 from .steerling_utils import (
@@ -123,8 +120,7 @@ class SteerlingModel(SteerlingLowLevelModel):
 
         # Concept annotations are derived from the concept heads, whose concept
         # structure is fixed once those heads are pretrained. Refuse a
-        # caller-supplied annotations/graph in that case rather than silently
-        # ignoring it.
+        # caller-supplied annotations/graph in that case.
         concept_pretrained = [
             component
             for component in ("known_head", "unknown_head")

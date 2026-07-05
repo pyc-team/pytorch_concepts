@@ -124,7 +124,7 @@ class SteerlingEmbeddingToConcept(BaseConceptLayer):
 
     def forward(
         self,
-        latent: torch.Tensor,
+        embeddings: torch.Tensor,
     ) -> torch.Tensor:
         """Compute dense raw concept logits.
 
@@ -133,7 +133,7 @@ class SteerlingEmbeddingToConcept(BaseConceptLayer):
         - **Linear, dense** (``use_attention=False, factorize=False``): a single
           ``concept_predictor`` matmul.
         - **Linear, factorized** (``use_attention=False, factorize=True``): scored in
-          rank-``r`` space as ``(latent @ down.T) @ up.T``, so the full ``(C, D)``
+          rank-``r`` space as ``(embeddings @ down.T) @ up.T``, so the full ``(C, D)``
           predictor weight is **never materialized** — this is what keeps the large
           unknown head cheap.
         - **Attention** (``use_attention=True``): scores the query against the concept
@@ -157,7 +157,7 @@ class SteerlingEmbeddingToConcept(BaseConceptLayer):
 
         To match Steerling bit-for-bit instead, you would: (1) return fp32 logits
         here, upcasting before the matmul — ``(h_r.float() @ up_w.float().T)`` /
-        ``(latent.float() @ W.float().T)``; (2) apply the external sigmoid in fp32;
+        ``(embeddings.float() @ W.float().T)``; (2) apply the external sigmoid in fp32;
         (3) in the mixer, ``torch.topk`` on the fp32 weights and cast to bf16 only at
         the weighted-sum einsum. Even then the dense (known) head's top-k ranking can
         differ at the k-boundary, because Steerling ranks on a bf16 matmul in pass 1
@@ -165,34 +165,36 @@ class SteerlingEmbeddingToConcept(BaseConceptLayer):
         single-logit decomposition here does not reproduce.
 
         Args:
-            latent: Hidden states with shape ``(batch, in_latent)`` or
-                ``(batch, sequence, in_latent)``.
+            embeddings: Input embeddings (transformer hidden states) with shape
+                ``(batch, in_embeddings)`` or ``(batch, sequence, in_embeddings)``.
 
         Returns:
             Dense logits with shape ``(batch, out_concepts)`` for 2-D input or
             ``(batch, sequence, out_concepts)`` for 3-D input.
         """
-        squeeze = latent.dim() == 2
+        squeeze = embeddings.dim() == 2
         if squeeze:
-            latent = latent.unsqueeze(1)
+            embeddings = embeddings.unsqueeze(1)
 
         if self.head.use_attention:
-            embeddings = self.head._get_embedding_weight()[:self.out_concepts]
-            query = self.head.concept_query_projection(latent)
+            # Per-concept embeddings (the concept embedding matrix), distinct from
+            # the input `embeddings`: attention scores the query against these.
+            concept_embeddings = self.head._get_embedding_weight()[:self.out_concepts]
+            query = self.head.concept_query_projection(embeddings)
             logits = self.head.blocked_logits(
                 query,
-                embeddings,
+                concept_embeddings,
                 block_size=int(self.head.block_size),
-            ).to(latent.dtype)
+            ).to(embeddings.dtype)
         elif self.head.factorize:
             # Score in rank-r space instead of materializing the full (C, D) predictor
-            # weight: logits = latent @ (up @ down).T = (latent @ down.T) @ up.T.
+            # weight: logits = embeddings @ (up @ down).T = (embeddings @ down.T) @ up.T.
             down_w = self.head.predictor_down.weight              # (r, D)
             up_w = self.head.predictor_up.weight[:self.out_concepts]  # (C, r)
-            h_r = latent @ down_w.T                               # (B, T, r)
+            h_r = embeddings @ down_w.T                           # (B, T, r)
             logits = (h_r @ up_w.T).clamp(-15, 15)                # (B, T, C)
         else:
-            logits = self.head.concept_predictor(latent)[..., :self.out_concepts].clamp(-15, 15)
+            logits = self.head.concept_predictor(embeddings)[..., :self.out_concepts].clamp(-15, 15)
 
         return logits.squeeze(1) if squeeze else logits
 
@@ -420,7 +422,10 @@ class SteerlingResidualCorrection(nn.Module):
                     f"stop_grad_parts index {idx} out of range [0, {n_terms})."
                 )
 
-    def forward(self, inputs) -> torch.Tensor:
+    def forward(
+        self, 
+        inputs: list[torch.Tensor]
+    ) -> torch.Tensor:
         """Aggregate the parent set ``[target, *parts]`` into :math:`\\varepsilon`.
 
         Args:
