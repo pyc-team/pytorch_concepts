@@ -45,10 +45,26 @@ def make_temperature_schedule(
 def reshape_value_to_event(
     variable: Variable, value: torch.Tensor
 ) -> torch.Tensor:
-    """Reshape a variable's *realization* from flat ``(batch, size)`` to
-    ``(batch, *variable.shape)``.
+    """Reshape a realization to ``(*batch, *variable.shape)``.
+
+    Leading dims are the batch and may have any rank (``(B,)``, ``(B, T)``, ...);
+    the trailing dims are the event. Two input layouts are accepted:
+
+    * already event-shaped ``(*batch, *event)`` — returned unchanged;
+    * flat ``(*batch, size)`` — the single trailing axis holds the flattened
+      event and is reshaped to ``variable.shape``.
     """
-    return value.reshape(value.shape[0], *variable.shape)
+    event = tuple(variable.shape)
+    if not event:
+        return value
+    n = len(event)
+    # Already event-shaped iff the last ``n`` dims equal the event shape. Match
+    # by shape, not numel: e.g. events ``(1, 8)`` and ``(8,)`` have equal numel
+    # but are different shapes.
+    if value.dim() >= n and tuple(value.shape[-n:]) == event:
+        return value
+    # Otherwise the trailing axis is the flattened event; expand it.
+    return value.reshape(*value.shape[:-1], *event)
 
 
 def build_distribution(

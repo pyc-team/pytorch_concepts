@@ -86,10 +86,19 @@ class BaseInference(nn.Module):
 
         all_tensors = {name: val for name, val in query.items() if val is not None}
         all_tensors.update(evidence)
-        batch_sizes = {name: t.shape[0] for name, t in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
-            shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
-            raise ValueError(f"{self.name}: mismatched batch sizes {shapes}.")
+        # Batch shape = leading dims beyond each variable's event. Require the
+        # batch shapes to be mutually broadcastable — torch's standard
+        # broadcasting rule (torch.broadcast_shapes) — so batch-less constants
+        # (e.g. a shared embedding matrix) and size-1 dims are allowed, while
+        # genuinely incompatible batches (e.g. 2 vs 3) raise.
+        batch_shapes = {
+            name: tuple(t.shape[: t.ndim - len(self.pgm.resolve(name).shape)])
+            for name, t in all_tensors.items()
+        }
+        try:
+            torch.broadcast_shapes(*batch_shapes.values())
+        except RuntimeError:
+            raise ValueError(f"{self.name}: mismatched batch sizes {batch_shapes}.")
 
     @staticmethod
     def _normalize_query(

@@ -144,15 +144,19 @@ class ForwardInference(TorchBaseInference):
         """Cast and reshape an observed value to the cached-value contract.
 
         Evidence bypasses the CPD, so there is no network output to align
-        against: the value is cast to the PGM's parameter dtype (what child
-        CPDs expect as input) and reshaped to ``(batch, *variable.shape)``.
-        A numel mismatch raises instead of silently broadcasting.
+        against: a *floating-point* value is cast to the PGM's parameter dtype
+        (what child CPDs expect as input) and the value is reshaped to
+        ``(*batch, *variable.shape)``. Non-floating evidence (e.g. integer token
+        ids feeding an embedding lookup) keeps its dtype. 
+        A numel mismatch raises instead of broadcasting.
         """
-        try:
-            dtype = next(self.pgm.parameters()).dtype
-        except StopIteration:
-            dtype = torch.get_default_dtype()
-        return reshape_value_to_event(variable, value.to(dtype))
+        if value.is_floating_point():
+            try:
+                dtype = next(self.pgm.parameters()).dtype
+            except StopIteration:
+                dtype = torch.get_default_dtype()
+            value = value.to(dtype)
+        return reshape_value_to_event(variable, value)
 
     def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.
