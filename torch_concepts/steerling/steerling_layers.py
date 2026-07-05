@@ -94,6 +94,30 @@ class SteerlingEmbeddingToConcept(BaseConceptLayer):
             return coef, basis
         return self.head.concept_embedding.weight[idxs]
 
+    def embeddings_shape(self, cat_factorized: bool = False) -> torch.Size:
+        """Shape of :meth:`embeddings` without materializing it.
+
+        Read straight from the parameter shapes, so no embedding tensor (and, for
+        the factorized layout, no ``torch.cat``) is allocated.
+
+        Args:
+            cat_factorized: Same meaning as in :meth:`embeddings`. Required to be
+                ``True`` for a factorized head (the ``cat_factorized=False`` case
+                returns a ``(coef, basis)`` tuple, which has no single shape).
+
+        Returns:
+            The shape :meth:`embeddings` would return.
+        """
+        if self.head.factorize:
+            in_embeddings, rank = self.head.embedding_basis.weight.shape
+            if not cat_factorized:
+                raise ValueError(
+                    "embeddings_shape is undefined for a factorized head with "
+                    "cat_factorized=False: embeddings() returns a (coef, basis) tuple."
+                )
+            return torch.Size((self.out_concepts + in_embeddings, rank))
+        return torch.Size((self.out_concepts, self.head.concept_embedding.weight.shape[1]))
+
     # ------------------------------------------------------------------
     # Forward
     # ------------------------------------------------------------------

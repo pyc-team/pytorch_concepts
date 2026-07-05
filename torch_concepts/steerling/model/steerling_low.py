@@ -310,13 +310,11 @@ class SteerlingLowLevelModel(nn.Module):
         if "lm_head" in pretrained:
             weight_sharing = bool(self.model_cfg.get("weight_sharing", False))
             if weight_sharing and "backbone" in pretrained:
-                # `self.lm_head` aliases `transformer.lm_head`, whose weight is
-                # tied to `tok_emb.weight`.  The backbone load above (followed
-                # by the defensive re-tie) already populated it; an explicit
-                # load would just overwrite the shared tensor with itself.
-                logger.info(
-                    "Skipped LM head weight load (tied to tok_emb, loaded with backbone)."
-                )
+                # Under weight sharing the checkpoint omits `lm_head.weight` (tied
+                # to `tok_emb.weight`). Tie our LM head to the backbone's shared
+                # lm_head tensor so it uses the trained weights, not its init.
+                self.lm_head.encoder.weight = self.backbone.transformer.lm_head.weight
+                logger.info("Tied LM head weight to the backbone's shared lm_head.")
             else:
                 lm_head_sd = _load_lm_head_weights(model_id, device="cpu")
                 self._load_state_dict(self.lm_head, lm_head_sd, "lm_head")
@@ -442,12 +440,23 @@ class SteerlingLowLevelModel(nn.Module):
     def known_embeddings(self) -> torch.Tensor:
         """Known concept embeddings ``(n_known, embedding_dim)``."""
         return self.known_head.embeddings()
-    
+
     def unknown_embeddings(self, cat_factorized: bool = False) -> torch.Tensor | None:
         """Unknown concept embeddings (packed factorized when applicable)."""
         if self.unknown_head is None:
             return None
         return self.unknown_head.embeddings(cat_factorized=cat_factorized)
+
+    @property
+    def known_embeddings_shape(self) -> torch.Size:
+        """Shape of :meth:`known_embeddings`, without materializing it."""
+        return self.known_head.embeddings_shape()
+
+    def unknown_embeddings_shape(self, cat_factorized: bool = False) -> torch.Size | None:
+        """Shape of :meth:`unknown_embeddings`, without materializing it."""
+        if self.unknown_head is None:
+            return None
+        return self.unknown_head.embeddings_shape(cat_factorized=cat_factorized)
 
     @property
     def concept_names(self) -> list[str]:
@@ -487,7 +496,7 @@ class SteerlingLowLevelModel(nn.Module):
         k_hat = self.known_concept_mixer(torch.sigmoid(k), k_embs)
 
         u = u_hat = None
-        if self.has_unknown:
+        if self.unknown_head is not None:
             # Detach so unknown loss can't back-prop into the transformer.
             u = self.unknown_head(h.detach())
             u_embs = self.unknown_embeddings(cat_factorized=True)
@@ -518,11 +527,23 @@ class SteerlingLowLevelModel(nn.Module):
     ) -> tuple[torch.Tensor, torch.BoolTensor, torch.BoolTensor]:
         """Build the ``[prompt | MASK × N]`` input tensor for generation.
 
+        Mirrors the reference Steerling generation setup: a single prompt, no
+        padding (Steerling generates one prompt at a time — its backbone has no
+        attention-mask input, so batched/unequal-length prompts are not
+        supported).
+
         Returns:
             input_ids: Shape ``(1, T)``.
             prompt_mask: ``True`` for prompt positions, shape ``(T,)``.
             gen_mask: ``True`` for generation positions, shape ``(T,)``.
         """
+        if not isinstance(prompt, str):
+            raise ValueError(
+                "build_input accepts a single prompt string; batched / multiple "
+                "prompts are not supported by Steerling (its backbone has no "
+                "attention-mask input, so it generates one prompt at a time)."
+            )
+
         tokenizer = self.tokenizer
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         prompt_len = len(prompt_ids)
@@ -565,6 +586,14 @@ class SteerlingLowLevelModel(nn.Module):
         tokenizer = self.tokenizer
         mask_id = tokenizer.mask_token_id
 
+        # Special tokens that must never be generated (they would otherwise be
+        # picked as the argmax — the mask token in particular, which a masked
+        # diffusion LM scores highly at unfilled positions, leaving the slot
+        # still masked). Mirrors the reference Steerling generation loop.
+        banned_ids = [mask_id]
+        if tokenizer.pad_token_id is not None:
+            banned_ids.append(tokenizer.pad_token_id)
+
         input_ids, _, _ = self.build_input(prompt, n_new_tokens)
         input_ids = input_ids.to(self.device)
 
@@ -585,7 +614,8 @@ class SteerlingLowLevelModel(nn.Module):
             if masked_positions.numel() == 0:
                 break
 
-            masked_logits = token_logits[0, masked_positions]         # (n_masked, vocab)
+            masked_logits = token_logits[0, masked_positions].clone()  # (n_masked, vocab)
+            masked_logits[:, banned_ids] = float("-inf")               # never emit mask / pad
             masked_probs = torch.softmax(masked_logits.float(), dim=-1)
             confidences = masked_probs.max(dim=-1).values             # (n_masked,)
             best = confidences.argmax()

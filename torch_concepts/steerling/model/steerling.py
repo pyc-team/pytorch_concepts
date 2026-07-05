@@ -3,7 +3,7 @@ Steerling model — PGM-backed concept bottleneck LM (recommended entry point).
 
 :class:`SteerlingModel` is the high-level, test-time interface to Steerling.
 It builds on :class:`SteerlingLowLevelModel` but routes all computation through
-a :class:`~torch_concepts.nn.ProbabilisticModel`, so concepts, latents, and
+a :class:`~torch_concepts.nn.BayesianNetwork`, so concepts, latents, and
 tokens can be queried by name.
 """
 
@@ -18,17 +18,19 @@ from torch.distributions import Bernoulli, OneHotCategorical
 
 import pandas as pd
 
-import torch_concepts as pyc
 from torch_concepts.distributions import Delta
 from torch_concepts import ConceptGraph, ConceptVariable, EmbeddingVariable
 from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     BaseInference,
+    BayesianNetwork,
     DeterministicInference,
+    FixedPrior,
     ModelOutput,
     ParametricCPD,
-    ProbabilisticModel
+    TiedPrior,
 )
+from torch_concepts.nn.modules.outputs import logits_from_params
 
 from ...steerling.model.steerling_low import SteerlingLowLevelModel
 from ..steerling_utils import (
@@ -43,10 +45,10 @@ class SteerlingModel(SteerlingLowLevelModel):
     """PGM-backed Steerling concept-bottleneck language model.
 
     Same construction interface as :class:`SteerlingLowLevelModel`, but wraps
-    its modules in a :class:`ProbabilisticModel` so individual variables
-    (concepts, latents, tokens) can be queried by name. Unlike the low-level
-    model, :meth:`forward` returns a :class:`~torch_concepts.nn.ModelOutput`
-    and takes an optional ``query``.
+    its modules in a :class:`~torch_concepts.nn.BayesianNetwork` so individual
+    variables (concepts, latents, tokens) can be queried by name. Unlike the
+    low-level model, :meth:`forward` returns a
+    :class:`~torch_concepts.nn.ModelOutput` and takes an optional ``query``.
 
     Internal PGM graph::
 
@@ -76,15 +78,17 @@ class SteerlingModel(SteerlingLowLevelModel):
         model = SteerlingModel().to("cuda")
         model.eval()
 
-        # End-to-end: tokens → concept bottleneck → next-token logits
-        out = model(input_ids)
-        parts = model.split_full_forward(out.probs)
+        # End-to-end: default query returns known concepts + next token, read
+        # from out.params by variable name.
+        out = model(input_ids=input_ids)
+        concept_logits = out.params["concepts"]["logits"]      # (1, T, n_known)
+        token_logits   = out.params["new_token"]["logits"]     # (1, T, vocab)
 
-        # Query a single named concept
-        act = model(input_ids, query=["food"]).probs   # (1, T, 1)
+        # Query a single named concept (its logits)
+        logits = model(input_ids=input_ids, query=["food"]).params["food"]["logits"]  # (1, T, 1)
 
-        # Concept-based hidden-state reconstruction
-        h_bar = model(input_ids, query=["h_bar"]).probs  # (1, T, D)
+        # Concept-based hidden-state reconstruction (query the latent explicitly)
+        h_bar = model(input_ids=input_ids, query=["h_bar"]).params["h_bar"]["value"]  # (1, T, D)
 
         # Generation
         model.generate("As an Italian living abroad I miss", n_new_tokens=20)
@@ -101,9 +105,9 @@ class SteerlingModel(SteerlingLowLevelModel):
         *args,
         **kwargs,
     ):
-        # SteerlingModel mirrors the high-level ``BaseModel`` API but is a
-        # test-time model: it has no training engine and builds its concept
-        # annotations internally from the (pretrained) concept heads.
+        # SteerlingModel is a test-time model: it has no training 
+        # engine and builds its concept annotations internally 
+        # from the (pretrained) concept heads.
         if lightning:
             raise ValueError(
                 "SteerlingModel is a test-time model and does not support "
@@ -128,11 +132,8 @@ class SteerlingModel(SteerlingLowLevelModel):
         ]
         if (annotations is not None or graph is not None) and concept_pretrained:
             raise ValueError(
-                "SteerlingModel builds its concept annotations internally from "
-                f"the pretrained concept heads ({concept_pretrained}); passing "
-                "`annotations` or `graph` would conflict with that baked-in "
-                "structure. Omit them, or build the concept heads from scratch "
-                "(drop them from pretrained_components)."
+                f"Cannot pass `annotations` or `graph` when concept heads are pretrained "
+                f"({concept_pretrained}); they are built internally."
             )
 
         # ── concept names ─────────────────────────────────────────────────
@@ -148,93 +149,122 @@ class SteerlingModel(SteerlingLowLevelModel):
             self.unknown_names = []
 
         # ── High-level BaseModel API mirror ───────────────────────────────
-        # SteerlingModel is not a BaseModel subclass, but exposes the same
-        # surface: a bipartite concept→token graph, a backbone, and concept
-        # annotations built internally from the concept heads.
+        # SteerlingModel builds a bipartite concept→token graph, 
+        # a backbone, and concept annotations built internally from the concept heads.
         self.concept_annotations = self._build_annotations()
         self.graph = self._build_graph()
 
-         # ── PGM variables ─────────────────────────────────────────────────
-        input = EmbeddingVariable("input", size=self.vocab_size, distribution=OneHotCategorical)
-        h = EmbeddingVariable("h", size=self.latent_size, distribution=Delta)    
+        self.use_unknown = self.concept_cfg["use_unknown"]
+
+        # ── PGM variables ─────────────────────────────────────────────────
+        # FIXME: the `input` token should be a `Categorical` over the vocabulary, which 
+        # is not yet supported in PyC. We cannot use `OneHotCategorical`, as (B,T,vocab) 
+        # would be inefficient considering the backbone expects integer ids.
+        # Here, we model it as a Delta over the index and always require evidence over 'inputs'.
+        input = EmbeddingVariable("input", distribution=Delta, size=1)
+        h = EmbeddingVariable("h", distribution=Delta, size=self.latent_size)
         k = ConceptVariable("concepts", members=self.known_names, distribution=Bernoulli)
-        k_embs = EmbeddingVariable("embeddings", shape=(len(self.known_names), self.embedding_size), distribution=Delta)
-        k_hat = EmbeddingVariable("k_hat", size=self.embedding_size, distribution=Delta)
+        # Concept-embedding matrices are fixed model state (``TiedPrior`` roots,
+        # below), not evidence; their shape is fixed by the pretrained heads.
+        k_embs = EmbeddingVariable("embeddings", distribution=Delta, shape=tuple(self.known_embeddings_shape))
+        k_hat = EmbeddingVariable("k_hat", distribution=Delta, size=self.embedding_size)
 
-        if self.concept_cfg['use_unknown']:
+        if self.use_unknown:
             u = ConceptVariable("unknown_concepts", members=self.unknown_names, distribution=Bernoulli)
-            u_embs = EmbeddingVariable("unknown_embeddings", shape=(len(self.unknown_names), self.embedding_size), distribution=Delta)
-            u_hat = EmbeddingVariable("u_hat", size=self.embedding_size, distribution=Delta)
+            u_embs = EmbeddingVariable(
+                "unknown_embeddings",
+                distribution=Delta,
+                shape=tuple(self.unknown_embeddings_shape(cat_factorized=True)),
+            )
+            u_hat = EmbeddingVariable("u_hat", distribution=Delta, size=self.embedding_size)
 
-        epsilon = EmbeddingVariable("epsilon", size=self.embedding_size, distribution=Delta)
-        h_bar = EmbeddingVariable("h_bar", size=self.embedding_size, distribution=Delta)
-        new_token = ConceptVariable("new_token", size=self.vocab_size, distribution=OneHotCategorical)
+        epsilon = EmbeddingVariable("epsilon", distribution=Delta, size=self.embedding_size)
+        h_bar = EmbeddingVariable("h_bar", distribution=Delta, size=self.embedding_size)
+        new_token = ConceptVariable("new_token", distribution=OneHotCategorical, size=self.vocab_size)
 
         # ── CPDs ──────────────────────────────────────────────────────────
-        input_cpd = ParametricCPD(input, parents=[], parametrization=pyc.nn.FixedPrior(self.vocab_size))
-        h_cpd = ParametricCPD(h, parents=[input], parametrization=self.backbone)
+        # FIXME: placeholder prior for `input` until PyC supports a Categorical over the vocabulary.
+        # (see above)
+        input_cpd = ParametricCPD(variable=input, parents=[], parametrization=FixedPrior(torch.zeros(1)))
+        # NOTE: `input` carries token ids shaped ``(B, T, 1)``; the backbone expects ``(B, T)``.
+        # So the the aggregate squeezes the event axis so the backbone runs on the intact ``(B, T)`` sequence 
+        # and emits ``(B, T, D)``.
+        h_cpd = ParametricCPD(
+            variable=h,
+            parents=[input],
+            parametrization=self.backbone,
+            aggregate=lambda parent_values: next(iter(parent_values.values())).squeeze(-1),
+        )
         k_cpd = ParametricCPD(
-            variables=self.known_names, 
+            variable=k, 
             parents=[h], 
-            parametrization=self.known_head
+            parametrization={"logits": self.known_head}
         )
         k_embs_cpd = ParametricCPD(
-            variables=k_embs, 
-            parents=[], 
-            parametrization=pyc.nn.FixedPrior((len(self.known_names), self.embedding_size))
+            variable=k_embs,
+            parents=[],
+            parametrization=TiedPrior(self.known_embeddings, broadcast=False)
         )
         k_hat_cpd = ParametricCPD(
-            variables=k_hat, 
-            parents=[k, k_embs], 
-            parametrization=self.known_concept_mixer
+            variable=k_hat,
+            parents=[k, k_embs],
+            parametrization=self.known_concept_mixer,
         )
 
-        if self.concept_cfg["use_unknown"]:
+        if self.use_unknown:
+            # NOTE: the low-level model detaches `h` for the unknown head so its
+            # loss can't back-prop into the transformer. SteerlingModel is a
+            # test-time (eval / no-grad) model, so the detach is a no-op here and
+            # is omitted; re-introduce it via a wrapper if training is added.
             u_cpd = ParametricCPD(
-                variables=self.unknown_names, 
-                parents=[input], 
-                parametrization=self.unknown_head
+                variable=u, 
+                parents=[h], 
+                parametrization={"logits": self.unknown_head}
             )
             u_embs_cpd = ParametricCPD(
-                variables=u_embs, 
-                parents=[], 
-                parametrization=pyc.nn.FixedPrior((len(self.unknown_names), self.embedding_size))
+                variable=u_embs,
+                parents=[],
+                parametrization=TiedPrior(lambda: self.unknown_embeddings(cat_factorized=True), broadcast=False),
             )
             u_hat_cpd = ParametricCPD(
-                variables=u_hat, 
-                parents=[u, u_embs], 
-                parametrization=self.unknown_concept_mixer
+                variable=u_hat,
+                parents=[u, u_embs],
+                parametrization=self.unknown_concept_mixer,
             )
 
+        # epsilon_correction consumes the ordered list [h, k_hat, (u_hat)] =
+        # [target, *parts]; the aggregate hands it exactly that list.
         epsilon_cpd = ParametricCPD(
             variable=epsilon,
-            parents=[h, k_hat] + ([u_hat] if self.concept_cfg["use_unknown"] else []),
+            parents=[h, k_hat] + ([u_hat] if self.use_unknown else []),
             parametrization=self.epsilon_correction,
+            aggregate=lambda parent_values: list(parent_values.values()),
         )
+        # h_bar = sum(parts) + epsilon = k_hat (+ u_hat) + epsilon.
         h_bar_cpd = ParametricCPD(
             variable=h_bar,
-            parents=[k_hat] + ([u_hat] if self.concept_cfg["use_unknown"] else []) + [epsilon],
-            parametrization=torch.nn.Identity(),
-            aggregation=lambda *args: sum(args)  # sum k_hat + u_hat + epsilon
+            parents=[k_hat] + ([u_hat] if self.use_unknown else []) + [epsilon],
+            parametrization=nn.Identity(),
+            aggregate=lambda parent_values: sum(parent_values.values()),
         )
         new_token_cpd = ParametricCPD(
-            variable=new_token,
-            parents=[h_bar],
-            parametrization=self.lm_head
+            variable=new_token, 
+            parents=[h_bar], 
+            parametrization={"logits": self.lm_head}
         )
 
-        # ── ProbabilisticModel + inference engine ─────────────────────────
+        # ── BayesianNetwork + inference engine ────────────────────────────
         variables = [
             input, h, k, k_embs, k_hat,
-            *([u, u_embs, u_hat] if self.concept_cfg["use_unknown"] else []),
+            *([u, u_embs, u_hat] if self.use_unknown else []),
             epsilon, h_bar, new_token,
         ]
         factors = [
             input_cpd, h_cpd, k_cpd, k_embs_cpd, k_hat_cpd,
-            *([u_cpd, u_embs_cpd, u_hat_cpd] if self.concept_cfg["use_unknown"] else []),
+            *([u_cpd, u_embs_cpd, u_hat_cpd] if self.use_unknown else []),
             epsilon_cpd, h_bar_cpd, new_token_cpd,
         ]
-        self.model = ProbabilisticModel(variables=variables, factors=factors)
+        self.model = BayesianNetwork(variables=variables, factors=factors)
         # Test-time model: a single (evaluation) inference engine, no training inference.
         self.eval_inference = inference(self.model, **(inference_kwargs or {}))
         self.train_inference = None
@@ -243,16 +273,20 @@ class SteerlingModel(SteerlingLowLevelModel):
     # Core helpers
     # ------------------------------------------------------------------
 
-    def _evidence(self, input_ids: torch.Tensor) -> dict:
-        """Build full evidence dict: backbone hidden states + both embedding matrices."""
-        hidden = self.backbone(input_ids)
-        evidence = {"input": hidden}
-        evidence["K"] = self.known_embeddings
-        if self.concept_cfg["use_unknown"]:
-            evidence["U"] = self.unknown_embeddings
-        return evidence
+    def _default_evidence(self, input_ids: torch.Tensor) -> dict:
+        """Build the evidence dict for a forward pass.
 
-    def _build_annotations(self):
+        Only ``input`` is observed: the token ids, shaped ``(B, T, 1)`` to match
+        the variable's ``(1,)`` event, kept integer for the backbone's embedding
+        lookup. The concept-embedding matrices are model state (root priors), not
+        evidence.
+        """
+        return {"input": input_ids.unsqueeze(-1)}
+
+    def _default_query(self) -> list[str]:
+        return ["concepts",  "new_token"]
+    
+    def _build_annotations(self) -> Annotations:
         """Build concept annotations from the (pretrained) concept heads.
 
         Mirrors the high-level :class:`BaseModel`, which receives an
@@ -321,106 +355,58 @@ class SteerlingModel(SteerlingLowLevelModel):
             return self.train_inference
         return self.eval_inference
 
-    @property
-    def _split_query_specs(self):
-        return [            
-            ("input", self.latent_dim),
-            ("known_concepts", self.n_known),
-            *([("unknown_concepts", self.n_unknown)] if self.concept_cfg["use_unknown"] else []),
-            ("k_hat", self.embedding_dim),
-            *([("u_hat", self.embedding_dim)] if self.concept_cfg["use_unknown"] else []),
-            ("epsilon", self.embedding_dim),
-            ("h_bar", self.embedding_dim),
-            ("new_token", self.vocab_size),
-        ]   
-    
-    @property
-    def default_query(self):
-        return (
-            ["input"]
-            + self.known_names
-            + self.unknown_names
-            + ["k_hat"]
-            + (["u_hat"] if self.use_unknown else [])
-            + ["epsilon", "h_bar", "new_token"]
-        )
-
-
     # ------------------------------------------------------------------
-    # Forward — mirrors SteerlingLowLevelModel.forward()
+    # Forward - mirror high-level PyC models
     # ------------------------------------------------------------------
 
     def forward(
         self,
-        input_ids: torch.Tensor,
         query: Optional[list[str]] = None,
-        return_logits: bool = False,
-        return_probs: bool = True,
-        **inference_kwargs,
+        evidence: Optional[dict] = None,
+        input_ids: Optional[torch.Tensor] = None,
     ) -> ModelOutput:
-        """End-to-end forward through the PGM concept bottleneck.
-
-        Mirrors the high-level :class:`BaseModel` contract: returns a
-        :class:`~torch_concepts.nn.ModelOutput` whose ``logits``/``probs``/
-        ``joint`` fields are populated per the ``return_*`` flags. Note the
-        deliberate signature difference — ``input_ids`` is the required input
-        (a token sequence), and ``query`` is optional (defaults to the full
-        token-aligned query).
+        """Run inference over the concept-bottleneck PGM.
 
         Args:
-            input_ids: Token ids, shape ``(B, T)``.
-            query: Variable names to query. ``None`` queries all
-                token-aligned variables.
-            return_logits: Populate ``ModelOutput.logits``.
-            return_probs: Populate ``ModelOutput.probs`` (default).
-            **inference_kwargs: Forwarded to the inference engine's ``query``.
+            input_ids: Token ids ``(B, T)``. Required when ``evidence`` is None.
+            query: Variable names to return. Defaults to :attr:`default_query`.
+            evidence: Observed variables. Defaults to the evidence built from
+                ``input_ids``.
 
         Returns:
-            ModelOutput: ``.logits``/``.probs``/``.joint`` per the flags.
+            ModelOutput: per-variable ``params`` (plus ``samples``,
+            ``probabilities``, ``logits``), token-aligned ``(B, T, ...)``.
         """
         if query is None:
-            query = self.default_query
+            query = self._default_query()
+        if evidence is None:
+            if input_ids is None:
+                raise ValueError(
+                    "forward requires explicit `input_ids` " \
+                    "when `evidence` is not provided."
+                )
+            evidence = self._default_evidence(input_ids)
 
-        result = self.inference.query(
-            query,
-            evidence=self._evidence(input_ids),
-            return_logits=return_logits,
-            return_probs=return_probs,
-            **inference_kwargs,
+        # FIXME: placeholder assert for `input` until PyC supports a Categorical 
+        # over the vocabulary and simple interface to mix inferences (see above)
+        # (events should be passed to backbone, params should be passed to other layers)
+        assert "input" in evidence, (
+            "evidence must always include 'input' (the token sequence)."
         )
-        return ModelOutput(
-            logits=result.logits,
-            probs=result.probs,
-            joint=result.joint,
+
+        result = self.inference.query(query, evidence=evidence)
+        out = ModelOutput(
+            params=result.params,
+            guide_params=result.guide_params,
+            samples=result.samples,
+            probabilities=result.probabilities,
         )
+        out.logits = logits_from_params(result.params)
+        return out
 
     # ------------------------------------------------------------------
     # Convenience methods
     # ------------------------------------------------------------------
-
-    def split_full_forward(self, out: torch.Tensor) -> dict:
-        """Split the concatenated output of :meth:`forward` for full queries into named tensors.
-
-        Args:
-            out: Concatenated tensor from :meth:`forward`,
-                using the default query order.
-
-        Returns:
-            Dict mapping output groups to tensor slices. Concept outputs are
-            returned as ``known_concepts`` and ``unknown_concepts`` chunks.
-        """
-        expected = sum(size for _, size in self._split_query_specs)
-        if out.shape[-1] != expected:
-            raise ValueError(
-                "Expected output from the default full query with "
-                f"last dimension {expected}, got {out.shape[-1]}."
-            )
-        pieces = {}
-        offset = 0
-        for name, size in self._split_query_specs:
-            pieces[name] = out[..., offset:offset + size]
-            offset += size
-        return pieces
 
     @torch.no_grad()
     def generate(
@@ -449,6 +435,13 @@ class SteerlingModel(SteerlingLowLevelModel):
         tokenizer = self.tokenizer
         mask_id = tokenizer.mask_token_id
 
+        # Special tokens that must never be generated (see the low-level
+        # generate): the mask token especially, which the LM scores highly at
+        # unfilled positions and would leave the slot still masked.
+        banned_ids = [mask_id]
+        if tokenizer.pad_token_id is not None:
+            banned_ids.append(tokenizer.pad_token_id)
+
         input_ids, _, _ = self.build_input(prompt, n_new_tokens)
         input_ids = input_ids.to(self.device)
 
@@ -458,10 +451,12 @@ class SteerlingModel(SteerlingLowLevelModel):
             print(f"\nGenerating {n_new_tokens} tokens one at a time:")
 
         for step in range(n_new_tokens):
-            # 1. Query token probabilities through the PGM
-            query = ["new_token"] + (self.known_names if topk_concepts is not None else [])
-            out = self.forward(input_ids, query=query).probs
-            token_probs = out[..., :self.vocab_size]
+            # 1. Query token (and optionally concept) parameters through the PGM
+            query = ["new_token"] + (["concepts"] if topk_concepts is not None else [])
+            out = self.forward(query=query, input_ids=input_ids)
+            logits = out.params["new_token"]["logits"].clone()        # (1, T, vocab)
+            logits[..., banned_ids] = float("-inf")                   # never emit mask / pad
+            token_probs = torch.softmax(logits, dim=-1)
 
             # 2. Pick the most confident masked position, take argmax
             masked_positions = (input_ids[0] == mask_id).nonzero(as_tuple=False).squeeze(-1)
@@ -480,10 +475,8 @@ class SteerlingModel(SteerlingLowLevelModel):
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
                 if topk_concepts is not None:
-                    concepts = top_concepts(
-                        out[0, seq_idx, self.vocab_size:],
-                        topk=topk_concepts,
-                    )
+                    concept_scores = torch.sigmoid(out.params["concepts"]["logits"][0, seq_idx])
+                    concepts = top_concepts(concept_scores, topk=topk_concepts)
                     print(concepts.to_string(index=False))
 
         generated_ids  = input_ids[0, prompt_len:].tolist()
@@ -499,6 +492,6 @@ class SteerlingModel(SteerlingLowLevelModel):
             f"SteerlingModel("
             f"n_known={self.n_known}, "
             f"n_unknown={self.n_unknown}, "
-            f"latent_dim={self.latent_dim}, "
+            f"latent_size={self.latent_size}, "
             f"vocab={self.vocab_size})"
         )
