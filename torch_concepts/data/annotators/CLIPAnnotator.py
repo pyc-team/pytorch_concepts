@@ -74,6 +74,9 @@ class CLIPAnnotator(Annotator):
         Probability threshold used for binary output. Default is 0.5.
     num_workers : int, optional
         Number of data-loading workers. Default is 0.
+    show_progress : bool, optional
+        Whether to show progress bars while encoding text concepts and image
+        batches. Default is False.
     """
 
     def __init__(
@@ -96,6 +99,7 @@ class CLIPAnnotator(Annotator):
         bias: float = 0.0,
         threshold: float = 0.5,
         num_workers: int = 0,
+        show_progress: bool = False,
     ):
         if output not in {"similarity", "logit", "probability", "binary"}:
             raise ValueError(
@@ -127,6 +131,7 @@ class CLIPAnnotator(Annotator):
         self.bias = bias
         self.threshold = threshold
         self.num_workers = num_workers
+        self.show_progress = show_progress
 
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
             model_name,
@@ -160,7 +165,12 @@ class CLIPAnnotator(Annotator):
         )
 
         concept_batches = []
-        for batch in loader:
+        batches = self._progress(
+            loader,
+            desc="CLIP image annotation",
+            total=len(loader),
+        )
+        for batch in batches:
             images = [self.input_getter(sample) for sample in batch]
             clip_images = self._prepare_clip_images(images)
 
@@ -200,7 +210,12 @@ class CLIPAnnotator(Annotator):
 
     def _encode_text_concepts(self, concepts: Sequence[str]) -> Tensor:
         all_features = []
-        for concept in concepts:
+        concept_iterator = self._progress(
+            concepts,
+            desc="CLIP text encoding",
+            total=len(concepts),
+        )
+        for concept in concept_iterator:
             prompts = self._make_prompts(concept)
             with torch.no_grad():
                 tokens = self.tokenizer(prompts).to(self.device)
@@ -210,6 +225,15 @@ class CLIPAnnotator(Annotator):
                 text_feature = F.normalize(text_feature, dim=0)
             all_features.append(text_feature)
         return torch.stack(all_features, dim=0)
+
+    def _progress(self, iterable: Any, desc: str, total: int | None = None) -> Any:
+        if not self.show_progress:
+            return iterable
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            return iterable
+        return tqdm(iterable, desc=desc, total=total)
 
     def _make_prompts(self, concept: str) -> list[str]:
         template = self.prompt_template
