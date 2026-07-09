@@ -10,7 +10,7 @@ The example follows the main ingredients of Oikarinen et al.,
 
 Minimal run:
 
-    python -m examples.utilization.4_label_free.0_lf_pipeline \
+    python -m examples.utilization.4_label_free.1_lf_cbm \
       --llm-model gemini/gemini-3.5-flash \
       --llm-temperature 1.0 \
       --max-prompt-classes 1 \
@@ -20,7 +20,7 @@ Minimal run:
 
 Larger run:
 
-    python -m examples.utilization.4_label_free.0_lf_pipeline \
+    python -m examples.utilization.4_label_free.1_lf_cbm \
       --llm-model gemini/gemini-3.5-flash \
       --llm-temperature 1.0 \
       --max-prompt-classes 10 \
