@@ -5,6 +5,17 @@ This example uses:
 - CLIPAnnotator to score each image against the generated concepts.
 - ConceptSupervisionPipeline to connect generation and annotation.
 - A tiny concept bottleneck classifier trained on the generated concepts.
+
+Usage:
+
+    export GEMINI_API_KEY="your_google_ai_studio_key"
+
+    python -m examples.utilization.4_label_free.0_basic_usage \
+      --llm-model gemini/gemini-3.5-flash \
+      --llm-temperature 1.0
+
+For another LiteLLM provider, set the API key expected by that provider, e.g.
+``OPENAI_API_KEY`` for ``--llm-model openai/gpt-4o``.
 """
 
 import argparse
