@@ -359,46 +359,48 @@ class BaseModel(nn.Module, ABC):
                 f"annotations contain: {details}."
             )
 
-    @staticmethod
-    def _resolve_train_inference(inference, train_inference):
-        """Resolve the training inference class, falling back to ``inference`` when ``None``."""
-        return train_inference if train_inference is not None else inference
-
     def setup_inference(
         self,
-        inference,
+        inference=None,
         inference_kwargs=None,
         train_inference=None,
         train_inference_kwargs=None,
     ):
-        """Instantiate and store the eval/train inference engines.
+        """Set up — or later swap — the eval/train inference engines.
 
-        Centralises the wiring that every concrete model previously duplicated:
-        build ``eval_inference`` from ``inference`` and resolve ``train_inference``
-        (falling back to the same class as ``inference``). The concrete ("last")
-        child supplies the inference classes; this wraps them around the model's
-        ``probabilistic_model``.
+        Called once at construction to wire the engines around the model's
+        ``pgm``, and callable again on an already-instantiated model to change
+        inference. Only the engines whose class is passed are (re)built; any
+        engine left as ``None`` keeps its current instance, so you can replace
+        just the eval or just the train engine. On the very first setup the
+        training engine falls back to the ``inference`` class (so passing only
+        ``inference`` wires both). Because the :attr:`inference` property reads
+        ``eval_inference``/``train_inference``, a replacement is used on the
+        next :meth:`forward`.
 
         Parameters
         ----------
-        inference : type
-            Evaluation inference engine class.
+        inference : type, optional
+            Evaluation inference engine class. Engine left unchanged if None.
         inference_kwargs : dict, optional
             Keyword arguments forwarded to the evaluation engine.
         train_inference : type, optional
-            Training inference engine class. Defaults to ``inference``.
+            Training inference engine class. On first setup defaults to
+            ``inference``; on later swaps the engine is left unchanged if None.
         train_inference_kwargs : dict, optional
             Keyword arguments forwarded to the training engine.
         """
-        self.eval_inference = inference(
-            self.pgm,
-            **(inference_kwargs or {}),
-        )
-        train_inference_cls = self._resolve_train_inference(inference, train_inference)
-        self.train_inference = train_inference_cls(
-            self.pgm,
-            **(train_inference_kwargs or {}),
-        )
+        if inference is not None:
+            self.eval_inference = inference(self.pgm, **(inference_kwargs or {}))
+        # First setup: train falls back to the eval class. Later swaps: replace
+        # the train engine only when a class is passed explicitly.
+        first_setup = not hasattr(self, "train_inference")
+        train_inference_cls = train_inference or (inference if first_setup else None)
+        if train_inference_cls is not None:
+            self.train_inference = train_inference_cls(
+                self.pgm,
+                **(train_inference_kwargs or {}),
+            )
 
     def __repr__(self):
         backbone_name = self.backbone.__class__.__name__

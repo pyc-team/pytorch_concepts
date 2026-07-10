@@ -43,9 +43,29 @@ class DummyLatentEncoder(nn.Module):
         super().__init__()
         self.linear = nn.Linear(input_size, hidden_size)
         self.hidden_size = hidden_size
-    
+
     def forward(self, x):
         return self.linear(x)
+
+
+class FakeEngine:
+    """Minimal stand-in for an inference engine.
+
+    ``setup_inference`` only ever calls ``engine_cls(pgm, **kwargs)``, so a
+    plain object recording what it was built with is enough to assert the
+    wiring without pulling in a full ProbabilisticModel.
+    """
+    def __init__(self, pgm, **kwargs):
+        self.pgm = pgm
+        self.kwargs = kwargs
+
+
+class FakeEvalEngine(FakeEngine):
+    pass
+
+
+class FakeTrainEngine(FakeEngine):
+    pass
 
 
 # Fixtures
@@ -576,3 +596,119 @@ class TestBaseModelMissingLines:
 
         with pytest.raises(ValueError, match="BinaryOnlyModel"):
             BinaryOnlyModel(input_size=10, annotations=mixed_ann)
+
+
+# setup_inference: initial wiring and post-instantiation swapping
+class TestBaseModelSetupInference:
+    """Test setup_inference as both the constructor wiring and the swap API."""
+
+    def _model(self, annotations):
+        """A model with a sentinel ``pgm`` the engines are built around."""
+        model = ConcreteModel(input_size=10, annotations=annotations)
+        model.pgm = object()
+        return model
+
+    # ----- first setup -------------------------------------------------
+    def test_first_setup_train_falls_back_to_eval(self, annotations_with_distributions):
+        """Passing only ``inference`` wires both engines from that class."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine)
+
+        assert isinstance(model.eval_inference, FakeEvalEngine)
+        assert isinstance(model.train_inference, FakeEvalEngine)
+        # both wrap the model's pgm
+        assert model.eval_inference.pgm is model.pgm
+        assert model.train_inference.pgm is model.pgm
+
+    def test_first_setup_distinct_train(self, annotations_with_distributions):
+        """A distinct ``train_inference`` class is used for the train engine."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine, train_inference=FakeTrainEngine)
+
+        assert isinstance(model.eval_inference, FakeEvalEngine)
+        assert isinstance(model.train_inference, FakeTrainEngine)
+
+    def test_kwargs_forwarded_to_engines(self, annotations_with_distributions):
+        """Per-engine kwargs are forwarded to the respective constructors."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(
+            FakeEvalEngine, {'a': 1}, FakeTrainEngine, {'b': 2},
+        )
+
+        assert model.eval_inference.kwargs == {'a': 1}
+        assert model.train_inference.kwargs == {'b': 2}
+
+    # ----- post-instantiation swaps -----------------------------------
+    def test_swap_eval_only_keeps_train(self, annotations_with_distributions):
+        """Replacing only eval leaves the existing train engine untouched."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine, train_inference=FakeTrainEngine)
+        train_before = model.train_inference
+
+        model.setup_inference(inference=FakeEvalEngine, inference_kwargs={'x': 9})
+
+        assert model.train_inference is train_before          # untouched
+        assert isinstance(model.eval_inference, FakeEvalEngine)
+        assert model.eval_inference.kwargs == {'x': 9}         # rebuilt
+
+    def test_swap_train_only_keeps_eval(self, annotations_with_distributions):
+        """Replacing only train leaves the existing eval engine untouched."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine)
+        eval_before = model.eval_inference
+
+        model.setup_inference(train_inference=FakeTrainEngine)
+
+        assert model.eval_inference is eval_before             # untouched
+        assert isinstance(model.train_inference, FakeTrainEngine)
+
+    def test_no_args_is_noop(self, annotations_with_distributions):
+        """Calling with nothing keeps both engines as-is."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine, train_inference=FakeTrainEngine)
+        eval_before, train_before = model.eval_inference, model.train_inference
+
+        model.setup_inference()
+
+        assert model.eval_inference is eval_before
+        assert model.train_inference is train_before
+
+    def test_swapped_engine_is_used_by_inference_property(self, annotations_with_distributions):
+        """A swapped engine is picked up by the ``inference`` property immediately."""
+        model = self._model(annotations_with_distributions)
+        model.setup_inference(FakeEvalEngine, train_inference=FakeTrainEngine)
+
+        model.eval()
+        assert model.inference is model.eval_inference
+
+        model.setup_inference(inference=FakeEvalEngine, inference_kwargs={'v': 1})
+        assert model.inference is model.eval_inference          # new instance
+        assert model.inference.kwargs == {'v': 1}
+
+        model.train()
+        assert model.inference is model.train_inference         # train unchanged
+
+
+class TestSetupInferenceIntegration:
+    """Swap real inference engines on a fully-built model and run forward."""
+
+    def test_swap_on_real_cbm(self, annotations_with_distributions):
+        from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
+
+        model = ConceptBottleneckModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+            task_names=['task'],
+        )
+        train_before = model.train_inference
+        engine_cls = type(model.eval_inference)
+
+        # replace only the eval engine with a fresh instance of the same class
+        model.setup_inference(inference=engine_cls)
+
+        assert model.train_inference is train_before            # untouched
+        assert isinstance(model.eval_inference, engine_cls)
+        assert model.eval_inference.pgm is model.pgm
+
+        out = model(query=['c1', 'c2', 'task'], input=torch.randn(4, 10))
+        assert out.logits.shape == (4, 3)
