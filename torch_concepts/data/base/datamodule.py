@@ -5,40 +5,32 @@ This module provides the :class:`ConceptDataModule` class, which handles
 the complete data pipeline for concept-based learning tasks, including
 data splitting, embedding precomputation, and DataLoader creation.
 
-The datamodule integrates with the :class:`Backbone` class for optional
-feature extraction and embedding caching, enabling efficient training
-workflows with pre-trained models.
-
 Example
 -------
+>>> from torch_concepts import Backbone
 >>> from torch_concepts.data import ConceptDataModule, CelebADataset
->>> 
->>> dataset = CelebADataset(root='./data')
+>>>
+>>> dataset = CelebADataset(root='./data/celeba')
 >>> dm = ConceptDataModule(
 ...     dataset=dataset,
-...     backbone='resnet50',
-...     precompute_embs=True,
+...     val_size=0.1,
+...     test_size=0.2,
 ...     batch_size=64
 ... )
 >>> dm.setup('fit')
 >>> train_loader = dm.train_dataloader()
 """
 
-import os
-import torch
 import logging
 from typing import Literal, Mapping, Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
-from tqdm import tqdm
 
 from .dataset import ConceptDataset
 
 logger = logging.getLogger(__name__)
 
-from ..backbone import Backbone
-from ..splitters.random import RandomSplitter
-from ...typing import BackboneType
+from ..splitters import RandomSplitter, NativeSplitter
 
 StageOptions = Literal['fit', 'validate', 'test', 'predict']
 
@@ -46,15 +38,15 @@ StageOptions = Literal['fit', 'validate', 'test', 'predict']
 class ConceptDataModule(LightningDataModule):
     """PyTorch Lightning DataModule for concept-based datasets.
 
-    Handles the complete data pipeline for concept-based learning:
+    Handles the data pipeline for concept-based learning:
 
     1. **Data splitting**: Train/validation/test splits using configurable splitters
-    2. **Embedding precomputation**: Optional backbone feature extraction with caching
-    3. **Data scaling**: Optional normalization through configurable scalers
-    4. **DataLoader creation**: Efficient data loading with proper configurations
+    2. **Data scaling**: Optional normalization through configurable scalers
+    3. **DataLoader creation**: Efficient data loading with proper configurations
 
-    The datamodule automatically caches computed embeddings to disk, allowing
-    fast reloading on subsequent runs without recomputation.
+    Backbone embedding precomputation is a separate, explicit step: call
+    :meth:`precompute_embeddings` with a :class:`~torch_concepts.Backbone` before
+    ``setup()``. Embeddings are cached to disk and reloaded on subsequent runs.
 
     Parameters
     ----------
@@ -66,21 +58,11 @@ class ConceptDataModule(LightningDataModule):
         Test set fraction (0.0 to 1.0). Default is 0.2.
     batch_size : int, optional
         Mini-batch size for DataLoaders. Default is 64.
-    backbone : str or None, optional
-        Feature extraction model name. Can be:
-
-        - **HuggingFace model**: 'facebook/dinov2-base', 'google/vit-base-patch16-224'
-        - **torchvision model**: 'resnet18', 'resnet50', 'vgg16', 'efficientnet_b0'
-
-        If provided with ``precompute_embs=True``, embeddings are computed
-        and cached to disk. Default is None.
-    precompute_embs : bool, optional
-        If True and backbone is provided, precompute and cache backbone
-        embeddings before training. Embeddings are saved to
-        ``{dataset.root_dir}/{backbone_filename}.pt``. Default is False.
-    force_recompute : bool, optional
-        If True, recompute embeddings even if cached file exists.
-        Useful when the dataset or backbone changes. Default is False.
+    max_samples : int or None, optional
+        If set, truncate the dataset to its first ``max_samples`` rows at
+        construction — everything downstream (embedding precomputation,
+        splitting, loaders) sees only the subset. Useful for quick runs and
+        examples. Default is None (use all samples).
     scalers : Mapping or None, optional
         Dictionary of custom scalers for data normalization. Keys should
         match target keys in the batch (e.g., 'input', 'concepts').
@@ -110,8 +92,6 @@ class ConceptDataModule(LightningDataModule):
         Validation subset after setup().
     testset : Subset or None
         Test subset after setup().
-    backbone : Backbone or None
-        The backbone wrapper for feature extraction.
     scalers : dict
         Dictionary of scalers for data normalization.
     splitter : object
@@ -133,29 +113,18 @@ class ConceptDataModule(LightningDataModule):
     >>> print(f"Train: {dm.train_len}, Val: {dm.val_len}, Test: {dm.test_len}")
     Train: 700, Val: 100, Test: 200
 
-    Using backbone for embedding precomputation:
+    Optional precomputation of backbone embeddings (before setup):
 
-    >>> dm = ConceptDataModule(
-    ...     dataset=image_dataset,
-    ...     backbone='resnet50',
-    ...     precompute_embs=True,
-    ...     batch_size=64,
-    ...     workers=4
-    ... )
-    >>> dm.setup('fit')  # Computes and caches embeddings
-    >>> # On subsequent runs, embeddings are loaded from cache
-
-    Using HuggingFace backbone:
-
-    >>> dm = ConceptDataModule(
-    ...     dataset=image_dataset,
-    ...     backbone='facebook/dinov2-base',
-    ...     precompute_embs=True
-    ... )
+    >>> from torch_concepts.data import ToyDataset
+    >>> dataset = ToyDataset(dataset='xor', n_gen=1000)
+    >>> from torch_concepts import Backbone
+    >>> dm = ConceptDataModule(dataset=image_dataset, batch_size=64)
+    >>> dm.precompute_embeddings(Backbone('resnet50'))  # computes or loads cache
+    >>> dm.setup('fit')  # splitting only
 
     See Also
     --------
-    Backbone : Feature extraction wrapper class.
+    torch_concepts.Backbone : Feature extraction wrapper class.
     ConceptDataset : Base dataset class for concept data.
     RandomSplitter : Default splitter for train/val/test splits.
     NativeSplitter : Splitter using dataset's native splits.
@@ -167,9 +136,7 @@ class ConceptDataModule(LightningDataModule):
         val_size: float = 0.1,
         test_size: float = 0.2,
         batch_size: int = 64,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
+        max_samples: Optional[int] = None,
         scalers: Optional[Mapping] = None,
         splitter: Optional[object] = None,
         workers: int = 0,
@@ -177,15 +144,18 @@ class ConceptDataModule(LightningDataModule):
         seed: Optional[int] = None
     ):
         super(ConceptDataModule, self).__init__()
+        # Truncate the dataset to its first `max_samples` rows (all downstream
+        # steps — embedding precompute, splitting, loaders — see the subset).
+        if max_samples is not None:
+            dataset.input_data = dataset.input_data[:max_samples]
+            dataset.concepts = dataset.concepts[:max_samples]
+            if isinstance(splitter, NativeSplitter):
+                raise ValueError(
+                f"'max_samples' is incompatible with NativeSplitter. \
+                Please pass splitter=None (-> RandomSplitter) or a compatible splitter which does not \
+                use explicit indices."
+            )
         self.dataset = dataset
-        
-        # Initialize dataset's embs_precomputed flag
-        self.dataset.embs_precomputed = False
-
-        # Wrap backbone in Backbone class if provided
-        self._backbone = Backbone(backbone) if backbone is not None else None
-        self.precompute_embs = precompute_embs
-        self.force_recompute = force_recompute
 
         # data loaders
         self.batch_size = batch_size
@@ -259,9 +229,11 @@ class ConceptDataModule(LightningDataModule):
             Formatted string with split lengths, scalers, batch size, and dimensions.
         """
         scalers_str = ', '.join(self.scalers.keys())
-        return (f"{self.__class__.__name__}(train_len={self.train_len}, val_len={self.val_len}, "
-                f"test_len={self.test_len}, scalers=[{scalers_str}], batch_size={self.batch_size}, "
-                f"n_features={self.n_features}, n_concepts={self.n_concepts})")
+        return (f"{self.__class__.__name__}(n_samples={self.n_samples}, "
+                f"train_len={self.train_len}, val_len={self.val_len}, "
+                f"test_len={self.test_len}, scalers=[{scalers_str}], "
+                f"n_features={self.n_features}, n_concepts={self.n_concepts}, "
+                f"batch_size={self.batch_size})")
 
     @property
     def trainset(self):
@@ -354,17 +326,6 @@ class ConceptDataModule(LightningDataModule):
             Total number of samples.
         """
         return len(self.dataset)
-    
-    @property
-    def backbone(self) -> Optional[Backbone]:
-        """The backbone model wrapper for feature extraction.
-
-        Returns
-        -------
-        Backbone or None
-            The backbone wrapper, or None if not configured.
-        """
-        return self._backbone
 
     def _add_set(self, split_type, _set):
         """Add a dataset or indices as a specific split.
@@ -403,177 +364,49 @@ class ConceptDataModule(LightningDataModule):
                 _set = None  # Empty split
             setattr(self, name, _set)
 
-    def _maybe_precompute_backbone_embeddings(
-        self, 
-        device: Optional[str] = None, 
-        verbose: bool = True
-    ) -> None:
-        """Precompute and cache backbone embeddings if configured.
+    def precompute_embeddings(self, backbone, cache: bool = True,
+                              cache_dir: Optional[str] = None, force: bool = False) -> None:
+        """Precompute backbone embeddings on the underlying dataset.
 
-        Handles all preprocessing logic based on configuration:
-
-        - If ``precompute_embs=False``: Sets ``embs_precomputed=False`` on dataset
-        - If ``precompute_embs=True``: Loads from cache or computes embeddings
-
-        Embeddings are cached to ``{dataset.root_dir}/{backbone.filename}``.
+        Explicit preprocessing step — call it *before* :meth:`setup`. Delegates
+        to :meth:`ConceptDataset.precompute_embeddings` with this datamodule's
+        ``batch_size`` and ``workers``. With ``cache=True`` (default) the
+        embeddings are persisted to ``{cache_dir or dataset.root_dir}/{backbone.filename}``
+        and loaded from there on subsequent calls.
 
         Parameters
         ----------
-        device : str, optional
-            Device for backbone computation ('cpu', 'cuda', etc.).
-            If None, uses backbone's auto-detected device.
-        verbose : bool, optional
-            If True, print detailed logging information. Default is True.
-
-        Raises
-        ------
-        ValueError
-            If ``precompute_embs=True`` but no backbone model is provided.
-
-        Notes
-        -----
-        When cached embeddings are found and ``force_recompute=False``,
-        embeddings are loaded directly without recomputation.
+        backbone : Backbone
+            Feature extractor to run over the dataset.
+        cache : bool, default True
+            Persist the embeddings to disk and reuse them across calls.
+        cache_dir : str, optional
+            Directory for the cache file. Defaults to the dataset's ``root_dir``.
+        force : bool, default False
+            Recompute even if a cache file exists.
         """
-        if verbose:
-            logger.info(f"Input shape: {tuple(self.dataset[0]['inputs']['x'].shape)}")
-        
-        # If not precomputing, just mark dataset and return
-        if not self.precompute_embs:
-            self.dataset.embs_precomputed = False
-            if verbose:
-                logger.info("Using raw input data without backbone preprocessing.")
-            return
-        
-        # Precompute embeddings
-        if self.backbone is None:
-            raise ValueError("precompute_embs=True but no backbone model provided.")
-        
-        # If device is explicitly provided, override backbone's device
-        if device is not None:
-            self._backbone = Backbone(self.backbone.name, device=device)
-        
-        cache_path = os.path.join(self.dataset.root_dir, self.backbone.filename)
-        
-        # Load from cache or compute
-        if os.path.exists(cache_path) and not self.force_recompute:
-            if verbose:
-                logger.info(f"Loading precomputed embeddings from {cache_path}")
-            embs = torch.load(cache_path)
-        else:
-            embs = self._compute_embeddings(verbose=verbose)
-            if verbose:
-                logger.info(f"Saving embeddings to {cache_path}")
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            torch.save(embs, cache_path)
-        
-        # Update dataset with precomputed embeddings
-        self.dataset.input_data = embs
-        self.dataset.embs_precomputed = True
-        
-        if verbose:
-            logger.info(f"Embeddings precomputed using {self.backbone}. "
-                        f"New input shape: {tuple(embs.shape)}")
-
-    def _compute_embeddings(self, verbose: bool = True) -> torch.Tensor:
-        """Compute embeddings for the entire dataset using the backbone.
-
-        Iterates through the dataset in batches and extracts embeddings
-        using the configured backbone model.
-
-        Parameters
-        ----------
-        verbose : bool, optional
-            If True, print progress information and show tqdm progress bar.
-            Default is True.
-
-        Returns
-        -------
-        torch.Tensor
-            Stacked embeddings with shape (n_samples, embedding_dim),
-            where embedding_dim depends on the backbone model.
-        """
-        if verbose:
-            model_type = "HuggingFace" if self.backbone.is_huggingface else "torchvision"
-            logger.info(f"Using {model_type} backbone: {self.backbone.name}")
-            logger.info(f"Device: {self.backbone.device}")
-        
-        def collate_fn(batch):
-            images = [sample['inputs']['x'] for sample in batch]
-            if not self.backbone.is_huggingface and isinstance(images[0], torch.Tensor):
-                return torch.stack(images)
-            return images
-        
-        dataloader = DataLoader(
-            self.dataset,
+        self.dataset.precompute_embeddings(
+            backbone,
             batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.workers,
-            collate_fn=collate_fn
+            workers=self.workers,
+            cache=cache,
+            cache_dir=cache_dir,
+            force=force,
         )
-        
-        embeddings_list = []
-        if verbose:
-            logger.info("Precomputing embeddings with backbone...")
-        
-        with torch.no_grad():
-            iterator = tqdm(dataloader, desc="Extracting embeddings") if verbose else dataloader
-            for batch_data in iterator:
-                embedding = self.backbone(batch_data)
-                embeddings_list.append(embedding.cpu())
 
-        return torch.cat(embeddings_list, dim=0)
+    def setup(self, stage: StageOptions = None) -> None:
+        """Prepare the data splits for training, validation, or testing.
 
-    def setup(
-            self, 
-            stage: StageOptions = None, 
-            backbone_device: Optional[str] = None,
-            verbose: Optional[bool] = True) -> None:
-        """Prepare the data for training, validation, or testing.
-
-        This method is called by PyTorch Lightning with 'fit', 'validate',
-        'test', or 'predict' stages. It handles:
-
-        1. Backbone embedding precomputation (if configured)
-        2. Data splitting using the configured splitter
+        Called by PyTorch Lightning with 'fit', 'validate', 'test', or
+        'predict' stages. Handles splitting (and, in the future,
+        scaler fitting)
 
         Parameters
         ----------
         stage : {'fit', 'validate', 'test', 'predict'}, optional
             The stage for which data is being prepared. If None, prepares
             data for all stages. Default is None.
-        backbone_device : str, optional
-            Device for backbone computation ('cpu', 'cuda', etc.).
-            If None, auto-detects available hardware. Default is None.
-        verbose : bool, optional
-            If True, print detailed logging information during setup.
-            Default is True.
-
-        Notes
-        -----
-        **Embedding Caching Behavior:**
-
-        When ``precompute_embs=True``:
-
-        - If cached embeddings exist at ``{dataset.root_dir}/{backbone.filename}``,
-          they are loaded automatically
-        - If not, embeddings are computed using the backbone and saved to cache
-        - Set ``force_recompute=True`` to always recompute
-
-        When ``precompute_embs=False``:
-
-        - Uses original ``input_data`` without backbone preprocessing
-        - Backbone is ignored even if provided
-
-        Examples
-        --------
-        >>> dm = ConceptDataModule(dataset, backbone='resnet50', precompute_embs=True)
-        >>> dm.setup('fit')  # Computes/loads embeddings and creates splits
-        >>> dm.setup('test', backbone_device='cuda:1')  # Use specific GPU
         """
-        # Preprocess data with backbone if needed
-        self._maybe_precompute_backbone_embeddings(device=backbone_device, verbose=verbose)
-
         # Splitting
         if self.splitter is not None:
             self.splitter.split(self.dataset)

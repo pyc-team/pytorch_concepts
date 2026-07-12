@@ -6,10 +6,13 @@ for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
 import os
+import logging
 import numpy as np
 import pandas as pd
+import torch
 from torch import Tensor
-from torch.utils.data import Dataset, default_collate
+from torch.utils.data import DataLoader, Dataset, default_collate
+from tqdm import tqdm
 from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
@@ -23,6 +26,8 @@ from ..utils import files_exist, parse_tensor, convert_precision
 # TODO: add exogenous
 # TODO: range for continuous concepts
 # TODO: add possibility to annotate multiple axis (e.g., for relational concepts)
+
+logger = logging.getLogger(__name__)
 
 
 class ConceptDataset(Dataset):
@@ -330,11 +335,95 @@ class ConceptDataset(Dataset):
         raise NotImplementedError
 
     def load(self, *args, **kwargs):
-        """Loads raw dataset and preprocess data. 
+        """Loads raw dataset and preprocess data.
         Default to :obj:`load_raw`."""
         return self.load_raw(*args, **kwargs)
 
+    # Embedding precomputation #############################################
 
+    def precompute_embeddings(
+        self,
+        backbone,
+        batch_size: int = 64,
+        workers: int = 0,
+        cache: bool = True,
+        cache_dir: Optional[str] = None,
+        force: bool = False,
+    ) -> None:
+        """Precompute backbone embeddings and swap them in as ``input_data``.
+
+        Runs the (frozen) ``backbone`` over the whole dataset once. Afterwards
+        ``input_data`` holds the ``(n_samples, backbone.out_features)``
+        embeddings and ``embs_precomputed`` is True, so ``__getitem__`` serves
+        embeddings.
+
+        With ``cache=True`` (default) the embeddings are persisted to
+        ``{root_dir}/{backbone.filename}`` and loaded from there on subsequent
+        calls instead of recomputing. Use ``force=True`` to force recomputing 
+        embeddings even if a cache file exists.
+
+        
+        Parameters
+        ----------
+        backbone : Backbone
+            Feature extractor (needs ``filename``, ``is_huggingface`` and
+            ``__call__``).
+        batch_size : int, default 64
+            Batch size for the extraction pass.
+        workers : int, default 0
+            DataLoader workers for the extraction pass.
+        cache : bool, default True
+            Persist the embeddings to disk and reuse them across calls. Pass
+            False to compute in memory only (e.g. on a dataset subset, to
+            avoid writing a subset-sized cache into a shared ``root_dir``).
+        cache_dir : str, optional
+            Directory for the cache file. Defaults to the dataset's
+            ``root_dir``; set it when the data lives on read-only/shared
+            storage and the cache should go elsewhere (e.g. local scratch).
+        force : bool, default False
+            Recompute even if a cache file exists.
+        """
+        embs = None
+        if cache:
+            if cache_dir is None:
+                cache_dir = self.root_dir
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(cache_dir, backbone.filename)
+            if os.path.exists(cache_path) and not force:
+                logger.info(f"Loading cached embeddings from {cache_path}")
+                embs = torch.load(cache_path)
+                if embs.shape[0] != self.n_samples:  # stale cache (e.g. written from a subset)
+                    embs = None
+        if embs is None:
+            embs = self._compute_embeddings(backbone, batch_size, workers)
+            if cache:
+                logger.info(f"Saving embeddings to {cache_path}")
+                torch.save(embs, cache_path)
+        self.input_data = embs
+        self.embs_precomputed = True
+
+    def _compute_embeddings(self, backbone, batch_size: int, workers: int):
+        """Run ``backbone`` over the whole dataset (original order) and return
+        the stacked ``(n_samples, emb_dim)`` embeddings on CPU."""
+        def collate_fn(batch):
+            images = [sample['inputs']['x'] for sample in batch]
+            if not backbone.is_huggingface and isinstance(images[0], Tensor):
+                return torch.stack(images)
+            return images
+
+        dataloader = DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=workers,
+            collate_fn=collate_fn,
+        )
+
+        embeddings_list = []
+        with torch.no_grad():
+            for batch_data in tqdm(dataloader, desc="Extracting embeddings"):
+                embeddings_list.append(backbone(batch_data).cpu())
+        return torch.cat(embeddings_list, dim=0)
 
     # Setters ##############################################################
 
