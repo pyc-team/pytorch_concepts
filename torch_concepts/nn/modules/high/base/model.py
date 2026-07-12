@@ -32,7 +32,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .....annotations import Annotations
-from .....typing import BackboneType
 from ...utils import with_training_mode
 from ...outputs import ModelOutput, logits_from_params
 from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_DIST_KWARGS
@@ -58,9 +57,9 @@ class BaseModel(nn.Module, ABC):
 
     Parameters
     ----------
-    input_size : int
-        Dimensionality of input features after backbone processing. If no backbone
-        is used (backbone=None), this should match raw input dimensionality.
+    input_size : int or tuple
+        Shape of the raw input: an int for flat features, or a tuple (e.g.
+        ``(C, H, W)``) when a backbone consumes structured data.
     annotations : Annotations
         Concept annotations containing variable names, cardinalities, and optional
         distribution metadata. Distributions specify how the model represents each
@@ -88,17 +87,17 @@ class BaseModel(nn.Module, ABC):
         ``CausallyReliableConceptBottleneckModel``). If None, model assumes no explicit 
         graph structure, and each model enforces its own.
         Defaults to None.
-    backbone : BackboneType, optional
+    backbone : nn.Module, optional
         Module mapping the raw input (``input_size``) to the ``latent``
         representation (``latent_size``). It runs *inside* the PGM as the
         ``latent | input`` CPD. Can be any ``nn.Module`` (e.g. ResNet, ViT, MLP).
         If None, defaults to ``nn.Identity`` (``latent`` equals the raw input).
         Defaults to None.
     latent_size : int, optional
-        Dimensionality of the ``latent`` variable (the backbone's output, and the
-        input to the concept encoders). Required when a ``backbone`` is provided
-        (cannot be inferred automatically). Defaults to ``input_size`` when no
-        backbone is used.
+        Dimensionality of the ``latent`` variable (the backbone's output). 
+        Inferred from ``backbone.out_features`` when the backbone exposes it 
+        (e.g. :class:`~torch_concepts.Backbone`); otherwise required. 
+        Defaults to ``input_size`` when no backbone is used.
 
     Lightning Training Parameters (only used when lightning=True)
     -------------------------------------------------------------
@@ -132,7 +131,7 @@ class BaseModel(nn.Module, ABC):
         Concept-axis annotations for each concept.
     concept_names : List[str]
         List of concept variable names from annotations.
-    backbone : BackboneType
+    backbone : nn.Module
         Module mapping the raw input to the ``latent`` variable (``nn.Identity`` if
         none was provided). Runs inside the PGM as the ``latent | input`` CPD.
     input_size : int
@@ -244,7 +243,7 @@ class BaseModel(nn.Module, ABC):
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
         variable_dist_kwargs: Optional[Mapping] = None,
-        backbone: Optional[BackboneType] = None,
+        backbone: Optional[nn.Module] = None,
         latent_size: Optional[int] = None,
         lightning: bool = False,  # Consumed by __new__, included for signature
         **kwargs
@@ -288,7 +287,7 @@ class BaseModel(nn.Module, ABC):
 
     def _setup_backbone(
         self,
-        backbone: Optional[BackboneType],
+        backbone: Optional[nn.Module],
         input_size: int,
         latent_size: Optional[int],
     ) -> None:
@@ -298,18 +297,20 @@ class BaseModel(nn.Module, ABC):
         ``latent`` representation (``latent_size``); it runs *inside* the PGM as the
         ``latent | input`` CPD. When no backbone is given it defaults to
         ``nn.Identity`` (so :attr:`backbone` is always callable) and ``latent_size``
-        falls back to ``input_size``. A custom backbone requires an explicit
-        ``latent_size`` since its output dimensionality cannot be inferred.
+        falls back to ``input_size``. With a custom backbone, ``latent_size``
+        is taken from the backbone's ``out_features`` when it exposes one
+        (e.g. :class:`~torch_concepts.Backbone`, ``nn.Linear``); otherwise it
+        must be passed explicitly.
         """
         self.input_size = input_size
         if backbone is not None:
-            if latent_size is None:
-                raise ValueError(
-                    "Pass `latent_size` when providing a `backbone` — the output "
-                    "dimensionality cannot be inferred automatically."
-                )
             self._backbone = backbone
-            self.latent_size = latent_size
+            self.latent_size = latent_size or getattr(backbone, 'out_features', None)
+            if self.latent_size is None:
+                raise ValueError(
+                    "Pass `latent_size` when the `backbone` does not expose "
+                    "`out_features`."
+                )
         else:
             self._backbone = nn.Identity()
             self.latent_size = latent_size or input_size
@@ -416,7 +417,7 @@ class BaseModel(nn.Module, ABC):
         return f"{self.__class__.__name__}({fields})"
 
     @property
-    def backbone(self) -> BackboneType:
+    def backbone(self) -> nn.Module:
         """The backbone mapping raw input to the latent representation.
 
         Maps whatever the dataloader provides (``input_size``) to the ``latent``
@@ -426,7 +427,7 @@ class BaseModel(nn.Module, ABC):
 
         Returns
         -------
-        BackboneType
+        nn.Module
             Backbone module (e.g., ResNet, ViT, MLP) or ``nn.Identity``.
         """
         return self._backbone
