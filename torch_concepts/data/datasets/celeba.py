@@ -1,5 +1,6 @@
 import os
 import csv
+import zipfile
 import torch
 import pandas as pd
 import numpy as np
@@ -63,8 +64,9 @@ class CelebADataset(ConceptDataset):
             root = os.path.join(os.getcwd(), 'data', "celeba")
 
         self.root = root
-            
+
         self.label_descriptions = label_descriptions
+        self._zip = None  # lazy handle for reading images straight from the zip
         
         # Load data and annotations
         filenames, concepts, annotations, graph = self.load()
@@ -132,29 +134,8 @@ class CelebADataset(ConceptDataset):
         
         logger.info(f"CelebA files downloaded to {celeba_folder}.")
 
-    def maybe_extract(self):
-        """Extract the CelebA images archive.
-        
-        Extracts img_align_celeba.zip to the raw celeba folder.
-        """
-        celeba_folder = os.path.join(self.root, "raw")
-        archive_path = os.path.join(celeba_folder, "img_align_celeba.zip")
-        
-        if os.path.isdir(os.path.join(celeba_folder, "img_align_celeba")):
-            logger.info("Images already extracted")
-            return
-            
-        if not os.path.exists(archive_path):
-            logger.warning(f"Archive not found: {archive_path}")
-            return
-            
-        logger.info("Extracting img_align_celeba.zip...")
-        tv = _import_torchvision()
-        tv.datasets.utils.extract_archive(archive_path)
-        logger.info(f"CelebA images extracted to {celeba_folder}")
-
     def maybe_download(self):
-        """Download and extract the dataset if needed."""
+        """Download the dataset files if needed."""
         super().maybe_download()
 
     def _load_csv(self, filename: str, header: Optional[int] = None):
@@ -184,15 +165,19 @@ class CelebADataset(ConceptDataset):
 
         return headers, indices, torch.tensor(data_int)
 
+    def __getstate__(self):
+        """Drop the (unpicklable) zip handle; workers reopen it lazily."""
+        state = self.__dict__.copy()
+        state['_zip'] = None
+        return state
+
     def build(self):
         """Build processed dataset: save concepts, annotations and splits metadata.
-        
-        Images are not saved as they are already in the downloaded folder and
-        will be loaded on-the-fly in __getitem__.
+
+        Images are not extracted: __getitem__ reads them on-the-fly, straight
+        from the zip (or from the extracted folder when one exists).
         """
         self.maybe_download()
-
-        self.maybe_extract()
 
         celeba_folder = os.path.join(self.root, "raw")
         logger.info(f"Building CelebA dataset from raw files in {celeba_folder}...")
@@ -242,7 +227,8 @@ class CelebADataset(ConceptDataset):
             filenames = f.read().strip().split('\n')
         
         concepts = pd.read_hdf(self.processed_paths[1], "concepts")
-        annotations = torch.load(self.processed_paths[2])
+        # locally-built pickle holding an Annotations object (not just weights)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
         graph = None
         
         return filenames, concepts, annotations, graph
@@ -272,7 +258,14 @@ class CelebADataset(ConceptDataset):
         else:
             filename = self.input_data[item]  # input_data contains filenames
             img_path = os.path.join(self.root, "raw", "img_align_celeba", filename)
-            img = Image.open(img_path)
+            if os.path.exists(img_path):  # extracted folder (if present)
+                img = Image.open(img_path)
+            else:  # read straight from the zip — no extraction needed
+                if self._zip is None:
+                    self._zip = zipfile.ZipFile(
+                        os.path.join(self.root, "raw", "img_align_celeba.zip")
+                    )
+                img = Image.open(self._zip.open(f"img_align_celeba/{filename}"))
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
         
         c = self.concepts[item]
