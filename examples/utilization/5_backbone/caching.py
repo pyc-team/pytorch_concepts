@@ -24,7 +24,7 @@ from pytorch_lightning import Trainer
 
 from torch_concepts import Backbone, seed_everything
 from torch_concepts.data import CelebADataModule
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, MLP
 
 
 def main():
@@ -33,8 +33,8 @@ def main():
     # 1. Data: CelebA images
     dm = CelebADataModule(
         root='./data/celeba',
-        max_samples=500,
-        batch_size=64,
+        max_samples=1000,
+        batch_size=128,
         # splitter=None replaces the native split (defined on the full dataset) 
         # with a random split.
         splitter=None,
@@ -65,14 +65,16 @@ def main():
         input_size=dm.n_features[-1],
         annotations=dm.annotations,
         task_names=['Attractive'],
-        backbone=None,  # embeddings are precomputed, backbone stays torch.nn.Identity()
+        backbone=MLP(backbone.out_features, 128), # embeddings are precomputed, backbone reduces to a simple latent encoder
+        latent_size=128,  
         lightning=True,
         loss=torch.nn.BCEWithLogitsLoss(),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.01},
     )
-    trainer = Trainer(max_epochs=5, logger=False, enable_checkpointing=False)
+    trainer = Trainer(max_epochs=200, logger=False)
     trainer.fit(model, datamodule=dm)
+    trainer.test(ckpt_path='best', datamodule=dm)
 
 
 if __name__ == '__main__':
