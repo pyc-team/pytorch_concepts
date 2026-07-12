@@ -35,7 +35,7 @@ class LearnablePrior(nn.Module):
         ``k`` for a ``k``-way OneHotCategorical ``logits``).
     """
 
-    def __init__(self, size: int) -> None:
+    def __init__(self, size: Union[int, tuple]) -> None:
         super().__init__()
         self.param = nn.Parameter(torch.randn(size))
 
