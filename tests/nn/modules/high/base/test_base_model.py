@@ -570,8 +570,8 @@ class TestBaseModelMissingLines:
     # model.py line 309: backbone requires latent_size
     # ------------------------------------------------------------------
     def test_backbone_without_latent_size_raises(self, annotations_with_distributions):
-        """Providing a backbone without latent_size raises ValueError (line 309)."""
-        backbone = nn.Linear(10, 20)
+        """A backbone with no `out_features` and no latent_size raises ValueError."""
+        backbone = nn.Sequential(nn.Linear(10, 20))  # exposes no out_features
         with pytest.raises(ValueError, match="latent_size"):
             ConcreteModel(
                 input_size=10,
@@ -579,6 +579,29 @@ class TestBaseModelMissingLines:
                 backbone=backbone,
                 # latent_size intentionally omitted
             )
+
+    def test_latent_size_inferred_from_backbone_out_features(
+        self, annotations_with_distributions
+    ):
+        """latent_size is inferred from backbone.out_features when not passed."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+            backbone=nn.Linear(10, 32),  # out_features == 32
+        )
+        assert model.latent_size == 32
+
+    def test_explicit_latent_size_wins_over_out_features(
+        self, annotations_with_distributions
+    ):
+        """An explicit latent_size overrides the backbone's out_features."""
+        model = ConcreteModel(
+            input_size=10,
+            annotations=annotations_with_distributions,
+            backbone=DummyBackbone(in_features=10, out_features=20),
+            latent_size=64,
+        )
+        assert model.latent_size == 64
 
     # ------------------------------------------------------------------
     # model.py lines 355-358: _validate_concept_types raises for unsupported types

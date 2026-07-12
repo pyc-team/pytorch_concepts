@@ -1,5 +1,5 @@
 """
-Tests for torch_concepts.data.backbone module.
+Tests for torch_concepts.backbone module.
 
 This module provides comprehensive tests for the Backbone class, including:
 - API validation (string-only model names)
@@ -16,7 +16,7 @@ from PIL import Image
 import numpy as np
 from torch.utils.data import Dataset
 
-from torch_concepts.data.backbone import (
+from torch_concepts.backbone import (
     Backbone,
     _is_huggingface_model,
     _resolve_device,
@@ -325,11 +325,54 @@ class TestBackboneAsModule:
     def test_no_grad_context(self, dummy_tensor_batch):
         """Test that embeddings can be computed without gradients."""
         backbone = Backbone('resnet18', device='cpu')
-        
+
         with torch.no_grad():
             embeddings = backbone(dummy_tensor_batch)
-        
+
         assert not embeddings.requires_grad
+
+
+# =============================================================================
+# Test Freezing
+# =============================================================================
+
+class TestBackboneFreeze:
+    """Tests for the freeze mechanism (default frozen, opt-in fine-tuning)."""
+
+    def test_frozen_by_default(self):
+        backbone = Backbone('resnet18', device='cpu')
+        assert backbone.frozen
+        assert all(not p.requires_grad for p in backbone.parameters())
+
+    def test_frozen_stays_in_eval_under_train(self):
+        """A frozen backbone ignores .train() (fixed BatchNorm/Dropout)."""
+        backbone = Backbone('resnet18', device='cpu')
+        backbone.train()
+        assert not backbone.training
+
+    def test_unfrozen_is_trainable(self):
+        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        assert not backbone.frozen
+        assert all(p.requires_grad for p in backbone.parameters())
+        # starts in train mode like any nn.Module (correct BatchNorm behavior
+        # when fine-tuning; Lightning does not flip modes at fit start)
+        assert backbone.training
+        assert all(m.training for m in backbone.modules())
+
+    def test_unfrozen_propagates_train_mode(self):
+        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        backbone.train()
+        assert backbone.training
+        backbone.eval()
+        assert not backbone.training
+
+    def test_frozen_inside_parent_model(self):
+        """Calling .train() on a parent module keeps a frozen backbone in eval."""
+        backbone = Backbone('resnet18', device='cpu')
+        parent = nn.Sequential(backbone)
+        parent.train()
+        assert parent.training
+        assert not backbone.training
 
 
 # =============================================================================
