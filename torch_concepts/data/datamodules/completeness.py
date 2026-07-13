@@ -3,7 +3,6 @@ import os
 from ..datasets.toy import CompletenessDataset
 
 from ..base.datamodule import ConceptDataModule
-from ...typing import BackboneType
 
 
 class CompletenessDataModule(ConceptDataModule):
@@ -25,9 +24,6 @@ class CompletenessDataModule(ConceptDataModule):
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         concept_subset: list | None = None,
         label_descriptions: dict | None = None,
         workers: int = 0,
@@ -51,9 +47,7 @@ class CompletenessDataModule(ConceptDataModule):
             val_size=val_size,
             test_size=test_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
-            seed=seed
+            seed=seed,
+            **kwargs,
         )

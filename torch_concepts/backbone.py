@@ -1,24 +1,5 @@
 """
 Backbone utilities for feature extraction.
-
-This module provides the :class:`Backbone` class for extracting embeddings
-from pre-trained models. It supports both HuggingFace models (DINOv2, ViT, etc.)
-and torchvision models (ResNet, VGG, EfficientNet, DenseNet).
-
-The backbone can be used as a regular :class:`torch.nn.Module` and is designed
-to work seamlessly with the :class:`ConceptDataModule` for preprocessing
-image datasets into feature embeddings.
-
-Example
--------
->>> from torch_concepts.data.backbone import Backbone
->>> backbone = Backbone('resnet50', device='cuda')
->>> embeddings = backbone(batch_images)  # (B, 2048)
-
-Notes
------
-HuggingFace models are detected by presence of '/' in the name or by
-keywords like 'dinov2', 'vit-', 'beit', 'clip', 'swin', 'convnext'.
 """
 import torch
 import torch.nn as nn
@@ -26,7 +7,7 @@ import logging
 import warnings
 from typing import Union, List, Tuple, Optional
 
-from ..utils import resolve_hf_token
+from .utils import resolve_hf_token
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +30,7 @@ def _resolve_device(device: Optional[str] = None) -> torch.device:
 
     Warnings
     --------
-    If MPS is available but selected, a warning is raised and CPU is used instead.
+    If MPS is available and selected, a warning is raised and CPU is used instead.
     """
     if device is None:
         if torch.cuda.is_available():
@@ -83,6 +64,8 @@ def _is_huggingface_model(name: str) -> bool:
     bool
         True if the name refers to a HuggingFace model.
     """
+    # FIXME: This is a heuristic; consider using a more robust method 
+    # (e.g., checking against a list of known HF models).
     hf_keywords = ['dinov2', 'dino-', 'vit-', 'beit', 'clip', 'swin', 'convnext']
     name_lower = name.lower()
     if '/' in name:
@@ -96,6 +79,9 @@ def _load_huggingface_model(
 ) -> Tuple[nn.Module, object]:
     """Load a HuggingFace model and processor.
 
+    Supported model families:
+    - DINOv2 (facebook/dinov2-base, facebook/dinov2-large)
+
     Parameters
     ----------
     name : str
@@ -106,13 +92,13 @@ def _load_huggingface_model(
     Returns
     -------
     tuple
-        (model, processor) where model is the HuggingFace model in eval mode
-        and processor is the AutoImageProcessor for preprocessing.
+        (model, processor) where 'model' is the HuggingFace model
+        and 'processor' is the AutoImageProcessor for preprocessing.
     """
     from transformers import AutoImageProcessor, AutoModel
     token = resolve_hf_token()
     processor = AutoImageProcessor.from_pretrained(name, token=token)
-    model = AutoModel.from_pretrained(name, token=token).to(device).eval()
+    model = AutoModel.from_pretrained(name, token=token).to(device)
     return model, processor
 
 
@@ -138,8 +124,8 @@ def _load_torchvision_model(
     Returns
     -------
     tuple
-        (model, preprocess) where model is a feature extractor (without
-        classification head) and preprocess is the transforms pipeline.
+        (model, preprocess) where 'model' is a feature extractor (without
+        classification head) and 'preprocess' is the transforms pipeline.
 
     Raises
     ------
@@ -163,23 +149,21 @@ def _load_torchvision_model(
     else:
         raise ValueError(f"Unsupported torchvision backbone: {name}")
 
-    model = model.to(device).eval()
+    model = model.to(device)
     preprocess = weights.transforms()
     return model, preprocess
 
 
 class Backbone(nn.Module):
-    """Wrapper class for backbone models used for feature extraction.
+    """
+    This module provides the :class:`Backbone` class for extracting embeddings
+    from pre-trained models. It supports both HuggingFace models (DINOv2, ViT, etc.)
+    and torchvision models (ResNet, VGG, EfficientNet, DenseNet).
 
-    Supports both HuggingFace models (DINOv2, ViT, CLIP, etc.) and torchvision
-    models (ResNet, VGG, EfficientNet, DenseNet). The backbone extracts
-    embeddings from images and can be used as a regular :class:`torch.nn.Module`.
-
-    The class automatically handles:
-    - Model loading and initialization in eval mode
-    - Preprocessing transforms appropriate for each model
-    - Device management (auto-detection of CUDA/CPU)
-    - Image format conversion (PIL to tensor for torchvision)
+    The backbone is a regular :class:`torch.nn.Module`. 
+    Pass it to :meth:`ConceptDataset.precompute_embeddings` /
+    :meth:`ConceptDataModule.precompute_embeddings` to precompute and cache embeddings,
+    or pass it to a high-level model as its ``backbone`` (frozen or unfrozen).
 
     Parameters
     ----------
@@ -193,13 +177,18 @@ class Backbone(nn.Module):
         Device to use ('cpu', 'cuda', 'cuda:0', etc.).
         If None, auto-detects available hardware (CUDA > CPU).
         Default is None.
+    freeze : bool, default True
+        If True, parameters are excluded from gradients. 
+        Pass ``freeze=False`` to fine-tune.
 
     Attributes
     ----------
     name : str
         The model name used for initialization.
+    frozen : bool
+        Whether the backbone is frozen.
     device : torch.device
-        The device the model is loaded on.
+        The device the model currently lives on.
     processor : object
         The preprocessing transform/processor (varies by model type).
     is_huggingface : bool
@@ -209,40 +198,40 @@ class Backbone(nn.Module):
 
     Examples
     --------
-    Using with torchvision model:
-
-    >>> from torch_concepts.data.backbone import Backbone
+    >>> from torch_concepts import Backbone
     >>> import torch
+    >>>
     >>> backbone = Backbone('resnet50', device='cpu')
+    >>>
     >>> images = torch.randn(4, 3, 224, 224)  # batch of 4 images
     >>> embeddings = backbone(images)
     >>> embeddings.shape
     torch.Size([4, 2048])
-
-    Using with HuggingFace model:
-
-    >>> backbone = Backbone('facebook/dinov2-base', device='cuda')
-    >>> from PIL import Image
-    >>> images = [Image.new('RGB', (224, 224)) for _ in range(4)]
-    >>> embeddings = backbone(images)
-    >>> embeddings.shape
-    torch.Size([4, 768])
-
-    See Also
-    --------
-    ConceptDataModule : DataModule that integrates with Backbone for preprocessing.
-    _is_huggingface_model : Helper function for model type detection.
     """
 
-    def __init__(self, name: str, device: Optional[str] = None):
+    def __init__(self, name: str, device: Optional[str] = None, freeze: bool = True):
         super().__init__()
         self.name = name
+        self.frozen = freeze
         self._device = _resolve_device(device)
         self._is_huggingface = _is_huggingface_model(name)
         self._model = None
         self._processor = None
         self._out_features = None
         self._load_model()
+        if freeze:
+            self.requires_grad_(False)
+            self.eval()  # fixed feature extractor: lock BatchNorm/Dropout
+
+    def train(self, mode: bool = True):
+        """Set train mode, but keep a frozen backbone in eval.
+
+        A frozen backbone is a fixed feature extractor, so its BatchNorm
+        running statistics and Dropout must stay fixed even when a parent
+        module (or Lightning at the start of each epoch) switches to train
+        mode. Unfrozen backbones behave like a normal ``nn.Module``.
+        """
+        return super().train(mode and not self.frozen)
 
     def _load_model(self) -> None:
         """Load the backbone model and processor based on model type.
@@ -270,14 +259,17 @@ class Backbone(nn.Module):
 
     @property
     def device(self) -> torch.device:
-        """The device this backbone is on.
+        """The device this backbone currently lives on.
+
+        Read from the parameters so it stays correct when a parent model
+        (e.g. Lightning) moves the module after construction.
 
         Returns
         -------
         torch.device
             The device (e.g., cpu, cuda:0).
         """
-        return self._device
+        return next(self._model.parameters()).device
 
     @property
     def out_features(self) -> int:
@@ -338,7 +330,7 @@ class Backbone(nn.Module):
             Input data. Format depends on model type:
 
             - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
-            - **HuggingFace**: List of PIL Images or preprocessed tensors
+            - **HuggingFace**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
 
         Returns
         -------
@@ -354,16 +346,16 @@ class Backbone(nn.Module):
         """
         if self._is_huggingface:
             inputs = self._processor(images=x, return_tensors="pt")
-            inputs = {k: v.to(self._device) for k, v in inputs.items()}
             outputs = self._model(**inputs)
             return outputs.last_hidden_state[:, 0, :]  # CLS token
         else:
             if isinstance(x, list):
+                # list of PIL Images case
                 x = torch.stack([self._to_tensor(img) for img in x])
-            x = x.to(self._device)
             # Handle single image (3D tensor) by adding batch dimension
             squeeze_output = False
             if x.dim() == 3:
+                # single image case
                 x = x.unsqueeze(0)
                 squeeze_output = True
             x = self._processor(x)
@@ -381,5 +373,5 @@ class Backbone(nn.Module):
             Formatted string with model name, type, and device.
         """
         model_type = "HuggingFace" if self._is_huggingface else "torchvision"
-        return f"Backbone(name='{self.name}', type={model_type}, device={self._device})"
+        return f"Backbone(name='{self.name}', type={model_type}, device={self.device}, frozen={self.frozen})"
 

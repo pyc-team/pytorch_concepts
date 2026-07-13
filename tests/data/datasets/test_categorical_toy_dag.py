@@ -112,10 +112,9 @@ class TestToyDAGDataset:
         axis_annotation = dataset.annotations
         assert axis_annotation is not None
         assert axis_annotation.labels == ['engine', 'wheels', 'car_start']
-        # Metadata is a dict with concept names as keys
+        # Each concept is discrete (binary/categorical, not continuous)
         for concept_name in ['engine', 'wheels', 'car_start']:
-            assert concept_name in axis_annotation.metadata
-            assert axis_annotation.metadata[concept_name]['type'] == 'discrete'
+            assert axis_annotation.concept(concept_name).type in ('binary', 'categorical')
 
     def test_sample_structure(self, temp_dir, simple_car_config):
         """Test that sample structure matches expected format."""

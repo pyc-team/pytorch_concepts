@@ -3,11 +3,12 @@ defaults:
   - _commons_bnlearn
   - _self_
 
-_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+datamodule:
+  _target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
 
-name: pigs
+  name: pigs
+
+  autoencoder_kwargs:
+    latent_dim: 1024
 
 default_task_names: [p82265990]
-
-autoencoder_kwargs:
-  latent_dim: 1024

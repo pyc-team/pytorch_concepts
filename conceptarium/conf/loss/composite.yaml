@@ -18,7 +18,8 @@
     _target_: "torch.nn.BCEWithLogitsLoss"
   categorical: 
     _target_: "torch.nn.CrossEntropyLoss"
-  # continuous:
+  continuous:
+    _target_: "torch.nn.MSELoss"
 
 - _target_: 'torch_concepts.nn.L1LogitRegularizer'
   scale: 0.1

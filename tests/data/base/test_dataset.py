@@ -88,7 +88,7 @@ class TestConceptSubset(unittest.TestCase):
             concept_names_subset=subset
         )
 
-        metadata = dataset.annotations[1].metadata
+        metadata = dataset.annotations.metadata
         self.assertEqual(set(metadata.keys()), set(subset))
         for name in subset:
             self.assertEqual(metadata[name]['type'], 'discrete')
