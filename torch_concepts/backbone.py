@@ -221,6 +221,17 @@ class Backbone(nn.Module):
         self._load_model()
         if freeze:
             self.requires_grad_(False)
+            self.eval()  # fixed feature extractor: lock BatchNorm/Dropout
+
+    def train(self, mode: bool = True):
+        """Set train mode, but keep a frozen backbone in eval.
+
+        A frozen backbone is a fixed feature extractor, so its BatchNorm
+        running statistics and Dropout must stay fixed even when a parent
+        module (or Lightning at the start of each epoch) switches to train
+        mode. Unfrozen backbones behave like a normal ``nn.Module``.
+        """
+        return super().train(mode and not self.frozen)
 
     def _load_model(self) -> None:
         """Load the backbone model and processor based on model type.
