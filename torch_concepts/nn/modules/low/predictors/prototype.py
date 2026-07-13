@@ -109,6 +109,24 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
         Returns:
             torch.Tensor: Tensor of shape [batch, num_concepts] - final concept predictions.
         """
+        similarity = self.similarity_scores(concepts, embeddings)
+
+        # Weighted sum over prototypes
+        # similarity: [batch, num_concepts, max_prototypes]
+        # cumulative_weights: [num_concepts, max_prototypes]
+        output = (similarity * concepts.T.unsqueeze(0)).sum(dim=2)  # [batch, num_concepts]
+
+        return output
+
+    def similarity_scores(
+            self,
+            concepts: torch.Tensor,
+            embeddings: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute similarity scores between embeddings and prototypes.
+        """
+
         assert self.max_prototypes == concepts.shape[0], \
             f"Expected concepts to have shape [{self.max_prototypes}, {self.num_concepts}], got {concepts.shape}"
 
@@ -140,9 +158,4 @@ class PrototypeConceptEmbeddingToConcept(BaseConceptLayer):
             temp = torch.clamp(self.temperature_forward, min=0.1)
             similarity = F.softmax(logits / temp, dim=2)
 
-        # Weighted sum over prototypes
-        # similarity: [batch, num_concepts, max_prototypes]
-        # cumulative_weights: [num_concepts, max_prototypes]
-        output = (similarity * concepts.T.unsqueeze(0)).sum(dim=2)  # [batch, num_concepts]
-
-        return output
+        return similarity
