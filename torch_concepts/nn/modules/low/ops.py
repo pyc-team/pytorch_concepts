@@ -1,5 +1,37 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+
+
+class StraightThroughSoftmax(torch.autograd.Function):
+    """
+    Straight-Through Estimator for softmax:
+    Forward pass uses sharp temperature (peaked selection)
+    Backward pass uses soft temperature (informative gradients)
+    """
+    @staticmethod
+    def forward(ctx, logits, temp_forward, temp_backward, dim):
+        ctx.temp_backward = temp_backward
+        ctx.dim = dim
+        ctx.save_for_backward(logits)
+        # Forward: very peaked distribution
+        return F.softmax(logits / temp_forward, dim=dim)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        logits, = ctx.saved_tensors
+        temp = ctx.temp_backward
+        dim = ctx.dim
+
+        # Backward: use softer temperature for better gradient flow
+        probs = F.softmax(logits / temp, dim=dim)
+
+        # Compute softmax Jacobian-vector product
+        grad_input = probs * (grad_output - (grad_output * probs).sum(dim=dim, keepdim=True))
+        grad_input = grad_input / temp
+
+        return grad_input, None, None, None
+
 
 class SumOp(nn.Module):
     r"""Sum ``n_terms`` equal-size contributions concatenated along the last dim.

@@ -25,12 +25,17 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.prototype import MonotonicScoresEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
+from .modules.low.predictors.prototype import PrototypeConceptEmbeddingToConcept
+
+# Ops
+from .modules.low.ops import StraightThroughSoftmax
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
@@ -118,12 +123,14 @@ __all__ = [
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "MonotonicScoresEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
+    "PrototypeConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
