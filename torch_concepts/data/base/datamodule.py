@@ -151,10 +151,10 @@ class ConceptDataModule(LightningDataModule):
             dataset.concepts = dataset.concepts[:max_samples]
             if isinstance(splitter, NativeSplitter):
                 raise ValueError(
-                f"'max_samples' is incompatible with NativeSplitter. \
-                Please pass splitter=None (-> RandomSplitter) or a compatible splitter which does not \
-                use explicit indices."
-            )
+                    "'max_samples' is incompatible with NativeSplitter. Please pass "
+                    "splitter=None (-> RandomSplitter) or a compatible splitter that "
+                    "does not use explicit indices."
+                )
         self.dataset = dataset
 
         # data loaders

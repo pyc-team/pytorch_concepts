@@ -14,7 +14,7 @@ must be applied to the output of the prior module to map it to the correct domai
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -29,13 +29,14 @@ class LearnablePrior(nn.Module):
 
     Parameters
     ----------
-    size : int
-        Length of the parameter vector. This must match the per-parameter size
-        the target distribution expects (e.g. ``1`` for a Bernoulli ``logits``,
-        ``k`` for a ``k``-way OneHotCategorical ``logits``).
+    size : int or tuple of int
+        Shape of the parameter. An int gives a 1-D vector of that length; a
+        tuple gives a parameter of that shape. Must match the per-parameter
+        size the target distribution expects (e.g. ``1`` for a Bernoulli
+        ``logits``, ``k`` for a ``k``-way OneHotCategorical ``logits``).
     """
 
-    def __init__(self, size: Union[int, tuple]) -> None:
+    def __init__(self, size: Union[int, Tuple[int, ...]]) -> None:
         super().__init__()
         self.param = nn.Parameter(torch.randn(size))
 

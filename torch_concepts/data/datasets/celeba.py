@@ -265,7 +265,9 @@ class CelebADataset(ConceptDataset):
                     self._zip = zipfile.ZipFile(
                         os.path.join(self.root, "raw", "img_align_celeba.zip")
                     )
-                img = Image.open(self._zip.open(f"img_align_celeba/{filename}"))
+                with self._zip.open(f"img_align_celeba/{filename}") as fh:
+                    img = Image.open(fh)
+                    img.load()  # force the read so the zip entry handle can close
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
         
         c = self.concepts[item]

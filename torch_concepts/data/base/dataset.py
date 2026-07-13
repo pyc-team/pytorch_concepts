@@ -419,10 +419,17 @@ class ConceptDataset(Dataset):
             collate_fn=collate_fn,
         )
 
+        # Force eval so BatchNorm/Dropout stay deterministic (embeddings are
+        # cached); restore the caller's mode afterwards.
+        was_training = backbone.training
+        backbone.eval()
         embeddings_list = []
-        with torch.no_grad():
-            for batch_data in tqdm(dataloader, desc="Extracting embeddings"):
-                embeddings_list.append(backbone(batch_data).cpu())
+        try:
+            with torch.no_grad():
+                for batch_data in tqdm(dataloader, desc="Extracting embeddings"):
+                    embeddings_list.append(backbone(batch_data).cpu())
+        finally:
+            backbone.train(was_training)
         return torch.cat(embeddings_list, dim=0)
 
     # Setters ##############################################################

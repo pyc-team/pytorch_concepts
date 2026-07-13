@@ -314,6 +314,12 @@ class BaseModel(nn.Module, ABC):
         else:
             self._backbone = nn.Identity()
             self.latent_size = latent_size or input_size
+            if not isinstance(self.latent_size, int):
+                raise ValueError(
+                    "Without a `backbone` the latent equals the raw input, so "
+                    f"`input_size` must be an int; got {self.latent_size!r}. Add a "
+                    "`backbone` to map multi-dimensional inputs to a vector latent."
+                )
 
     @property
     def inference(self):
