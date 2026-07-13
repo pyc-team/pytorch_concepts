@@ -18,5 +18,6 @@ categorical:
     - _target_: "hydra.utils.get_class"
       path: "torchmetrics.classification.MulticlassAccuracy"
     - average: 'micro'
-# continuous: 
-  # ... not supported yet
+continuous: 
+  mse:
+    _target_: "torchmetrics.MeanSquaredError"
