@@ -98,6 +98,11 @@ class TestDeviceResolution:
             device = _resolve_device(None)
         assert device == torch.device('cpu')
 
+    def test_cuda_selected_when_available(self, monkeypatch):
+        """CUDA available -> 'cuda' is selected (covers the CUDA branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert _resolve_device(None) == torch.device('cuda')
+
 
 # =============================================================================
 # Test HuggingFace Detection
@@ -201,6 +206,11 @@ class TestBackboneProperties:
         """Test processor property is set."""
         backbone = Backbone('resnet18', device='cpu')
         assert backbone.processor is not None
+
+    def test_out_features_property(self):
+        """Test out_features exposes the embedding dimension."""
+        backbone = Backbone('resnet18', device='cpu')
+        assert backbone.out_features == 512
     
     def test_is_huggingface_property(self):
         """Test is_huggingface property."""
@@ -241,10 +251,18 @@ class TestBackboneForwardTorchvision:
         """Test forward pass with PIL image list."""
         backbone = Backbone('resnet18', device='cpu')
         embeddings = backbone(dummy_pil_images)
-        
+
         assert isinstance(embeddings, torch.Tensor)
         assert embeddings.shape[0] == 2
         assert embeddings.shape[1] == 512
+
+    def test_forward_single_image_3d(self):
+        """A single (C, H, W) image is batched then squeezed back to 1D."""
+        backbone = Backbone('resnet18', device='cpu')
+        embedding = backbone(torch.randn(3, 224, 224))
+
+        assert isinstance(embedding, torch.Tensor)
+        assert embedding.shape == (512,)  # batch dim added then squeezed away
     
     def test_resnet_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for different ResNet variants."""

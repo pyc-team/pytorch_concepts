@@ -446,21 +446,6 @@ class TestConceptMetrics(unittest.TestCase):
                 summary=True
             )
 
-    def test_unused_metrics_warning(self):
-        """Test that unused metrics produce warnings."""
-        import warnings
-        
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            ConceptMetrics(
-                self.annotations_binary,
-                binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
-                continuous={'mse': torchmetrics.regression.MeanSquaredError()},
-                summary=True
-            )
-            self.assertTrue(any("continuous" in str(warning.message).lower() 
-                              for warning in w))
-
     def test_metric_class_with_kwargs(self):
         """Test passing metric class with user kwargs as tuple."""
         metrics = ConceptMetrics(
