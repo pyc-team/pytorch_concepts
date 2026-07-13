@@ -132,6 +132,14 @@ class TestBaseModelInitialization:
         assert model.variable_distributions['binary'] == RelaxedBernoulli
         assert model.latent_size == 10  # No encoder, uses input_size
 
+    def test_no_backbone_requires_int_input_size(self, annotations_with_distributions):
+        """A multi-dimensional input_size with no backbone raises a clear error."""
+        with pytest.raises(ValueError, match="must be an int"):
+            ConcreteModel(
+                input_size=(3, 224, 224),
+                annotations=annotations_with_distributions,
+            )
+
     def test_init_with_variable_distributions_categorical(
         self, mixed_annotations
     ):

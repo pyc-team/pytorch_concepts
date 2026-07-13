@@ -825,5 +825,44 @@ class TestCacheEmbeddings:
         assert not os.path.exists(os.path.join(ds.root_dir, 'bb.pt'))
 
 
+class TestMaxSamplesNativeSplitter:
+    """`max_samples` with a NativeSplitter is rejected with a clear error."""
+
+    def test_native_splitter_incompatible_with_max_samples(self, toy_dataset):
+        from torch_concepts.data.splitters.native import NativeSplitter
+        with pytest.raises(ValueError, match="max_samples.*incompatible.*NativeSplitter"):
+            ConceptDataModule(dataset=toy_dataset, splitter=NativeSplitter(), max_samples=10)
+
+
+class TestComputeEmbeddingsEvalGuard:
+    """_compute_embeddings forces eval during extraction and restores the mode."""
+
+    def test_forces_eval_and_restores_mode(self, tmp_path):
+        ds = ToyDataset('xor', n_gen=8, seed=0, root=str(tmp_path))
+
+        class _RecordingBackbone(nn.Module):
+            is_huggingface = False
+
+            def __init__(self):
+                super().__init__()
+                self.out_features = 4
+                self.seen_training = None
+                self._p = nn.Parameter(torch.zeros(1))
+
+            def forward(self, x):
+                self.seen_training = self.training
+                return torch.zeros(x.shape[0], self.out_features)
+
+        bb = _RecordingBackbone()
+        bb.train()
+        assert bb.training
+
+        embs = ds._compute_embeddings(bb, batch_size=4, workers=0)
+
+        assert bb.seen_training is False      # ran in eval (deterministic BN/Dropout)
+        assert bb.training is True            # caller's mode restored afterwards
+        assert embs.shape == (len(ds), 4)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
