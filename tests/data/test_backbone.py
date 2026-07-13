@@ -9,6 +9,9 @@ This module provides comprehensive tests for the Backbone class, including:
 - Forward pass correctness
 - Property accessors
 """
+import sys
+import types
+
 import pytest
 import torch
 import torch.nn as nn
@@ -396,6 +399,54 @@ class TestBackboneFreeze:
 # =============================================================================
 # Test HuggingFace Backbone (Slow tests - marked for optional skip)
 # =============================================================================
+
+class TestBackboneHuggingFaceMocked:
+    """HuggingFace code paths exercised offline via a mocked ``transformers``.
+
+    These cover the HF branches of ``_load_huggingface_model``, ``_load_model``
+    and ``forward`` without any Hub download, so they run in CI (unlike the
+    ``@pytest.mark.slow`` tests below).
+    """
+
+    @pytest.fixture
+    def fake_transformers(self, monkeypatch):
+        class _FakeProcessor:
+            def __call__(self, images=None, return_tensors=None):
+                n = len(images) if isinstance(images, list) else images.shape[0]
+                return {"pixel_values": torch.zeros(n, 3, 224, 224)}
+
+        class _FakeHFModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = types.SimpleNamespace(hidden_size=8)
+                self._lin = nn.Linear(3, 8)  # real params for device / requires_grad
+
+            def forward(self, **inputs):
+                batch = inputs["pixel_values"].shape[0]
+                return types.SimpleNamespace(last_hidden_state=torch.zeros(batch, 5, 8))
+
+        fake = types.ModuleType("transformers")
+        fake.AutoImageProcessor = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeProcessor()
+        )
+        fake.AutoModel = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeHFModel()
+        )
+        monkeypatch.setitem(sys.modules, "transformers", fake)
+        return fake
+
+    def test_init_reads_hidden_size(self, fake_transformers):
+        """HF init path: loads model/processor and reads out_features from config."""
+        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        assert backbone.is_huggingface
+        assert backbone.out_features == 8
+
+    def test_forward_returns_cls_token(self, fake_transformers, dummy_pil_images):
+        """HF forward path: processor -> model -> CLS token embedding."""
+        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        embeddings = backbone(dummy_pil_images)
+        assert embeddings.shape == (2, 8)
+
 
 @pytest.mark.slow
 class TestBackboneHuggingFace:
