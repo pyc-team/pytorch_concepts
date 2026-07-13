@@ -14,7 +14,7 @@ must be applied to the output of the prior module to map it to the correct domai
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -29,17 +29,18 @@ class LearnablePrior(nn.Module):
 
     Parameters
     ----------
-    size : int
-        Length of the parameter vector. This must match the per-parameter size
-        the target distribution expects (e.g. ``1`` for a Bernoulli ``logits``,
-        ``k`` for a ``k``-way OneHotCategorical ``logits``).
+    size : int or tuple of int
+        Shape of the parameter. An int gives a 1-D vector of that length; a
+        tuple gives a parameter of that shape. Must match the per-parameter
+        size the target distribution expects (e.g. ``1`` for a Bernoulli
+        ``logits``, ``k`` for a ``k``-way OneHotCategorical ``logits``).
     broadcast : bool, default True
         Whether ``root_params`` broadcasts this prior to the batch (adds a leading
         ``batch`` dim). Set ``False`` for a prior shared across the batch (e.g. a
         fixed matrix) that should stay unbatched and broadcast downstream instead.
     """
 
-    def __init__(self, size: int, broadcast: bool = True) -> None:
+    def __init__(self, size: Union[int, Tuple[int, ...]], broadcast: bool = True) -> None:
         super().__init__()
         self.param = nn.Parameter(torch.randn(size))
         self.broadcast = broadcast

@@ -13,12 +13,15 @@ hydra:
       loss: standard
 
 dataset:
-  batch_size: 2048
+  datamodule:
+    batch_size: 2048
 
 model:
-  optim_kwargs:
-    lr: 0.01
-  latent_encoder_kwargs:
+  model_cls:
+    optim_kwargs:
+      lr: 0.01
+  latent_encoder:
+    _target_: torch_concepts.nn.MLP
     hidden_size: 128
     n_layers: 3
     activation: leaky_relu
