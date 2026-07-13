@@ -43,7 +43,7 @@ def main():
     print(f"Raw input shape: {tuple(dm.n_features)}")
 
     # 2. Explicit preprocessing: precompute backbone embeddings before setup()
-    backbone = Backbone('resnet18', freeze=True)
+    backbone = Backbone('facebook/dinov3-vits16-pretrain-lvd1689m', freeze=True)
 
     t0 = time.perf_counter()
     dm.precompute_embeddings(backbone, cache=True, force=True)  # first call: computes + saves to disk
