@@ -7,8 +7,8 @@ hydra:
     name: test
   sweeper:
     params:
-      dataset: celeba
-      model: c2bm
+      dataset: dag_asia, dag_sachs, dag_insurance, celeba
+      model: cbm, cem, c2bm
 
 seed: 42   # run, model init and training seed
 
