@@ -19,54 +19,66 @@ from torch_concepts.data.base.concept_generator import ConceptGenerator
 RoutingMode = Literal["merged", "cartesian", "zip"]
 
 
-class UnionConceptFilter:
-    """Merge concept axes in order while preserving categorical structure."""
+class DeduplicateConcepts:
+    """Remove duplicate concept labels from one concept axis.
 
-    def __call__(self, concepts: dict[str, Annotations]) -> Annotations:
+    The first occurrence is kept. Later occurrences must have the same states,
+    cardinality, and type so that filtering cannot silently collapse
+    incompatible concept definitions.
+    """
+
+    def __call__(self, concepts: Annotations) -> Annotations:
         labels: list[str] = []
         states: list[list[str]] = []
         cardinalities: list[int] = []
+        types: list[str] = []
         metadata: dict[str, dict[str, Any]] | None = None
-        definitions: dict[str, tuple[list[str], int]] = {}
+        definitions: dict[str, tuple[list[str], int, str]] = {}
 
-        if any(axis.metadata is not None for axis in concepts.values()):
+        if concepts.metadata is not None:
             metadata = {}
 
-        for source_name, axis in concepts.items():
-            for index, label in enumerate(axis.labels):
-                state_names = list(axis.states[index])
-                cardinality = axis.cardinalities[index]
-                definition = (state_names, cardinality)
+        for index, label in enumerate(concepts.labels):
+            state_names = list(concepts.states[index])
+            cardinality = concepts.cardinalities[index]
+            concept_type = concepts.types[index]
+            definition = (state_names, cardinality, concept_type)
 
-                if label in definitions:
-                    if definitions[label] != definition:
-                        previous_states, previous_cardinality = definitions[label]
-                        raise ValueError(
-                            f"Concept {label!r} has incompatible definitions while "
-                            f"merging {source_name!r}: states/cardinality "
-                            f"{state_names}/{cardinality} do not match "
-                            f"{previous_states}/{previous_cardinality}."
-                        )
-                    if metadata is not None and axis.metadata is not None:
-                        existing = metadata.setdefault(label, {})
-                        for key, value in axis.metadata.get(label, {}).items():
-                            existing.setdefault(key, value)
-                    continue
-
-                definitions[label] = definition
-                labels.append(label)
-                states.append(state_names)
-                cardinalities.append(cardinality)
-                if metadata is not None:
-                    metadata[label] = dict(
-                        axis.metadata.get(label, {}) if axis.metadata else {}
+            if label in definitions:
+                if definitions[label] != definition:
+                    previous_states, previous_cardinality, previous_type = (
+                        definitions[label]
                     )
+                    raise ValueError(
+                        f"Concept {label!r} has incompatible definitions: "
+                        f"states/cardinality/type "
+                        f"{state_names}/{cardinality}/{concept_type} do not "
+                        f"match {previous_states}/{previous_cardinality}/"
+                        f"{previous_type}."
+                    )
+                if metadata is not None and concepts.metadata is not None:
+                    existing = metadata.setdefault(label, {})
+                    for key, value in concepts.metadata.get(label, {}).items():
+                        existing.setdefault(key, value)
+                continue
+
+            definitions[label] = definition
+            labels.append(label)
+            states.append(state_names)
+            cardinalities.append(cardinality)
+            types.append(concept_type)
+            if metadata is not None:
+                metadata[label] = dict(
+                    concepts.metadata.get(label, {}) if concepts.metadata else {}
+                )
 
         return Annotations(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
+            types=types,
             metadata=metadata,
+            concept_space=concepts.concept_space,
         )
 
 
@@ -85,8 +97,12 @@ class ConceptSupervisionPipeline:
     annotators : Annotator or sequence of Annotator
         Annotators to produce concept values from the dataset and concept annotations.
     concept_filter : callable, optional
-        Function to filter or merge concept annotations from multiple generators.
-        If None, no filtering is applied. If routing='merged', a default filter is used to merge concept axes while preserving categorical structure.
+        Transformation applied to each concept axis before annotation. Defaults
+        to :class:`DeduplicateConcepts`, so duplicate labels are removed even
+        when they come from a single generator. For ``routing='merged'``,
+        generator axes are first merged by routing and then the filter is
+        applied to the merged axis. For ``cartesian`` and ``zip``, the filter is
+        applied to each routed generator axis.
     aggregator : callable, optional
         Function to aggregate the generated concept values into a single tensor.
         If None, no aggregation is performed.
@@ -103,7 +119,7 @@ class ConceptSupervisionPipeline:
         self,
         generators: ConceptGenerator | Sequence[ConceptGenerator],
         annotators: Annotator | Sequence[Annotator],
-        concept_filter: Callable[[dict[str, Annotations]], Annotations] | None = None,
+        concept_filter: Callable[[Annotations], Annotations] | None = DeduplicateConcepts(),
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
@@ -124,11 +140,7 @@ class ConceptSupervisionPipeline:
                 "routing='zip' requires the same number of generators and annotators."
             )
 
-        self.concept_filter = (
-            concept_filter
-            if concept_filter is not None
-            else UnionConceptFilter() if routing == "merged" else None
-        )
+        self.concept_filter = concept_filter
         self.aggregator = aggregator
         self.routing = routing
         self.name = name or self.__class__.__name__
@@ -213,9 +225,8 @@ class ConceptSupervisionPipeline:
         values: dict[str, Tensor] = {}
         annotations: dict[str, Annotations] = {}
         if self.routing == "merged":
-            if self.concept_filter is None:
-                raise RuntimeError("Merged routing requires a concept filter.")
-            merged = self.concept_filter(concepts)
+            merged = self._merge_concept_axes(concepts)
+            merged = self._filter_concepts(merged)
             for annotator_name, annotator in zip(annotator_names, self.annotators):
                 concept_values = annotator.annotate(dataset, merged, **kwargs)
                 self._insert_result(
@@ -228,6 +239,7 @@ class ConceptSupervisionPipeline:
                 )
         elif self.routing == "cartesian":
             for generator_name, annotation in concepts.items():
+                annotation = self._filter_concepts(annotation)
                 for annotator_name, annotator in zip(
                     annotator_names, self.annotators
                 ):
@@ -250,6 +262,7 @@ class ConceptSupervisionPipeline:
                 annotator_names,
                 self.annotators,
             ):
+                annotation = self._filter_concepts(annotation)
                 route_name = f"{generator_name}_{annotator_name}"
                 concept_values = annotator.annotate(
                     dataset, annotation, **kwargs
@@ -278,6 +291,43 @@ class ConceptSupervisionPipeline:
             )
 
         return values, annotations
+
+    @staticmethod
+    def _merge_concept_axes(concepts: dict[str, Annotations]) -> Annotations:
+        """Concatenate generator concept axes in generator order."""
+        labels: list[str] = []
+        states: list[list[str]] = []
+        cardinalities: list[int] = []
+        types: list[str] = []
+        metadata: dict[str, dict[str, Any]] | None = None
+        concept_space = False
+
+        if any(axis.metadata is not None for axis in concepts.values()):
+            metadata = {}
+
+        for axis in concepts.values():
+            labels.extend(axis.labels)
+            states.extend([list(state_names) for state_names in axis.states])
+            cardinalities.extend(axis.cardinalities)
+            types.extend(axis.types)
+            concept_space = concept_space or axis.concept_space
+            if metadata is not None and axis.metadata is not None:
+                for label in axis.labels:
+                    metadata.setdefault(label, dict(axis.metadata.get(label, {})))
+
+        return Annotations(
+            labels=labels,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
+            metadata=metadata,
+            concept_space=concept_space,
+        )
+
+    def _filter_concepts(self, concepts: Annotations) -> Annotations:
+        if self.concept_filter is None:
+            return concepts
+        return self.concept_filter(concepts)
 
     @staticmethod
     def _annotation_dataset_map(

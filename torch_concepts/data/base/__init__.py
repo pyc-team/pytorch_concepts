@@ -2,8 +2,8 @@ from .annotator import Annotator
 from .concept_generator import ConceptGenerator
 from .concept_pipeline import (
     ConceptSupervisionPipeline,
+    DeduplicateConcepts,
     RoutingMode,
-    UnionConceptFilter,
 )
 from .dataset import ConceptDataset
 from .datamodule import ConceptDataModule
@@ -16,9 +16,8 @@ __all__: list[str] = [
     "ConceptDataModule",
     "ConceptGenerator",
     "ConceptSupervisionPipeline",
+    "DeduplicateConcepts",
     "RoutingMode",
     "Scaler",
     "Splitter",
-    "UnionConceptFilter",
 ]
-
