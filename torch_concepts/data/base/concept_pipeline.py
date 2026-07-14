@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal, Sequence
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base.annotator import Annotator
 from torch_concepts.data.base.concept_generator import ConceptGenerator
 
@@ -21,7 +21,7 @@ RoutingMode = Literal["merged", "cartesian", "zip"]
 class UnionConceptFilter:
     """Merge concept axes in order while preserving categorical structure."""
 
-    def __call__(self, concepts: dict[str, AxisAnnotation]) -> AxisAnnotation:
+    def __call__(self, concepts: dict[str, Annotations]) -> Annotations:
         labels: list[str] = []
         states: list[list[str]] = []
         cardinalities: list[int] = []
@@ -61,7 +61,7 @@ class UnionConceptFilter:
                         axis.metadata.get(label, {}) if axis.metadata else {}
                     )
 
-        return AxisAnnotation(
+        return Annotations(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
@@ -97,7 +97,7 @@ class ConceptSupervisionPipeline:
         self,
         generators: ConceptGenerator | Sequence[ConceptGenerator],
         annotators: Annotator | Sequence[Annotator],
-        concept_filter: Callable[[dict[str, AxisAnnotation]], AxisAnnotation] | None = None,
+        concept_filter: Callable[[dict[str, Annotations]], Annotations] | None = None,
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
@@ -132,7 +132,7 @@ class ConceptSupervisionPipeline:
         dataset: Dataset,
         class_names: list[str] | None = None,
         **kwargs: Any,
-    ) -> tuple[dict[str, Tensor], dict[str, AxisAnnotation]]:
+    ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
         generator_names = self._component_names(self.generators)
         annotator_names = self._component_names(self.annotators)
         concepts = {
@@ -145,7 +145,7 @@ class ConceptSupervisionPipeline:
         }
 
         values: dict[str, Tensor] = {}
-        annotations: dict[str, AxisAnnotation] = {}
+        annotations: dict[str, Annotations] = {}
         if self.routing == "merged":
             if self.concept_filter is None:
                 raise RuntimeError("Merged routing requires a concept filter.")
@@ -252,10 +252,10 @@ class ConceptSupervisionPipeline:
     def _insert_result(
         cls,
         values: dict[str, Tensor],
-        annotations: dict[str, AxisAnnotation],
+        annotations: dict[str, Annotations],
         requested_name: str,
         concept_values: Tensor,
-        annotation: AxisAnnotation,
+        annotation: Annotations,
         dataset: Dataset,
         unique: bool = True,
     ) -> None:
@@ -271,7 +271,7 @@ class ConceptSupervisionPipeline:
     def _validate_value(
         name: str,
         values: Tensor,
-        annotation: AxisAnnotation,
+        annotation: Annotations,
         dataset: Dataset,
     ) -> None:
         if not isinstance(values, Tensor):
@@ -296,8 +296,8 @@ class ConceptSupervisionPipeline:
 
     @staticmethod
     def _common_annotation(
-        annotations: dict[str, AxisAnnotation],
-    ) -> AxisAnnotation:
+        annotations: dict[str, Annotations],
+    ) -> Annotations:
         if not annotations:
             raise ValueError("Cannot aggregate an empty set of concept values.")
         iterator = iter(annotations.values())
@@ -306,6 +306,6 @@ class ConceptSupervisionPipeline:
         if any(axis.to_dict() != first_definition for axis in iterator):
             raise ValueError(
                 "Aggregation requires all generated concept tensors to share "
-                "the same AxisAnnotation."
+                "the same Annotations."
             )
         return first

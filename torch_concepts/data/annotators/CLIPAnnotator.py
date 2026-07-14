@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base.annotator import Annotator
 
 
@@ -39,7 +39,7 @@ def default_state_prompt_formatter(concept_name: str, state_name: str) -> str:
 class CLIPAnnotator(Annotator):
     """General CLIP-based annotator for label-free concept supervision.
 
-    The annotator maps an image dataset and an :class:`AxisAnnotation` to a
+    The annotator maps an image dataset and an :class:`Annotations` to a
     tensor of sample-level concept values. Binary concepts are represented by
     their labels; categorical concepts use one text prompt per state.
 
@@ -144,12 +144,12 @@ class CLIPAnnotator(Annotator):
     def annotate(
         self,
         dataset: Dataset,
-        concepts: AxisAnnotation,
+        concepts: Annotations,
         **kwargs: Any,
     ) -> Tensor:
         del kwargs
-        if not isinstance(concepts, AxisAnnotation):
-            raise TypeError("concepts must be an AxisAnnotation.")
+        if not isinstance(concepts, Annotations):
+            raise TypeError("concepts must be an Annotations.")
 
         text_concepts = self._flatten_concept_prompts(concepts)
         if not text_concepts:
@@ -191,7 +191,7 @@ class CLIPAnnotator(Annotator):
 
     def _flatten_concept_prompts(
         self,
-        concepts: AxisAnnotation,
+        concepts: Annotations,
     ) -> list[str]:
         prompts: list[str] = []
         for label, states, cardinality in zip(

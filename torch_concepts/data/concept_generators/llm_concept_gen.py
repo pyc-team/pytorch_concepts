@@ -4,7 +4,7 @@ from typing import Any
 
 from torch.utils.data import Dataset
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base.concept_generator import (
     LLM,
     ConceptGenerator,
@@ -56,8 +56,8 @@ class LLMConceptGenerator(ConceptGenerator):
         class_names: list[str] | None = None,
         prompt: Prompt | None = None,
         **kwargs: Any,
-    ) -> AxisAnnotation:
-        """Generate an :class:`AxisAnnotation` from an LLM response.
+    ) -> Annotations:
+        """Generate an :class:`Annotations` from an LLM response.
 
         Parameters
         ----------
@@ -73,7 +73,7 @@ class LLMConceptGenerator(ConceptGenerator):
 
         Returns
         -------
-        AxisAnnotation
+        Annotations
             Generated binary and/or categorical concept definitions.
         """
         prompt = prompt if prompt is not None else self.prompt
@@ -233,7 +233,7 @@ def default_concept_postprocessor(concepts: list[Any]) -> list[ConceptSpec]:
     return processed
 
 
-def concept_specs_to_annotation(concepts: list[Any]) -> AxisAnnotation:
+def concept_specs_to_annotation(concepts: list[Any]) -> Annotations:
     specs = default_concept_postprocessor(concepts)
     labels = [spec["name"] for spec in specs]
     states = [
@@ -245,7 +245,7 @@ def concept_specs_to_annotation(concepts: list[Any]) -> AxisAnnotation:
         label: {"type": "discrete"}
         for label in labels
     }
-    return AxisAnnotation(
+    return Annotations(
         labels=labels,
         states=states,
         cardinalities=cardinalities,

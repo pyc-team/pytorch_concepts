@@ -4,7 +4,7 @@ from typing import Any
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 
 
 class Annotator(ABC):
@@ -18,7 +18,7 @@ class Annotator(ABC):
     def annotate(
         self,
         dataset: Dataset,
-        concepts: AxisAnnotation,
+        concepts: Annotations,
         **kwargs: Any,
     ) -> Tensor:
         pass

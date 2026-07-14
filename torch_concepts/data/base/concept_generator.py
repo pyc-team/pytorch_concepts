@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from torch.utils.data import Dataset
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 
 Prompt = str | Callable[..., Any]
 LLM = Callable[..., Any]
@@ -24,5 +24,5 @@ class ConceptGenerator(ABC):
         dataset: Dataset | None = None,
         class_names: list[str] | None = None,
         **kwargs: Any,
-    ) -> AxisAnnotation:
+    ) -> Annotations:
         pass
