@@ -1,10 +1,12 @@
 import numpy as np
 import random
 import torch
-from typing import Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from torchvision.datasets import MNIST
 from torchvision.transforms import transforms
+
+from torch_concepts.data.base.dataset import ConceptDataset
 
 
 def _colorize(image: torch.Tensor, color: str) -> torch.Tensor:
@@ -17,7 +19,7 @@ def _colorize(image: torch.Tensor, color: str) -> torch.Tensor:
     return colored_image
 
 
-class ColorMNISTDataset(MNIST):
+class ColorMNISTDataset(ConceptDataset, MNIST):
     """
     The color MNIST dataset is a modified version of the MNIST dataset where
     each digit is colored either red or green. The concept labels are the digit
@@ -33,6 +35,15 @@ class ColorMNISTDataset(MNIST):
         download: Whether to download the dataset if it does not exist. Default
             is False.
         random: Whether to colorize the digits randomly. Default is True.
+        indices: Optional subset of indices to keep.
+        concept_pipeline: Optional pipeline used to generate label-free concept
+            supervision.
+        concept_pipeline_kwargs: Optional keyword arguments forwarded when
+            running ``concept_pipeline``.
+        use_as_gt: Whether generated concepts should be selected as
+            ``ground_truth``.
+        generated_gt_name: Optional generated concept source to use as
+            ``ground_truth``.
     """
     def __init__(
         self,
@@ -42,15 +53,31 @@ class ColorMNISTDataset(MNIST):
         target_transform = None,
         download: bool = False,
         random: bool = True,
+        indices = None,
+        concept_pipeline = None,
+        concept_pipeline_kwargs: Optional[Mapping[str, Any]] = None,
+        use_as_gt: bool = False,
+        generated_gt_name: Optional[str] = None,
     ):
-        super(ColorMNISTDataset, self).__init__(
+        MNIST.__init__(
+            self,
             root,
             train=train,
             transform=transform,
             target_transform=target_transform,
             download=download,
         )
+        if indices is not None:
+            indices = torch.as_tensor(list(indices), dtype=torch.long)
+            self.data = self.data[indices]
+            self.targets = self.targets[indices]
         self.random = random
+        self._setup_generated_concepts(
+            concept_pipeline=concept_pipeline,
+            concept_pipeline_kwargs=concept_pipeline_kwargs,
+            use_as_gt=use_as_gt,
+            generated_gt_name=generated_gt_name,
+        )
         self.concept_attr_names = [
             '0',
             '1',
@@ -67,8 +94,14 @@ class ColorMNISTDataset(MNIST):
         ]
         self.task_attr_names = ['even', 'odd']
 
+        self._maybe_generate_concepts()
+
     def __len__(self):
         return len(self.data)
+
+    def download(self):
+        """Use torchvision's MNIST download implementation."""
+        return MNIST.download(self)
 
     def __getitem__(self, index):
         image, digit = self.data[index], int(self.targets[index])
