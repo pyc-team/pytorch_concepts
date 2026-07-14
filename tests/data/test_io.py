@@ -14,6 +14,10 @@ from torch_concepts.data.io import (
     save_pickle,
     load_pickle,
     download_url,
+    download_url_wget,
+    zip_is_valid,
+    wget_available,
+    DownloadProgressBar,
 )
 
 
@@ -151,3 +155,86 @@ class TestDownloadUrl:
             # Verify
             assert os.path.exists(path)
             assert os.path.basename(path) == custom_name
+
+
+class TestZipIsValid:
+    """Test zip file validation."""
+
+    def test_valid_zip(self):
+        """zip_is_valid returns True for a well-formed zip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "good.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zf:
+                zf.writestr("hello.txt", "hello world")
+            assert zip_is_valid(zip_path) is True
+
+    def test_invalid_zip_bad_file(self):
+        """zip_is_valid returns False for a file that is not a zip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bad_path = os.path.join(tmpdir, "bad.zip")
+            with open(bad_path, 'wb') as f:
+                f.write(b"this is not a zip file at all")
+            assert zip_is_valid(bad_path) is False
+
+    def test_invalid_zip_truncated(self):
+        """zip_is_valid returns False for a truncated/corrupt zip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "truncated.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zf:
+                zf.writestr("data.txt", "some data")
+            # Corrupt it by truncating
+            with open(zip_path, 'r+b') as f:
+                f.truncate(10)
+            assert zip_is_valid(zip_path) is False
+
+
+class TestWgetAvailable:
+    """Test wget availability detection."""
+
+    def test_returns_bool(self):
+        """wget_available always returns a bool."""
+        result = wget_available()
+        assert isinstance(result, bool)
+
+
+class TestDownloadUrlWget:
+    """Test download_url_wget."""
+
+    def test_download_creates_file(self):
+        """download_url_wget downloads a small file successfully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
+            dest = os.path.join(tmpdir, "README.md")
+            download_url_wget(url, dest)
+            assert os.path.exists(dest)
+            assert os.path.getsize(dest) > 0
+
+    def test_download_resume(self):
+        """download_url_wget does not overwrite a pre-existing file of the same name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
+            dest = os.path.join(tmpdir, "README.md")
+            # First download
+            download_url_wget(url, dest)
+            size_first = os.path.getsize(dest)
+            # Second download (resume / skip)
+            download_url_wget(url, dest)
+            size_second = os.path.getsize(dest)
+            assert size_second >= size_first
+
+
+class TestDownloadProgressBar:
+    """Test DownloadProgressBar.update_to."""
+
+    def test_update_to_sets_total(self):
+        """update_to sets self.total when tsize is provided."""
+        with DownloadProgressBar(unit='B', unit_scale=True, miniters=1,
+                                 desc="test", disable=True) as bar:
+            bar.update_to(b=1, bsize=1, tsize=1024)
+            assert bar.total == 1024
+
+    def test_update_to_without_tsize(self):
+        """update_to works without tsize (no total set)."""
+        with DownloadProgressBar(unit='B', unit_scale=True, miniters=1,
+                                 desc="test", disable=True) as bar:
+            bar.update_to(b=2, bsize=512)  # should not raise

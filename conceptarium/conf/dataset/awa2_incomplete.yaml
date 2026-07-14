@@ -1,0 +1,11 @@
+defaults:
+  - _commons
+  - awa2
+  - _self_
+
+# the incomplete version of the AWA2 dataset is obtained selecting the same concepts as in 
+# Zarlenga et al. "Avoiding Leakage Poisoning: Concept Interventions Under Distribution Shifts", ICML, 2025.
+# link: https://arxiv.org/pdf/2504.17921v1.
+
+datamodule:
+  concept_subset: [black, gray, stripes, hairless, flippers, paws, plains, fierce, solitary, class] # include the task label

@@ -6,16 +6,20 @@ for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
 import os
+import logging
 import numpy as np
 import pandas as pd
+import torch
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset, default_collate
+from tqdm import tqdm
 from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
 
-from ...nn.modules.mid.constructors.concept_graph import ConceptGraph
-from ...annotations import Annotations, AxisAnnotation
+from ...concept_graph import ConceptGraph
+from ...annotations import Annotations
+from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
 from .concept_pipeline import ConceptSupervisionPipeline
 
@@ -23,6 +27,8 @@ from .concept_pipeline import ConceptSupervisionPipeline
 # TODO: add exogenous
 # TODO: range for continuous concepts
 # TODO: add possibility to annotate multiple axis (e.g., for relational concepts)
+
+logger = logging.getLogger(__name__)
 
 
 class ConceptDataset(Dataset):
@@ -39,7 +45,7 @@ class ConceptDataset(Dataset):
         input_data (Tensor): Input features/images.
         concepts (Tensor, optional): Native concept annotations originally
             provided by the dataset.
-        generated_concepts (dict[str, AxisAnnotation]): Generated concept
+        generated_concepts (dict[str, Annotations]): Generated concept
             vocabularies keyed by pipeline output name.
         generated_annotations (dict[str, Tensor]): Sample-level annotations
             binding dataset samples to generated concept values.
@@ -69,7 +75,7 @@ class ConceptDataset(Dataset):
     Example:
         >>> X = torch.randn(100, 28, 28)  # 100 images
         >>> C = torch.randint(0, 2, (100, 5))  # 5 binary concepts
-        >>> annotations = Annotations({1: AxisAnnotation(labels=['c1', 'c2', 'c3', 'c4', 'c5'])})
+        >>> annotations = Annotations(labels=['c1', 'c2', 'c3', 'c4', 'c5'])
         >>> dataset = ConceptDataset(X, C, annotations=annotations)
         >>> len(dataset)
         100
@@ -97,52 +103,30 @@ class ConceptDataset(Dataset):
         self.concept_pipeline = concept_pipeline
         self.use_as_gt = use_as_gt
         self.concepts: Optional[Tensor] = None
-        self.generated_concepts: Dict[str, AxisAnnotation] = {}
+        self.generated_concepts: Dict[str, Annotations] = {}
         self.generated_annotations: Dict[str, Tensor] = {}
         self.ground_truth: Optional[Tensor] = None
-        self._ground_truth_annotation: Optional[AxisAnnotation] = None
+        self._ground_truth_annotation: Optional[Annotations] = None
 
         # sanity check on concept annotations and metadata
         if annotations is None and concepts is not None:
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
-            annotations = Annotations({
-                    1: AxisAnnotation(labels=[f"concept_{i}" for i in range(concepts.shape[1])],
-                                      cardinalities=None, # assume binary
-                                      metadata={f"concept_{i}": {'type': 'discrete', # assume discrete (bernoulli)
-                                                                } for i in range(concepts.shape[1])})
-                                      })
-        # assert first axis is annotated axis for concepts
-        if concepts is not None and 1 not in annotations.annotated_axes:
-            raise ValueError("Concept annotations must include axis 1 for concepts. " \
-            "Axis 0 is always assumed to be the batch dimension")
+            n = concepts.shape[1]
+            annotations = Annotations(labels=[f"concept_{i}" for i in range(n)],
+                                      cardinalities=[1] * n, # assume binary
+                                      types=['binary'] * n)
 
         # sanity check
-        axis_annotation = annotations[1] if concepts is not None else None
-        if axis_annotation is not None and axis_annotation.metadata is not None:
-            assert all('type' in v  for v in axis_annotation.metadata.values()), \
-                "Concept metadata must contain 'type' for each concept."
-            assert all(v['type'] in ['discrete', 'continuous'] for v in axis_annotation.metadata.values()), \
-                "Concept metadata 'type' must be either 'discrete' or 'continuous'."
+        axis_annotation = annotations
 
-        if axis_annotation is not None and axis_annotation.cardinalities is not None:
+        if axis_annotation.cardinalities is not None:
             concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
             concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
-            
-            
-        # sanity check on unsupported concept types     
-        if axis_annotation is not None and axis_annotation.metadata is not None:
-            for name, meta in axis_annotation.metadata.items():
-                # raise error if type metadata contain 'continuous': this is not supported yet
-                # TODO: implement continuous concept types
-                if meta['type'] == 'continuous':
-                    raise NotImplementedError("Continuous concept types are not supported yet.")
-
 
         # set concept annotations
-        # this defines self.annotations property
         self._annotations = annotations
         if concepts is not None:
             # maybe reduce annotations based on subset of concept names
@@ -229,6 +213,26 @@ class ConceptDataset(Dataset):
 
         return sample
 
+    def collate(self, samples):
+        """Collate samples into a batch, re-annotating the ground-truth concepts.
+
+        The default collate stacks the per-sample (plain, 1-D) concept rows into a
+        ``(batch, n_concepts)`` tensor; this re-wraps that tensor as an
+        :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
+        concept-space annotation as :attr:`concepts`, so every batch's concepts
+        are label/type aware. Inputs and any other keys are collated unchanged.
+        Used as the DataLoader ``collate_fn`` by :class:`ConceptDataModule`.
+        """
+        batch = default_collate(samples)
+        annotation = getattr(self.concepts, 'annotation', None)
+        if annotation is not None and isinstance(batch, dict):
+            concepts = batch.get('concepts')
+            if isinstance(concepts, dict):
+                c = concepts.get('c')
+                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.size:
+                    concepts['c'] = AnnotatedTensor(c, annotation)
+        return batch
+
 
     # Dataset properties #####################################################
 
@@ -272,7 +276,7 @@ class ConceptDataset(Dataset):
         """
         if self._ground_truth_annotation is None:
             return []
-        return list(self._ground_truth_annotation.labels)
+        return self._ground_truth_annotation.labels
 
     @property
     def annotations(self) -> Optional[Annotations]:
@@ -386,15 +390,108 @@ class ConceptDataset(Dataset):
         raise NotImplementedError
 
     def load(self, *args, **kwargs):
-        """Loads raw dataset and preprocess data. 
+        """Loads raw dataset and preprocess data.
         Default to :obj:`load_raw`."""
         return self.load_raw(*args, **kwargs)
 
+    # Embedding precomputation #############################################
+
+    def precompute_embeddings(
+        self,
+        backbone,
+        batch_size: int = 64,
+        workers: int = 0,
+        cache: bool = True,
+        cache_dir: Optional[str] = None,
+        force: bool = False,
+    ) -> None:
+        """Precompute backbone embeddings and swap them in as ``input_data``.
+
+        Runs the (frozen) ``backbone`` over the whole dataset once. Afterwards
+        ``input_data`` holds the ``(n_samples, backbone.out_features)``
+        embeddings and ``embs_precomputed`` is True, so ``__getitem__`` serves
+        embeddings.
+
+        With ``cache=True`` (default) the embeddings are persisted to
+        ``{root_dir}/{backbone.filename}`` and loaded from there on subsequent
+        calls instead of recomputing. Use ``force=True`` to force recomputing 
+        embeddings even if a cache file exists.
+
+        
+        Parameters
+        ----------
+        backbone : Backbone
+            Feature extractor (needs ``filename``, ``is_huggingface`` and
+            ``__call__``).
+        batch_size : int, default 64
+            Batch size for the extraction pass.
+        workers : int, default 0
+            DataLoader workers for the extraction pass.
+        cache : bool, default True
+            Persist the embeddings to disk and reuse them across calls. Pass
+            False to compute in memory only (e.g. on a dataset subset, to
+            avoid writing a subset-sized cache into a shared ``root_dir``).
+        cache_dir : str, optional
+            Directory for the cache file. Defaults to the dataset's
+            ``root_dir``; set it when the data lives on read-only/shared
+            storage and the cache should go elsewhere (e.g. local scratch).
+        force : bool, default False
+            Recompute even if a cache file exists.
+        """
+        embs = None
+        if cache:
+            if cache_dir is None:
+                cache_dir = self.root_dir
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(cache_dir, backbone.filename)
+            if os.path.exists(cache_path) and not force:
+                logger.info(f"Loading cached embeddings from {cache_path}")
+                embs = torch.load(cache_path)
+                if embs.shape[0] != self.n_samples:  # stale cache (e.g. written from a subset)
+                    embs = None
+        if embs is None:
+            embs = self._compute_embeddings(backbone, batch_size, workers)
+            if cache:
+                logger.info(f"Saving embeddings to {cache_path}")
+                torch.save(embs, cache_path)
+        self.input_data = embs
+        self.embs_precomputed = True
+
+    def _compute_embeddings(self, backbone, batch_size: int, workers: int):
+        """Run ``backbone`` over the whole dataset (original order) and return
+        the stacked ``(n_samples, emb_dim)`` embeddings on CPU."""
+        def collate_fn(batch):
+            images = [sample['inputs']['x'] for sample in batch]
+            if not backbone.is_huggingface and isinstance(images[0], Tensor):
+                return torch.stack(images)
+            return images
+
+        dataloader = DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=workers,
+            collate_fn=collate_fn,
+        )
+
+        # Force eval so BatchNorm/Dropout stay deterministic (embeddings are
+        # cached); restore the caller's mode afterwards.
+        was_training = backbone.training
+        backbone.eval()
+        embeddings_list = []
+        try:
+            with torch.no_grad():
+                for batch_data in tqdm(dataloader, desc="Extracting embeddings"):
+                    embeddings_list.append(backbone(batch_data).cpu())
+        finally:
+            backbone.train(was_training)
+        return torch.cat(embeddings_list, dim=0)
+    
     def generate_concepts(
         self,
         class_names: Optional[List[str]] = None,
         **kwargs,
-    ) -> tuple[Dict[str, Tensor], Dict[str, AxisAnnotation]]:
+    ) -> tuple[Dict[str, Tensor], Dict[str, Annotations]]:
         """Run the configured concept-supervision pipeline once.
 
         Dataset subclasses with processed files can call this method from
@@ -413,7 +510,7 @@ class ConceptDataset(Dataset):
 
     def set_generated_concepts(
         self,
-        concepts: Dict[str, AxisAnnotation],
+        concepts: Dict[str, Annotations],
         annotations: Dict[str, Tensor],
     ) -> None:
         """Store generated vocabularies and their sample annotations.
@@ -438,7 +535,7 @@ class ConceptDataset(Dataset):
             self._ground_truth_annotation = self.generated_concepts[name]
         elif self.concepts is not None:
             self.ground_truth = self.concepts
-            self._ground_truth_annotation = self._annotations[1]
+            self._ground_truth_annotation = self._annotations
         elif self.generated_concepts:
             name = next(iter(self.generated_concepts))
             self.ground_truth = self.generated_annotations[name]
@@ -462,20 +559,45 @@ class ConceptDataset(Dataset):
             concept_names_subset: List of strings naming the subset of concepts to use. 
                                     If :obj:`None`, will use all concepts.
         """
-        self.concept_names_all = annotations.get_axis_labels(1)
-        self._all_concept_annotation = annotations[1]
+        self.concept_names_all = annotations.labels
+        self._all_concept_annotation = annotations
         if concept_names_subset is not None:
             # sanity check, all subset concepts must be in all concepts
             missing_concepts = set(concept_names_subset) - set(self.concept_names_all)
             assert not missing_concepts, f"Concepts not found in dataset: {missing_concepts}"
             to_select = deepcopy(concept_names_subset)
+            
+            # Get indices of selected concepts
+            indices = [self.concept_names_all.index(name) for name in to_select]
+            
+            # Reduce annotations by extracting only the selected concepts
+            axis_annotation = annotations
+            reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
+            
+            # Reduce cardinalities
+            reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
+        
+            # Reduce states
+            reduced_states = tuple(axis_annotation.states[i] for i in indices)
 
-            # Reduce annotations using concept-level slices. AxisAnnotation
-            # preserves states, cardinalities, and metadata for categorical
-            # concepts.
-            self._annotations = Annotations({
-                1: annotations[1].subset(to_select)
-            })
+            # Reduce types
+            reduced_types = tuple(axis_annotation.types[i] for i in indices)
+
+            # Reduce metadata if present
+            if axis_annotation.metadata is not None:
+                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
+                                   for i in range(len(indices))}
+            else:
+                reduced_metadata = None
+
+            # Create reduced annotations
+            self._annotations = Annotations(
+                labels=reduced_labels,
+                cardinalities=reduced_cardinalities,
+                states=reduced_states,
+                types=reduced_types,
+                metadata=reduced_metadata
+            )
 
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 
@@ -521,11 +643,20 @@ class ConceptDataset(Dataset):
         #########################################################################
         # convert pd.Dataframe to tensor
         values = parse_tensor(concepts, 'concepts', self.precision)
-        columns = self._all_concept_annotation.get_slice(self._annotations[1].labels)
+        columns = self._all_concept_annotation.get_slice(self._annotations.labels)
         values = values[:, columns]
         #########################################################################
 
-        self.concepts = values
+        # Wrap the full concept tensor with a *concept-space* annotation (one
+        # integer-coded column per concept, so categorical labels are class
+        # indices) so it carries the concept labels/types. Per-sample
+        # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
+        # axis 1); batches are re-annotated by :meth:`collate`.
+        concept_ann = self.annotations.to_concept_space()
+        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
+            self.concepts = AnnotatedTensor(concepts, concept_ann)
+        else:
+            self.concepts = concepts
         self._resolve_ground_truth()
 
     def add_exogenous(self,

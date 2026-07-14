@@ -2,10 +2,11 @@ import torch
 from torch import nn
 from typing import List, Optional, Union
 
-from .....data.utils import ensure_list
+from .....utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
 from ...loss import ConceptLoss
+from ...outputs import ModelOutput, logits_from_params
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
@@ -17,7 +18,7 @@ class BlackBox(BaseModel):
 
     This model implements a standard neural network architecture for concept-based tasks,
     without explicit concept bottleneck or interpretable intermediate representations.
-    It uses a backbone for feature extraction and a latent encoder for concepts prediction.
+    It uses a backbone mapping the raw input to the latent representation, then a linear head.
 
     Args:
         input_size (int): Dimensionality of input features.
@@ -26,6 +27,8 @@ class BlackBox(BaseModel):
         **kwargs: Additional arguments for BaseModel.
 
     Example:
+        >>> from torch_concepts.annotations import Annotations
+        >>> ann = Annotations(labels=['c1', 'task'], cardinalities=[1, 1])
         >>> model = BlackBox(input_size=8, annotations=ann)
         >>> out = model(torch.randn(2, 8))
     """
@@ -45,40 +48,79 @@ class BlackBox(BaseModel):
         output_size = sum(self.concept_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        query: List[str] = None,
-        evidence: torch.Tensor = None,
-        **kwargs
-    ) -> torch.Tensor:
-        """Forward pass through the BlackBox model.
-        
+    def build_query(self, ground_truth) -> dict:
+        """Build query dict mapping each concept name to its ground-truth column.
+
         Parameters
         ----------
-        x : torch.Tensor
-            Input tensor.
-        query : List[str], optional
-            Concept names to query. If provided, only the columns
-            corresponding to the queried concepts are returned.
-        evidence : torch.Tensor, optional
-            Evidence tensor (ignored for BlackBox).
-        **kwargs
-            Additional arguments (ignored).
-        
+        ground_truth : torch.Tensor
+            Full concept-level ground truth, shape ``(batch, n_concepts)``.
+
         Returns
         -------
-        torch.Tensor
-            Predictions for queried concepts.
+        dict
+            ``{concept_name: tensor(batch, cardinality)}`` for every concept.
         """
-        features = self.maybe_apply_backbone(x)
-        endogenous = self.latent_encoder(features)
-        output = self.linear(endogenous)
+        if ground_truth is None:
+            return {name: None for name in self.concept_names}
+        axis = self.concept_annotations
+        query = {}
+        for i, name in enumerate(axis.labels):
+            card = axis.concept(name).cardinality
+            if card == 1:
+                query[name] = ground_truth[:, i].float().unsqueeze(-1)
+            else:
+                import torch.nn.functional as F
+                query[name] = F.one_hot(ground_truth[:, i].long(), card).float()
+        return query
 
-        if query is not None:
-            output = self.concept_annotations.slice_tensor(output, query)
+    def forward(
+        self,
+        x: torch.Tensor = None,
+        query=None,
+        evidence: torch.Tensor = None,
+        **kwargs
+    ) -> ModelOutput:
+        """Forward pass through the BlackBox model.
 
-        return output
+        Parameters
+        ----------
+        x : torch.Tensor, optional
+            Input tensor. When ``None``, the tensor is extracted from
+            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+        query : list of str or dict, optional
+            Concept names to return. Defaults to all concepts.  When a dict
+            is supplied (from ``build_query``), the keys are used as names.
+        evidence : dict or torch.Tensor, optional
+            Evidence dict (``{'input': x}`` from shared_step) or raw tensor
+            (ignored for BlackBox).
+        **kwargs
+            Additional arguments (ignored).
+
+        Returns
+        -------
+        ModelOutput
+            ``params[name]['logits']`` per queried concept (uniform with the
+            PGM-based models).
+        """
+        # Resolve the raw input tensor
+        if x is None and isinstance(evidence, dict):
+            x = evidence.get('input', None)
+
+        output = self.linear(self.backbone(x))
+
+        axis = self.concept_annotations
+        # query may be a list of strings, a dict (from build_query), or None
+        if isinstance(query, dict):
+            names = list(query.keys()) if query else axis.labels
+        else:
+            names = query if query is not None else axis.labels
+        params = {name: {"logits": output[:, axis.concept_slices[name]]} for name in names}
+        out = ModelOutput(params=params)
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        out.logits = logits_from_params(params, keys=list(names))
+        return out
 
 
 class BlackBoxTaskOnly(BaseModel):
@@ -87,7 +129,7 @@ class BlackBoxTaskOnly(BaseModel):
 
     This model implements a standard neural network architecture for predicting tasks only,
     without explicit concept bottleneck or interpretable intermediate representations.
-    It uses a backbone for feature extraction and a latent encoder for concepts prediction.
+    It uses a backbone mapping the raw input to the latent representation, then a linear head.
 
     Args:
         input_size (int): Dimensionality of input features.
@@ -97,12 +139,14 @@ class BlackBoxTaskOnly(BaseModel):
         **kwargs: Additional arguments for BaseModel.
 
     Attributes:
-        task_annotations (AxisAnnotation): Sub-annotation restricted to task
+        task_annotations (Annotations): Sub-annotation restricted to task
             concepts only.  Use this to build ``ConceptLoss`` / ``ConceptMetrics``.
         task_concept_idx (List[int]): Concept-level column indices used to
             slice the ground-truth target tensor to match the task-only output.
 
     Example:
+        >>> from torch_concepts.annotations import Annotations
+        >>> ann = Annotations(labels=['c1', 'task'], cardinalities=[1, 1])
         >>> model = BlackBoxTaskOnly(input_size=8, annotations=ann, task_names=['task'])
         >>> out = model(torch.randn(2, 8))
     """
@@ -118,10 +162,9 @@ class BlackBoxTaskOnly(BaseModel):
         
         # Pre-compute task annotations before super().__init__ so that
         # setup_metrics (called by BaseLearner.__init__) can use them.
-        concept_ann = annotations.get_axis_annotation(axis=1)
-        self.task_annotations = concept_ann.subset(self.task_names)
+        self.task_annotations = annotations.subset(self.task_names)
         self.task_concept_idx = [
-            concept_ann.get_index(name)
+            annotations.get_index(name)
             for name in self.task_names
         ]
 
@@ -133,9 +176,9 @@ class BlackBoxTaskOnly(BaseModel):
         )
 
         # Rebuild loss with task-only annotations so index slicing matches
-        # the task-only tensors produced by filter_output_for_loss.
+        # the task-only tensors produced by prepare_target.
         if isinstance(getattr(self, 'loss', None), ConceptLoss):
-            task_ann = Annotations({1: self.task_annotations})
+            task_ann = self.task_annotations
             self.loss = ConceptLoss(
                 annotations=task_ann,
                 binary=self.loss.fn_collection.get('binary'),
@@ -150,68 +193,87 @@ class BlackBoxTaskOnly(BaseModel):
         output_size = sum(self.task_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def forward(self,
-                x: torch.Tensor,
-                query: List[str] = None,
-                evidence: torch.Tensor = None,
-                **kwargs
-        ) -> torch.Tensor:
-        """Forward pass through the BlackBoxTaskOnly model.
-        
+    def build_query(self, ground_truth) -> dict:
+        """Build query dict mapping each *task* name to its ground-truth column.
+
         Parameters
         ----------
-        x : torch.Tensor
-            Input tensor.
-        query : List[str], optional
-            Concept names to query (ignored).
-            Always returns predictions for specified task_names.
-        evidence : torch.Tensor, optional
-            Evidence tensor (ignored).
+        ground_truth : torch.Tensor
+            Full concept-level ground truth, shape ``(batch, n_all_concepts)``.
+
+        Returns
+        -------
+        dict
+            ``{task_name: tensor(batch, cardinality)}`` for every task.
+        """
+        if ground_truth is None:
+            return {name: None for name in self.task_names}
+        axis = self.concept_annotations
+        query = {}
+        for idx, name in zip(self.task_concept_idx, self.task_names):
+            card = axis.concept(name).cardinality
+            if card == 1:
+                query[name] = ground_truth[:, idx].float().unsqueeze(-1)
+            else:
+                import torch.nn.functional as F
+                query[name] = F.one_hot(ground_truth[:, idx].long(), card).float()
+        return query
+
+    def forward(self,
+                x: torch.Tensor = None,
+                query=None,
+                evidence=None,
+                **kwargs
+        ) -> ModelOutput:
+        """Forward pass through the BlackBoxTaskOnly model.
+
+        Parameters
+        ----------
+        x : torch.Tensor, optional
+            Input tensor. When ``None``, the tensor is extracted from
+            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+        query : list of str or dict, optional
+            Ignored; predictions are always returned for ``task_names``.
+        evidence : dict or torch.Tensor, optional
+            Evidence dict (``{'input': x}`` from shared_step) or raw tensor
+            (ignored).
         **kwargs
             Additional arguments (ignored).
-        """
-        features = self.maybe_apply_backbone(x)
-        endogenous = self.latent_encoder(features)
-        output = self.linear(endogenous)
-        return output
-
-    def filter_output_for_loss(self, forward_out, target):
-        """Slice target to task columns to match the task-only predictions.
-
-        Parameters
-        ----------
-        forward_out : torch.Tensor
-            Model output containing task predictions only.
-        target : torch.Tensor
-            Ground truth labels (full concept-level tensor).
 
         Returns
         -------
-        dict
-            Dict with 'input' (task predictions) and 'target' (task-only
-            ground-truth columns) for loss computation.
+        ModelOutput
+            ``params[name]['logits']`` per task (uniform with the PGM-based models).
         """
-        task_target = target[:, self.task_concept_idx]
-        return {'input': forward_out, 'target': task_target}
+        # Resolve the raw input tensor
+        if x is None and isinstance(evidence, dict):
+            x = evidence.get('input', None)
 
-    def filter_output_for_metrics(self, forward_out, target):
-        """Slice target to task columns to match the task-only predictions.
+        output = self.linear(self.backbone(x))
+
+        # The linear head spans the task sub-annotation; slice it per task.
+        slices = self.task_annotations.concept_slices
+        params = {name: {"logits": output[:, slices[name]]} for name in self.task_names}
+        out = ModelOutput(params=params)
+
+        # FIXME: update ModelOutput to generalize beyond logits
+        out.logits = logits_from_params(params, keys=list(self.task_names))
+        return out
+
+    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+        """Slice target to task-only columns.
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output containing task predictions only.
         target : torch.Tensor
-            Ground truth labels (full concept-level tensor).
+            Full concept-level ground truth labels.
 
         Returns
         -------
-        dict
-            Dict with 'preds' (task predictions) and 'target' (task-only
-            ground-truth columns) for metric computation.
+        torch.Tensor
+            Target sliced to task columns only.
         """
-        task_target = target[:, self.task_concept_idx]
-        return {'preds': forward_out, 'target': task_target}
+        return target[:, self.task_concept_idx]
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.
@@ -221,9 +283,9 @@ class BlackBoxTaskOnly(BaseModel):
         ``BlackBoxTaskOnly`` outputs only task logits, the internal index
         mappings would be misaligned.  This override reconstructs the
         metrics using ``task_annotations`` so that indices match the
-        task-only tensors produced by ``filter_output_for_*``.
+        task-only output.
         """
-        task_ann = Annotations({1: self.task_annotations})
+        task_ann = self.task_annotations
         task_metrics = ConceptMetrics(
             annotations=task_ann,
             binary=metrics.fn_collection.get('binary'),

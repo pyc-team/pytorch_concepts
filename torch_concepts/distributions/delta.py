@@ -37,8 +37,10 @@ class Delta(Distribution):
         >>> from torch_concepts.distributions import Delta
         >>> dist = Delta(torch.tensor([1.0, 2.0, 3.0]))
         >>> sample = dist.sample()
-        >>> print(sample)  # tensor([1., 2., 3.])
-        >>> print(dist.mean)  # tensor([1., 2., 3.])
+        >>> print(sample)
+        tensor([1., 2., 3.])
+        >>> print(dist.mean)
+        tensor([1., 2., 3.])
     """
     arg_constraints: Dict[str, Any] = {}
     support: Optional[torch.Tensor] = None

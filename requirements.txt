@@ -1,7 +1,10 @@
 scikit-learn
+scipy
 torch
 pytorch-minimize
 pgmpy
 pandas
 pytorch-lightning
 networkx
+sympy
+sympytorch

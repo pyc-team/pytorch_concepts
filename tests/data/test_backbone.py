@@ -1,5 +1,5 @@
 """
-Tests for torch_concepts.data.backbone module.
+Tests for torch_concepts.backbone module.
 
 This module provides comprehensive tests for the Backbone class, including:
 - API validation (string-only model names)
@@ -9,6 +9,9 @@ This module provides comprehensive tests for the Backbone class, including:
 - Forward pass correctness
 - Property accessors
 """
+import sys
+import types
+
 import pytest
 import torch
 import torch.nn as nn
@@ -16,7 +19,7 @@ from PIL import Image
 import numpy as np
 from torch.utils.data import Dataset
 
-from torch_concepts.data.backbone import (
+from torch_concepts.backbone import (
     Backbone,
     _is_huggingface_model,
     _resolve_device,
@@ -83,6 +86,25 @@ class TestDeviceResolution:
         device = _resolve_device(None)
         assert isinstance(device, torch.device)
         assert device.type in ['cpu', 'cuda']
+
+    def test_auto_cpu_when_nothing_available(self, monkeypatch):
+        """No CUDA and no MPS -> CPU (covers the final else branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+        assert _resolve_device(None) == torch.device('cpu')
+
+    def test_mps_warns_and_falls_back_to_cpu(self, monkeypatch):
+        """MPS available -> warn and fall back to CPU (covers the MPS branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        with pytest.warns(UserWarning, match="MPS"):
+            device = _resolve_device(None)
+        assert device == torch.device('cpu')
+
+    def test_cuda_selected_when_available(self, monkeypatch):
+        """CUDA available -> 'cuda' is selected (covers the CUDA branch)."""
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert _resolve_device(None) == torch.device('cuda')
 
 
 # =============================================================================
@@ -187,6 +209,11 @@ class TestBackboneProperties:
         """Test processor property is set."""
         backbone = Backbone('resnet18', device='cpu')
         assert backbone.processor is not None
+
+    def test_out_features_property(self):
+        """Test out_features exposes the embedding dimension."""
+        backbone = Backbone('resnet18', device='cpu')
+        assert backbone.out_features == 512
     
     def test_is_huggingface_property(self):
         """Test is_huggingface property."""
@@ -227,10 +254,18 @@ class TestBackboneForwardTorchvision:
         """Test forward pass with PIL image list."""
         backbone = Backbone('resnet18', device='cpu')
         embeddings = backbone(dummy_pil_images)
-        
+
         assert isinstance(embeddings, torch.Tensor)
         assert embeddings.shape[0] == 2
         assert embeddings.shape[1] == 512
+
+    def test_forward_single_image_3d(self):
+        """A single (C, H, W) image is batched then squeezed back to 1D."""
+        backbone = Backbone('resnet18', device='cpu')
+        embedding = backbone(torch.randn(3, 224, 224))
+
+        assert isinstance(embedding, torch.Tensor)
+        assert embedding.shape == (512,)  # batch dim added then squeezed away
     
     def test_resnet_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for different ResNet variants."""
@@ -311,16 +346,107 @@ class TestBackboneAsModule:
     def test_no_grad_context(self, dummy_tensor_batch):
         """Test that embeddings can be computed without gradients."""
         backbone = Backbone('resnet18', device='cpu')
-        
+
         with torch.no_grad():
             embeddings = backbone(dummy_tensor_batch)
-        
+
         assert not embeddings.requires_grad
+
+
+# =============================================================================
+# Test Freezing
+# =============================================================================
+
+class TestBackboneFreeze:
+    """Tests for the freeze mechanism (default frozen, opt-in fine-tuning)."""
+
+    def test_frozen_by_default(self):
+        backbone = Backbone('resnet18', device='cpu')
+        assert backbone.frozen
+        assert all(not p.requires_grad for p in backbone.parameters())
+
+    def test_frozen_stays_in_eval_under_train(self):
+        """A frozen backbone ignores .train() (fixed BatchNorm/Dropout)."""
+        backbone = Backbone('resnet18', device='cpu')
+        backbone.train()
+        assert not backbone.training
+
+    def test_unfrozen_is_trainable(self):
+        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        assert not backbone.frozen
+        assert all(p.requires_grad for p in backbone.parameters())
+        # starts in train mode like any nn.Module (correct BatchNorm behavior
+        # when fine-tuning; Lightning does not flip modes at fit start)
+        assert backbone.training
+        assert all(m.training for m in backbone.modules())
+
+    def test_unfrozen_propagates_train_mode(self):
+        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        backbone.train()
+        assert backbone.training
+        backbone.eval()
+        assert not backbone.training
+
+    def test_frozen_inside_parent_model(self):
+        """Calling .train() on a parent module keeps a frozen backbone in eval."""
+        backbone = Backbone('resnet18', device='cpu')
+        parent = nn.Sequential(backbone)
+        parent.train()
+        assert parent.training
+        assert not backbone.training
 
 
 # =============================================================================
 # Test HuggingFace Backbone (Slow tests - marked for optional skip)
 # =============================================================================
+
+class TestBackboneHuggingFaceMocked:
+    """HuggingFace code paths exercised offline via a mocked ``transformers``.
+
+    These cover the HF branches of ``_load_huggingface_model``, ``_load_model``
+    and ``forward`` without any Hub download, so they run in CI (unlike the
+    ``@pytest.mark.slow`` tests below).
+    """
+
+    @pytest.fixture
+    def fake_transformers(self, monkeypatch):
+        class _FakeProcessor:
+            def __call__(self, images=None, return_tensors=None):
+                n = len(images) if isinstance(images, list) else images.shape[0]
+                return {"pixel_values": torch.zeros(n, 3, 224, 224)}
+
+        class _FakeHFModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = types.SimpleNamespace(hidden_size=8)
+                self._lin = nn.Linear(3, 8)  # real params for device / requires_grad
+
+            def forward(self, **inputs):
+                batch = inputs["pixel_values"].shape[0]
+                return types.SimpleNamespace(last_hidden_state=torch.zeros(batch, 5, 8))
+
+        fake = types.ModuleType("transformers")
+        fake.AutoImageProcessor = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeProcessor()
+        )
+        fake.AutoModel = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeHFModel()
+        )
+        monkeypatch.setitem(sys.modules, "transformers", fake)
+        return fake
+
+    def test_init_reads_hidden_size(self, fake_transformers):
+        """HF init path: loads model/processor and reads out_features from config."""
+        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        assert backbone.is_huggingface
+        assert backbone.out_features == 8
+
+    def test_forward_returns_cls_token(self, fake_transformers, dummy_pil_images):
+        """HF forward path: processor -> model -> CLS token embedding."""
+        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        embeddings = backbone(dummy_pil_images)
+        assert embeddings.shape == (2, 8)
+
 
 @pytest.mark.slow
 class TestBackboneHuggingFace:

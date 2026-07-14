@@ -2,8 +2,8 @@
 Example: Verifying automatic routing of model outputs to loss terms
 
 Creates a **fully synthetic** setup with 2 binary + 2 categorical concepts
-and a model that returns extra keys (``embeddings``, ``latent``) alongside
-the standard ``input`` / ``target``.
+and a model that returns extra keys (``embeddings``, ``latent``) via
+``ModelOutput.extra`` alongside the standard ``logits`` / ``target``.
 
 Four custom loss terms are defined, each declaring a **different subset**
 of kwargs in its ``forward()`` signature:
@@ -24,11 +24,10 @@ route each term only the kwargs it declares, so:
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
 from torch.utils.data import DataLoader, TensorDataset
 
-from torch_concepts.annotations import Annotations, AxisAnnotation
-from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
+from torch_concepts.annotations import Annotations
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
 
 # ======================================================================
@@ -81,15 +80,18 @@ class KitchenSinkReg(nn.Module):
 # ======================================================================
 
 class CBMWithExtraOutputs(ConceptBottleneckModel):
-    """Adds ``embeddings`` and ``latent`` to the loss kwargs."""
+    """Adds ``embeddings`` and ``latent`` to the model output extras."""
 
-    def filter_output_for_loss(self, forward_out, target):
-        base = super().filter_output_for_loss(forward_out, target)
-        batch_size = forward_out.shape[0]
+    def forward(self, *args, **kwargs):
+        out = super().forward(*args, **kwargs)
+        batch_size = out.logits.shape[0]
+        device = out.logits.device
         # Synthetic extra outputs (in practice these come from the model)
-        base['embeddings'] = torch.randn(batch_size, 16, device=forward_out.device)
-        base['latent'] = torch.randn(batch_size, 8, device=forward_out.device)
-        return base
+        out.extra = {
+            'embeddings': torch.randn(batch_size, 16, device=device),
+            'latent': torch.randn(batch_size, 8, device=device),
+        }
+        return out
 
 
 # ======================================================================
@@ -108,16 +110,11 @@ def make_synthetic_data(n=512, seed=0):
 
 
 def make_annotations():
-    return Annotations({1: AxisAnnotation(
+    return Annotations(
         labels=['b1', 'b2', 'cat1', 'cat2'],
         cardinalities=[1, 1, 3, 4],
-        metadata={
-            'b1':   {'type': 'discrete', 'distribution': Bernoulli},
-            'b2':   {'type': 'discrete', 'distribution': Bernoulli},
-            'cat1': {'type': 'discrete', 'distribution': Categorical},
-            'cat2': {'type': 'discrete', 'distribution': Categorical},
-        },
-    )})
+        types=['binary', 'binary', 'categorical', 'categorical'],
+    )
 
 
 # ======================================================================
@@ -149,34 +146,30 @@ def main():
     print()
 
     # ── Build model ───────────────────────────────────────────
+    # Distributions are owned by the model: binary -> Bernoulli, categorical ->
+    # OneHotCategorical are resolved from the concept types (no need to specify).
     model = CBMWithExtraOutputs(
         input_size=10,
         annotations=ann,
         task_names=[],
-        variable_distributions={
-            'b1': Bernoulli, 
-            'b2': Bernoulli,
-            'cat1': Categorical, 
-            'cat2': Categorical,
-        },
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=10, hidden_size=16, n_layers=1),
+        latent_size=16,
     )
 
     # ── Manual forward + loss (no Lightning, just to inspect routing) ─
     model.train()
-    out = model(x=x, query=['b1', 'b2', 'cat1', 'cat2'])
-    loss_kwargs = model.filter_output_for_loss(out, c)
+    out = model(input=x, query=['b1', 'b2', 'cat1', 'cat2'])
+    out.target = c
 
-    print(f"Keys passed to loss: {sorted(loss_kwargs.keys())}")
-    print(f"  input  shape: {loss_kwargs['input'].shape}")
-    print(f"  target shape: {loss_kwargs['target'].shape}")
-    print(f"  embeddings shape: {loss_kwargs['embeddings'].shape}")
-    print(f"  latent shape: {loss_kwargs['latent'].shape}")
+    print(f"ModelOutput fields: logits={out.logits.shape}, target={out.target.shape}")
+    print(f"  extra keys: {sorted(out.extra.keys())}")
+    print(f"  embeddings shape: {out.extra['embeddings'].shape}")
+    print(f"  latent shape: {out.extra['latent'].shape}")
     print()
 
     print("Computing loss (watch which keys each term receives):")
     print("-" * 60)
-    loss = loss_fn(**loss_kwargs)
+    loss = loss_fn(out)
     print("-" * 60)
     print(f"\nTotal loss: {loss.item():.4f}")
 

@@ -13,7 +13,7 @@ This flexibility allows you to:
 """
 
 import torch
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch.distributions import Bernoulli, Categorical
@@ -26,23 +26,16 @@ def main():
     
     # Create annotations with mixed concept types
     concept_names = ['binary1', 'binary2', 'cat1', 'cat2']
-    annotations = Annotations({
-        1: AxisAnnotation(
-            labels=tuple(concept_names),
-            metadata={
-                'binary1': {'type': 'discrete', 'distribution': Bernoulli},
-                'binary2': {'type': 'discrete', 'distribution': Bernoulli},
-                'cat1': {'type': 'discrete', 'distribution': Categorical},
-                'cat2': {'type': 'discrete', 'distribution': Categorical},
-            },
-            cardinalities=[1, 1, 3, 4]  # binary=1, cat1=3 classes, cat2=4 classes
-        )
-    })
+    annotations = Annotations(
+        labels=tuple(concept_names),
+        types=['binary', 'binary', 'categorical', 'categorical'],
+        cardinalities=[1, 1, 3, 4],
+    )
     
     print("\nAnnotations:")
     print(f"  Concepts: {concept_names}")
-    print(f"  Types: {[annotations[1].metadata[name]['type'] for name in concept_names]}")
-    print(f"  Cardinalities: {annotations[1].cardinalities}")
+    print(f"  Types: {annotations.types}")
+    print(f"  Cardinalities: {annotations.cardinalities}")
    
     # Three ways to specify metrics
 

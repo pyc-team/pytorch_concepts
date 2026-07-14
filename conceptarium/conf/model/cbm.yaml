@@ -2,14 +2,7 @@ defaults:
   - _commons
   - _self_
 
-_target_: "torch_concepts.nn.ConceptBottleneckModel"
-
-task_names: ${dataset.default_task_names}
-
-inference:
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
-
-train_inference:  
-  _target_: "torch_concepts.nn.DeterministicInference"
-  _partial_: true
+model_cls:
+  _target_: "torch_concepts.nn.ConceptBottleneckModel"
+  task_names: ${dataset.default_task_names}
+  
