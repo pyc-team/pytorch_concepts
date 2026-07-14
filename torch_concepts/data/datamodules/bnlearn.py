@@ -3,7 +3,6 @@ import os
 from ..datasets.bnlearn import BnLearnDataset
 
 from ..base.datamodule import ConceptDataModule
-from ...typing import BackboneType
 
 
 class BnLearnDataModule(ConceptDataModule):
@@ -22,7 +21,6 @@ class BnLearnDataModule(ConceptDataModule):
         autoencoder_kwargs: Configuration for autoencoder-based feature extraction.
         concept_subset: Subset of concepts to use. If None, uses all concepts.
         label_descriptions: Dictionary mapping concept names to descriptions.
-        backbone: Model backbone to use (if applicable).
         workers: Number of workers for dataloaders.
     """
     
@@ -35,9 +33,6 @@ class BnLearnDataModule(ConceptDataModule):
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         n_gen: int = 10000,
         concept_subset: list | None = None,
         label_descriptions: dict | None = None,
@@ -60,9 +55,7 @@ class BnLearnDataModule(ConceptDataModule):
             val_size=val_size,
             test_size=test_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
-            seed=seed
+            seed=seed,
+            **kwargs,
         )

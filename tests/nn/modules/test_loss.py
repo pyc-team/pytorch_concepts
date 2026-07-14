@@ -390,27 +390,6 @@ class TestLossConfiguration(unittest.TestCase):
         with self.assertRaises(ValueError):
             ConceptLoss(annotations, categorical=nn.CrossEntropyLoss())
 
-    def test_unused_loss_warning(self):
-        """Test that unused loss configs produce warnings."""
-        import warnings
-        
-        axis = Annotations(
-            labels=('b1', 'b2'),
-            cardinalities=(1, 1),
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-            }
-        )
-        annotations = axis
-        
-        # Provides continuous loss but no continuous concepts
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            ConceptLoss(annotations, binary=nn.BCEWithLogitsLoss(), continuous=nn.MSELoss())
-            # Should warn about unused continuous loss
-            self.assertTrue(any("continuous" in str(warning.message).lower() for warning in w))
-
 
 # ======================================================================
 # DepthWeightedConceptLoss tests

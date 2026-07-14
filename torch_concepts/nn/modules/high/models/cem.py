@@ -133,12 +133,12 @@ class ConceptEmbeddingModel(BipartiteModel):
         ``input`` enters the PGM as evidence and the backbone runs *inside* the
         PGM as the ``latent | input`` CPD.
         """
-        input_var = EmbeddingVariable("input", distribution=Delta, size=self.input_size)
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
         latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
             input_var, 
             parents=[],
-            parametrization=LearnablePrior(self.input_size),
+            parametrization=LearnablePrior(input_var.shape),
         )
         latent_cpd = ParametricCPD(
             latent_var, 

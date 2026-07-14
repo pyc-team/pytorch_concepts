@@ -10,7 +10,7 @@ import copy
 import math
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
-from functools import partial
+from functools import partial, cached_property
 
 import torch
 import torch.nn as nn
@@ -295,6 +295,34 @@ class Variable(ABC):
     def size(self) -> int:
         """Total number of scalar elements: ``math.prod(self.shape)``."""
         return math.prod(self._shape)
+
+    @cached_property
+    def concept_slices(self) -> Dict[str, slice]:
+        """Precomputed mapping from concept name to slice in flattened tensor.
+        """
+        cum = self.member_size
+        return {name: slice(cum*i, cum*(i+1))
+                for i, name in enumerate(self.members)}
+
+
+    def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
+        """Get slice or indices for concept(s) in the flattened tensor.
+        """
+        slices = self.concept_slices  # Use cached property
+
+        # Single concept → 1 element list
+        if isinstance(labels, str):
+            labels = [labels]
+
+        # Multiple concepts → return flattened indices
+        logits_indices = []
+        for label in labels:
+            if label not in slices:
+                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
+            s = slices[label]
+            logits_indices.extend(range(s.start, s.stop))
+
+        return logits_indices
 
     @property
     def param_sizes(self) -> Dict[str, int]:
