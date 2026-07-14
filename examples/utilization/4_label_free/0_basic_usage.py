@@ -3,7 +3,8 @@
 This example uses:
 - LLMConceptGenerator with LiteLLMBackend to produce a concept vocabulary.
 - CLIPAnnotator to score each image against the generated concepts.
-- ConceptSupervisionPipeline to connect generation and annotation.
+- ConceptSupervisionPipeline to generate concepts from train and annotate
+  both train and validation partitions.
 - A tiny concept bottleneck classifier trained on the generated concepts.
 
 Usage:
@@ -96,15 +97,20 @@ def main():
         routing="merged",
     )
 
-    train_values, concepts = pipeline(
+    concept_values, concepts = pipeline(
         train_dataset,
         class_names=["red digit", "green digit"],
+        annotation_datasets={
+            "train": train_dataset,
+            "val": val_dataset,
+        },
     )
 
-    name = next(iter(concepts))
-    concept_axis = concepts[name]
-    train_concepts = train_values[name].float()
-    val_concepts = annotator.annotate(val_dataset, concept_axis).float()
+    train_name = "train_CLIPAnnotator"
+    val_name = "val_CLIPAnnotator"
+    concept_axis = concepts[train_name]
+    train_concepts = concept_values[train_name].float()
+    val_concepts = concept_values[val_name].float()
 
     mean = train_concepts.mean(dim=0, keepdim=True)
     std = train_concepts.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)

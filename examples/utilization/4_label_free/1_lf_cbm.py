@@ -64,7 +64,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
-from torch_concepts import AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.annotators import CLIPAnnotator
 from torch_concepts.data.base import ConceptSupervisionPipeline
 from torch_concepts.data.concept_generators import (
@@ -72,8 +72,7 @@ from torch_concepts.data.concept_generators import (
     LiteLLMBackend,
     default_concept_postprocessor,
 )
-from torch_concepts.data.datasets import CUBDataset
-from torch_concepts.data.datasets.cub import CLASS_NAMES as CUB_CLASS_NAMES
+from torch_concepts.data.datasets.cub import CUBDataset, CLASS_NAMES as CUB_CLASS_NAMES
 
 
 CUB_URL = (
@@ -437,6 +436,11 @@ def prepare_cub_dataset(data_root, num_samples):
     output_dir.mkdir(exist_ok=True)
     with (output_dir / "train.pkl").open("wb") as file:
         pickle.dump([records[image_id] for image_id in image_ids], file)
+    for split_name in ("val", "test"):
+        split_path = output_dir / f"{split_name}.pkl"
+        if not split_path.exists():
+            with split_path.open("wb") as file:
+                pickle.dump([], file)
     return str(cub_root)
 
 
@@ -453,7 +457,7 @@ def prepare_cub_image(image):
 
 def make_axis(names):
     """Build a binary concept axis for the filtered generated concepts."""
-    return AxisAnnotation(
+    return Annotations(
         labels=list(names),
         states=[["0"] for _ in names],
         cardinalities=[1] * len(names),
@@ -677,7 +681,10 @@ def main():
             namespace=f"{args.llm_model}:{args.llm_temperature}:compact-v2",
         )
 
-    # ConceptSupervisionPipeline performs: LLMConceptGenerator -> CLIPAnnotator.
+    # With one dataset argument, ConceptSupervisionPipeline performs
+    # LLMConceptGenerator -> CLIPAnnotator on that dataset. For train/val
+    # workflows, pass annotation_datasets to annotate named partitions with
+    # the concepts generated from the first dataset argument.
     cub_root = prepare_cub_dataset(args.data_root, args.num_samples)
     max_concepts = (
         min(prompt_classes, len(CUB_CLASS_NAMES))

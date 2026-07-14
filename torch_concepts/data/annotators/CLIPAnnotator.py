@@ -185,7 +185,7 @@ class CLIPAnnotator(Annotator):
         concept_data = (
             torch.cat(concept_batches, dim=0)
             if concept_batches
-            else torch.empty((0, concepts.shape))
+            else torch.empty((0, concepts.size))
         )
         return concept_data
 

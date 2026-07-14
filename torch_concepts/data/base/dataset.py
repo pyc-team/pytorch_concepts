@@ -14,7 +14,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
 from copy import deepcopy
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 import warnings
 
 from ...concept_graph import ConceptGraph
@@ -61,8 +61,12 @@ class ConceptDataset(Dataset):
         concept_names_subset: Optional list to select subset of concepts.
         concept_pipeline: Optional pipeline used to generate concept
             supervision.
+        concept_pipeline_kwargs: Optional keyword arguments forwarded when
+            ``concept_pipeline`` is run during dataset initialization.
         use_as_gt: Whether the selected generated concepts should replace native
             concepts as training supervision.
+        generated_gt_name: Optional key selecting which generated concept source
+            to use when generated concepts are used as ground truth.
         name: Optional dataset name.
         precision: Numerical precision (16, 32, or 64, default: 32).
         exogenous: Optional exogenous variables (not yet implemented).
@@ -88,7 +92,9 @@ class ConceptDataset(Dataset):
         graph: Optional[pd.DataFrame] = None,
         concept_names_subset: Optional[List[str]] = None,
         concept_pipeline: Optional[ConceptSupervisionPipeline] = None,
+        concept_pipeline_kwargs: Optional[Mapping[str, Any]] = None,
         use_as_gt: bool = False,
+        generated_gt_name: Optional[str] = None,
         name: Optional[str] = None,
         precision: Union[int, str] = 32,
         # TODO: implement handling of exogenous inputs
@@ -101,7 +107,9 @@ class ConceptDataset(Dataset):
         self.embs_precomputed = False  # whether input_data 
                                        # contains precomputed embeddings
         self.concept_pipeline = concept_pipeline
+        self.concept_pipeline_kwargs = dict(concept_pipeline_kwargs or {})
         self.use_as_gt = use_as_gt
+        self.generated_gt_name = generated_gt_name
         self.concepts: Optional[Tensor] = None
         self.generated_concepts: Dict[str, Annotations] = {}
         self.generated_annotations: Dict[str, Tensor] = {}
@@ -154,6 +162,9 @@ class ConceptDataset(Dataset):
         self._graph = None
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
+
+        if self.concept_pipeline is not None:
+            self.generate_concepts(**self.concept_pipeline_kwargs)
 
     def __repr__(self):
         """
@@ -492,11 +503,14 @@ class ConceptDataset(Dataset):
         class_names: Optional[List[str]] = None,
         **kwargs,
     ) -> tuple[Dict[str, Tensor], Dict[str, Annotations]]:
-        """Run the configured concept-supervision pipeline once.
+        """Run the configured concept-supervision pipeline on this dataset.
 
         Dataset subclasses with processed files can call this method from
         :meth:`build` and cache the returned tensors and annotations alongside
-        their other processed data.
+        their other processed data. This convenience method uses this dataset
+        for both concept generation and annotation; call the pipeline directly
+        with ``annotation_datasets`` to annotate multiple dataset partitions
+        from one generated concept axis.
         """
         if self.concept_pipeline is None:
             raise RuntimeError("No concept_pipeline configured.")
@@ -530,19 +544,33 @@ class ConceptDataset(Dataset):
     def _resolve_ground_truth(self) -> None:
         """Resolve the tensor and annotation used as training supervision."""
         if self.use_as_gt and self.generated_concepts:
-            name = next(iter(self.generated_concepts))
+            name = self._resolve_generated_gt_name()
             self.ground_truth = self.generated_annotations[name]
             self._ground_truth_annotation = self.generated_concepts[name]
         elif self.concepts is not None:
             self.ground_truth = self.concepts
             self._ground_truth_annotation = self._annotations
         elif self.generated_concepts:
-            name = next(iter(self.generated_concepts))
+            name = self._resolve_generated_gt_name()
             self.ground_truth = self.generated_annotations[name]
             self._ground_truth_annotation = self.generated_concepts[name]
         else:
             self.ground_truth = None
             self._ground_truth_annotation = None
+
+    def _resolve_generated_gt_name(self) -> str:
+        """Return the generated source selected for ground-truth supervision."""
+        if not self.generated_concepts:
+            raise ValueError("No generated concepts are available.")
+        if self.generated_gt_name is None:
+            return next(iter(self.generated_concepts))
+        if self.generated_gt_name not in self.generated_concepts:
+            available = ", ".join(self.generated_concepts)
+            raise ValueError(
+                f"generated_gt_name={self.generated_gt_name!r} is not a "
+                f"generated concept source. Available sources: {available}."
+            )
+        return self.generated_gt_name
 
 
 
@@ -652,7 +680,7 @@ class ConceptDataset(Dataset):
         # indices) so it carries the concept labels/types. Per-sample
         # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
         # axis 1); batches are re-annotated by :meth:`collate`.
-        concept_ann = self.annotations.to_concept_space()
+        concept_ann = self._annotations.to_concept_space()
         if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
             self.concepts = AnnotatedTensor(concepts, concept_ann)
         else:

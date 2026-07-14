@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable, Literal, Sequence
 
 from torch import Tensor
@@ -10,11 +11,11 @@ from torch_concepts.data.base.annotator import Annotator
 from torch_concepts.data.base.concept_generator import ConceptGenerator
 
 
-# merged: merges all generated concepts, then sends them to all annotators
-# cartesian: sends each generated concept to all annotators
-# zip: sends each generated concept to the corresponding annotator, producing a one-to-one mapping of results.
-# The mapping is determined by the order of generators and annotators in the pipeline configuration.
-# Ex. routing='zip' with generators=[G1, G2] and annotators=[A1, A2] produces A1(G1) and A2(G2), while routing='cartesian' produces A1(G1), A1(G2), A2(G1), and A2(G2).
+# merged: merge all generated concepts, then send them to all annotators.
+# cartesian: send each generated concept axis to all annotators.
+# zip: send each generated concept axis to the corresponding annotator.
+# Annotation can run over the generation dataset or over named datasets such as
+# {"train": train_dataset, "val": val_dataset}.
 RoutingMode = Literal["merged", "cartesian", "zip"]
 
 
@@ -71,6 +72,11 @@ class UnionConceptFilter:
 
 class ConceptSupervisionPipeline:
     """Compose concept generation, annotation, filtering, and aggregation.
+
+    Calling the pipeline uses ``dataset`` as the concept-generation dataset.
+    By default, that same dataset is annotated. Pass ``annotation_datasets`` to
+    annotate one or more named datasets with the generated concept axis while
+    still generating concepts from ``dataset``.
 
     Parameters
     ----------
@@ -131,8 +137,31 @@ class ConceptSupervisionPipeline:
         self,
         dataset: Dataset,
         class_names: list[str] | None = None,
+        annotation_datasets: Mapping[str, Dataset] | None = None,
         **kwargs: Any,
     ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
+        """Generate concepts from ``dataset`` and annotate datasets.
+
+        Parameters
+        ----------
+        dataset : Dataset
+            Dataset used by concept generators. If ``annotation_datasets`` is
+            omitted, this dataset is also annotated.
+        class_names : list[str], optional
+            Class names forwarded to concept generators.
+        annotation_datasets : mapping of str to Dataset, optional
+            Named datasets to annotate with the concepts generated from
+            ``dataset``. Output keys are prefixed with each mapping key, e.g.
+            ``"train_CLIPAnnotator"`` and ``"val_CLIPAnnotator"``.
+        **kwargs
+            Additional keyword arguments forwarded to generators and annotators.
+
+        Returns
+        -------
+        values, annotations : tuple[dict[str, Tensor], dict[str, Annotations]]
+            Sample-level concept values and their concept axes. With named
+            annotation datasets, both dictionaries use split-prefixed keys.
+        """
         generator_names = self._component_names(self.generators)
         annotator_names = self._component_names(self.annotators)
         concepts = {
@@ -144,6 +173,43 @@ class ConceptSupervisionPipeline:
             for generator_name, generator in zip(generator_names, self.generators)
         }
 
+        values: dict[str, Tensor] = {}
+        annotations: dict[str, Annotations] = {}
+        datasets_to_annotate, prefix_outputs = self._annotation_dataset_map(
+            dataset,
+            annotation_datasets,
+        )
+        for dataset_name, annotation_dataset in datasets_to_annotate.items():
+            dataset_values, dataset_annotations = self._annotate_dataset(
+                concepts=concepts,
+                generator_names=generator_names,
+                annotator_names=annotator_names,
+                dataset=annotation_dataset,
+                kwargs=kwargs,
+            )
+            for name, concept_values in dataset_values.items():
+                output_name = (
+                    f"{dataset_name}_{name}" if prefix_outputs else name
+                )
+                self._insert_result(
+                    values,
+                    annotations,
+                    output_name,
+                    concept_values,
+                    dataset_annotations[name],
+                    annotation_dataset,
+                )
+
+        return values, annotations
+
+    def _annotate_dataset(
+        self,
+        concepts: dict[str, Annotations],
+        generator_names: list[str],
+        annotator_names: list[str],
+        dataset: Dataset,
+        kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
         values: dict[str, Tensor] = {}
         annotations: dict[str, Annotations] = {}
         if self.routing == "merged":
@@ -212,6 +278,33 @@ class ConceptSupervisionPipeline:
             )
 
         return values, annotations
+
+    @staticmethod
+    def _annotation_dataset_map(
+        default_dataset: Dataset,
+        annotation_datasets: Mapping[str, Dataset] | None,
+    ) -> tuple[dict[str, Dataset], bool]:
+        if annotation_datasets is None:
+            return {"": default_dataset}, False
+        if not isinstance(annotation_datasets, Mapping):
+            raise TypeError(
+                "annotation_datasets must be a mapping of names to datasets."
+            )
+        if not annotation_datasets:
+            raise ValueError("annotation_datasets must not be empty.")
+
+        result: dict[str, Dataset] = {}
+        for name, dataset in annotation_datasets.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    "annotation_datasets keys must be non-empty strings."
+                )
+            if not isinstance(dataset, Dataset):
+                raise TypeError(
+                    f"annotation_datasets[{name!r}] must be a Dataset."
+                )
+            result[name] = dataset
+        return result, True
 
     @staticmethod
     def _as_list(value: Any, expected_type: type, name: str) -> list[Any]:
@@ -288,10 +381,10 @@ class ConceptSupervisionPipeline:
                 f"Generated concept values {name!r} have {values.shape[0]} "
                 f"samples, but the dataset has {len(dataset)}."
             )
-        if values.shape[1] != annotation.shape:
+        if values.shape[1] != annotation.size:
             raise ValueError(
                 f"Generated concept values {name!r} have {values.shape[1]} "
-                f"outputs, but their annotation defines {annotation.shape}."
+                f"outputs, but their annotation defines {annotation.size}."
             )
 
     @staticmethod
