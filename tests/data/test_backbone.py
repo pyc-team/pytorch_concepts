@@ -462,10 +462,15 @@ class TestBackboneHuggingFaceMocked:
 
     @pytest.fixture
     def fake_transformers(self, monkeypatch):
+        class _BatchFeature(dict):
+            # mirror transformers.BatchFeature: dict with a .to(device) method
+            def to(self, device):
+                return self
+
         class _FakeProcessor:
             def __call__(self, images=None, return_tensors=None):
                 n = len(images) if isinstance(images, list) else images.shape[0]
-                return {"pixel_values": torch.zeros(n, 3, 224, 224)}
+                return _BatchFeature(pixel_values=torch.zeros(n, 3, 224, 224))
 
         class _FakeHFModel(nn.Module):
             def __init__(self):
@@ -518,15 +523,19 @@ class TestTextBackboneMocked:
     (less-masked) sentence has a strictly larger mean.
     """
 
-    @pytest.fixture
-    def fake_transformers(self, monkeypatch):
+    @staticmethod
+    def _install(monkeypatch, pad_token="[PAD]"):
+        """Install a mocked ``transformers`` whose tokenizer starts with the
+        given ``pad_token`` (pass None to exercise the eos-fallback)."""
         class _Enc(dict):
             def to(self, device):
                 return self
 
         class _FakeTokenizer:
-            pad_token = "[PAD]"
             eos_token = "[EOS]"
+
+            def __init__(self):
+                self.pad_token = pad_token
 
             def __call__(self, texts, padding=True, truncation=True,
                          return_tensors="pt"):
@@ -559,6 +568,10 @@ class TestTextBackboneMocked:
         monkeypatch.setitem(sys.modules, "transformers", fake)
         return fake
 
+    @pytest.fixture
+    def fake_transformers(self, monkeypatch):
+        return self._install(monkeypatch)
+
     TEXTS = ["short text", "a much longer piece of text with many words"]
 
     def test_init(self, fake_transformers):
@@ -571,6 +584,17 @@ class TestTextBackboneMocked:
     def test_invalid_pooling_raises(self):
         with pytest.raises(ValueError, match="pooling must be"):
             TextBackbone("fake/model", device='cpu', pooling='max')
+
+    def test_pad_token_falls_back_to_eos(self, monkeypatch):
+        """Decoder-style tokenizers have no pad token: it must fall back to eos."""
+        self._install(monkeypatch, pad_token=None)
+        tb = TextBackbone("gpt-style", device='cpu')
+        assert tb.processor.pad_token == "[EOS]"
+
+    def test_existing_pad_token_is_kept(self, fake_transformers):
+        """A tokenizer that already has a pad token keeps it (no clobbering)."""
+        tb = TextBackbone("fake/model", device='cpu')
+        assert tb.processor.pad_token == "[PAD]"
 
     def test_mean_pooling_shape(self, fake_transformers):
         tb = TextBackbone("fake/model", device='cpu', pooling='mean')

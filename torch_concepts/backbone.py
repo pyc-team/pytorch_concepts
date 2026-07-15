@@ -420,7 +420,9 @@ def _load_hf_image_source(name: str, device: torch.device) -> BackboneSpec:
     model, processor = _load_huggingface_model(name, device)
 
     def embed(model, processor, x):
-        inputs = processor(images=x, return_tensors="pt")
+        inputs = processor(images=x, return_tensors="pt").to(
+            next(model.parameters()).device
+        )
         outputs = model(**inputs)
         return outputs.last_hidden_state[:, 0, :]  # CLS token
 

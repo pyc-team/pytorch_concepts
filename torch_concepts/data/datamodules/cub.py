@@ -39,6 +39,7 @@ class CUBDataModule(ConceptDataModule):
 
     Examples
     --------
+    >>> from torch_concepts import ImageBackbone
     >>> from torch_concepts.data import CUBDataModule
     >>>
     >>> dm = CUBDataModule(root="./data/CUB200", batch_size=64)

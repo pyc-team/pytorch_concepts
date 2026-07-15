@@ -57,8 +57,9 @@ class CelebADataModule(ConceptDataModule):
     --------
     Basic usage with default settings:
 
+    >>> from torch_concepts import ImageBackbone
     >>> from torch_concepts.data import CelebADataModule
-    >>> 
+    >>>
     >>> dm = CelebADataModule(
     ...     seed=42,
     ...     root='./data/celeba',

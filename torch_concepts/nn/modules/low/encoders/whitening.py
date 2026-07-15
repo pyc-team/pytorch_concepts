@@ -150,8 +150,9 @@ class ConceptWhitening(torch.nn.Module):
                     wm.detach(), alpha=self.momentum
                 )
         else:
-            xc = x - self.running_mean
-            wm = self.running_wm
+            # match input dtype/device (buffers are fp32; keeps AMP fp16/bf16)
+            xc = x - self.running_mean.to(x)
+            wm = self.running_wm.to(x)
         return xc @ wm  # wm is symmetric
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
@@ -179,7 +180,8 @@ class ConceptWhitening(torch.nn.Module):
                 )
                 self.counter[self.mode] += 1
 
-        return (x_hat @ self.running_rot).reshape(shape)
+        # .to(x_hat): rotation buffer is fp32; keep AMP fp16/bf16 activations
+        return (x_hat @ self.running_rot.to(x_hat)).reshape(shape)
 
     def align(self, axis_index: int):
         """
