@@ -43,7 +43,7 @@ class AWA2DataModule(ConceptDataModule):
     >>> from torch_concepts.data import AWA2DataModule
     >>>
     >>> dm = AWA2DataModule(root="./data/AWA2", batch_size=64)
-    >>> dm.precompute_embeddings(Backbone("resnet50"))  # optional
+    >>> dm.precompute_embeddings(ImageBackbone("resnet50"))  # optional
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
 

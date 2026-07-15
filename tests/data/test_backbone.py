@@ -21,6 +21,9 @@ from torch.utils.data import Dataset
 
 from torch_concepts.backbone import (
     Backbone,
+    ImageBackbone,
+    TextBackbone,
+    BackboneSpec,
     _is_huggingface_model,
     _resolve_device,
     _load_torchvision_model,
@@ -157,39 +160,88 @@ class TestBackboneInit:
     
     def test_init_with_resnet(self):
         """Test initialization with ResNet model."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert backbone.name == 'resnet18'
         assert backbone.device == torch.device('cpu')
-        assert backbone.is_huggingface is False
+        assert backbone.source == 'torchvision'
     
     def test_init_with_vgg(self):
         """Test initialization with VGG model."""
-        backbone = Backbone('vgg16', device='cpu')
+        backbone = ImageBackbone('vgg16', device='cpu')
         assert backbone.name == 'vgg16'
-        assert backbone.is_huggingface is False
+        assert backbone.source == 'torchvision'
     
     def test_init_with_efficientnet(self):
         """Test initialization with EfficientNet model."""
-        backbone = Backbone('efficientnet_b0', device='cpu')
+        backbone = ImageBackbone('efficientnet_b0', device='cpu')
         assert backbone.name == 'efficientnet_b0'
-        assert backbone.is_huggingface is False
+        assert backbone.source == 'torchvision'
     
     def test_init_with_densenet(self):
         """Test initialization with DenseNet model."""
-        backbone = Backbone('densenet121', device='cpu')
+        backbone = ImageBackbone('densenet121', device='cpu')
         assert backbone.name == 'densenet121'
-        assert backbone.is_huggingface is False
+        assert backbone.source == 'torchvision'
     
     def test_unsupported_torchvision_model(self):
         """Test that unsupported torchvision models raise ValueError."""
         with pytest.raises(ValueError, match="Unsupported torchvision backbone"):
-            Backbone('mobilenet_v2', device='cpu')
+            ImageBackbone('mobilenet_v2', device='cpu')
     
     def test_init_auto_device(self):
         """Test that auto device detection works."""
-        backbone = Backbone('resnet18')  # No device specified
+        backbone = ImageBackbone('resnet18')  # No device specified
         assert backbone.device is not None
         assert backbone.device.type in ['cpu', 'cuda']
+
+    def test_base_class_is_abstract(self):
+        """Backbone cannot be instantiated directly."""
+        with pytest.raises(TypeError, match="abstract"):
+            Backbone('resnet18', device='cpu')
+
+    def test_image_backbone_is_a_backbone(self):
+        assert isinstance(ImageBackbone('resnet18', device='cpu'), Backbone)
+
+
+# =============================================================================
+# Test source resolution and the loader registry
+# =============================================================================
+
+class TestImageBackboneSource:
+    """Tests for `source` resolution on ImageBackbone."""
+
+    def test_auto_resolves_torchvision(self):
+        assert ImageBackbone('resnet18', device='cpu').source == 'torchvision'
+
+    def test_explicit_torchvision(self):
+        assert ImageBackbone('resnet18', device='cpu',
+                             source='torchvision').source == 'torchvision'
+
+    def test_unknown_source_raises(self):
+        with pytest.raises(ValueError, match="Unknown source"):
+            ImageBackbone('resnet18', device='cpu', source='nope')
+
+
+class TestBackboneRegistry:
+    """Tests for the per-source loader registry."""
+
+    def test_registries_are_per_modality(self):
+        assert 'torchvision' in ImageBackbone._loaders
+        assert 'torchvision' not in TextBackbone._loaders
+
+    def test_register_and_use_custom_source(self):
+        @ImageBackbone.register_source("dummy_src")
+        def _load(name, device):
+            model = nn.Linear(10, 7).to(device)
+            return BackboneSpec(model, None, lambda m, p, x: m(x), 7)
+        try:
+            b = ImageBackbone("whatever", device='cpu', source="dummy_src")
+            assert b.source == "dummy_src"
+            assert b.out_features == 7
+            assert b(torch.randn(4, 10)).shape == (4, 7)
+            assert isinstance(b, Backbone)
+        finally:
+            del ImageBackbone._loaders["dummy_src"]
 
 
 # =============================================================================
@@ -201,28 +253,28 @@ class TestBackboneProperties:
     
     def test_device_property(self):
         """Test device property returns torch.device."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert isinstance(backbone.device, torch.device)
         assert backbone.device == torch.device('cpu')
     
     def test_processor_property(self):
         """Test processor property is set."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert backbone.processor is not None
 
     def test_out_features_property(self):
         """Test out_features exposes the embedding dimension."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert backbone.out_features == 512
     
-    def test_is_huggingface_property(self):
-        """Test is_huggingface property."""
-        backbone = Backbone('resnet18', device='cpu')
-        assert backbone.is_huggingface is False
+    def test_source_property(self):
+        """Test source resolves to 'torchvision' for a torchvision name."""
+        backbone = ImageBackbone('resnet18', device='cpu')
+        assert backbone.source == 'torchvision'
     
     def test_filename_property_torchvision(self):
         """Test filename generation for torchvision models."""
-        backbone = Backbone('resnet50', device='cpu')
+        backbone = ImageBackbone('resnet50', device='cpu')
         assert backbone.filename == 'bkb_embs_resnet50.pt'
     
     def test_filename_property_huggingface_format(self):
@@ -243,7 +295,7 @@ class TestBackboneForwardTorchvision:
     
     def test_forward_with_tensor_batch(self, dummy_tensor_batch):
         """Test forward pass with tensor input."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         embeddings = backbone(dummy_tensor_batch)
         
         assert isinstance(embeddings, torch.Tensor)
@@ -252,7 +304,7 @@ class TestBackboneForwardTorchvision:
     
     def test_forward_with_pil_images(self, dummy_pil_images):
         """Test forward pass with PIL image list."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         embeddings = backbone(dummy_pil_images)
 
         assert isinstance(embeddings, torch.Tensor)
@@ -261,7 +313,7 @@ class TestBackboneForwardTorchvision:
 
     def test_forward_single_image_3d(self):
         """A single (C, H, W) image is batched then squeezed back to 1D."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         embedding = backbone(torch.randn(3, 224, 224))
 
         assert isinstance(embedding, torch.Tensor)
@@ -270,30 +322,30 @@ class TestBackboneForwardTorchvision:
     def test_resnet_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for different ResNet variants."""
         # ResNet18/34 have 512 features
-        backbone18 = Backbone('resnet18', device='cpu')
+        backbone18 = ImageBackbone('resnet18', device='cpu')
         emb18 = backbone18(dummy_tensor_batch)
         assert emb18.shape[1] == 512
         
         # ResNet50/101/152 have 2048 features
-        backbone50 = Backbone('resnet50', device='cpu')
+        backbone50 = ImageBackbone('resnet50', device='cpu')
         emb50 = backbone50(dummy_tensor_batch)
         assert emb50.shape[1] == 2048
     
     def test_vgg_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for VGG."""
-        backbone = Backbone('vgg16', device='cpu')
+        backbone = ImageBackbone('vgg16', device='cpu')
         embeddings = backbone(dummy_tensor_batch)
         assert embeddings.shape[1] == 25088  # 512 * 7 * 7
     
     def test_efficientnet_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for EfficientNet."""
-        backbone = Backbone('efficientnet_b0', device='cpu')
+        backbone = ImageBackbone('efficientnet_b0', device='cpu')
         embeddings = backbone(dummy_tensor_batch)
         assert embeddings.shape[1] == 1280
     
     def test_densenet_embedding_dimensions(self, dummy_tensor_batch):
         """Test correct embedding dimensions for DenseNet."""
-        backbone = Backbone('densenet121', device='cpu')
+        backbone = ImageBackbone('densenet121', device='cpu')
         embeddings = backbone(dummy_tensor_batch)
         assert embeddings.shape[1] == 1024
 
@@ -307,7 +359,7 @@ class TestBackboneRepr:
     
     def test_repr_torchvision(self):
         """Test repr for torchvision model."""
-        backbone = Backbone('resnet50', device='cpu')
+        backbone = ImageBackbone('resnet50', device='cpu')
         repr_str = repr(backbone)
         
         assert 'Backbone' in repr_str
@@ -317,11 +369,11 @@ class TestBackboneRepr:
     
     def test_repr_contains_all_info(self):
         """Test that repr contains all relevant information."""
-        backbone = Backbone('vgg16', device='cpu')
+        backbone = ImageBackbone('vgg16', device='cpu')
         repr_str = repr(backbone)
         
         assert 'name=' in repr_str
-        assert 'type=' in repr_str
+        assert 'source=' in repr_str
         assert 'device=' in repr_str
 
 
@@ -334,18 +386,18 @@ class TestBackboneAsModule:
     
     def test_is_nn_module(self):
         """Test that Backbone is an nn.Module subclass."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert isinstance(backbone, nn.Module)
     
     def test_eval_mode_after_init(self):
         """Test that backbone model is in eval mode after initialization."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         # The internal model should be in eval mode
         assert not backbone._model.training
     
     def test_no_grad_context(self, dummy_tensor_batch):
         """Test that embeddings can be computed without gradients."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
 
         with torch.no_grad():
             embeddings = backbone(dummy_tensor_batch)
@@ -361,18 +413,18 @@ class TestBackboneFreeze:
     """Tests for the freeze mechanism (default frozen, opt-in fine-tuning)."""
 
     def test_frozen_by_default(self):
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         assert backbone.frozen
         assert all(not p.requires_grad for p in backbone.parameters())
 
     def test_frozen_stays_in_eval_under_train(self):
         """A frozen backbone ignores .train() (fixed BatchNorm/Dropout)."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         backbone.train()
         assert not backbone.training
 
     def test_unfrozen_is_trainable(self):
-        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        backbone = ImageBackbone('resnet18', device='cpu', freeze=False)
         assert not backbone.frozen
         assert all(p.requires_grad for p in backbone.parameters())
         # starts in train mode like any nn.Module (correct BatchNorm behavior
@@ -381,7 +433,7 @@ class TestBackboneFreeze:
         assert all(m.training for m in backbone.modules())
 
     def test_unfrozen_propagates_train_mode(self):
-        backbone = Backbone('resnet18', device='cpu', freeze=False)
+        backbone = ImageBackbone('resnet18', device='cpu', freeze=False)
         backbone.train()
         assert backbone.training
         backbone.eval()
@@ -389,7 +441,7 @@ class TestBackboneFreeze:
 
     def test_frozen_inside_parent_model(self):
         """Calling .train() on a parent module keeps a frozen backbone in eval."""
-        backbone = Backbone('resnet18', device='cpu')
+        backbone = ImageBackbone('resnet18', device='cpu')
         parent = nn.Sequential(backbone)
         parent.train()
         assert parent.training
@@ -437,15 +489,119 @@ class TestBackboneHuggingFaceMocked:
 
     def test_init_reads_hidden_size(self, fake_transformers):
         """HF init path: loads model/processor and reads out_features from config."""
-        backbone = Backbone('facebook/dinov2-base', device='cpu')
-        assert backbone.is_huggingface
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
+        assert backbone.source == 'huggingface'
         assert backbone.out_features == 8
 
     def test_forward_returns_cls_token(self, fake_transformers, dummy_pil_images):
         """HF forward path: processor -> model -> CLS token embedding."""
-        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
         embeddings = backbone(dummy_pil_images)
         assert embeddings.shape == (2, 8)
+
+    def test_repr_shows_source(self, fake_transformers):
+        """repr shows the resolved source, truthfully (not a HF/torchvision bool)."""
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
+        assert 'source=huggingface' in repr(backbone)
+
+
+# =============================================================================
+# Test TextBackbone (HuggingFace text path, mocked)
+# =============================================================================
+
+class TestTextBackboneMocked:
+    """TextBackbone paths exercised offline via a mocked ``transformers``.
+
+    The fake tokenizer emits per-sample lengths of ``len(text.split()) + 2``
+    so mask-aware pooling can be checked on an unequal-length batch; the fake
+    model returns hidden states equal to the token position, so a longer
+    (less-masked) sentence has a strictly larger mean.
+    """
+
+    @pytest.fixture
+    def fake_transformers(self, monkeypatch):
+        class _Enc(dict):
+            def to(self, device):
+                return self
+
+        class _FakeTokenizer:
+            pad_token = "[PAD]"
+            eos_token = "[EOS]"
+
+            def __call__(self, texts, padding=True, truncation=True,
+                         return_tensors="pt"):
+                lengths = [len(t.split()) + 2 for t in texts]
+                T = max(lengths)
+                ids = torch.zeros(len(texts), T, dtype=torch.long)
+                mask = torch.zeros(len(texts), T, dtype=torch.long)
+                for i, n in enumerate(lengths):
+                    mask[i, :n] = 1
+                return _Enc(input_ids=ids, attention_mask=mask)
+
+        class _FakeModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = types.SimpleNamespace(hidden_size=8)
+                self._lin = nn.Linear(3, 8)  # real params for device/grad
+
+            def forward(self, input_ids=None, attention_mask=None, **kw):
+                B, T = input_ids.shape
+                h = torch.arange(T, dtype=torch.float32).view(1, T, 1).expand(B, T, 8)
+                return types.SimpleNamespace(last_hidden_state=h.clone())
+
+        fake = types.ModuleType("transformers")
+        fake.AutoTokenizer = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeTokenizer()
+        )
+        fake.AutoModel = types.SimpleNamespace(
+            from_pretrained=lambda name, token=None: _FakeModel()
+        )
+        monkeypatch.setitem(sys.modules, "transformers", fake)
+        return fake
+
+    TEXTS = ["short text", "a much longer piece of text with many words"]
+
+    def test_init(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu')
+        assert tb.source == 'huggingface'
+        assert tb.out_features == 8
+        assert tb.pooling == 'mean'
+        assert isinstance(tb, Backbone)
+
+    def test_invalid_pooling_raises(self):
+        with pytest.raises(ValueError, match="pooling must be"):
+            TextBackbone("fake/model", device='cpu', pooling='max')
+
+    def test_mean_pooling_shape(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu', pooling='mean')
+        assert tb(self.TEXTS).shape == (2, 8)
+
+    def test_cls_pooling_shape(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu', pooling='cls')
+        assert tb(self.TEXTS).shape == (2, 8)
+
+    def test_none_pooling_returns_tokens(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu', pooling='none')
+        out = tb(self.TEXTS)
+        assert out.dim() == 3 and out.shape[0] == 2 and out.shape[2] == 8
+
+    def test_single_string_is_squeezed(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu')
+        assert tb("hello world").shape == (8,)
+
+    def test_mean_pooling_respects_mask(self, fake_transformers):
+        """Masked (padding) positions are excluded: the longer sentence, with
+        fewer masked-out positions, has a strictly larger mean."""
+        tb = TextBackbone("fake/model", device='cpu', pooling='mean')
+        out = tb(self.TEXTS)
+        assert out[0, 0] < out[1, 0]
+
+    def test_frozen_by_default(self, fake_transformers):
+        tb = TextBackbone("fake/model", device='cpu')
+        assert tb.frozen
+        assert all(not p.requires_grad for p in tb.parameters())
+        tb.train()
+        assert not tb.training  # frozen stays in eval
 
 
 @pytest.mark.slow
@@ -458,13 +614,13 @@ class TestBackboneHuggingFace:
     
     def test_init_dinov2(self):
         """Test initialization with DINOv2 model."""
-        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
         assert backbone.name == 'facebook/dinov2-base'
-        assert backbone.is_huggingface is True
+        assert backbone.source == 'huggingface'
     
     def test_forward_dinov2(self, dummy_pil_images):
         """Test forward pass with DINOv2."""
-        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
         embeddings = backbone(dummy_pil_images)
         
         assert isinstance(embeddings, torch.Tensor)
@@ -473,10 +629,10 @@ class TestBackboneHuggingFace:
     
     def test_repr_huggingface(self):
         """Test repr for HuggingFace model."""
-        backbone = Backbone('facebook/dinov2-base', device='cpu')
+        backbone = ImageBackbone('facebook/dinov2-base', device='cpu')
         repr_str = repr(backbone)
-        
-        assert 'HuggingFace' in repr_str
+
+        assert 'source=huggingface' in repr_str
         assert 'facebook/dinov2-base' in repr_str
 
 

@@ -5,10 +5,10 @@ The same ``Backbone`` used for data-side caching can be passed directly to a
 high-level model as its ``backbone``: it runs *inside* the PGM as the
 ``latent | input`` CPD, consuming raw images end-to-end.
 
-- ``Backbone('resnet18')`` is **frozen** by default: its parameters take no
+- ``ImageBackbone('resnet18')`` is **frozen** by default: its parameters take no
   gradients and it stays in eval mode even under ``model.train()`` (linear
   probing / feature extraction).
-- ``Backbone('resnet18', freeze=False)`` is trainable end-to-end (fine-tuning).
+- ``ImageBackbone('resnet18', freeze=False)`` is trainable end-to-end (fine-tuning).
 - ``latent_size`` is inferred from ``backbone.out_features`` — no need to
   pass it.
 
@@ -19,7 +19,7 @@ before/after training to verify that freezing does what it promises.
 import torch
 from pytorch_lightning import Trainer
 
-from torch_concepts import Backbone, seed_everything
+from torch_concepts import ImageBackbone, seed_everything
 from torch_concepts.data import CelebADataModule
 from torch_concepts.nn import ConceptBottleneckModel
 
@@ -70,7 +70,7 @@ def main():
     )
 
     # ── Frozen backbone (default): linear probing ────────────────────────
-    frozen_backbone = Backbone('resnet18')
+    frozen_backbone = ImageBackbone('resnet18')
     weight_before = frozen_backbone._model[0].weight.clone()
 
     model = fit(frozen_backbone, dm)
@@ -85,7 +85,7 @@ def main():
     print("[frozen]   backbone weights bit-identical after training; stays in eval ✓")
 
     # ── Unfrozen backbone: end-to-end fine-tuning ────────────────────────
-    unfrozen_backbone = Backbone('resnet18', freeze=False)
+    unfrozen_backbone = ImageBackbone('resnet18', freeze=False)
     weight_before = unfrozen_backbone._model[0].weight.clone()
 
     model = fit(unfrozen_backbone, dm)

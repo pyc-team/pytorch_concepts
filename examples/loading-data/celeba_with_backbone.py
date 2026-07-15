@@ -20,7 +20,7 @@ Task: Predict 'Attractive' attribute from other concept attributes
 import torch
 from pytorch_lightning import Trainer
 
-from torch_concepts import seed_everything, Backbone
+from torch_concepts import seed_everything, ImageBackbone
 from torch_concepts.data import CelebADataModule
 from torch_concepts.nn import MLP, ConceptBottleneckModel
 
@@ -59,7 +59,7 @@ def main():
     # =========================================================================
     print(f"\n2. Loading backbone...")
     
-    backbone = Backbone(name='resnet18', device=device, freeze=True)
+    backbone = ImageBackbone(name='resnet18', device=device, freeze=True)
     print(backbone)
     
     # =========================================================================

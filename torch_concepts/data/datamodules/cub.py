@@ -42,7 +42,7 @@ class CUBDataModule(ConceptDataModule):
     >>> from torch_concepts.data import CUBDataModule
     >>>
     >>> dm = CUBDataModule(root="./data/CUB200", batch_size=64)
-    >>> dm.precompute_embeddings(Backbone("resnet50"))  # optional
+    >>> dm.precompute_embeddings(ImageBackbone("resnet50"))  # optional
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
 

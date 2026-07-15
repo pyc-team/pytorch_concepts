@@ -30,7 +30,7 @@ Task: predict 'Attractive' from the full 128-dim whitened representation
 """
 import torch
 
-from torch_concepts import Backbone, seed_everything
+from torch_concepts import ImageBackbone, seed_everything
 from torch_concepts.data import CelebADataModule
 from torch_concepts.nn import ConceptWhitening
 
@@ -47,7 +47,7 @@ def load_embeddings(n_samples=4000):
         max_samples=n_samples,
         splitter=None,   # required alongside max_samples (see CelebADataModule docs)
     )
-    dm.precompute_embeddings(Backbone("resnet18"), cache=False)
+    dm.precompute_embeddings(ImageBackbone("resnet18"), cache=False)
     return dm.dataset.input_data, dm.dataset.concepts.float()
 
 
