@@ -40,6 +40,7 @@ Evaluation Metrics
 
    completeness_score
    intervention_score
+   tcav_score
    cace_score
    residual_concept_causal_effect
 

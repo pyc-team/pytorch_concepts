@@ -47,7 +47,7 @@ def load_embeddings(n_samples=4000):
         max_samples=n_samples,
         splitter=None,   # required alongside max_samples (see CelebADataModule docs)
     )
-    dm.precompute_embeddings(ImageBackbone("resnet18"), cache=False)
+    dm.precompute_embeddings(ImageBackbone("resnet18"), cache=True)
     return dm.dataset.input_data, dm.dataset.concepts.float()
 
 

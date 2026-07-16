@@ -26,6 +26,7 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
+from .modules.low.encoders.cav import CAVEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
@@ -121,6 +122,7 @@ __all__ = [
     "LinearEmbeddingToConcept",
     "ConceptWhitening",
     "WhitenedEmbeddingToConcept",
+    "CAVEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
