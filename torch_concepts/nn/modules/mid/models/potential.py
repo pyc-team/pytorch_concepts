@@ -2,21 +2,25 @@
 
 A potential contributes ``exp(-E(scope ; conditioning))`` to the joint. Its
 ``scope`` is a *symmetric* clique of variables (no child/parent asymmetry); an
-optional list of ``conditioning`` variables (e.g. an embedding) feeds the neural
-energy but is **not** part of the scope — those are observed inputs, so they
-create no undirected edges and are not marginalized. This is the conditional
-random field (CRF) setting used by concept models.
+optional list of ``conditioning`` variables (e.g. an embedding) also feeds the
+energy but is observed — those inputs create no undirected edges and are not
+marginalized. This is the conditional random field (CRF) setting used by
+concept models.
 
-The energy is domain-agnostic (continuous or discrete assignments). The concrete
-:class:`TabularPotential` realizes the discrete log-linear case that belief
-propagation consumes: a neural function of the conditioning inputs emits a
-log-potential *table* over the discrete joint states of the scope.
+The energy is a **plain scalar function** of the assignment: the parametrization
+aggregates the scope values (and any conditioning values) exactly as a
+:class:`ParametricCPD` aggregates its parents, and maps them to a single scalar
+``E`` per batch element. ``log_potential = -E``. Belief propagation builds the
+factor tables it needs by enumerating discrete assignments and evaluating this
+energy — the same enumeration path it already uses for CPDs.
+
+Note the modelling consequence: a linear energy over the concatenated inputs is
+*additive* (no interaction between scope variables). Use an interaction-capable
+module (e.g. an MLP) when you need a genuine coupling between concepts.
 """
 
 from __future__ import annotations
 
-import math
-from abc import abstractmethod
 from typing import Dict, List, Mapping, Optional, Union
 
 import torch
@@ -28,7 +32,7 @@ from .variable import Variable
 
 
 # ---------------------------------------------------------------------------
-# Discrete-state cardinality (shared by TabularPotential and the BP engine).
+# Discrete-state cardinality (used by the BP engine to enumerate assignments).
 # ---------------------------------------------------------------------------
 _BINARY_FAMILIES = (dist.Bernoulli, dist.RelaxedBernoulli)
 _CATEGORICAL_FAMILIES = (
@@ -66,26 +70,28 @@ def enumerable_cardinality(variable: Variable) -> int:
 
 
 class ParametricPotential(ParametricFactor):
-    """Undirected, energy-based factor over a symmetric ``scope``.
+    """Undirected, energy-based factor over a ``scope``.
 
     Parameters
     ----------
     scope : list of Variable
         The clique of variables the energy ranges over (>= 1). These are the
         factor-graph edges of this potential.
-    parametrization : dict[str, nn.Module]
-        Maps energy-parameter names to modules that produce them from the
-        conditioning inputs (or, when ``conditioning`` is empty, from no inputs —
-        e.g. a :class:`~torch_concepts.nn.LearnablePrior`). Subclasses fix the
-        parameter names they expect (e.g. :class:`TabularPotential` uses
-        ``"table"``).
+    parametrization : nn.Module or dict[str, nn.Module]
+        The energy module. It receives the aggregated inputs — the scope values
+        (and any conditioning values), concatenated along the last dim in
+        ``scope`` then ``conditioning`` order — and must return **one scalar per
+        batch element** (shape ``(batch,)`` or ``(batch, 1)``). Its input width is
+        therefore ``sum(v.size for v in scope) + sum(v.size for v in
+        conditioning)``. A bare ``nn.Module`` is wrapped as ``{"energy": module}``.
     conditioning : list of Variable, optional
-        Observed input variables the energy depends on (CRF conditioning). Not
-        part of ``scope``. Default: none (a plain MRF potential).
+        Observed input variables the energy also depends on (CRF conditioning).
+        Not part of ``scope``. Default: none (a plain MRF potential).
     name : str, optional
         Factor-graph key. Defaults to ``"phi(<scope names>)"``.
     aggregate : callable or dict, optional
-        As in :class:`ParametricFactor`; aggregates the conditioning inputs.
+        As in :class:`ParametricFactor`; aggregates the inputs before the energy
+        module (default: concatenate along the last dim).
     """
 
     def __init__(
@@ -106,13 +112,15 @@ class ParametricPotential(ParametricFactor):
                 )
         self._scope: List[Variable] = list(scope)
         self._conditioning: List[Variable] = list(conditioning) if conditioning else []
-        # The conditioning inputs are exactly the aggregation inputs, so expose
-        # them as ``parents`` to reuse ParametricFactor's aggregation machinery.
-        self.parents: List[Variable] = list(self._conditioning)
+        # Scope + conditioning are exactly the aggregation inputs, so expose them
+        # as ``parents`` to reuse ParametricFactor's aggregation machinery.
+        self.parents: List[Variable] = list(self._scope) + list(self._conditioning)
         self._name: str = name if name is not None else self._default_name()
 
-        parametrization = self._normalize_parametrization(parametrization)
-        super().__init__(parametrization=parametrization, aggregate=aggregate)
+        super().__init__(
+            parametrization=self._normalize_parametrization(parametrization),
+            aggregate=aggregate,
+        )
 
     def _default_name(self) -> str:
         return f"phi({','.join(v.name for v in self._scope)})"
@@ -120,12 +128,18 @@ class ParametricPotential(ParametricFactor):
     def _normalize_parametrization(
         self, parametrization: Union[nn.Module, Dict[str, nn.Module]]
     ) -> Dict[str, nn.Module]:
-        """Subclasses may override to wrap a bare ``nn.Module`` under their key."""
+        if isinstance(parametrization, nn.Module):
+            return {"energy": parametrization}
         if isinstance(parametrization, dict):
+            if set(parametrization) != {"energy"}:
+                raise ValueError(
+                    "ParametricPotential: parametrization dict must have exactly the key "
+                    f"'energy', got {sorted(parametrization)}."
+                )
             return parametrization
         raise TypeError(
-            f"{type(self).__name__}: `parametrization` must be a dict mapping "
-            "energy-parameter names to nn.Module instances."
+            "ParametricPotential: `parametrization` must be an nn.Module or a "
+            "{'energy': nn.Module} dict."
         )
 
     # ---- unified factor-graph interface (see ParametricFactor) --------------
@@ -145,7 +159,7 @@ class ParametricPotential(ParametricFactor):
     def _resolve_input(
         self, v: Variable, values: Mapping[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Value for conditioning input ``v`` (exact name, or plate-member slice)."""
+        """Value for input ``v`` (exact name, or a plate-member column slice)."""
         val = values.get(v.name)
         if val is not None:
             return val
@@ -154,43 +168,31 @@ class ParametricPotential(ParametricFactor):
         if val is not None:
             return val[..., owner.column_of(v.name)]
         raise KeyError(
-            f"{type(self).__name__}({self.name!r}): no value for conditioning input "
-            f"{v.name!r} in keys {sorted(values)}."
+            f"ParametricPotential({self.name!r}): no value for input {v.name!r} "
+            f"in keys {sorted(values)}."
         )
 
-    def forward(
-        self,
-        inputs: Optional[Mapping[str, torch.Tensor]] = None,
-        **layer_kwargs,
-    ) -> Dict[str, torch.Tensor]:
-        """Produce the energy parameters from the conditioning inputs.
-
-        With no ``conditioning``, each module is called with no arguments (a
-        learnable/fixed prior). Otherwise the conditioning values are aggregated
-        (as for a CPD's parents) and fed through each parameter module.
-        """
-        if not self._conditioning:
-            return {pname: mod() for pname, mod in self.parametrization.items()}
-
-        values = inputs or {}
-        cond = {v: self._resolve_input(v, values) for v in self._conditioning}
-        result: Dict[str, torch.Tensor] = {}
-        for pname, mod in self.parametrization.items():
-            cat = self._aggregators[pname](cond)
-            if isinstance(cat, dict):
-                out = mod(**cat, **layer_kwargs)
-            else:
-                out = mod(cat, **layer_kwargs)
-            result[pname] = out
-        return result
-
-    @abstractmethod
     def energy(
         self,
-        scope_values: Dict[Variable, torch.Tensor],
+        scope_values: Mapping[Variable, torch.Tensor],
         conditioning: Optional[Mapping[str, torch.Tensor]] = None,
+        **layer_kwargs,
     ) -> torch.Tensor:
-        """Scalar energy ``E(scope ; conditioning)`` of shape ``(batch,)``."""
+        """Scalar energy ``E(scope ; conditioning)`` of shape ``(batch,)``.
+
+        Aggregates the scope values (from ``scope_values``) and conditioning
+        values (resolved by name from ``conditioning``) and applies the energy
+        module.
+        """
+        conditioning = conditioning or {}
+        inputs: Dict[Variable, torch.Tensor] = {v: scope_values[v] for v in self._scope}
+        for v in self._conditioning:
+            inputs[v] = self._resolve_input(v, conditioning)
+
+        mod = self.parametrization["energy"]
+        cat = self._aggregators["energy"](inputs)
+        out = mod(**cat, **layer_kwargs) if isinstance(cat, dict) else mod(cat, **layer_kwargs)
+        return out.reshape(out.shape[0])
 
     def log_potential(
         self,
@@ -206,101 +208,18 @@ class ParametricPotential(ParametricFactor):
                 scope_values[v] = conditioning[v.name]
             else:
                 raise KeyError(
-                    f"{type(self).__name__}({self.name!r}).log_potential: no value for "
+                    f"ParametricPotential({self.name!r}).log_potential: no value for "
                     f"scope variable {v.name!r}."
                 )
         return -self.energy(scope_values, conditioning)
 
-
-class TabularPotential(ParametricPotential):
-    """Discrete log-linear potential: a log-potential *table* over the scope.
-
-    The parametrization (keyed ``"table"``) emits, from the conditioning inputs,
-    a tensor of ``prod(cardinalities)`` entries — one log-potential per joint
-    discrete assignment of the scope — reshaped to ``(batch, k_1, ..., k_d)``.
-    With no conditioning, pass a prior producing that flat vector (e.g.
-    ``{"table": LearnablePrior(prod_of_cardinalities)}``). This is the family
-    :class:`BeliefPropagation` consumes directly (no per-cell enumeration).
-
-    Every scope variable must be discretely enumerable (see
-    :func:`enumerable_cardinality`).
-    """
-
-    #: Guard against constructing an astronomically large table by accident.
-    MAX_TABLE_SIZE: int = 1_000_000
-
-    def __init__(
+    def forward(
         self,
-        scope: List[Variable],
-        parametrization: Union[nn.Module, Dict[str, nn.Module]],
-        conditioning: Optional[List[Variable]] = None,
-        name: Optional[str] = None,
-        aggregate=None,
-    ) -> None:
-        self._cardinalities: List[int] = [enumerable_cardinality(v) for v in scope]
-        self._table_size: int = int(math.prod(self._cardinalities))
-        if self._table_size > self.MAX_TABLE_SIZE:
-            raise ValueError(
-                f"TabularPotential({name or 'phi'}): table has {self._table_size} entries "
-                f"(cardinalities {self._cardinalities}), exceeding MAX_TABLE_SIZE="
-                f"{self.MAX_TABLE_SIZE}. Split the clique or use a smaller scope."
-            )
-        super().__init__(scope, parametrization, conditioning, name, aggregate)
-
-    def _normalize_parametrization(self, parametrization):
-        if isinstance(parametrization, nn.Module):
-            return {"table": parametrization}
-        if isinstance(parametrization, dict):
-            if set(parametrization) != {"table"}:
-                raise ValueError(
-                    "TabularPotential: parametrization dict must have exactly the key "
-                    f"'table', got {sorted(parametrization)}."
-                )
-            return parametrization
-        raise TypeError(
-            "TabularPotential: `parametrization` must be an nn.Module or a "
-            "{'table': nn.Module} dict."
-        )
-
-    @property
-    def cardinalities(self) -> List[int]:
-        """Per-scope-variable number of discrete states (table axis sizes)."""
-        return list(self._cardinalities)
-
-    def log_potential_table(
-        self,
-        conditioning: Optional[Mapping[str, torch.Tensor]] = None,
-        batch_size: Optional[int] = None,
+        inputs: Optional[Mapping[str, torch.Tensor]] = None,
+        **layer_kwargs,
     ) -> torch.Tensor:
-        """The log-potential table ``(batch, k_1, ..., k_d)`` (axis order == scope order).
-
-        Consumed directly by :class:`BeliefPropagation` (the fast path — no
-        per-assignment enumeration).
-        """
-        params = self.forward(conditioning)
-        table = params["table"]
-        if table.dim() == 1:
-            # Unconditional prior produced a batch-less (table_size,) vector.
-            B = batch_size if batch_size is not None else 1
-            table = table.unsqueeze(0).expand(B, -1)
-        return table.reshape(table.shape[0], *self._cardinalities)
-
-    def _state_index(self, v: Variable, value: torch.Tensor) -> torch.Tensor:
-        """Decode a scope variable's value to its discrete state index ``(batch,)``."""
-        card = enumerable_cardinality(v)
-        if card == 2 and v.size == 1:
-            return value.reshape(value.shape[0]).round().long()
-        return value.reshape(value.shape[0], v.size).argmax(dim=-1)
-
-    def energy(
-        self,
-        scope_values: Dict[Variable, torch.Tensor],
-        conditioning: Optional[Mapping[str, torch.Tensor]] = None,
-    ) -> torch.Tensor:
-        """``-`` the table entry at the assignment (so ``log_potential`` = table entry)."""
-        table = self.log_potential_table(conditioning)
-        B = table.shape[0]
-        idx = [torch.arange(B, device=table.device)]
-        idx += [self._state_index(v, scope_values[v]) for v in self._scope]
-        gathered = table[tuple(idx)]
-        return -gathered
+        """Energy for a name-keyed ``inputs`` dict holding all scope (and
+        conditioning) values. Returns ``(batch,)``."""
+        inputs = inputs or {}
+        scope_values = {v: self._resolve_input(v, inputs) for v in self._scope}
+        return self.energy(scope_values, inputs, **layer_kwargs)

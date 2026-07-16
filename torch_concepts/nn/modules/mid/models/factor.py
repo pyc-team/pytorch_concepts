@@ -266,14 +266,6 @@ class ParametricFactor(nn.Module, ABC):
           and returns a named energy-parameter dict.
         """
 
-    # ------------------------------------------------------------------
-    # Unified factor-graph interface
-    # ------------------------------------------------------------------
-    # These three members are the *only* things an inference engine needs to
-    # treat a factor uniformly, whether it is a directed CPD or an undirected
-    # potential. An engine that consumes them (e.g. belief propagation) runs on
-    # directed, undirected, and mixed (chain) graphs with no special-casing.
-
     @property
     @abstractmethod
     def name(self) -> str:

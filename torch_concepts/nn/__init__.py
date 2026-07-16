@@ -59,7 +59,7 @@ from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 # Models (mid-level)
 from .modules.mid.models.factor import ParametricFactor
 from .modules.mid.models.cpd import ParametricCPD
-from .modules.mid.models.potential import ParametricPotential, TabularPotential
+from .modules.mid.models.potential import ParametricPotential
 from .modules.mid.models.probabilistic_model import ProbabilisticModel
 from .modules.mid.models.bayesian_network import BayesianNetwork
 from .modules.mid.models.markov_network import MarkovNetwork
@@ -165,7 +165,6 @@ __all__ = [
     "ParametricFactor",
     "ParametricCPD",
     "ParametricPotential",
-    "TabularPotential",
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",

@@ -112,17 +112,15 @@ class BeliefPropagation(TorchBaseInference):
     ) -> Optional[torch.Tensor]:
         """Log-potential table over ``free_vars`` (axis order preserved).
 
-        Observed scope variables in ``fixed`` are baked in (per-batch). Returns
-        ``None`` when the factor has no free variable (a constant w.r.t. the
-        active variables, contributing nothing to messages).
+        Built by enumerating the free grid and evaluating ``factor.log_potential``
+        per cell — uniform for CPDs and energy-based potentials alike. Observed
+        scope variables in ``fixed`` are baked in (per-batch). Returns ``None``
+        when the factor has no free variable (a constant w.r.t. the active
+        variables, contributing nothing to messages).
         """
         free_cards = [enumerable_cardinality(v) for v in free_vars]
         if not free_cards:
             return None
-        # Fast path: a tabular potential with all its scope free hands us the table.
-        if not fixed and hasattr(factor, "log_potential_table"):
-            return factor.log_potential_table(conditioning=conditioning, batch_size=batch)
-        # Generic path: enumerate the free grid, evaluate log_potential per cell.
         cells: List[torch.Tensor] = []
         for combo in itertools.product(*[range(c) for c in free_cards]):
             assignment: Dict[Variable, torch.Tensor] = dict(fixed)

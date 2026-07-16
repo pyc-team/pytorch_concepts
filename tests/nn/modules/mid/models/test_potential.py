@@ -1,6 +1,5 @@
-"""ParametricPotential / TabularPotential and the unified factor interface
-(scope, name, log_potential) on both CPDs and potentials
-(FACTOR_GRAPH_INSTRUCTIONS.md §5.2-5.4)."""
+"""ParametricPotential (undirected, energy-based factor) and the unified factor
+interface (scope, name, log_potential) on both CPDs and potentials."""
 import pytest
 import torch
 import torch.nn as nn
@@ -10,7 +9,6 @@ from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.models.potential import (
     ParametricPotential,
-    TabularPotential,
     enumerable_cardinality,
 )
 from torch_concepts.nn.modules.mid.inference.utils import build_distribution
@@ -23,6 +21,10 @@ def _bin(name):
 
 def _cat(name, k):
     return ConceptVariable(name, distribution=dist.OneHotCategorical, size=k)
+
+
+def _mlp(in_dim, hidden=16):
+    return nn.Sequential(nn.Linear(in_dim, hidden), nn.Tanh(), nn.Linear(hidden, 1))
 
 
 class TestEnumerableCardinality:
@@ -43,65 +45,79 @@ class TestEnumerableCardinality:
             enumerable_cardinality(v)
 
 
-class TestTabularPotential:
-    def test_table_shape_unconditional(self):
-        a, b = _bin("a"), _cat("b", 3)
-        pot = TabularPotential(scope=[a, b], parametrization=LearnablePrior(2 * 3), name="phi")
-        assert pot.cardinalities == [2, 3]
-        table = pot.log_potential_table(batch_size=5)
-        assert table.shape == (5, 2, 3)
-
-    def test_table_shape_conditional(self):
+class TestParametricPotential:
+    def test_energy_shape(self):
         a, b = _bin("a"), _bin("b")
-        emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
-        pot = TabularPotential(scope=[a, b], parametrization=nn.Linear(4, 4), conditioning=[emb], name="phi")
-        table = pot.log_potential_table(conditioning={"emb": torch.randn(6, 4)})
-        assert table.shape == (6, 2, 2)
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(2, 1), name="phi")
+        e = pot.energy({a: torch.tensor([[1.0], [0.0]]), b: torch.tensor([[0.0], [1.0]])})
+        assert e.shape == (2,)
+
+    def test_energy_categorical_scope(self):
+        a, b = _bin("a"), _cat("b", 3)
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(1 + 3, 1), name="phi")
+        av = torch.tensor([[1.0], [0.0]])
+        bv = torch.nn.functional.one_hot(torch.tensor([2, 0]), 3).float()
+        assert pot.energy({a: av, b: bv}).shape == (2,)
 
     def test_log_potential_equals_neg_energy(self):
         a, b = _bin("a"), _bin("b")
-        pot = TabularPotential(scope=[a, b], parametrization=LearnablePrior(4), name="phi")
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(2, 1), name="phi")
         av = torch.tensor([[1.0], [0.0]])
         bv = torch.tensor([[0.0], [1.0]])
         lp = pot.log_potential({a: av, b: bv})
         e = pot.energy({a: av, b: bv})
         assert torch.allclose(lp, -e)
 
-    def test_log_potential_matches_table_gather(self):
-        a, b = _bin("a"), _cat("b", 3)
-        pot = TabularPotential(scope=[a, b], parametrization=LearnablePrior(6), name="phi")
-        table = pot.log_potential_table(batch_size=4)  # (4, 2, 3)
-        av = torch.tensor([[1.0], [0.0], [1.0], [0.0]])
-        bv = torch.nn.functional.one_hot(torch.tensor([2, 0, 1, 2]), 3).float()
-        lp = pot.log_potential({a: av, b: bv})
-        manual = table[torch.arange(4), av.reshape(4).long(), bv.argmax(-1)]
-        assert torch.allclose(lp, manual)
+    def test_conditional_energy_uses_embedding(self):
+        a = _bin("a")
+        emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
+        pot = ParametricPotential(scope=[a], parametrization=nn.Linear(1 + 4, 1),
+                                  conditioning=[emb], name="phi")
+        e = pot.energy({a: torch.tensor([[1.0], [0.0], [1.0]])},
+                       conditioning={"emb": torch.randn(3, 4)})
+        assert e.shape == (3,)
 
-    def test_scope_and_name_and_conditioning(self):
+    def test_scope_name_conditioning(self):
         a, b = _bin("a"), _bin("b")
         emb = ConceptVariable("emb", distribution=dist.Normal, size=2)
-        pot = TabularPotential(scope=[a, b], parametrization=nn.Linear(2, 4), conditioning=[emb], name="phi")
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(4, 1),
+                                  conditioning=[emb], name="phi")
         assert [v.name for v in pot.scope] == ["a", "b"]
         assert [v.name for v in pot.conditioning] == ["emb"]
         assert pot.name == "phi"
 
-    def test_table_blowup_guard(self):
-        big = [_cat(f"v{i}", 50) for i in range(4)]  # 50**4 = 6.25M > 1M
-        with pytest.raises(ValueError, match="MAX_TABLE_SIZE"):
-            TabularPotential(scope=big, parametrization=LearnablePrior(1), name="phi")
+    def test_default_name(self):
+        a, b = _bin("a"), _bin("b")
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(2, 1))
+        assert pot.name == "phi(a,b)"
 
     def test_bad_param_key_raises(self):
         a = _bin("a")
-        with pytest.raises(ValueError, match="'table'"):
-            TabularPotential(scope=[a], parametrization={"probs": LearnablePrior(2)}, name="phi")
+        with pytest.raises(ValueError, match="'energy'"):
+            ParametricPotential(scope=[a], parametrization={"table": nn.Linear(1, 1)}, name="phi")
 
+    def test_linear_energy_is_additive(self):
+        # A linear energy over the concatenated inputs cannot represent a coupling:
+        # E(1,1) - E(1,0) - E(0,1) + E(0,0) == 0.
+        a, b = _bin("a"), _bin("b")
+        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(2, 1), name="phi")
 
-class TestParametricPotentialBaseIsAbstract:
-    def test_cannot_instantiate_base_energy(self):
-        # ParametricPotential.energy is abstract; a bare subclass without it fails.
-        a = _bin("a")
-        with pytest.raises(TypeError):
-            ParametricPotential(scope=[a], parametrization={"e": LearnablePrior(1)})
+        def E(ia, ib):
+            return pot.energy({a: torch.tensor([[float(ia)]]), b: torch.tensor([[float(ib)]])})[0]
+
+        interaction = E(1, 1) - E(1, 0) - E(0, 1) + E(0, 0)
+        assert torch.allclose(interaction, torch.zeros(()), atol=1e-6)
+
+    def test_mlp_energy_has_interaction(self):
+        torch.manual_seed(0)
+        a, b = _bin("a"), _bin("b")
+        pot = ParametricPotential(scope=[a, b], parametrization=_mlp(2), name="phi")
+
+        def E(ia, ib):
+            return pot.energy({a: torch.tensor([[float(ia)]]), b: torch.tensor([[float(ib)]])})[0]
+
+        interaction = E(1, 1) - E(1, 0) - E(0, 1) + E(0, 0)
+        assert interaction.abs() > 1e-4
 
 
 class TestCPDFactorInterface:

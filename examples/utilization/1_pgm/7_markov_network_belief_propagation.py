@@ -15,12 +15,7 @@ import torch.nn as nn
 from torch.distributions import Bernoulli, Normal
 
 from torch_concepts import seed_everything, ConceptVariable, EmbeddingVariable
-from torch_concepts.nn import (
-    MarkovNetwork,
-    TabularPotential,
-    BeliefPropagation,
-    LearnablePrior,
-)
+from torch_concepts.nn import MarkovNetwork, ParametricPotential, BeliefPropagation
 
 
 def main():
@@ -38,14 +33,16 @@ def main():
     a = ConceptVariable("a", distribution=Bernoulli, size=1)
     b = ConceptVariable("b", distribution=Bernoulli, size=1)
 
-    # Factors: two conditional unary potentials + one learnable pairwise potential.
-    u_a = TabularPotential(scope=[a], parametrization=nn.Linear(n_features, 2),
-                           conditioning=[emb], name="u_a")
-    u_b = TabularPotential(scope=[b], parametrization=nn.Linear(n_features, 2),
-                           conditioning=[emb], name="u_b")
-    phi_ab = TabularPotential(scope=[a, b], parametrization=LearnablePrior(2 * 2), name="phi_ab")
+    # A single energy-based potential over both concepts, conditioned on the
+    # embedding: E(a, b ; x) = MLP([onehot(a), onehot(b), x]). The MLP lets x
+    # shape each concept AND couples a with b (a linear energy would be additive).
+    energy = nn.Sequential(
+        nn.Linear(1 + 1 + n_features, 128), nn.ReLU(), nn.Linear(128, 1)
+    )
+    phi = ParametricPotential(scope=[a, b], parametrization=energy,
+                              conditioning=[emb], name="phi")
 
-    mrf = MarkovNetwork(variables=[emb, a, b], factors=[u_a, u_b, phi_ab])
+    mrf = MarkovNetwork(variables=[emb, a, b], factors=[phi])
 
     # Inference: loopy belief propagation (a few message-passing rounds).
     engine = BeliefPropagation(mrf, iters=5)
