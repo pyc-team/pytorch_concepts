@@ -64,6 +64,9 @@ def build_distribution(
     variable's event shape is restored on the *realization* by
     :func:`reshape_value_to_event`, not on the distribution parameters.
     """
+    # NOTE: a plate of *categorical* members builds one OneHotCategorical over the
+    # plate's whole flattened width (len(members) * member_size classes) rather
+    # than one distribution per member. Tracked separately; out of scope here.
     D = variable.distribution
     _univariate = (dist.Bernoulli, dist.Normal)
     _is_delta = D.__name__ == "Delta"

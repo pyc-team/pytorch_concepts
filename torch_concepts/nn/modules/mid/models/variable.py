@@ -10,7 +10,7 @@ import copy
 import math
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
-from functools import partial, cached_property
+from functools import partial
 
 import torch
 import torch.nn as nn
@@ -296,33 +296,59 @@ class Variable(ABC):
         """Total number of scalar elements: ``math.prod(self.shape)``."""
         return math.prod(self._shape)
 
-    @cached_property
-    def concept_slices(self) -> Dict[str, slice]:
-        """Precomputed mapping from concept name to slice in flattened tensor.
-        """
-        cum = self.member_size
-        return {name: slice(cum*i, cum*(i+1))
-                for i, name in enumerate(self.members)}
-
-
     def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
-        """Get slice or indices for concept(s) in the flattened tensor.
-        """
-        slices = self.concept_slices  # Use cached property
+        """Flattened indices for member(s) in this variable's event dimension.
 
-        # Single concept → 1 element list
+        Parameter-agnostic: the indices address event columns, which are the
+        same for every distribution parameter (probs/logits, loc, scale, ...).
+        """
         if isinstance(labels, str):
             labels = [labels]
 
-        # Multiple concepts → return flattened indices
-        logits_indices = []
+        indices = []
         for label in labels:
-            if label not in slices:
-                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
-            s = slices[label]
-            logits_indices.extend(range(s.start, s.stop))
+            if label not in self._column:
+                raise ValueError(f"Label '{label}' not found in members {self.members}")
+            s = self._column[label]
+            indices.extend(range(s.start, s.stop))
 
-        return logits_indices
+        return indices
+
+    def select(
+        self, params: Dict[str, torch.Tensor], name: str
+    ) -> Dict[str, torch.Tensor]:
+        """Distribution params for ``name``: the whole tensor for this variable's own
+        name, or a member's column slice (a view, no copy)."""
+        if name == self.name:
+            return params
+        columns = self.column_of(name)
+        return {key: value[..., columns] for key, value in params.items()}
+
+    def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
+        """Realised value for ``name``: the whole value, or a member's column slice."""
+        if name == self.name:
+            return value
+        return value[..., self.column_of(name)]
+
+    def clamp_members(
+        self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Clamp individually-observed members to their observed values.
+
+        Used for *partial observation* of a plate: given the whole stacked
+        ``value``, overwrite the columns of the observed members with their
+        observed tensors, leaving the unobserved members untouched. ``observed``
+        maps member name -> observed tensor. Returns a new tensor (the input is
+        not mutated); a no-op when ``observed`` is empty.
+        """
+        if not observed:
+            return value
+        value = value.clone() # FIXME: maybe the clone is not needed.
+        for member, obs in observed.items():
+            columns = self.column_of(member)
+            slot = value[..., columns]
+            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
+        return value
 
     @property
     def param_sizes(self) -> Dict[str, int]:

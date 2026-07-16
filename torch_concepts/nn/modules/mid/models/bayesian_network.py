@@ -5,10 +5,7 @@ BayesianNetwork: a directed factor graph wiring a list of ``Variable``s to a lis
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Union
-
-import torch
-import torch.nn as nn
+from typing import Dict, List, Optional
 
 from .cpd import ParametricCPD
 from .probabilistic_model import ProbabilisticModel
@@ -18,9 +15,11 @@ class BayesianNetwork(ProbabilisticModel):
     """Directed factor graph wiring a list of ``Variable``s to a list of
     ``ParametricCPD``s.
 
-    Validates the structure (one factor per variable, no duplicate names,
-    every parent reference resolves, DAG only), runs a topological sort,
-    and stores the graph ready for inference engines.
+    The directed special case of :class:`ProbabilisticModel`: validates the
+    structure (one factor per variable, no duplicate names, every parent
+    reference resolves, DAG only), runs a topological sort, and stores the graph
+    ready for inference engines. ``factors`` is keyed by child variable name
+    (which is a ``ParametricCPD``'s ``name``), preserving the historical API.
 
     Parameters
     ----------
@@ -35,29 +34,24 @@ class BayesianNetwork(ProbabilisticModel):
         variables: List[Variable],
         factors: List[ParametricCPD],
     ):
-        super().__init__(variables)  # registers self.variables (dict), self.guides
-
-        # ---- factors --------------------------------------------------------
+        factors = list(factors)
         if len(factors) != len(variables):
             raise ValueError(
                 f"Got {len(variables)} variables but {len(factors)} factors; "
                 "exactly one factor per variable is required."
             )
-        # ``_factors`` maps {variable name: ParametricCPD}; the key is taken from
-        # each child ``f.variable.name``.
-        # Exposed through the ``factors`` property (the abstract contract).
-        self._factors: nn.ModuleDict = nn.ModuleDict()
         for f in factors:
-            if f.variable.name in self._factors:
-                raise ValueError(f"Duplicate factor for variable {f.variable.name!r}.")
-            if f.variable.name not in self.variables:
-                raise ValueError(
-                    f"Factor name {f.variable.name!r} has no matching Variable."
+            if not isinstance(f, ParametricCPD):
+                raise TypeError(
+                    "BayesianNetwork factors must be ParametricCPD instances "
+                    f"(got {type(f).__name__}). Use a MarkovNetwork for undirected "
+                    "models, or a plain ProbabilisticModel for mixed (chain) graphs."
                 )
-            self._factors[f.variable.name] = f
 
-        # Validate parent references against the variables table and dedup.
-        self._validate_graph()
+        # ProbabilisticModel registers factors ({child name: cpd}), runs
+        # validation (overridden below to the DAG-specific parent check), and
+        # builds the bipartite adjacency.
+        super().__init__(variables, factors)
 
         # Variables sorted in topological order.
         self.sorted_variables: List[Variable] = self._topological_sort()
@@ -65,10 +59,20 @@ class BayesianNetwork(ProbabilisticModel):
         # Cache for topological levels (computed lazily on first access).
         self._levels_cache: Optional[List[List[Variable]]] = None
 
-    @property
-    def factors(self) -> nn.ModuleDict:
-        """Mapping ``{child variable name: ParametricCPD}`` (one CPD per variable)."""
-        return self._factors
+    def _validate_factors(self) -> None:
+        """Directed validation: one factor per variable, then parent checks.
+
+        Replaces :meth:`ProbabilisticModel._validate_factors` (called from
+        ``ProbabilisticModel.__init__``) so ``BayesianNetwork`` keeps its
+        DAG-specific error messages and its parent dedup.
+        """
+        if set(self._factors.keys()) != set(self.variables.keys()):
+            raise ValueError(
+                "BayesianNetwork: exactly one factor per variable is required; "
+                f"factor keys {sorted(self._factors)} do not match variable names "
+                f"{sorted(self.variables)}."
+            )
+        self._validate_graph()
 
     @property
     def levels(self) -> List[List[Variable]]:

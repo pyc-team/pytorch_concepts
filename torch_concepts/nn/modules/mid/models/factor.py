@@ -262,6 +262,63 @@ class ParametricFactor(nn.Module, ABC):
 
         - :class:`ParametricCPD` accepts ``parent_values`` and returns a
           named distribution-parameter dict (e.g. ``{"probs": ...}``).
-        - A future ``ParametricPotential`` will accept clique variable values
-          and return a log-potential tensor.
+        - :class:`ParametricPotential` accepts clique variable values
+          and returns a named energy-parameter dict.
+        """
+
+    # ------------------------------------------------------------------
+    # Unified factor-graph interface
+    # ------------------------------------------------------------------
+    # These three members are the *only* things an inference engine needs to
+    # treat a factor uniformly, whether it is a directed CPD or an undirected
+    # potential. An engine that consumes them (e.g. belief propagation) runs on
+    # directed, undirected, and mixed (chain) graphs with no special-casing.
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Stable key under which a :class:`ProbabilisticModel` registers this factor.
+
+        A :class:`ParametricCPD` uses its child variable's name (so a
+        :class:`BayesianNetwork`'s ``factors`` keeps its historical
+        ``{child_name: cpd}`` keying); a :class:`ParametricPotential` uses an
+        explicit or scope-derived name.
+        """
+
+    @property
+    @abstractmethod
+    def scope(self) -> List[Variable]:
+        """The variables this factor touches (its factor-graph edges).
+
+        For a directed CPD this is ``[child, *parents]``; for an undirected
+        potential it is the clique of variables the energy ranges over. Observed
+        *conditioning* inputs of a potential are **not** part of the scope — they
+        feed the neural energy but create no undirected edges.
+        """
+
+    @abstractmethod
+    def log_potential(
+        self,
+        assignment: Dict["Variable", torch.Tensor],
+        conditioning: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        """Log score ``log φ_f`` of a joint assignment over :attr:`scope`.
+
+        - :class:`ParametricCPD` returns ``log p(child | parents)`` evaluated at
+          the assignment.
+        - :class:`ParametricPotential` returns ``-E(scope ; conditioning)``.
+
+        Parameters
+        ----------
+        assignment : dict[Variable, Tensor]
+            Value ``(batch, *var.shape)`` for each scope variable being scored.
+        conditioning : dict[str, Tensor], optional
+            Name-keyed observed values (a superset is fine; unused keys are
+            ignored). Provides observed scope variables and any conditioning
+            inputs the factor's parametrization depends on.
+
+        Returns
+        -------
+        torch.Tensor
+            Log-potential of shape ``(batch,)``.
         """

@@ -87,6 +87,7 @@ class ForwardInference(TorchBaseInference):
         activate_before_propagation: bool = True,
     ):
         super().__init__(pgm)
+        self._require_directed()
         if mode not in {"deterministic", "ancestral"}:
             raise ValueError(f"mode must be either 'deterministic' or 'ancestral', got {mode!r}.")
         if not 0.0 <= float(p_int) <= 1.0:
@@ -184,19 +185,6 @@ class ForwardInference(TorchBaseInference):
         self._required_cache[key] = required
         return required
 
-    def _parent_value(self, parent: Variable, cache: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Cached value of a parent variable.
-
-        Ordinary parents are read straight from the cache. A parent that is a
-        plate member is sliced out of its owning variable's cached value by that
-        variable's CPD, so a child can depend on a subset of a plate's members.
-        """
-        value = cache.get(parent.name)
-        if value is not None:
-            return value
-        var = self.pgm.resolve(parent.name)
-        return self.pgm.factors[var.name].select_value(cache[var.name], parent.name)
-
     def predict_variable(
         self,
         variable: Variable,
@@ -225,8 +213,9 @@ class ForwardInference(TorchBaseInference):
         if cpd.is_root:
             params = cpd.root_params(batch_size)
         else:
-            parent_values = {p.name: self._parent_value(p, cache) for p in cpd.parents}
-            params = cpd(parent_values=parent_values, **layer_kwargs)
+            # ``cache`` is keyed by whole-variable names; the CPD resolves each
+            # parent (slicing member-handle parents out of their plate's value).
+            params = cpd(parent_values=cache, **layer_kwargs)
 
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
@@ -300,33 +289,24 @@ class ForwardInference(TorchBaseInference):
         O(number of CPDs), independent of how many members a plate has.
 
         A name should appear in either ``query`` or ``evidence``, not both.
+
+        Member (partial-plate) evidence is **value forcing**: the member's column
+        is overwritten after the plate is produced and the forced value propagates
+        to descendants, contributing no likelihood of its own.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
 
         query_names = set(query)
-        evidence_names = set(evidence)
-        resolve = self.pgm.resolve
-
-        # Queried names grouped by the variable whose CPD produces them. The CPD
-        # turns a name into its slice (whole output for the variable/plate name,
-        # a column for a member), so the engine never slices here.
-        requested: Dict[str, List[str]] = {}
-        for q_name in query_names:
-            requested.setdefault(resolve(q_name).name, []).append(q_name)
-
-        # Individually-observed plate members, grouped by their variable. Built by
-        # walking the (small) evidence set — never the members — so it stays O(#evidence),
-        # not O(plate size). Whole-variable evidence is handled by the clamp instead.
-        observed_members: Dict[str, Dict[str, torch.Tensor]] = {}
-        for e_name in evidence_names:
-            var = resolve(e_name)
-            if e_name != var.name:
-                observed_members.setdefault(var.name, {})[e_name] = evidence[e_name]
-
-        required = self._required_variables(query_names, evidence_names)
         tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
         batch_size = tensors[0].shape[0] if tensors else 1
+
+        # Whole-variable evidence clamps-and-skips its CPD; member evidence is
+        # threaded to ``clamp_members`` (a no-op for the empty dict).
+        evidence, observed_members = self._split_evidence(evidence)
+        evidence_names = set(evidence)
+
+        required = self._required_variables(query_names, evidence_names)
         temperature = self.temperature
         sampled = self.mode == "ancestral"
 
@@ -343,24 +323,15 @@ class ForwardInference(TorchBaseInference):
                 cache[name] = value
                 if params is None:
                     continue  # fully-observed variable: clamped, no params emitted
-                cpd = self.pgm.factors[name]
-
-                for q_name in requested.get(name, ()):
-                    out.params[q_name] = cpd.select(params, q_name)
+                out.params[name] = params
                 if sampled:
                     out.samples[name] = value
-                    for q_name in requested.get(name, ()):
-                        if q_name != name:
-                            out.samples[q_name] = cpd.select_value(value, q_name)
 
-                # for q_name in requested.get(name, ()):
-                #     out.params[q_name] = cpd.select(params, q_name)
-                #     if sampled:
-                #         if q_name != name:
-                #             out.samples[q_name] = cpd.select_value(value, q_name)
-                # if sampled:
-                #     out.samples[name] = value
-
+        # Add queried member views, then keep only the queried names in params.
+        out.params = self._expose_params(out.params, query_names)
+        if sampled:
+            out.samples = self._expose_values(out.samples, query_names)
+        out.params = {name: p for name, p in out.params.items() if name in query_names}
         return out
 
     def _propagate(

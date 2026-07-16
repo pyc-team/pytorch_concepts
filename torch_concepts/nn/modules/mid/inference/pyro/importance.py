@@ -39,7 +39,8 @@ The estimate is self-normalised over the ``N`` particles::
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional, Set
+from collections import ChainMap
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributions as td
@@ -138,6 +139,7 @@ class PyroImportanceSampling(PyroBaseInference):
         warn_low_ess: float = 0.01,
     ) -> None:
         super().__init__(pgm)
+        self._require_directed()
         if int(n_samples) < 1:
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
@@ -200,8 +202,12 @@ class PyroImportanceSampling(PyroBaseInference):
         return cpd(parent_values=parent_values, **layer_kwargs)
 
     def _model_fn(self, data: Dict[str, torch.Tensor], batch: int,
-                  layer_kwargs: Dict[str, Dict]) -> None:
-        """Generative model: evidence observed (``obs=``), the rest sampled."""
+                  layer_kwargs: Dict[str, Dict],
+                  member_evidence: Dict[str, Dict[str, torch.Tensor]] = {}) -> None:
+        """Generative model: evidence observed (``obs=``), the rest sampled.
+
+        Member evidence is forced onto the cached plate value so it propagates to
+        descendants identically in model and guide (value forcing)."""
         pyro, _, _ = _import_pyro()
         pgm = self.pgm
         cache: Dict[str, torch.Tensor] = {}
@@ -209,19 +215,19 @@ class PyroImportanceSampling(PyroBaseInference):
             for level in pgm.levels:
                 for var in level:
                     cpd = pgm.factors[var.name]
-                    parent_values = self._gather_parents(cpd, cache, data)
                     params = self._params_with_batch(
-                        cpd, parent_values, batch, layer_kwargs.get(var.name, {})
+                        cpd, ChainMap(cache, data), batch, layer_kwargs.get(var.name, {})
                     )
                     obs = data.get(var.name)
                     if obs is not None:
                         obs = obs.reshape(obs.shape[0], var.size)
                     d = _pyro_exact_distribution(var, params)
-                    value = pyro.sample(var.name, d, obs=obs)
-                    cache[var.name] = reshape_value_to_event(var, value)
+                    value = reshape_value_to_event(var, pyro.sample(var.name, d, obs=obs))
+                    cache[var.name] = cpd.clamp_members(value, member_evidence.get(var.name, {}))
 
     def _guide_fn(self, data: Dict[str, torch.Tensor], batch: int,
-                  layer_kwargs: Dict[str, Dict]) -> None:
+                  layer_kwargs: Dict[str, Dict],
+                  member_evidence: Dict[str, Dict[str, torch.Tensor]] = {}) -> None:
         """Proposal: sample every non-evidence node (declared guide, else prior)."""
         pyro, _, _ = _import_pyro()
         pgm = self.pgm
@@ -235,13 +241,14 @@ class PyroImportanceSampling(PyroBaseInference):
                         cpd = self.proposal[var.name]
                     else:
                         cpd = pgm.factors[var.name]  # prior (mutilated)
-                    parent_values = self._gather_parents(cpd, cache, data)
                     params = self._params_with_batch(
-                        cpd, parent_values, batch, layer_kwargs.get(var.name, {})
+                        cpd, ChainMap(cache, data), batch, layer_kwargs.get(var.name, {})
                     )
                     d = _pyro_exact_distribution(cpd.variable, params)
-                    value = pyro.sample(var.name, d)
-                    cache[var.name] = reshape_value_to_event(var, value)
+                    value = reshape_value_to_event(var, pyro.sample(var.name, d))
+                    cache[var.name] = pgm.factors[var.name].clamp_members(
+                        value, member_evidence.get(var.name, {})
+                    )
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -263,7 +270,12 @@ class PyroImportanceSampling(PyroBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Estimate ``P(Q=q | E=e)`` for a batch via Pyro importance sampling."""
+        """Estimate ``P(Q=q | E=e)`` for a batch via Pyro importance sampling.
+
+        Query and evidence accept plate-member names. Whole-variable evidence is
+        conditioning; member evidence is **value forcing** — forced onto the plate
+        value in model and guide alike, so its site log-probs cancel in the weight.
+        """
         _, _, poutine = _import_pyro()
         if evidence is None:
             evidence = {}
@@ -271,19 +283,27 @@ class PyroImportanceSampling(PyroBaseInference):
 
         N = self.n_samples
         M = N * B
-        query_names: Set[str] = set(query.keys())
 
         # Pack N particles x B observations into one plate axis of size M
         # (row m -> particle n = m // B, observation b = m % B).
         def _expand(t: torch.Tensor) -> torch.Tensor:
             return t.unsqueeze(0).expand(N, *t.shape).reshape(M, *t.shape[1:])
 
+        # Whole-variable evidence is scored (obs=); member evidence is forced.
+        # ``data`` keeps the member entries: they never collide with a variable
+        # name (so the ``obs=`` lookup ignores them) and a proposal whose parent
+        # is a plate member resolves them by exact name.
+        _, member_evidence = self._split_evidence(evidence)
         data = {name: _expand(val) for name, val in evidence.items()}
+        member_data = {
+            owner: {m: _expand(v) for m, v in members.items()}
+            for owner, members in member_evidence.items()
+        }
 
         guide_tr = poutine.trace(
-            lambda: self._guide_fn(data, M, layer_kwargs)
+            lambda: self._guide_fn(data, M, layer_kwargs, member_data)
         ).get_trace()
-        model = lambda: self._model_fn(data, M, layer_kwargs)
+        model = lambda: self._model_fn(data, M, layer_kwargs, member_data)
         model_tr = poutine.trace(
             poutine.replay(model, trace=guide_tr)
         ).get_trace()
@@ -295,10 +315,13 @@ class PyroImportanceSampling(PyroBaseInference):
         match = torch.ones(N, B, device=log_w.device)
         for name, target in query.items():
             # A member query reads the plate's site value and slices its column.
-            var = self.pgm.resolve(name)
-            sample = self.pgm.factors[var.name].select_value(
-                model_tr.nodes[var.name]["value"], name
+            # Forced member columns are clamped first so the match sees the same
+            # value the model propagated (the trace stores the raw draw).
+            owner = self.pgm.resolve(name).name
+            value = self.pgm.factors[owner].clamp_members(
+                model_tr.nodes[owner]["value"], member_data.get(owner, {})
             )
+            sample = self.pgm.extract(name, {owner: value})
             event = sample.shape[1:]
             sample_nb = sample.reshape(N, B, *event)
             target_nb = _expand(target).reshape(N, B, *event)

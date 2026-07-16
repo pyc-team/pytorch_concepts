@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -33,13 +33,16 @@ class BaseInference(nn.Module):
         # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
 
+        # Factor-based (not variable-keyed): a ProbabilisticModel keys factors by
+        # factor name, and undirected potentials have no ``is_root``. Only root CPDs
+        # whose parametrization needs inputs must receive constant evidence every call.
         roots_needing_input: List[str] = [
-            v.name
-            for v in pgm.variables.values()
-            if pgm.factors[v.name].is_root
+            f.name
+            for f in pgm.factors.values()
+            if getattr(f, "is_root", False)
             and any(
                 len(inspect.signature(mod.forward).parameters) > 0
-                for mod in pgm.factors[v.name].parametrization.values()
+                for mod in f.parametrization.values()
             )
         ]
         if roots_needing_input:
@@ -51,6 +54,24 @@ class BaseInference(nn.Module):
                 "\033[0m",
                 UserWarning,
                 stacklevel=2,
+            )
+
+    def _require_directed(self) -> None:
+        """Guard for engines that need a topological order.
+
+        The directed engines traverse ``pgm.levels`` / ``pgm.sorted_variables``,
+        which only a :class:`BayesianNetwork` provides. Passing a general
+        (undirected or mixed) :class:`ProbabilisticModel` raises a clear error
+        pointing at :class:`BeliefPropagation`.
+        """
+        from ..models.bayesian_network import BayesianNetwork
+
+        if not isinstance(self.pgm, BayesianNetwork):
+            raise TypeError(
+                f"{self.name} requires a directed BayesianNetwork (an acyclic, "
+                "all-CPD model with a topological order); got a general "
+                f"{type(self.pgm).__name__}. Use BeliefPropagation for undirected "
+                "or mixed (chain) graphs."
             )
 
     def _validate_containers(
@@ -99,6 +120,57 @@ class BaseInference(nn.Module):
         if isinstance(query, list):
             return {name: None for name in query}
         return query
+
+    # Uniform plate routing — the only plate awareness outside the models. Each
+    # call is an identity/no-op for ordinary variables, so engines run the same
+    # line for plate and non-plate names (never behind an is_plate branch).
+    def _split_evidence(
+        self, evidence: Dict[str, torch.Tensor]
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Dict[str, torch.Tensor]]]:
+        """Split evidence into whole-variable entries and per-owner member entries.
+
+        Returns ``(whole, member_evidence)`` where ``whole`` keeps every key that
+        names a variable, and ``member_evidence[owner_name][member_name]`` collects
+        keys that name plate members. O(#evidence), never O(#members).
+        """
+        whole: Dict[str, torch.Tensor] = {}
+        member_evidence: Dict[str, Dict[str, torch.Tensor]] = {}
+        for name, value in evidence.items():
+            var = self.pgm.resolve(name)
+            if name == var.name:
+                whole[name] = value
+            else:
+                member_evidence.setdefault(var.name, {})[name] = value
+        return whole, member_evidence
+
+    def _expose_params(self, params, query_names):
+        """Add sliced entries for queried member names (whole-variable entries
+        already present in ``params`` are the source; a view, no copy).
+
+        Slicing is a pure function of the variable's own column layout
+        (``Variable.select``), so this works for directed and undirected models
+        alike. ``resolve`` is hoisted out of the loop: it goes through
+        ``nn.Module.__getattr__``, which dominates the per-name cost when many
+        members are queried at once.
+        """
+        resolve = self.pgm.resolve
+        for name in query_names:
+            var = resolve(name)
+            owner = var.name
+            if name != owner and owner in params:
+                params[name] = var.select(params[owner], name)
+        return params
+
+    def _expose_values(self, values, query_names):
+        """Value-side twin of :meth:`_expose_params` (``select_value`` instead
+        of ``select``)."""
+        resolve = self.pgm.resolve
+        for name in query_names:
+            var = resolve(name)
+            owner = var.name
+            if name != owner and owner in values:
+                values[name] = var.select_value(values[owner], name)
+        return values
 
     def __call__(
         self,

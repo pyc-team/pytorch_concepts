@@ -130,6 +130,7 @@ class ImportanceSampling(TorchBaseInference):
         warn_low_ess: float = 0.01,
     ) -> None:
         super().__init__(pgm)
+        self._require_directed()
         if not isinstance(proposal, BaseProposal):
             raise TypeError(
                 f"{self.name}: `proposal` must be a BaseProposal subclass, "
@@ -201,8 +202,9 @@ class ImportanceSampling(TorchBaseInference):
                     for k, v in params.items()
                 }
             else:
-                parent_values = {p.name: samples[p.name] for p in cpd.parents}
-                params = cpd(parent_values=parent_values, **layer_kwargs.get(name, {}))
+                # ``samples`` (whole-variable keyed, member columns already forced)
+                # is passed straight through; the CPD resolves each parent.
+                params = cpd(parent_values=samples, **layer_kwargs.get(name, {}))
 
             value = samples[name].reshape(batch_size, var.size)
             if name in evidence_names:
@@ -221,7 +223,13 @@ class ImportanceSampling(TorchBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Estimate ``P(Q=q | E=e)`` for a batch via importance sampling."""
+        """Estimate ``P(Q=q | E=e)`` for a batch via importance sampling.
+
+        Query and evidence accept plate-member names. Whole-variable evidence is
+        conditioning; member evidence is **value forcing** — the member's column
+        is forced on the sampled plate value, scored identically by proposal and
+        model, contributing no likelihood of its own.
+        """
         if evidence is None:
             evidence = {}
         B = self._validate(query, evidence)
@@ -230,7 +238,6 @@ class ImportanceSampling(TorchBaseInference):
         M = N * B
         temperature = self.temperature
         query_names: Set[str] = set(query.keys())
-        evidence_names: Set[str] = set(evidence.keys())
 
         # Pack the N importance draws and the B observations into one leading
         # axis of size M = N * B (row m corresponds to sample n = m // B,
@@ -239,13 +246,20 @@ class ImportanceSampling(TorchBaseInference):
         def _expand(t: torch.Tensor) -> torch.Tensor:
             return t.unsqueeze(0).expand(N, *t.shape).reshape(M, *t.shape[1:])
 
+        # Whole-variable evidence is conditioned (scored exactly); member evidence
+        # is forced onto the plate value in both proposal and model (value forcing).
+        evidence, member_evidence = self._split_evidence(evidence)
         evidence_M = {name: _expand(val) for name, val in evidence.items()}
+        member_evidence_M = {
+            owner: {m: _expand(v) for m, v in members.items()}
+            for owner, members in member_evidence.items()
+        }
 
         samples, log_q = self.proposal.sample(
-            query_names, evidence_M, M, temperature, layer_kwargs
+            query_names, evidence_M, M, temperature, layer_kwargs, member_evidence_M
         )
         log_p = self._model_log_joint(
-            samples, evidence_names, temperature, M, layer_kwargs
+            samples, set(evidence), temperature, M, layer_kwargs
         )
 
         log_w = (log_p - log_q).reshape(N, B)
@@ -253,10 +267,10 @@ class ImportanceSampling(TorchBaseInference):
 
         match = torch.ones(N, B, device=temperature.device)
         for name, target in query.items():
-            var = self.pgm.variables[name]
-            sample_nb = samples[name].reshape(N, B, *var.shape)
-            target_nb = _expand(target).reshape(N, B, *var.shape)
-            match = match * _soft_match(var, sample_nb, target_nb)
+            sample = self.pgm.extract(name, samples)  # (M, k): k = member or full size
+            sample_nb = sample.reshape(N, B, *sample.shape[1:])
+            target_nb = _expand(target).reshape(N, B, *sample.shape[1:])
+            match = match * _soft_match(self.pgm.resolve(name), sample_nb, target_nb)
 
         prob = (w_tilde * match).sum(dim=0)  # (B,)
 
@@ -321,8 +335,7 @@ class ImportanceSampling(TorchBaseInference):
         if len(set(batch_sizes.values())) > 1:
             raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
 
-        all_names = {v.name for v in self.pgm.variables.values()}
-        unknown = set(all_tensors.keys()) - all_names
+        unknown = set(all_tensors.keys()) - self.pgm.queryable_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
 
@@ -331,7 +344,7 @@ class ImportanceSampling(TorchBaseInference):
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
-            v = self.pgm.variables[name]
+            v = self.pgm.resolve(name)  # a member's family is its plate's family
             if not issubclass(v.distribution, self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "

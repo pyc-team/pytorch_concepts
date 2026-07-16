@@ -84,6 +84,7 @@ class RejectionSampling(TorchBaseInference):
         warn_low_acceptance: float = 0.01,
     ) -> None:
         super().__init__(pgm)
+        self._require_directed()
         if int(n_samples) < 1:
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
@@ -98,7 +99,7 @@ class RejectionSampling(TorchBaseInference):
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
-            v = self.pgm.variables[name]
+            v = self.pgm.resolve(name)  # a member's family is its plate's family
             if not any(issubclass(v.distribution, d) for d in self._DISCRETE):
                 raise ValueError(
                     f"{self.name}: {role} variable {name!r} has "
@@ -148,8 +149,9 @@ class RejectionSampling(TorchBaseInference):
                         params = {k: v.unsqueeze(0).expand(N, *v.shape)
                                   for k, v in params.items()}
                     else:
-                        parent_values = {p.name: samples[p.name] for p in cpd.parents}
-                        params = cpd(parent_values=parent_values,
+                        # ``samples`` is keyed by whole-variable names; the CPD
+                        # resolves member-handle parents from the plate value.
+                        params = cpd(parent_values=samples,
                                      **layer_kwargs.get(name, {}))
 
                     D = var.distribution
@@ -177,7 +179,9 @@ class RejectionSampling(TorchBaseInference):
         """Build an ``(N,)`` boolean mask for a single-observation dict."""
         mask = torch.ones(self.n_samples, dtype=torch.bool)
         for name, val in obs_dict.items():
-            mask = mask & _match(stacked_samples[name], val)
+            # ``extract`` reads a whole variable or a member column uniformly, so
+            # member evidence joins the rejection mask (exact conditioning).
+            mask = mask & _match(self.pgm.extract(name, stacked_samples), val)
         return mask
 
     # ------------------------------------------------------------------
@@ -187,7 +191,12 @@ class RejectionSampling(TorchBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Run rejection sampling to estimate P(Q=q_b | E=e_b) for a batch."""
+        """Run rejection sampling to estimate P(Q=q_b | E=e_b) for a batch.
+
+        Query and evidence accept plate-member names as well as variable names.
+        Member evidence joins the rejection mask, so for this engine it is **exact
+        conditioning** (not the value forcing the other engines apply).
+        """
         if evidence is None:
             evidence = {}
 
@@ -274,8 +283,7 @@ class RejectionSampling(TorchBaseInference):
             )
         B = next(iter(batch_sizes.values()))
 
-        all_names = {v.name for v in self.pgm.variables.values()}
-        unknown = set(all_tensors.keys()) - all_names
+        unknown = set(all_tensors.keys()) - self.pgm.queryable_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
 

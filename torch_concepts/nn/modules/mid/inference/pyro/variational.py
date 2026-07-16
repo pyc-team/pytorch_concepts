@@ -69,6 +69,7 @@ class VariationalInference(PyroBaseInference):
         annealing_rate: float = 0.0,
     ):
         super().__init__(pgm)
+        self._require_directed()
 
         # Detect PGM device before building guides.
         try:
@@ -165,17 +166,18 @@ class VariationalInference(PyroBaseInference):
                     f"{cpd.variable.name!r} does not match the dict key {lat_name!r}."
                 )
             for p in cpd.parents:
-                if p.name not in all_var_names:
+                owner = p.plate  # owning plate for a member handle, else p itself
+                if owner.name not in all_var_names:
                     raise ValueError(
                         f"{cls.__name__}: guide for {lat_name!r}: parent "
                         f"{p.name!r} is not a variable of the PGM."
                     )
-                if p.name in latent_set:
+                if owner.name in latent_set:
                     raise ValueError(
                         f"{cls.__name__}: guide for {lat_name!r} cannot "
                         f"condition on latent variable {p.name!r}."
                     )
-                if pgm.variables[p.name] is not p:
+                if pgm.variables[owner.name] is not owner:
                     raise ValueError(
                         f"{cls.__name__}: guide for {lat_name!r}: parent "
                         f"{p.name!r} is a different Variable instance than the one "
@@ -257,7 +259,13 @@ class VariationalInference(PyroBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Run variational inference and return model and guide parameters."""
+        """Run variational inference and return model and guide parameters.
+
+        Query and evidence accept plate-member names. Whole-variable evidence is
+        conditioning (obs-scored); member evidence is **value forcing** — the
+        member's column is forced on the plate value and propagates to descendants,
+        contributing no likelihood of its own.
+        """
         _, _, poutine = _import_pyro()
         if query is None:
             query = {}
@@ -267,6 +275,12 @@ class VariationalInference(PyroBaseInference):
         self._validate_containers(query, evidence)
 
         data = self._merge_observables(query, evidence)
+        # Whole-variable observations are scored (obs=); member observations are
+        # forced onto the plate value (value forcing). ``data`` keeps the member
+        # entries: they never collide with a variable name (so the ``obs=``
+        # lookup ignores them) and a guide whose parent is a plate member
+        # resolves them by exact name.
+        _, member_evidence = self._split_evidence(data)
 
         supplied_latents = [name for name in self._latent_names if name in data]
         if supplied_latents and not self._warned_latent_evidence:
@@ -294,20 +308,20 @@ class VariationalInference(PyroBaseInference):
         latent_names = self._latent_names
 
         if self.pgm.has_guides:
-            guide_fn = lambda: self.guide_fn(data, temperature, latent_names, layer_kwargs)
+            guide_fn = lambda: self.guide_fn(data, temperature, latent_names, layer_kwargs, member_evidence)
             guide_tr = poutine.trace(guide_fn).get_trace()
-            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence)
             replayed = poutine.replay(model_fn, trace=guide_tr)
             model_tr = poutine.trace(replayed).get_trace()
             guide_params = self._align_param_keys(
                 trace_to_params(guide_tr), use_guides=True
             )
         else:
-            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence)
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
-        model_params = self._expose_members(
+        model_params = self._expose_params(
             self._align_param_keys(trace_to_params(model_tr), use_guides=False),
             set(query),
         )

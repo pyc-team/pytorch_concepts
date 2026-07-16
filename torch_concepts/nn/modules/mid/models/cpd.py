@@ -5,7 +5,7 @@ ParametricCPD — Conditional distribution parameterised by a neural network.
 from __future__ import annotations
 
 import copy
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Mapping, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -289,9 +289,27 @@ class ParametricCPD(ParametricFactor):
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
+    def _resolve_parent_value(
+        self, p: Variable, parent_values: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Tensor for parent ``p`` from ``parent_values``, keyed by ``p.name``
+        (exact, checked first) or by ``p.plate.name`` (a member column slice)."""
+        value = parent_values.get(p.name)
+        if value is not None:
+            return value
+        owner = p.plate
+        value = parent_values.get(owner.name)
+        if value is not None:
+            return value[..., owner.column_of(p.name)]
+        raise KeyError(
+            f"ParametricCPD({self.variable.name!r}): no value for parent "
+            f"{p.name!r} (owner {owner.name!r}) in parent_values keys "
+            f"{sorted(parent_values)}."
+        )
+
     def forward(
         self,
-        parent_values: Optional[Dict[str, torch.Tensor]] = None,
+        parent_values: Optional[Mapping[str, torch.Tensor]] = None,
         **layer_kwargs,
     ):
         """Compute the distribution parameters by processing the parent values through the
@@ -302,8 +320,11 @@ class ParametricCPD(ParametricFactor):
         parameter dict for ``self.variable.distribution`` (typically a
         :class:`~torch_concepts.nn.LearnablePrior`).
 
-        Non-root CPDs receive a ``parent_values`` dict mapping each parent name
-        to its tensor value (shape ``(*batch, *parent.shape)``). These tensors are
+        Non-root CPDs receive a ``parent_values`` dict. Each parent is resolved
+        by :meth:`_resolve_parent_value`: keyed either by its exact name or by its
+        owning variable's name (a member column is sliced out), so callers may
+        pass a superset (e.g. an engine's whole value cache) and unknown keys are
+        ignored. The resolved tensors (shape ``(*batch, *parent.shape)``) are
         passed to ``self.aggregate`` (default: flatten event dims and concatenate
         along the last axis) to produce a single input tensor, which is then
         forwarded to each parameter module independently.
@@ -324,7 +345,9 @@ class ParametricCPD(ParametricFactor):
             }
 
         # Compose the Variable → Tensor dict for the parents (ordered by parent list).
-        parent_variable_values = {p: parent_values[p.name] for p in self.parents}
+        parent_variable_values = {
+            p: self._resolve_parent_value(p, parent_values) for p in self.parents
+        }
 
         # Each parameter module uses its own pre-resolved aggregation function.
         result = {}
@@ -350,46 +373,71 @@ class ParametricCPD(ParametricFactor):
             for key, value in self(parent_values={}).items()
         }
 
-    # ---- member addressing (a plate produces all members; these slice) ------
-    # ``forward`` runs once and returns the whole stacked output; the methods
-    # below pick out a single member's column span (a view, no copy). They are
-    # the only thing that differs between addressing this CPD by its variable
-    # name vs by one of its members — every inference backend reuses them.
+    # ---- unified factor-graph interface (see ParametricFactor) --------------
+    @property
+    def name(self) -> str:
+        """This factor's key: the child variable's name (keeps ``BayesianNetwork``'s
+        historical ``{child_name: cpd}`` factor keying)."""
+        return self.variable.name
 
+    @property
+    def scope(self) -> List[Variable]:
+        """``[child, *parents]`` — the variables this CPD wires together."""
+        return [self.variable, *self.parents]
+
+    def log_potential(
+        self,
+        assignment: Mapping["Variable", torch.Tensor],
+        conditioning: Optional[Mapping[str, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        """``log p(child | parents)`` evaluated at ``assignment``.
+
+        Directed factors act as ordinary factor-graph factors: the child value
+        is scored against the distribution built from its parents' values. Parent
+        (and child) values may come from ``assignment`` (keyed by ``Variable``) or
+        from ``conditioning`` (keyed by name); the former wins on conflict.
+        """
+        from ..inference.utils import build_distribution  # local: avoid import cycle
+
+        values: Dict[str, torch.Tensor] = dict(conditioning) if conditioning else {}
+        child_value: Optional[torch.Tensor] = None
+        for var, val in assignment.items():
+            values[var.name] = val
+            if var.name == self.variable.name:
+                child_value = val
+        if child_value is None:
+            child_value = values.get(self.variable.name)
+        if child_value is None:
+            raise KeyError(
+                f"ParametricCPD({self.variable.name!r}).log_potential: no value for "
+                f"the child variable {self.variable.name!r} in the assignment."
+            )
+
+        B = child_value.shape[0]
+        params = self.root_params(B) if self.is_root else self(parent_values=values)
+        d = build_distribution(self.variable, params)
+        param_dtype = next(iter(params.values())).dtype
+        child_flat = child_value.reshape(B, self.variable.size).to(param_dtype)
+        return d.log_prob(child_flat)
+
+    # ---- member addressing (delegates to Variable; kept for back-compat) -----
+    # Slicing a member's column span is a pure function of the variable's own
+    # column layout, so the logic lives on ``Variable``. These thin delegators
+    # preserve the historical CPD-level API every inference backend already calls.
     def select(
         self, params: Dict[str, torch.Tensor], name: str
     ) -> Dict[str, torch.Tensor]:
-        """Distribution params for ``name``: the whole output for this CPD's own
-        variable, or a member's column slice."""
-        if name == self.variable.name:
-            return params
-        columns = self.variable.column_of(name)
-        return {key: value[..., columns] for key, value in params.items()}
+        """Distribution params for ``name`` (delegates to :meth:`Variable.select`)."""
+        return self.variable.select(params, name)
 
     def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
-        """Realised value for ``name``: the whole value, or a member's column slice."""
-        if name == self.variable.name:
-            return value
-        return value[..., self.variable.column_of(name)]
+        """Realised value for ``name`` (delegates to :meth:`Variable.select_value`)."""
+        return self.variable.select_value(value, name)
 
     def clamp_members(
         self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Clamp individually-observed members to their observed values.
-
-        Used for *partial observation* of a plate: the CPD has produced the whole
-        stacked ``value``, and this overwrites the columns of the observed members
-        with their observed tensors, leaving the unobserved members at the model's
-        value. ``observed`` maps member name -> observed tensor. Returns a new
-        tensor (the input is not mutated); a no-op when ``observed`` is empty.
-        """
-        if not observed:
-            return value
-        value = value.clone()
-        for member, obs in observed.items():
-            columns = self.variable.column_of(member)
-            slot = value[..., columns]
-            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
-        return value
-    
+        """Clamp individually-observed members (delegates to
+        :meth:`Variable.clamp_members`)."""
+        return self.variable.clamp_members(value, observed)
 
