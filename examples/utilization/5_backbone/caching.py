@@ -9,7 +9,7 @@ splitting.
 
 Flow:
 1. Load CelebA, limited to a small subset via ``max_samples``.
-2. ``dm.precompute_embeddings(Backbone('resnet18'))`` — computes or loads the
+2. ``dm.precompute_embeddings(ImageBackbone('resnet18'))`` — computes or loads the
    cache at ``{dataset.root_dir}/bkb_embs_resnet18.pt``.
 3. ``dm.setup('fit')`` — splitting only.
 4. Train a ConceptBottleneckModel on the embeddings.
@@ -22,7 +22,7 @@ import time
 import torch
 from pytorch_lightning import Trainer
 
-from torch_concepts import Backbone, seed_everything
+from torch_concepts import ImageBackbone, seed_everything
 from torch_concepts.data import CelebADataModule
 from torch_concepts.nn import ConceptBottleneckModel, MLP
 
@@ -43,7 +43,7 @@ def main():
     print(f"Raw input shape: {tuple(dm.n_features)}")
 
     # 2. Explicit preprocessing: precompute backbone embeddings before setup()
-    backbone = Backbone('resnet18', freeze=True)
+    backbone = ImageBackbone('resnet18', freeze=True)
 
     t0 = time.perf_counter()
     dm.precompute_embeddings(backbone, cache=True, force=True)  # first call: computes + saves to disk
