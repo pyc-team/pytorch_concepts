@@ -1,108 +1,104 @@
-"""Structured output containers for models and inference engines.
+"""Output containers for PGM inference engines."""
+from __future__ import annotations
 
-This module defines typed output containers that standardize communication
-between inference engines, models, losses, and metrics.
-
-    Inference (mid-level)          Model (high-level)         Training loop
-    ─────────────────────────   ──────────────────────────   ─────────────────
-    query() → InferenceOutput   forward() → ModelOutput      shared_step()
-      .logits  (return_logits)    .logits  (return_logits)     reads .logits,
-      .probs   (return_probs)     .probs   (return_probs)      .target, etc.
-      .joint   (return_joint)     .joint   (return_joint)
-
-ConceptLoss and ConceptMetrics also unpack these.
-Standard torch losses and metrics never see these containers — they always
-receive plain tensors extracted from the output fields.
-
-Examples
---------
->>> # Model returns ModelOutput
->>> output = model(x=batch_x, query=['c1', 'c2', 'task'])
->>> output.probs.shape  # (batch, total_feature_dims) — activated predictions
->>>
->>> # Use with standard torch loss (access the tensor field)
->>> loss = F.binary_cross_entropy_with_logits(output.logits, targets)
->>>
->>> # ConceptLoss accepts ModelOutput directly
->>> loss = concept_loss(output)
->>>
->>> # Inference always returns InferenceOutput
->>> result = inference.query(query, evidence, return_logits=True)
->>> result.logits.shape   # concatenated logits
-"""
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 
+# ---------------------------------------------------------------------------
+# Parameter-dict type alias
+# ---------------------------------------------------------------------------
+
+ParamDict = Dict[str, torch.Tensor]
+
+
+# ---------------------------------------------------------------------------
+# params -> logits assembly
+# ---------------------------------------------------------------------------
+
+# FIXME: this is a bit of a hack, but it works for now. We must make the ModelOutput
+# and InferenceOutput classes more flexible in the future. Storing the tensors and 
+# provide utilities for per-concept views.
+def logits_from_params(
+    params: Dict[str, ParamDict],
+    keys: Optional[List[str]] = None,
+) -> Optional[torch.Tensor]:
+    """Concatenate per-variable ``'logits'`` tensors from an output's ``params``.
+
+    The single place the library turns the per-variable parameter dict produced
+    by inference into the flat ``(batch, sum_cardinalities)`` logits tensor that
+    losses and metrics consume.
+
+    Parameters
+    ----------
+    params : dict[str, ParamDict]
+        Per-variable parameter dicts (e.g. ``{'c1': {'logits': ...}, ...}``).
+    keys : list[str], optional
+        Variable names to assemble, in order. When ``None`` (default), every
+        variable that carries a ``'logits'`` entry is used, in insertion order.
+
+    Returns
+    -------
+    torch.Tensor or None
+        Concatenated logits along the last dim, or ``None`` when no queried
+        variable carries logits.
+    """
+    if keys is None:
+        keys = [n for n, p in params.items() if isinstance(p, dict) and 'logits' in p]
+    parts = [params[n]['logits'] for n in keys]
+    return torch.cat(parts, dim=-1) if parts else None
+
+
+# ---------------------------------------------------------------------------
+# InferenceOutput
+# ---------------------------------------------------------------------------
 
 @dataclass
 class InferenceOutput:
-    """Structured output from an inference engine.
-
-    Always returned by ``ForwardInference.query()``. Which fields
-    are populated is controlled by ``return_logits``, ``return_probs``,
-    and ``return_joint`` parameters passed to ``query()``.
+    """Return value of every inference engine.
 
     Attributes
     ----------
-    logits : torch.Tensor, optional
-        Concatenated raw logits (before activation) for queried concepts.
-        Populated when ``return_logits=True``.
-    probs : torch.Tensor, optional
-        Concatenated activated predictions for queried concepts.
-        Populated when ``return_probs=True`` (default).
-    joint : torch.Tensor, optional
-        Joint (unnormalized) log probabilities.
-        Populated when ``return_joint=True``.
+    params : dict[str, ParamDict]
+        Per-variable named parameter tensors of the model-side distribution
+        (e.g. ``{'c': {'probs': ...}}``). 
+    guide_params : dict[str, ParamDict]
+        Per-latent named parameter tensors of the variational guide.
+    samples : dict[str, torch.Tensor]
+        Per-variable sampled values.
+    probabilities : torch.Tensor or None
+        Joint conditional probabilities for a fully realised query batch.
     """
-    logits: Optional[torch.Tensor] = None
-    probs: Optional[torch.Tensor] = None
-    joint: Optional[torch.Tensor] = None
+
+    params: Dict[str, ParamDict] = field(default_factory=dict)
+    guide_params: Dict[str, ParamDict] = field(default_factory=dict)
+    samples: Dict[str, torch.Tensor] = field(default_factory=dict)
+    probabilities: Optional[torch.Tensor] = None
+
 
 
 @dataclass
 class ModelOutput:
     """Structured output from a high-level model's ``forward()`` method.
 
-    Which prediction fields are populated mirrors the ``return_*``
-    parameters passed to ``forward()``.
-
     Attributes
     ----------
-    logits : torch.Tensor, optional
-        Concatenated logits for all queried concepts.
-        Populated when ``return_logits=True``.
-    probs : torch.Tensor, optional
-        Concatenated activated predictions for all queried concepts.
-        Populated when ``return_probs=True`` (default).
-    joint : torch.Tensor, optional
-        Joint (unnormalized) log probabilities.
-        Populated when ``return_joint=True``.
-    target : torch.Tensor, optional
-        Ground truth labels. Attached by the training loop
-        (``shared_step``) before passing to loss/metrics.
-    extras : dict of str → torch.Tensor, optional
-        Model-specific extra outputs (e.g. embeddings, latent
-        representations, KL divergence terms). Loss terms can
-        declare these in their ``forward()`` signature to receive
-        them via signature-based dispatch.
-
-    Examples
-    --------
-    >>> # Inference mode — probs populated by default
-    >>> output = model(x=batch_x, query=['c1', 'c2', 'task'])
-    >>> output.probs.shape  # (batch, total_logit_dims)
-    >>>
-    >>> # Training mode — logits for loss
-    >>> output = model(x=batch_x, query=['c1', 'c2', 'task'], return_logits=True)
-    >>> output.logits.shape
-    >>>
-    >>> # Training loop attaches target
-    >>> output.target = ground_truth_tensor
+    params : dict[str, ParamDict]
+        Per-variable named parameter tensors of the model-side distribution
+        (e.g. ``{'c': {'probs': ...}}``). 
+    guide_params : dict[str, ParamDict]
+        Per-latent named parameter tensors of the variational guide.
+    samples : dict[str, torch.Tensor]
+        Per-variable sampled values.
+    probabilities : torch.Tensor or None
+        Joint conditional probabilities for a fully realised query batch.
     """
-    logits: Optional[torch.Tensor] = None
-    probs: Optional[torch.Tensor] = None
-    joint: Optional[torch.Tensor] = None
+
+    params: Dict[str, ParamDict] = field(default_factory=dict)
+    guide_params: Dict[str, ParamDict] = field(default_factory=dict)
+    samples: Dict[str, torch.Tensor] = field(default_factory=dict)
+    probabilities: Optional[torch.Tensor] = None
+    logits: Optional[torch.Tensor] = None # FIXME: to be removed
     target: Optional[torch.Tensor] = None
-    extras: Optional[Dict[str, torch.Tensor]] = None
+    extra: Optional[Dict[str, torch.Tensor]] = None

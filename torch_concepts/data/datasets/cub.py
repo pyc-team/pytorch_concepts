@@ -15,7 +15,6 @@ import pickle
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as transforms
 
 from collections import defaultdict
 from PIL import Image
@@ -23,11 +22,23 @@ from typing import List, Mapping, Optional
 import zipfile
 import shutil
 
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "CUBDataset image loading requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -865,16 +876,14 @@ class CUBDataset(ConceptDataset):
         binary_states = [['0'] for _ in SELECTED_CONCEPT_NAMES]
         states = binary_states + [CLASS_NAMES]
         cardinalities = [1] * len(SELECTED_CONCEPT_NAMES) + [N_CLASSES]
-        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        types = ['binary'] * len(SELECTED_CONCEPT_NAMES) + ['categorical']
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                states=states,
-                cardinalities=cardinalities,
-                metadata=concept_metadata,
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Build split mapping (native train/val/test)
         split_series = pd.Series(split_labels, name='split')
@@ -915,9 +924,10 @@ class CUBDataset(ConceptDataset):
             x = self.input_data[item]
         else:
             img_path = self.input_data[item]
+            tv = _import_torchvision()
             x = Image.open(img_path).convert('RGB')
-            x = transforms.Resize((self.image_size, self.image_size))(x)
-            x = transforms.ToTensor()(x)
+            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+            x = tv.transforms.ToTensor()(x)
         c = self.concepts[item]
         return {'inputs': {'x': x}, 'concepts': {'c': c}}
 

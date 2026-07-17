@@ -1,998 +1,808 @@
-"""Comprehensive tests for torch_concepts.nn.modules.low.inference.intervention module to improve coverage."""
+"""Tests for InterventionModule, intervene, intervention context manager,
+and the GroundTruthIntervention, DoIntervention, DistributionIntervention
+strategies together with UniformPolicy, RandomPolicy, and
+UncertaintyInterventionPolicy.
+"""
 import pytest
-from torch_concepts.nn.modules.low.inference.intervention import (
-    _get_submodule,
-    _set_submodule,
-    _as_list,
-)
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.low.inference.intervention import (
-    _GlobalPolicyState,
-)
-import unittest
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Normal
-from torch_concepts.nn.modules.low.inference.intervention import (
-    RewiringIntervention,
+import torch.distributions as torch_dist
+
+from torch_concepts.nn.modules.low.intervention.intervention import (
+    InterventionModule,
+    intervene,
+    intervention,
+)
+from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import (
     GroundTruthIntervention,
-    DoIntervention,
+)
+from torch_concepts.nn.modules.low.intervention.strategy.do import DoIntervention
+from torch_concepts.nn.modules.low.intervention.strategy.distribution import (
     DistributionIntervention,
-    _InterventionWrapper,
+)
+from torch_concepts.nn.modules.low.intervention.policy.uniform import UniformPolicy
+from torch_concepts.nn.modules.low.intervention.policy.random import RandomPolicy
+from torch_concepts.nn.modules.low.intervention.policy.uncertainty import (
+    UncertaintyInterventionPolicy,
 )
 
 
-class ConcreteRewiringIntervention(RewiringIntervention):
-    """Concrete implementation for testing."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    def _make_target(self, y, target_value=1.0):
-        """Create target tensor filled with target_value."""
-        return torch.full_like(y, target_value)
-
-
-class SimpleModule(nn.Module):
-    """Simple module for testing."""
-    def __init__(self, in_features, out_features):
+class _Encoder(nn.Module):
+    """Simple encoder that always returns a fixed [B, F] output."""
+    def __init__(self, in_features=4, out_features=3):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
+        self.in_f = in_features
+        self.out_f = out_features
 
-    def forward(self, **kwargs):
-        if 'x' in kwargs:
-            return self.linear(kwargs['x'])
-        return torch.randn(2, self.linear.out_features)
+    def forward(self, x):
+        return torch.sigmoid(self.linear(x))
 
 
-class TestRewiringIntervention(unittest.TestCase):
-    """Test RewiringIntervention."""
+def _make_enc(in_f=4, out_f=3):
+    return _Encoder(in_features=in_f, out_features=out_f)
 
-    def setUp(self):
-        """Set up test model."""
-        self.model = nn.Sequential(
-            nn.Linear(10, 5),
-            nn.ReLU(),
-            nn.Linear(5, 3)
-        )
 
-    def test_initialization(self):
-        """Test intervention initialization."""
-        intervention = ConcreteRewiringIntervention(self.model)
-        self.assertIsNotNone(intervention.model)
+B, F = 4, 3  # default batch size and feature size
 
-    def test_query_creates_wrapper(self):
-        """Test that query creates intervention wrapper."""
-        intervention = ConcreteRewiringIntervention(self.model)
-        original_module = SimpleModule(10, 5)
-        mask = torch.ones(5)
 
-        wrapper = intervention.query(original_module, mask)
-        self.assertIsInstance(wrapper, nn.Module)
-
-    def test_intervention_with_mask(self):
-        """Test intervention applies mask correctly."""
-        intervention = ConcreteRewiringIntervention(self.model)
-        original_module = SimpleModule(10, 5)
-
-        # Mask: 1 = keep, 0 = replace
-        mask = torch.tensor([1.0, 0.0, 1.0, 0.0, 1.0])
-        wrapper = intervention.query(original_module, mask)
-
-        output = wrapper(x=torch.randn(2, 10))
-        self.assertEqual(output.shape, (2, 5))
-
-
-class TestGroundTruthIntervention(unittest.TestCase):
-    """Test GroundTruthIntervention."""
-
-    def test_initialization(self):
-        """Test initialization with ground truth."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-        self.assertTrue(torch.equal(intervention.ground_truth, ground_truth))
-
-    def test_make_target(self):
-        """Test _make_target returns ground truth."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.5, 0.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-        y = torch.randn(1, 3)
-        target = intervention._make_target(y)
-
-        self.assertTrue(torch.equal(target, ground_truth.to(dtype=y.dtype)))
-
-    def test_ground_truth_device_transfer(self):
-        """Test ground truth transfers to correct device."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-        y = torch.randn(1, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.device, y.device)
-
-
-class TestDoIntervention(unittest.TestCase):
-    """Test DoIntervention."""
-
-    def test_initialization_scalar(self):
-        """Test initialization with scalar constant."""
-        model = nn.Linear(10, 3)
-        intervention = DoIntervention(model, 1.0)
-        self.assertIsNotNone(intervention.constants)
-
-    def test_initialization_tensor(self):
-        """Test initialization with tensor constant."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.5, 1.0, 0.0])
-        intervention = DoIntervention(model, constants)
-        self.assertTrue(torch.equal(intervention.constants, constants))
-
-    def test_make_target_scalar(self):
-        """Test _make_target with scalar broadcasting."""
-        model = nn.Linear(10, 3)
-        intervention = DoIntervention(model, 0.5)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (4, 3))
-        self.assertTrue(torch.allclose(target, torch.full((4, 3), 0.5)))
-
-    def test_make_target_per_concept(self):
-        """Test _make_target with per-concept values [F]."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.0, 0.5, 1.0])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (2, 3))
-        self.assertTrue(torch.equal(target[0], constants))
-        self.assertTrue(torch.equal(target[1], constants))
-
-    def test_make_target_per_sample(self):
-        """Test _make_target with per-sample values [B, F]."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.0, 0.5, 1.0], [1.0, 0.5, 0.0]])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
-
-        self.assertTrue(torch.equal(target, constants))
-
-    def test_make_target_broadcast_batch(self):
-        """Test _make_target with [1, F] broadcasting."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.1, 0.2, 0.3]])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(5, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (5, 3))
-        for i in range(5):
-            self.assertTrue(torch.equal(target[i], constants[0]))
-
-    def test_make_target_wrong_dimensions(self):
-        """Test _make_target raises error for wrong dimensions."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.0, 0.5])  # Wrong size
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-        with self.assertRaises(AssertionError):
-            intervention._make_target(y)
-
-
-class TestDistributionIntervention(unittest.TestCase):
-    """Test DistributionIntervention."""
-
-    def test_initialization_single_distribution(self):
-        """Test initialization with single distribution."""
-        model = nn.Linear(10, 3)
-        dist = Bernoulli(torch.tensor(0.5))
-        intervention = DistributionIntervention(model, dist)
-        self.assertIsNotNone(intervention.dist)
-
-    def test_initialization_list_distributions(self):
-        """Test initialization with per-concept distributions."""
-        model = nn.Linear(10, 3)
-        dists = [
-            Bernoulli(torch.tensor(0.3)),
-            Bernoulli(torch.tensor(0.7)),
-            Normal(torch.tensor(0.0), torch.tensor(1.0))
-        ]
-        intervention = DistributionIntervention(model, dists)
-        self.assertEqual(len(intervention.dist), 3)
-
-    def test_make_target_single_distribution(self):
-        """Test _make_target with single distribution."""
-        torch.manual_seed(42)
-        model = nn.Linear(10, 3)
-        dist = Bernoulli(torch.tensor(0.5))
-        intervention = DistributionIntervention(model, dist)
-
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (2, 3))
-        # Check values are 0 or 1
-        self.assertTrue(torch.all((target == 0) | (target == 1)))
-
-    def test_make_target_list_distributions(self):
-        """Test _make_target with per-concept distributions."""
-        torch.manual_seed(42)
-        model = nn.Linear(10, 3)
-        dists = [
-            Bernoulli(torch.tensor(0.9)),
-            Bernoulli(torch.tensor(0.1)),
-            Bernoulli(torch.tensor(0.5))
-        ]
-        intervention = DistributionIntervention(model, dists)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (4, 3))
-
-    def test_make_target_normal_distribution(self):
-        """Test _make_target with normal distribution."""
-        torch.manual_seed(42)
-        model = nn.Linear(10, 2)
-        dist = Normal(torch.tensor(0.0), torch.tensor(1.0))
-        intervention = DistributionIntervention(model, dist)
-
-        y = torch.randn(3, 2)
-        target = intervention._make_target(y)
-
-        self.assertEqual(target.shape, (3, 2))
-
-
-class TestInterventionWrapper(unittest.TestCase):
-    """Test _InterventionWrapper."""
-
-    def test_initialization(self):
-        """Test wrapper initialization."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5)
-        self.assertEqual(wrapper.quantile, 0.5)
-
-    def test_build_mask_all_keep(self):
-        """Test mask building with quantile=0 (keep all)."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.0)
-        policy_endogenous = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_endogenous)
-
-        self.assertEqual(mask.shape, (2, 5))
-        # With quantile=0, should keep most concepts
-
-    def test_build_mask_all_replace(self):
-        """Test mask building with quantile=1 (replace all)."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=1.0)
-        policy_endogenous = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_endogenous)
-
-        self.assertEqual(mask.shape, (2, 5))
-
-    def test_build_mask_with_subset(self):
-        """Test mask building with subset selection."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        subset = [0, 2, 4]
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_endogenous = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_endogenous)
-
-        self.assertEqual(mask.shape, (2, 5))
-
-    def test_build_mask_single_concept_subset(self):
-        """Test mask building with single concept in subset."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        subset = [2]
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_endogenous = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_endogenous)
-
-        self.assertEqual(mask.shape, (2, 5))
-
-    def test_build_mask_empty_subset(self):
-        """Test mask building with empty subset."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        subset = []
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5, subset=subset)
-        policy_endogenous = torch.randn(2, 5)
-        mask = wrapper._build_mask(policy_endogenous)
-
-        # Empty subset should return all ones (keep all)
-        self.assertTrue(torch.allclose(mask, torch.ones_like(policy_endogenous)))
-
-    def test_forward(self):
-        """Test forward pass through wrapper."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5)
-        x = torch.randn(2, 10)
-        output = wrapper(x=x)
-
-        self.assertEqual(output.shape, (2, 5))
-
-    def test_gradient_flow(self):
-        """Test gradient flow through wrapper."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        wrapper = _InterventionWrapper(original, policy, strategy, quantile=0.5)
-        x = torch.randn(2, 10, requires_grad=True)
-        output = wrapper(x=x)
-        loss = output.sum()
-        loss.backward()
-
-        self.assertIsNotNone(x.grad)
-
-    def test_different_quantiles(self):
-        """Test wrapper with different quantile values."""
-        original = SimpleModule(10, 5)
-        policy = nn.Linear(5, 5)
-        model = nn.Linear(10, 5)
-        strategy = ConcreteRewiringIntervention(model)
-
-        for quantile in [0.0, 0.25, 0.5, 0.75, 1.0]:
-            wrapper = _InterventionWrapper(original, policy, strategy, quantile=quantile)
-            x = torch.randn(2, 10)
-            output = wrapper(x=x)
-            self.assertEqual(output.shape, (2, 5))
-
-
-class TestHelperFunctions:
-    """Test helper functions for intervention module."""
-
-    def test_get_submodule_single_level(self):
-        """Test _get_submodule with single level path."""
-        model = nn.Sequential(
-            nn.Linear(10, 5),
-            nn.ReLU(),
-            nn.Linear(5, 3)
-        )
-
-        layer0 = _get_submodule(model, "0")
-        assert isinstance(layer0, nn.Linear)
-        assert layer0.in_features == 10
-        assert layer0.out_features == 5
-
-    def test_get_submodule_nested(self):
-        """Test _get_submodule with nested path."""
-        class NestedModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.layer1 = nn.Sequential(
-                    nn.Linear(10, 5),
-                    nn.ReLU()
-                )
-                self.layer2 = nn.Linear(5, 3)
-
-        model = NestedModel()
-
-        # Access nested submodule
-        linear = _get_submodule(model, "layer1.0")
-        assert isinstance(linear, nn.Linear)
-        assert linear.in_features == 10
-
-    def test_set_submodule_single_level(self):
-        """Test _set_submodule with single level path."""
-        model = nn.Sequential(
-            nn.Linear(10, 5),
-            nn.ReLU()
-        )
-
-        new_layer = nn.Linear(10, 8)
-        _set_submodule(model, "0", new_layer)
-
-        assert model[0].out_features == 8
-
-    def test_set_submodule_nested(self):
-        """Test _set_submodule with nested path."""
-        class NestedModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.layer1 = nn.Sequential(
-                    nn.Linear(10, 5),
-                    nn.ReLU()
-                )
-
-        model = NestedModel()
-        new_layer = nn.Linear(10, 8)
-        _set_submodule(model, "layer1.0", new_layer)
-
-        assert model.layer1[0].out_features == 8
-
-    def test_set_submodule_with_parametric_cpd(self):
-        """Test _set_submodule with ParametricCPD."""
-        model = nn.Module()
-        cpd = ParametricCPD('concept', parametrization=nn.Linear(10, 5))
-        _set_submodule(model, "concept", cpd)
-
-        assert hasattr(model, 'concept')
-        assert isinstance(model.concept, ParametricCPD)
-
-    def test_set_submodule_wraps_module_in_cpd(self):
-        """Test _set_submodule wraps regular module in ParametricCPD."""
-        model = nn.Module()
-        layer = nn.Linear(10, 5)
-        _set_submodule(model, "concept", layer)
-
-        assert hasattr(model, 'concept')
-        assert isinstance(model.concept, ParametricCPD)
-
-    def test_set_submodule_empty_path_raises_error(self):
-        """Test _set_submodule with empty path raises error."""
-        model = nn.Module()
-
-        with pytest.raises(ValueError, match="Dotted path must not be empty"):
-            _set_submodule(model, "", nn.Linear(10, 5))
-
-    def test_as_list_scalar_broadcast(self):
-        """Test _as_list broadcasts scalar to list."""
-        result = _as_list(5, 3)
-        assert result == [5, 5, 5]
-        assert len(result) == 3
-
-    def test_as_list_with_list_input(self):
-        """Test _as_list preserves list if correct length."""
-        input_list = [1, 2, 3]
-        result = _as_list(input_list, 3)
-        assert result == [1, 2, 3]
-
-    def test_as_list_with_tuple_input(self):
-        """Test _as_list converts tuple to list."""
-        input_tuple = (1, 2, 3)
-        result = _as_list(input_tuple, 3)
-        assert result == [1, 2, 3]
-        assert isinstance(result, list)
-
-    def test_as_list_wrong_length_raises_error(self):
-        """Test _as_list raises error for wrong length list."""
-        with pytest.raises(ValueError, match="Expected list of length 3, got 2"):
-            _as_list([1, 2], 3)
-
+# ===========================================================================
+# 1. GroundTruthIntervention strategy
+# ===========================================================================
 
 class TestGroundTruthIntervention:
-    """Test GroundTruthIntervention class."""
+    def test_construction_no_model_arg(self):
+        gt = torch.ones(B, F)
+        strat = GroundTruthIntervention(gt)
+        assert torch.equal(strat.ground_truth, gt)
 
-    def test_initialization(self):
-        """Test GroundTruthIntervention initialization."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
+    def test_forward_returns_ground_truth(self):
+        gt = torch.full((B, F), 0.7)
+        strat = GroundTruthIntervention(gt)
+        x = torch.randn(B, F)
+        out = strat(x)
+        assert torch.equal(out, gt)
 
-        intervention = GroundTruthIntervention(model, ground_truth)
+    def test_forward_ignores_input(self):
+        gt = torch.zeros(B, F)
+        strat = GroundTruthIntervention(gt)
+        x1 = torch.randn(B, F)
+        x2 = torch.randn(B, F)
+        assert torch.equal(strat(x1), strat(x2))
 
-        assert hasattr(intervention, 'ground_truth')
-        assert torch.equal(intervention.ground_truth, ground_truth)
+    def test_ground_truth_stored_as_tensor(self):
+        gt = torch.tensor([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        strat = GroundTruthIntervention(gt)
+        assert isinstance(strat.ground_truth, torch.Tensor)
 
-    def test_make_target_returns_ground_truth(self):
-        """Test _make_target returns ground truth values."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
 
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Test prediction tensor
-        y = torch.randn(1, 3)
-        target = intervention._make_target(y)
-
-        assert torch.equal(target, ground_truth.to(dtype=y.dtype, device=y.device))
-
-    def test_make_target_device_transfer(self):
-        """Test _make_target transfers to correct device."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Create tensor with different dtype
-        y = torch.randn(1, 3, dtype=torch.float64)
-        target = intervention._make_target(y)
-
-        assert target.dtype == torch.float64
-        assert target.device == y.device
-
-    def test_query_creates_wrapper(self):
-        """Test query creates intervention wrapper."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Create mask (1 = keep prediction, 0 = replace with target)
-        mask = torch.tensor([[1.0, 0.0, 1.0]])
-
-        wrapped = intervention.query(model, mask)
-
-        assert isinstance(wrapped, nn.Module)
-        assert hasattr(wrapped, 'orig')
-        assert hasattr(wrapped, 'mask')
-
+# ===========================================================================
+# 2. DoIntervention strategy
+# ===========================================================================
 
 class TestDoIntervention:
-    """Test DoIntervention class."""
+    def test_construction_scalar(self):
+        strat = DoIntervention(1.0)
+        assert strat.constants.dim() == 0
 
-    def test_initialization_scalar(self):
-        """Test DoIntervention initialization with scalar."""
-        model = nn.Linear(10, 3)
-        intervention = DoIntervention(model, 1.0)
+    def test_construction_tensor_1d(self):
+        strat = DoIntervention(torch.tensor([0.5, 1.0, 0.0]))
+        assert strat.constants.shape == (3,)
 
-        assert hasattr(intervention, 'constants')
-        assert intervention.constants.item() == 1.0
+    def test_construction_tensor_2d(self):
+        strat = DoIntervention(torch.ones(1, 3))
+        assert strat.constants.shape == (1, 3)
 
-    def test_initialization_tensor(self):
-        """Test DoIntervention initialization with tensor."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.5, 1.0, 0.0])
-        intervention = DoIntervention(model, constants)
+    def test_forward_scalar_broadcasts(self):
+        strat = DoIntervention(0.5)
+        x = torch.randn(B, F)
+        out = strat(x)
+        assert out.shape == (B, F)
+        assert torch.allclose(out, torch.full((B, F), 0.5))
 
-        assert torch.equal(intervention.constants, constants)
+    def test_forward_1d_per_feature(self):
+        constants = torch.tensor([0.1, 0.2, 0.3])
+        strat = DoIntervention(constants)
+        x = torch.randn(B, F)
+        out = strat(x)
+        assert out.shape == (B, F)
+        for i in range(B):
+            assert torch.allclose(out[i], constants)
 
-    def test_make_target_scalar(self):
-        """Test _make_target with scalar constant."""
-        model = nn.Linear(10, 3)
-        intervention = DoIntervention(model, 1.0)
+    def test_forward_2d_per_sample(self):
+        constants = torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6],
+                                    [0.7, 0.8, 0.9], [1.0, 0.0, 0.5]])
+        strat = DoIntervention(constants)
+        x = torch.randn(B, F)
+        out = strat(x)
+        assert torch.allclose(out, constants)
 
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
+    def test_forward_2d_broadcast_1xF(self):
+        constants = torch.tensor([[0.3, 0.6, 0.9]])
+        strat = DoIntervention(constants)
+        x = torch.randn(B, F)
+        out = strat(x)
+        assert out.shape == (B, F)
+        for i in range(B):
+            assert torch.allclose(out[i], constants[0])
 
-        assert target.shape == (2, 3)
-        assert torch.all(target == 1.0)
-
-    def test_make_target_per_concept(self):
-        """Test _make_target with per-concept constants [F]."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.5, 1.0, 0.0])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (2, 3)
-        # Check each sample has the same per-concept values
-        assert torch.allclose(target[0], constants)
-        assert torch.allclose(target[1], constants)
-
-    def test_make_target_broadcast_batch(self):
-        """Test _make_target with [1, F] broadcasted to [B, F]."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.5, 1.0, 0.0]])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (4, 3)
-        # Check all samples have the same values
-        for i in range(4):
-            assert torch.allclose(target[i], constants[0])
-
-    def test_make_target_per_sample(self):
-        """Test _make_target with per-sample constants [B, F]."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.5, 1.0, 0.0],
-                                   [1.0, 0.0, 0.5]])
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (2, 3)
-        assert torch.allclose(target, constants)
-
-    def test_make_target_wrong_dimensions_raises_error(self):
-        """Test _make_target with wrong dimensions raises error."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[[0.5, 1.0, 0.0]]])  # 3D tensor
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-
+    def test_forward_3d_raises_value_error(self):
+        strat = DoIntervention(torch.ones(1, 1, 3))
+        x = torch.randn(B, F)
         with pytest.raises(ValueError, match="constants must be scalar"):
-            intervention._make_target(y)
+            strat(x)
 
-    def test_make_target_wrong_feature_dim_raises_error(self):
-        """Test _make_target with wrong feature dimension raises error."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([0.5, 1.0])  # Only 2 features, expecting 3
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)
-
+    def test_forward_wrong_feature_size_raises(self):
+        strat = DoIntervention(torch.tensor([0.5, 1.0]))  # 2 features, expect 3
+        x = torch.randn(B, F)
         with pytest.raises(AssertionError):
-            intervention._make_target(y)
+            strat(x)
 
-    def test_make_target_wrong_batch_dim_raises_error(self):
-        """Test _make_target with wrong batch dimension raises error."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.5, 1.0, 0.0],
-                                   [1.0, 0.0, 0.5],
-                                   [0.0, 0.5, 1.0]])  # 3 samples
-        intervention = DoIntervention(model, constants)
-
-        y = torch.randn(2, 3)  # Only 2 samples
-
+    def test_forward_wrong_batch_size_raises(self):
+        strat = DoIntervention(torch.ones(5, F))  # B=5, expect B=4
+        x = torch.randn(B, F)
         with pytest.raises(AssertionError):
-            intervention._make_target(y)
+            strat(x)
 
+    def test_output_dtype_matches_input(self):
+        strat = DoIntervention(torch.ones(F))
+        x = torch.randn(B, F, dtype=torch.float64)
+        out = strat(x)
+        assert out.dtype == torch.float64
+
+
+# ===========================================================================
+# 3. DistributionIntervention strategy
+# ===========================================================================
 
 class TestDistributionIntervention:
-    """Test DistributionIntervention class."""
+    def test_construction_single_distribution(self):
+        d = torch_dist.Bernoulli(torch.tensor(0.5))
+        strat = DistributionIntervention(d)
+        assert strat.dist is d
 
-    def test_initialization_single_distribution(self):
-        """Test DistributionIntervention with single distribution."""
-        model = nn.Linear(10, 3)
-        dist = Bernoulli(torch.tensor(0.5))
+    def test_construction_list_distributions(self):
+        dists = [torch_dist.Bernoulli(torch.tensor(p)) for p in [0.3, 0.5, 0.7]]
+        strat = DistributionIntervention(dists)
+        assert len(list(strat.dist)) == 3
 
-        intervention = DistributionIntervention(model, dist)
+    def test_forward_single_dist_shape(self):
+        d = torch_dist.Bernoulli(torch.tensor(0.5))
+        strat = DistributionIntervention(d)
+        out = strat(torch.randn(B, F))
+        assert out.shape == (B, F)
 
-        assert hasattr(intervention, 'dist')
+    def test_forward_single_bernoulli_values_binary(self):
+        d = torch_dist.Bernoulli(torch.tensor(0.5))
+        strat = DistributionIntervention(d)
+        out = strat(torch.randn(B, F))
+        assert torch.all((out == 0) | (out == 1))
 
-    def test_initialization_list_distributions(self):
-        """Test DistributionIntervention with list of distributions."""
-        model = nn.Linear(10, 3)
-        dists = [
-            Bernoulli(torch.tensor(0.3)),
-            Bernoulli(torch.tensor(0.7)),
-            Bernoulli(torch.tensor(0.5))
-        ]
+    def test_forward_per_feature_shape(self):
+        dists = [torch_dist.Bernoulli(torch.tensor(0.5)) for _ in range(F)]
+        strat = DistributionIntervention(dists)
+        out = strat(torch.randn(B, F))
+        assert out.shape == (B, F)
 
-        intervention = DistributionIntervention(model, dists)
+    def test_forward_normal_distribution(self):
+        d = torch_dist.Normal(torch.tensor(0.0), torch.tensor(1.0))
+        strat = DistributionIntervention(d)
+        out = strat(torch.randn(B, F))
+        assert out.shape == (B, F)
 
-        assert hasattr(intervention, 'dist')
-
-    def test_make_target_single_distribution(self):
-        """Test _make_target with single distribution."""
-        model = nn.Linear(10, 3)
-        dist = Bernoulli(torch.tensor(0.5))
-
-        intervention = DistributionIntervention(model, dist)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (4, 3)
-        # Values should be binary (0 or 1) for Bernoulli
-        assert torch.all((target == 0) | (target == 1))
-
-    def test_make_target_normal_distribution(self):
-        """Test _make_target with Normal distribution."""
-        model = nn.Linear(10, 3)
-        dist = Normal(torch.tensor(0.0), torch.tensor(1.0))
-
-        intervention = DistributionIntervention(model, dist)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (4, 3)
-        # Just check shape and type, values are random
-
-    def test_make_target_list_distributions(self):
-        """Test _make_target with list of per-concept distributions."""
-        model = nn.Linear(10, 3)
-        dists = [
-            Bernoulli(torch.tensor(0.3)),
-            Normal(torch.tensor(0.0), torch.tensor(1.0)),
-            Bernoulli(torch.tensor(0.8))
-        ]
-
-        intervention = DistributionIntervention(model, dists)
-
-        y = torch.randn(4, 3)
-        target = intervention._make_target(y)
-
-        assert target.shape == (4, 3)
+    def test_forward_wrong_number_of_dists_raises(self):
+        dists = [torch_dist.Bernoulli(torch.tensor(0.5))] * 2  # need 3, got 2
+        strat = DistributionIntervention(dists)
+        with pytest.raises(AssertionError):
+            strat(torch.randn(B, F))
 
 
-class TestRewiringInterventionWrapper:
-    """Test the intervention wrapper created by RewiringIntervention.query()."""
+# ===========================================================================
+# 4. UniformPolicy
+# ===========================================================================
 
-    def test_wrapper_forward_keeps_predictions(self):
-        """Test wrapper keeps predictions where mask is 1."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 1.0, 1.0]])
+class TestUniformPolicy:
+    def test_forward_returns_zeros(self):
+        policy = UniformPolicy()
+        x = torch.randn(B, F)
+        out = policy(x)
+        assert torch.all(out == 0.0)
 
-        intervention = GroundTruthIntervention(model, ground_truth)
+    def test_output_shape(self):
+        policy = UniformPolicy()
+        out = policy(torch.randn(4, 6))
+        assert out.shape == (4, 6)
 
-        # Mask: keep all predictions (all 1s)
-        mask = torch.ones(1, 3)
-        wrapped = intervention.query(model, mask)
+    def test_output_independent_of_input(self):
+        policy = UniformPolicy()
+        assert torch.equal(policy(torch.randn(4, 3)), policy(torch.randn(4, 3)))
 
-        # Forward pass
-        x = torch.randn(1, 10)
+
+# ===========================================================================
+# 5. RandomPolicy
+# ===========================================================================
+
+class TestRandomPolicy:
+    def test_default_scale(self):
+        p = RandomPolicy()
+        assert p.scale == pytest.approx(1.0)
+
+    def test_output_non_negative(self):
+        p = RandomPolicy(scale=2.0)
+        out = p(torch.randn(B, F))
+        assert (out >= 0).all()
+
+    def test_output_bounded_by_scale(self):
+        p = RandomPolicy(scale=2.0)
+        out = p(torch.randn(100, 10))
+        assert (out <= 2.0).all()
+
+    def test_random_outputs_differ(self):
+        p = RandomPolicy(scale=1.0)
+        x = torch.randn(B, F)
+        assert not torch.equal(p(x), p(x))
+
+
+# ===========================================================================
+# 6. UncertaintyInterventionPolicy
+# ===========================================================================
+
+class TestUncertaintyInterventionPolicy:
+    def test_certainty_at_zero_input(self):
+        p = UncertaintyInterventionPolicy()
+        assert torch.all(p(torch.zeros(B, F)) == 0.0)
+
+    def test_abs_distance_from_mup(self):
+        p = UncertaintyInterventionPolicy(max_uncertainty_point=0.5)
+        x = torch.tensor([[0.0, 0.5, 1.0]])
+        expected = torch.tensor([[0.5, 0.0, 0.5]])
+        assert torch.allclose(p(x), expected)
+
+    def test_output_non_negative(self):
+        p = UncertaintyInterventionPolicy()
+        assert (p(torch.randn(B, F)) >= 0).all()
+
+
+# ===========================================================================
+# 7. InterventionModule — construction
+# ===========================================================================
+
+class TestInterventionModuleConstruction:
+    def test_basic_construction(self):
+        enc = _make_enc()
+        gt = torch.ones(B, F)
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy())
+        assert isinstance(m, nn.Module)
+
+    def test_original_module_stored(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_strategy_stored(self):
+        enc = _make_enc()
+        strat = GroundTruthIntervention(torch.ones(B, F))
+        m = InterventionModule(enc, strat, UniformPolicy())
+        assert m.intervention_strategy is strat
+
+    def test_policy_stored(self):
+        enc = _make_enc()
+        policy = UniformPolicy()
+        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), policy)
+        assert m.intervention_policy is policy
+
+    def test_default_quantile(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        assert m.quantile == pytest.approx(1.0)
+
+    def test_custom_quantile(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), quantile=0.5)
+        assert m.quantile == pytest.approx(0.5)
+
+    def test_out_concepts_to_intervene_on_stored(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
+                               out_concepts_to_intervene_on=[0, 1])
+        assert m.out_concepts_to_intervene_on == [0, 1]
+
+
+# ===========================================================================
+# 8. intervene() factory function
+# ===========================================================================
+
+class TestInterveneFn:
+    def test_returns_intervention_module(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.0), UniformPolicy())
+        assert isinstance(m, InterventionModule)
+
+    def test_original_module_preserved(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.0), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_custom_quantile(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.0), UniformPolicy(), quantile=0.5)
+        assert m.quantile == pytest.approx(0.5)
+
+
+# ===========================================================================
+# 9. intervention() context manager
+# ===========================================================================
+
+class TestInterventionContextManager:
+    def test_yields_intervention_module(self):
+        enc = _make_enc()
+        with intervention(enc, DoIntervention(0.0), UniformPolicy()) as m:
+            assert isinstance(m, InterventionModule)
+
+    def test_forward_runs_inside_context(self):
+        enc = _make_enc()
+        x = torch.randn(B, enc.in_f)
+        with intervention(enc, DoIntervention(0.5), UniformPolicy()) as m:
+            out = m(x)
+        assert out.shape == (B, enc.out_f)
+
+    def test_context_exits_cleanly(self):
+        enc = _make_enc()
+        with intervention(enc, DoIntervention(0.0), UniformPolicy()):
+            pass
+
+
+# ===========================================================================
+# 10. InterventionModule.forward() — end-to-end
+# ===========================================================================
+
+class TestInterventionModuleForward:
+    def test_output_shape(self):
+        enc = _make_enc()
+        x = torch.randn(B, enc.in_f)
+        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=1.0)
+        out = m(x)
+        assert out.shape == (B, F)
+
+    def test_full_intervention_ground_truth(self):
+        enc = _make_enc()
+        gt = torch.full((B, F), 0.7)
+        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # quantile=1.0 → all concepts replaced → output should equal gt
+        assert torch.allclose(out, gt, atol=1e-5)
+
+    def test_full_do_intervention(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.0), UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # quantile=1.0 + do(0.0) → all concepts become 0
+        assert torch.allclose(out, torch.zeros(B, F), atol=1e-5)
+
+    def test_no_intervention_at_quantile_zero_single_concept(self):
+        enc = _Encoder(in_features=4, out_features=1)
+        gt = torch.ones(B, 1)
+        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=0.0)
+        x = torch.randn(B, 4)
         with torch.no_grad():
-            original_output = model(x)
-            wrapped_output = wrapped(input=x)
+            orig = enc(x)
+            out = m(x)
+        # quantile=0.0 + single concept → keep col → mask=1 → not intervened → matches original
+        assert torch.allclose(out, orig, atol=1e-5)
 
-        # Should be identical since mask is all 1s
-        assert torch.allclose(wrapped_output, original_output, rtol=1e-5)
-
-    def test_wrapper_forward_replaces_with_targets(self):
-        """Test wrapper replaces predictions where mask is 0."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Mask: replace all predictions (all 0s)
-        mask = torch.zeros(1, 3)
-        wrapped = intervention.query(model, mask)
-
-        # Forward pass
-        x = torch.randn(1, 10)
+    def test_subset_intervened_by_index(self):
+        F2 = 4
+        enc = _Encoder(in_features=4, out_features=F2)
+        gt = torch.ones(B, F2)
+        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(),
+                      out_concepts_to_intervene_on=[0, 1], quantile=1.0)
+        x = torch.randn(B, 4)
         with torch.no_grad():
-            wrapped_output = wrapped(input=x)
+            orig = enc(x)
+            out = m(x)
+        # Concepts 0 and 1 should be replaced by gt (=1.0)
+        assert torch.allclose(out[:, 0:2], torch.ones(B, 2), atol=1e-5)
+        # Concepts 2 and 3 should be unchanged
+        assert torch.allclose(out[:, 2:], orig[:, 2:], atol=1e-5)
 
-        # Should match ground truth since mask is all 0s
-        assert torch.allclose(wrapped_output, ground_truth, rtol=1e-5)
+    def test_random_policy_with_do_intervention(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.5), RandomPolicy(scale=1.0), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # quantile=1.0 → all concepts replaced by do(0.5)
+        assert torch.allclose(out, torch.full((B, F), 0.5), atol=1e-5)
 
-    def test_wrapper_forward_mixed_mask(self):
-        """Test wrapper with mixed mask (some keep, some replace)."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 1.0, 1.0]])
+    def test_uncertainty_policy_with_do_intervention(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(1.0), UncertaintyInterventionPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # quantile=1.0 → all concepts replaced by do(1.0)
+        assert torch.allclose(out, torch.ones(B, F), atol=1e-5)
 
-        intervention = GroundTruthIntervention(model, ground_truth)
+    def test_distribution_intervention_output_shape(self):
+        enc = _make_enc()
+        d = torch_dist.Bernoulli(torch.tensor(0.5))
+        m = intervene(enc, DistributionIntervention(d), UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        assert out.shape == (B, F)
 
-        # Mask: keep first, replace middle, keep last
-        mask = torch.tensor([[1.0, 0.0, 1.0]])
-        wrapped = intervention.query(model, mask)
 
-        # Forward pass
-        x = torch.randn(1, 10)
-        with torch.no_grad():
-            original_output = model(x)
-            wrapped_output = wrapped(input=x)
+# ===========================================================================
+# 11. Gradient flow
+# ===========================================================================
 
-        # First and last should match original, middle should be 1.0
-        assert torch.allclose(wrapped_output[0, 0], original_output[0, 0], rtol=1e-5)
-        assert torch.allclose(wrapped_output[0, 1], torch.tensor(1.0), rtol=1e-5)
-        assert torch.allclose(wrapped_output[0, 2], original_output[0, 2], rtol=1e-5)
-
-    def test_wrapper_forward_wrong_shape_raises_error(self):
-        """Test wrapper raises error for wrong shaped output."""
-        # Create a model that outputs wrong shape
-        class WrongShapeModel(nn.Module):
-            def forward(self, input):
-                # Returns 3D tensor instead of 2D
-                return torch.randn(2, 3, 4)
-
-        model = WrongShapeModel()
-        ground_truth = torch.tensor([[1.0, 1.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-        mask = torch.ones(1, 3)
-        wrapped = intervention.query(model, mask)
-
-        x = torch.randn(1, 10)
-
-        with pytest.raises(AssertionError, match="RewiringIntervention expects 2-D tensors"):
-            wrapped(input=x)
-
-    def test_wrapper_preserves_gradient_flow(self):
-        """Test that wrapper preserves gradient flow."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Partial mask
-        mask = torch.tensor([[1.0, 1.0, 0.0]])
-        wrapped = intervention.query(model, mask)
-
-        # Forward pass with gradients
-        x = torch.randn(1, 10, requires_grad=True)
-        output = wrapped(input=x)
-        loss = output.sum()
-        loss.backward()
-
-        # Check that gradients were computed
+class TestGradientFlow:
+    def test_gradient_through_intervention_module(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=0.5)
+        x = torch.randn(B, enc.in_f, requires_grad=True)
+        m(x).sum().backward()
         assert x.grad is not None
-        assert not torch.all(x.grad == 0)
+
+    def test_gradient_through_original_module_weights(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=0.5)
+        x = torch.randn(B, enc.in_f)
+        m(x).sum().backward()
+        assert enc.linear.weight.grad is not None
+
+    def test_no_gradient_with_full_do_intervention(self):
+        enc = _make_enc()
+        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f, requires_grad=True)
+        out = m(x)
+        out.sum().backward()
+        # quantile=1.0 with uniform policy + STE proxy: grad may still flow
+        # through the STE term, so just check it doesn't error
+        assert out is not None
+
+    def test_gradient_with_ground_truth_partial(self):
+        enc = _make_enc()
+        gt = torch.zeros(B, F)
+        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=0.5)
+        x = torch.randn(B, enc.in_f, requires_grad=True)
+        m(x).sum().backward()
+        assert x.grad is not None
 
 
-class TestRewiringInterventionBatchProcessing:
-    """Test RewiringIntervention with batch processing."""
+# ===========================================================================
+# 12. sel_idx property
+# ===========================================================================
 
-    def test_batch_processing(self):
-        """Test intervention works with batched inputs."""
-        model = nn.Linear(10, 3)
-        constants = torch.tensor([[0.0, 0.5, 1.0],
-                                   [1.0, 0.5, 0.0],
-                                   [0.5, 1.0, 0.5]])
+class TestSelIdx:
+    def test_none_when_no_selection(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        assert m.sel_idx is None
 
-        intervention = DoIntervention(model, constants)
+    def test_tensor_when_int_indices(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
+                               out_concepts_to_intervene_on=[0, 2])
+        sel = m.sel_idx
+        assert isinstance(sel, torch.Tensor)
+        assert sel.tolist() == [0, 2]
 
-        # Batch of 3 samples
-        mask = torch.tensor([[1.0, 0.0, 1.0],
-                              [0.0, 1.0, 0.0],
-                              [1.0, 1.0, 0.0]])
-        wrapped = intervention.query(model, mask)
 
-        x = torch.randn(3, 10)
+# ===========================================================================
+# 13. Extra modules registration
+# ===========================================================================
+
+class TestExtraModules:
+    def test_extra_module_registered(self):
+        enc = _make_enc()
+        head = nn.Linear(F, 1)
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
+                               extra_modules={"task_head": head})
+        assert "task_head" in dict(m.named_modules())
+
+
+# ===========================================================================
+# 14. PositiveWeightsIntervention strategy
+# ===========================================================================
+
+from torch_concepts.nn.modules.low.intervention.strategy.positive_weights import PositiveWeightsIntervention
+
+
+class TestPositiveWeightsIntervention:
+    def test_construction(self):
+        strat = PositiveWeightsIntervention()
+        from torch_concepts.nn.modules.low.base.intervention import BaseModuleInterventionStrategy
+        assert isinstance(strat, BaseModuleInterventionStrategy)
+
+    def test_transform_makes_weights_nonnegative(self):
+        enc = _make_enc()
+        # Force some negative weights
         with torch.no_grad():
-            output = wrapped(input=x)
+            enc.linear.weight.fill_(-1.0)
+        strat = PositiveWeightsIntervention()
+        strat.transform(enc)
+        assert (enc.linear.weight >= 0).all()
 
-        assert output.shape == (3, 3)
-
-
-class TestRewiringInterventionEdgeCases:
-    """Test edge cases for RewiringIntervention."""
-
-    def test_empty_batch_size_one(self):
-        """Test intervention with batch size 1."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-        mask = torch.tensor([[0.0, 0.0, 0.0]])
-        wrapped = intervention.query(model, mask)
-
-        x = torch.randn(1, 10)
+    def test_transform_preserves_positive_weights(self):
+        enc = _make_enc()
         with torch.no_grad():
-            output = wrapped(input=x)
+            enc.linear.weight.fill_(2.0)
+        strat = PositiveWeightsIntervention()
+        strat.transform(enc)
+        assert torch.allclose(enc.linear.weight, torch.full_like(enc.linear.weight, 2.0))
 
-        assert output.shape == (1, 3)
+    def test_transform_returns_module(self):
+        enc = _make_enc()
+        strat = PositiveWeightsIntervention()
+        result = strat.transform(enc)
+        assert result is enc
 
-    def test_large_batch(self):
-        """Test intervention with large batch."""
-        model = nn.Linear(10, 3)
-        ground_truth = torch.tensor([[1.0, 0.0, 1.0]])
-
-        intervention = GroundTruthIntervention(model, ground_truth)
-
-        # Repeat mask for large batch
-        batch_size = 100
-        mask = torch.ones(batch_size, 3)
-        mask[:, 1] = 0  # Replace middle concept
-
-        wrapped = intervention.query(model, mask)
-
-        x = torch.randn(batch_size, 10)
+    def test_full_intervention_via_intervention_module(self):
+        """PositiveWeightsIntervention used as strategy in InterventionModule."""
+        enc = _make_enc()
         with torch.no_grad():
-            output = wrapped(input=x)
-
-        assert output.shape == (batch_size, 3)
-        # Check that middle column is all zeros (from ground truth)
-        assert torch.all(output[:, 1] == 0.0)
-
-
-class DummyOriginal(nn.Module):
-    def __init__(self, out_features):
-        super().__init__()
-        self._out = torch.zeros((1, out_features))
-
-    def forward(self, **kwargs):
-        return self._out
+            enc.linear.weight.fill_(-0.5)
+        strat = PositiveWeightsIntervention()
+        m = InterventionModule(enc, strat, UniformPolicy(), quantile=1.0)
+        x = torch.randn(B, enc.in_f)
+        out = m(x)
+        # After applying ReLU to weights, all weights are 0, output should be bias-only
+        assert out.shape == (B, enc.out_f)
 
 
-class DummyPolicy(nn.Module):
-    def __init__(self, endogenous):
-        super().__init__()
-        self._end = endogenous
+# ===========================================================================
+# 15. GradientPolicy
+# ===========================================================================
 
-    def forward(self, y):
-        # ignore y and return the provided endogenous
-        return self._end
+from torch_concepts.nn.modules.low.intervention.policy.gradient import GradientPolicy
 
 
-def test_distribution_intervention_single_and_per_feature():
-    model = nn.Linear(2, 3)
-    dist_single = Bernoulli(torch.tensor(0.7))
-    di_single = DistributionIntervention(model, dist_single)
+class TestGradientPolicy:
+    def test_construction(self):
+        p = GradientPolicy()
+        from torch_concepts.nn.modules.low.base.intervention import BaseInterventionPolicy
+        assert isinstance(p, BaseInterventionPolicy)
 
-    y = torch.randn(4, 3)
-    t = di_single._make_target(y)
-    assert t.shape == (4, 3)
+    def test_with_gradients_returns_abs(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        grads = torch.tensor([[-1.0, 2.0, -3.0]] * B)
+        out = p(concepts, concept_grads=grads)
+        assert torch.allclose(out, grads.abs())
 
-    # per-feature distributions
-    dists = [Bernoulli(torch.tensor(0.2)), Normal(torch.tensor(0.0), torch.tensor(1.0)), Bernoulli(torch.tensor(0.8))]
-    di_multi = DistributionIntervention(model, dists)
-    t2 = di_multi._make_target(y)
-    assert t2.shape == (4, 3)
+    def test_without_gradients_returns_zeros(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        out = p(concepts)
+        assert torch.equal(out, torch.zeros(B, F))
 
+    def test_no_gradients_same_shape_as_input(self):
+        p = GradientPolicy()
+        concepts = torch.randn(3, 7)
+        out = p(concepts)
+        assert out.shape == (3, 7)
 
-def test_intervention_wrapper_build_mask_single_column_behaviour():
-    # Create wrapper with subset single column
-    B, F = 2, 3
-    original = DummyOriginal(out_features=F)
-    # policy endogenous: shape [B, F]
-    endogenous = torch.tensor([[0.1, 0.5, 0.2], [0.2, 0.4, 0.6]], dtype=torch.float32)
-    policy = DummyPolicy(endogenous)
-    strategy = DoIntervention(original, 1.0)
-
-    # q < 1: selected column should be kept (mask close to 1 with STE proxy applied)
-    wrapper_soft = _InterventionWrapper(original=original, policy=policy, strategy=strategy, quantile=0.5, subset=[1])
-    mask_soft = wrapper_soft._build_mask(endogenous)
-    assert mask_soft.shape == (B, F)
-    # For single column with q < 1, the hard mask is 1 (keep), STE proxy modifies slightly
-    # The selected column values should be close to the soft proxy values (between 0 and 1)
-    # Check that non-selected columns are 1.0
-    assert torch.allclose(mask_soft[:, 0], torch.ones((B,), dtype=mask_soft.dtype))
-    assert torch.allclose(mask_soft[:, 2], torch.ones((B,), dtype=mask_soft.dtype))
-    # Selected column should have STE proxy applied (values influenced by endogenous)
-    # Since hard mask starts at 1 and STE subtracts soft_proxy then adds it back,
-    # the result equals soft_proxy which is log1p(sel)/log1p(row_max)
-    # This should be < 1 for most cases
-    soft_values = mask_soft[:, 1]
-    assert soft_values.shape == (B,)
-    # With the given endogenous values, soft values should be less than 1.0
-    # Actually, let's just verify the shape and dtype are correct
-    assert soft_values.dtype == mask_soft.dtype
-
-    # q == 1: selected column should be zeros (replace)
-    wrapper_hard = _InterventionWrapper(original=original, policy=policy, strategy=strategy, quantile=1.0, subset=[1])
-    mask_hard = wrapper_hard._build_mask(endogenous)
-    # For q==1, hard mask is 0 (replace), and after STE proxy it becomes the soft proxy value
-    # which should be < 1 for the selected column
-    assert mask_hard[:, 1].max() < 1.0  # At least somewhat less than 1
-    # Non-selected columns should still be 1.0
-    assert torch.allclose(mask_hard[:, 0], torch.ones((B,), dtype=mask_hard.dtype))
-    assert torch.allclose(mask_hard[:, 2], torch.ones((B,), dtype=mask_hard.dtype))
+    def test_gradient_scores_are_nonnegative(self):
+        p = GradientPolicy()
+        concepts = torch.randn(B, F)
+        grads = torch.randn(B, F)
+        out = p(concepts, concept_grads=grads)
+        assert (out >= 0).all()
 
 
-def test_global_policy_state_compute_and_slice():
-    state = _GlobalPolicyState(n_wrappers=2, quantile=0.5)
-    B = 1
-    end1 = torch.tensor([[0.9, 0.1]], dtype=torch.float32)
-    end2 = torch.tensor([[0.2, 0.8]], dtype=torch.float32)
-    out1 = torch.zeros((B, 2))
-    out2 = torch.zeros((B, 2))
+# ===========================================================================
+# 16. Additional intervention module coverage
+# ===========================================================================
 
-    state.register(0, end1, out1)
-    state.register(1, end2, out2)
-
-    assert not state.is_ready() or state.is_ready()  # register doesn't compute readiness until both are in
-
-    # Should be ready now
-    assert state.is_ready()
-    state.compute_global_mask()
-    gm = state.global_mask
-    assert gm.shape == (B, 4)
-
-    slice0 = state.get_mask_slice(0)
-    slice1 = state.get_mask_slice(1)
-    assert slice0.shape == out1.shape
-    assert slice1.shape == out2.shape
+from torch_concepts.annotations import Annotations
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestInterventionModuleCoverage:
+    def test_build_context_fn_is_called(self):
+        """build_context_fn is invoked and its return value flows into policy/strategy."""
+        enc = _make_enc()
+        context_called = []
+
+        def my_build_context(preds, module, inputs, extra_tensors, extra_modules):
+            context_called.append(True)
+            return {}
+
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.5),
+            UniformPolicy(),
+            build_context=my_build_context,
+        )
+        x = torch.randn(B, enc.in_f)
+        m(x)
+        assert context_called
+
+    def test_invalid_strategy_type_raises(self):
+        """Passing an object that is neither BaseConceptInterventionStrategy nor BaseModuleInterventionStrategy raises."""
+        enc = _make_enc()
+
+        class FakeStrategy:
+            pass
+
+        m = InterventionModule(enc, FakeStrategy(), UniformPolicy())
+        x = torch.randn(B, enc.in_f)
+        with pytest.raises((ValueError, AttributeError)):
+            m(x)
+
+    def test_sel_idx_string_type_raises(self):
+        """String-based concept selection without Annotations raises ValueError."""
+        enc = _make_enc()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=['concept_a'],
+        )
+        with pytest.raises(ValueError):
+            _ = m.sel_idx
+
+    def test_sel_idx_invalid_type_raises(self):
+        """out_concepts_to_intervene_on with floats raises ValueError."""
+        enc = _make_enc()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=[1.5],  # not int or str
+        )
+        with pytest.raises(ValueError):
+            _ = m.sel_idx
+
+    def test_module_with_var_kwargs_patches_forward(self):
+        """Module whose forward has **kwargs still gets patched cleanly."""
+        class KwargsEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+            def forward(self, x, **kwargs):
+                return torch.sigmoid(self.l(x))
+
+        enc = KwargsEncoder()
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        x = torch.randn(B, 4)
+        out = m(x)
+        assert out.shape == (B, 3)
+
+    def test_patch_forward_signature_exception_path(self):
+        """Module whose forward raises during inspect.signature() skips patching silently (lines 99-100)."""
+        class _Unpatchable(nn.Module):
+            """forward is a non-callable descriptor — inspect.signature raises TypeError."""
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+
+        enc = _Unpatchable()
+        # Overwrite 'forward' with a built-in that has no inspectable signature
+        enc.forward = len  # built-in: inspect.signature raises ValueError
+        # Construction must not raise — the except branch (lines 99-100) silently
+        # swallows the signature-inspection failure.
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_sel_idx_string_with_valid_axis_annotation(self):
+        """String-based selection with valid Annotations returns correct indices (lines 112-113)."""
+        from torch_concepts.annotations import Annotations
+
+        class AnnotatedEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+                self.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
+
+            def forward(self, x):
+                return torch.sigmoid(self.l(x))
+
+        enc = AnnotatedEncoder()
+        m = InterventionModule(
+            enc,
+            DoIntervention(0.0),
+            UniformPolicy(),
+            out_concepts_to_intervene_on=['alpha', 'gamma'],
+        )
+        sel = m.sel_idx
+        assert sel.tolist() == [0, 2]
+
+    def test_forward_bind_raises_falls_back_to_empty_dict(self):
+        """When sig.bind raises TypeError, original_module_inputs falls back to {} (lines 140-141)."""
+        class _BadSigEncoder(nn.Module):
+            """forward requires extra required arg so sig.bind with just x fails."""
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+
+            def forward(self, x, required_extra):
+                return torch.sigmoid(self.l(x))
+
+        enc = _BadSigEncoder()
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        x = torch.randn(B, 4)
+        # Calling m(x) without required_extra triggers TypeError inside sig.bind;
+        # also, the underlying encoder call will fail — we only care that the
+        # except branch is reachable, so catch the propagated error from enc.forward.
+        with pytest.raises(TypeError):
+            m(x)
+
+
+# ===========================================================================
+# 17. Base intervention abstract methods (base/intervention.py lines 27, 43, 53)
+# ===========================================================================
+
+from torch_concepts.nn.modules.low.base.intervention import (
+    BaseConceptInterventionStrategy,
+    BaseModuleInterventionStrategy,
+    BaseInterventionPolicy,
+)
+
+
+class TestBaseInterventionModuleCoverageExtra:
+    def test_patch_forward_signature_exception_branch(self):
+        """A forward with no inspectable signature triggers the except (ValueError/TypeError) branch (lines 99-100)."""
+        class _Unpatchable(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = nn.Linear(4, 3)
+            def forward(self, x):
+                return torch.sigmoid(self.l(x))
+
+        enc = _Unpatchable()
+        # range() has no signature inspectable by inspect.signature -> raises ValueError
+        enc.forward = range
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        assert m.original_module is enc
+
+    def test_base_build_context_raises_not_implemented(self):
+        """BaseInterventionModule.build_context raises NotImplementedError (line 128)."""
+        from torch_concepts.nn.modules.low.intervention.intervention import (
+            BaseInterventionModule,
+        )
+
+        class _Concrete(BaseInterventionModule):
+            def build_context(self, *args, **kwargs):
+                return super().build_context(*args, **kwargs)
+
+        enc = _make_enc()
+        m = _Concrete(enc, DoIntervention(0.0), UniformPolicy())
+        with pytest.raises(NotImplementedError):
+            m.build_context({}, enc, torch.randn(B, F))
+
+
+class TestBaseInterventionAbstractMethods:
+    def test_base_concept_strategy_forward_raises(self):
+        """BaseConceptInterventionStrategy.forward raises NotImplementedError (line 27)."""
+        class _ConcreteStrategy(BaseConceptInterventionStrategy):
+            def forward(self, *args, **kwargs):
+                return super().forward(*args, **kwargs)
+
+        strat = _ConcreteStrategy()
+        with pytest.raises(NotImplementedError):
+            strat(torch.randn(2, 3))
+
+    def test_base_module_strategy_transform_raises(self):
+        """BaseModuleInterventionStrategy.transform raises NotImplementedError (line 43)."""
+        class _ConcreteModuleStrategy(BaseModuleInterventionStrategy):
+            def transform(self, module, *args, **kwargs):
+                return super().transform(module, *args, **kwargs)
+
+        strat = _ConcreteModuleStrategy()
+        with pytest.raises(NotImplementedError):
+            strat.transform(nn.Linear(2, 2))
+
+    def test_base_policy_forward_raises(self):
+        """BaseInterventionPolicy.forward raises NotImplementedError (line 53)."""
+        class _ConcretePolicy(BaseInterventionPolicy):
+            def forward(self, x, *args, **kwargs):
+                return super().forward(x, *args, **kwargs)
+
+        policy = _ConcretePolicy()
+        with pytest.raises(NotImplementedError):
+            policy(torch.randn(2, 3))

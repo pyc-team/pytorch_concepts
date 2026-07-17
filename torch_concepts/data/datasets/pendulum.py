@@ -9,7 +9,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from ..base.dataset import ConceptDataset
-from ...annotations import Annotations, AxisAnnotation
+from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
@@ -200,16 +200,13 @@ class PendulumDataset(ConceptDataset):
         cy = torch.tensor(cy, dtype=torch.float32)
 
         cy_names = CONCEPT_NAMES + TASK_NAMES
-        concept_metadata = {name: {'type': 'continuous'} for name in cy_names}
         cardinalities = tuple([1] * len(cy_names))
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=cy_names,
-                cardinalities=cardinalities,
-                metadata=concept_metadata,
-            )
-        })
+        annotations = Annotations(
+            labels=cy_names,
+            cardinalities=cardinalities,
+            types=['continuous'] * len(cy_names),
+        )
 
         os.makedirs(self.root_dir, exist_ok=True)
 

@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
 from torch_concepts import seed_everything
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import RandomPolicy, DoIntervention, intervention, DeterministicInference, BipartiteModel, LazyConstructor, \
     MixConceptExogegnousToConcept, LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy
@@ -34,7 +34,7 @@ def main():
         'c2': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2'},
         'xor': {'distribution': RelaxedOneHotCategorical, 'type': 'binary', 'description': 'XOR Task'},
     }
-    annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
+    annotations = Annotations(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)
 
     # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())

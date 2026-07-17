@@ -35,15 +35,8 @@ ignore:
   # large Hub checkpoints; exclude it from coverage.
   - "torch_concepts/steerling/"
   - "**/steerling/**"
-  # Download-heavy datasets / datamodules (require fetching & storing data).
-  - "torch_concepts/data/datasets/dsprites_regression.py"
-  - "torch_concepts/data/datasets/mnist_arithmetic.py"
-  - "torch_concepts/data/datasets/pendulum.py"
-  - "torch_concepts/data/datasets/awa2.py"
-  - "torch_concepts/data/datasets/cub.py"
-  - "torch_concepts/data/datamodules/dsprites_regression.py"
-  - "torch_concepts/data/datamodules/mnist_arithmetic.py"
-  - "torch_concepts/data/datamodules/pendulum.py"
-  - "torch_concepts/data/datamodules/awa2.py"
-  - "torch_concepts/data/datamodules/cub.py"
+  # Data loaders depend on fetching & storing external datasets (and pretrained
+  # backbones); exclude the whole data subpackage from coverage.
+  - "torch_concepts/data/"
+  - "**/data/**"
 

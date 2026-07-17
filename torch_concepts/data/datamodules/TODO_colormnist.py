@@ -7,7 +7,6 @@ from ..datasets import ColorMNISTDataset
 
 from ..base.datamodule import ConceptDataModule
 from ..splitters.coloring import ColoringSplitter
-from ...typing import BackboneType
 
 
 class ColorMNISTDataModule(ConceptDataModule):
@@ -23,7 +22,6 @@ class ColorMNISTDataModule(ConceptDataModule):
         batch_size: Batch size for dataloaders.
         concept_subset: Subset of concepts to use. If None, uses all concepts.
         label_descriptions: Dictionary mapping concept names to descriptions.
-        backbone: Model backbone to use (if applicable).
         workers: Number of workers for dataloaders.
     """
     
@@ -36,9 +34,6 @@ class ColorMNISTDataModule(ConceptDataModule):
         test_size: int | float = 0.2,
         batch_size: int = 512,
         task_type: str = 'classification',
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         concept_subset: list | None = None,
         label_descriptions: dict | None = None,
         workers: int = 0,
@@ -72,9 +67,6 @@ class ColorMNISTDataModule(ConceptDataModule):
             test_size=test_size,
             batch_size=batch_size,
             task_type=task_type,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
             splitter=splitter
         )

@@ -15,8 +15,7 @@ class RandomSplitter(Splitter):
     """Random splitting strategy for datasets.
     
     Randomly divides a dataset into train, validation, and test splits.
-    Ensures reproducibility when numpy's random seed is set externally
-    before calling fit().
+    Reproducible via its own ``seed`` argument.
     
     The splitting is done in the following order:
     1. Test (if test_size > 0)
@@ -30,7 +29,9 @@ class RandomSplitter(Splitter):
         test_size (Union[int, float], optional): Size of test set.
             If float, represents fraction of dataset. If int, represents
             absolute number of samples. Defaults to 0.2.
-            
+        seed (int, optional): Seed for the split's own RNG. 'None' means
+            non-deterministic (fresh entropy). Defaults to None.
+
     Example:
         >>> # 70% train, 10% val, 20% test
         >>> splitter = RandomSplitter(val_size=0.1, test_size=0.2)
@@ -43,9 +44,10 @@ class RandomSplitter(Splitter):
         self,
         val_size: Union[int, float] = 0.1,
         test_size: Union[int, float] = 0.2,
+        seed: Union[int, None] = None,
     ):
         """Initialize the RandomSplitter.
-        
+
         Args:
             val_size: Size of validation set. If float, represents fraction
                 of dataset. If int, represents absolute number of samples.
@@ -53,10 +55,12 @@ class RandomSplitter(Splitter):
             test_size: Size of test set. If float, represents fraction
                 of dataset. If int, represents absolute number of samples.
                 Defaults to 0.2.
+            seed: Seed for the split's own random generator.
         """
         super().__init__()
         self.val_size = val_size
         self.test_size = test_size
+        self.seed = seed
 
     def fit(self, dataset: ConceptDataset) -> None:
         """Randomly split the dataset into train/val/test sets.
@@ -88,8 +92,8 @@ class RandomSplitter(Splitter):
         
         n_train = n_samples - total_split
         
-        # Create random permutation of indices
-        indices = np.random.permutation(n_samples)
+        # Always permute with an isolated RNG. 'None' uses fresh entropy.
+        indices = np.random.default_rng(self.seed).permutation(n_samples)
         
         # Split indices in order: test, val, train
         test_idxs = indices[:n_test]

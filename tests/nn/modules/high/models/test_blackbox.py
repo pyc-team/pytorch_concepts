@@ -24,12 +24,18 @@ from torch_concepts.nn.modules.high.models.blackbox import BlackBox, BlackBoxTas
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.nn import MLP
+from torch_concepts.annotations import Annotations
 
 
 # =============================================================================
 # Test Fixtures and Helper Classes
 # =============================================================================
+
+def _logits(out, names):
+    """Concatenate the per-concept logits for ``names`` along the feature axis."""
+    import torch
+    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
 
 class DummyBackbone(nn.Module):
     """Simple backbone for testing."""
@@ -56,13 +62,11 @@ def make_annotations(labels, cardinalities, distributions=None):
     metadata = {}
     for label, card in zip(labels, cardinalities):
         metadata[label] = {'type': 'discrete'}
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=labels,
             cardinalities=cardinalities,
             metadata=metadata
         )
-    })
 
 
 # =============================================================================
@@ -82,49 +86,48 @@ class TestBlackBoxInitialization(unittest.TestCase):
     def test_basic_init(self):
         """Test basic initialization."""
         model = BlackBox(input_size=8, annotations=self.ann)
-        
+
         self.assertIsInstance(model, nn.Module)
         self.assertTrue(hasattr(model, 'linear'))
-        self.assertTrue(hasattr(model, 'latent_encoder'))
-    
+        self.assertTrue(hasattr(model, 'backbone'))
+
     def test_init_with_backbone(self):
         """Test initialization with custom backbone."""
         backbone = DummyBackbone(out_features=16)
         model = BlackBox(
             input_size=8,
             annotations=self.ann,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=16,
         )
-        
+
         self.assertIsInstance(model.backbone, DummyBackbone)
         self.assertEqual(model.backbone.out_features, 16)
-    
-    def test_init_with_latent_encoder(self):
-        """Test initialization with custom latent encoder."""
+
+    def test_init_with_backbone_encoder(self):
+        """Test initialization with a custom backbone mapping input to latent."""
         model = BlackBox(
             input_size=8,
             annotations=self.ann,
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
-        
-        self.assertIsInstance(model.latent_encoder, DummyLatentEncoder)
-        self.assertEqual(model.latent_encoder.linear.in_features, 8)
-        self.assertEqual(model.latent_encoder.linear.out_features, 4)
+
+        self.assertIsInstance(model.backbone, DummyLatentEncoder)
+        self.assertEqual(model.backbone.linear.in_features, 8)
+        self.assertEqual(model.backbone.linear.out_features, 4)
     
     def test_output_size_calculation(self):
         """Test that output size equals sum of cardinalities."""
         model = BlackBox(input_size=8, annotations=self.ann)
         
         # Sum of cardinalities: 1 + 2 + 1 = 4
-        expected_output_size = sum(self.ann[1].cardinalities)
+        expected_output_size = sum(self.ann.cardinalities)
         self.assertEqual(model.linear.out_features, expected_output_size)
     
     def test_init_with_defaults(self):
         """Test initialization with default distributions."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
                 metadata={
@@ -132,7 +135,6 @@ class TestBlackBoxInitialization(unittest.TestCase):
                     'c2': {'type': 'discrete'}
                 }
             )
-        })
         
         model = BlackBox(
             input_size=8,
@@ -141,26 +143,28 @@ class TestBlackBoxInitialization(unittest.TestCase):
         
         self.assertIsInstance(model, nn.Module)
     
-    def test_latent_size_with_no_encoder(self):
-        """Test latent_size equals input_size when no encoder is used."""
+    def test_latent_size_with_no_backbone(self):
+        """Test latent_size equals input_size when no backbone is used."""
         model = BlackBox(input_size=16, annotations=self.ann)
         self.assertEqual(model.latent_size, 16)
-    
-    def test_latent_size_with_encoder_kwargs(self):
-        """Test latent_size equals hidden_size from encoder kwargs."""
+
+    def test_latent_size_with_backbone(self):
+        """Test latent_size equals the backbone's output size."""
         model = BlackBox(
             input_size=8,
             annotations=self.ann,
-            latent_encoder_kwargs={'hidden_size': 32}
+            backbone=MLP(input_size=8, hidden_size=32),
+            latent_size=32,
         )
         self.assertEqual(model.latent_size, 32)
-    
+
     def test_linear_layer_input_matches_latent_size(self):
         """Test that the linear layer input features match latent_size."""
         model = BlackBox(
             input_size=8,
             annotations=self.ann,
-            latent_encoder_kwargs={'hidden_size': 16}
+            backbone=MLP(input_size=8, hidden_size=16),
+            latent_size=16,
         )
         self.assertEqual(model.linear.in_features, 16)
     
@@ -193,122 +197,134 @@ class TestBlackBoxForward(unittest.TestCase):
         defaults = dict(
             input_size=8,
             annotations=self.ann,
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
         defaults.update(kwargs)
         return BlackBox(**defaults)
     
+    ALL = ['c1', 'c2', 'task']
+
     def test_forward_shape(self):
         """Test forward pass output shape."""
         model = self._make_model()
         x = torch.randn(2, 8)
         out = model(x)
-        
+
         # Output size is sum of cardinalities: 1 + 3 + 2 = 6
-        expected_output_size = sum(self.ann[1].cardinalities)
-        self.assertEqual(out.logits.shape, (2, expected_output_size))
-    
+        expected_output_size = sum(self.ann.cardinalities)
+        self.assertEqual(_logits(out, self.ALL).shape, (2, expected_output_size))
+
     def test_forward_batch_sizes(self):
         """Test forward pass with different batch sizes."""
         model = self._make_model()
-        
+
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             out = model(x)
-            self.assertEqual(out.logits.shape[0], batch_size)
-    
+            self.assertEqual(_logits(out, self.ALL).shape[0], batch_size)
+
     def test_forward_query_filters_output(self):
         """Test that query selects only the queried concept columns."""
         model = self._make_model()
-        
+
         x = torch.randn(2, 8)
         # Annotations: c1(1), c2(3), task(2) — total 6
         out_all = model(x)
-        self.assertEqual(out_all.logits.shape, (2, 6))
-        
+        all_logits = _logits(out_all, self.ALL)
+        self.assertEqual(all_logits.shape, (2, 6))
+
         # Query single binary concept
         out_c1 = model(x, query=['c1'])
-        self.assertEqual(out_c1.logits.shape, (2, 1))
-        self.assertTrue(torch.allclose(out_c1.logits, out_all.logits[:, 0:1]))
-        
+        c1_logits = _logits(out_c1, ['c1'])
+        self.assertEqual(c1_logits.shape, (2, 1))
+        self.assertTrue(torch.allclose(c1_logits, all_logits[:, 0:1]))
+
         # Query single categorical concept
         out_c2 = model(x, query=['c2'])
-        self.assertEqual(out_c2.logits.shape, (2, 3))
-        self.assertTrue(torch.allclose(out_c2.logits, out_all.logits[:, 1:4]))
-        
+        c2_logits = _logits(out_c2, ['c2'])
+        self.assertEqual(c2_logits.shape, (2, 3))
+        self.assertTrue(torch.allclose(c2_logits, all_logits[:, 1:4]))
+
         # Query subset
         out_subset = model(x, query=['c1', 'task'])
-        self.assertEqual(out_subset.logits.shape, (2, 3))  # 1 + 2
-        self.assertTrue(torch.allclose(out_subset.logits[:, 0:1], out_all.logits[:, 0:1]))
-        self.assertTrue(torch.allclose(out_subset.logits[:, 1:3], out_all.logits[:, 4:6]))
-    
+        subset_logits = _logits(out_subset, ['c1', 'task'])
+        self.assertEqual(subset_logits.shape, (2, 3))  # 1 + 2
+        self.assertTrue(torch.allclose(subset_logits[:, 0:1], all_logits[:, 0:1]))
+        self.assertTrue(torch.allclose(subset_logits[:, 1:3], all_logits[:, 4:6]))
+
     def test_forward_query_all_same_as_none(self):
         """Test that querying all concepts returns same as query=None."""
         model = self._make_model()
         model.eval()
-        
+
         x = torch.randn(2, 8)
         out_none = model(x)
         out_all = model(x, query=['c1', 'c2', 'task'])
-        
-        self.assertEqual(out_none.logits.shape, out_all.logits.shape)
-        self.assertTrue(torch.allclose(out_none.logits, out_all.logits))
-    
+
+        none_logits = _logits(out_none, self.ALL)
+        all_logits = _logits(out_all, self.ALL)
+        self.assertEqual(none_logits.shape, all_logits.shape)
+        self.assertTrue(torch.allclose(none_logits, all_logits))
+
     def test_forward_query_single_concept(self):
         """Test querying a single concept with large cardinality."""
         model = self._make_model()
-        
+
         x = torch.randn(4, 8)
         out = model(x, query=['task'])
-        self.assertEqual(out.logits.shape, (4, 2))
-    
+        self.assertEqual(_logits(out, ['task']).shape, (4, 2))
+
     def test_forward_with_evidence_ignored(self):
         """Test that evidence parameter is accepted but doesn't affect output."""
         model = self._make_model()
-        
+
         x = torch.randn(2, 8)
         out1 = model(x)
         out2 = model(x, evidence=torch.randn(2, 4))
-        
-        self.assertEqual(out1.logits.shape, out2.logits.shape)
-    
+
+        self.assertEqual(
+            _logits(out1, self.ALL).shape, _logits(out2, self.ALL).shape
+        )
+
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic with same input."""
         model = self._make_model()
         model.eval()
-        
+
         x = torch.randn(2, 8)
         out1 = model(x)
         out2 = model(x)
-        
-        self.assertTrue(torch.allclose(out1.logits, out2.logits))
-    
+
+        self.assertTrue(
+            torch.allclose(_logits(out1, self.ALL), _logits(out2, self.ALL))
+        )
+
     def test_forward_no_backbone(self):
         """Test forward pass with no backbone (identity)."""
         model = BlackBox(input_size=8, annotations=self.ann)
         x = torch.randn(2, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 6))
-    
-    def test_forward_no_latent_encoder(self):
-        """Test forward pass with identity latent encoder."""
+
+        self.assertEqual(_logits(out, self.ALL).shape, (2, 6))
+
+    def test_forward_no_backbone_shape(self):
+        """Test forward pass with identity backbone preserves shapes."""
         model = BlackBox(input_size=8, annotations=self.ann)
         x = torch.randn(3, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape[0], 3)
-        self.assertEqual(out.logits.shape[1], sum(self.ann[1].cardinalities))
-    
+
+        logits = _logits(out, self.ALL)
+        self.assertEqual(logits.shape[0], 3)
+        self.assertEqual(logits.shape[1], sum(self.ann.cardinalities))
+
     def test_forward_extra_kwargs_ignored(self):
         """Test that extra kwargs in forward are silently ignored."""
         model = self._make_model()
         x = torch.randn(2, 8)
         # These kwargs should be captured by **kwargs and ignored
         out = model(x, ground_truth=torch.ones(2, 6), concept_names=['a'])
-        self.assertEqual(out.logits.shape, (2, 6))
+        self.assertEqual(_logits(out, self.ALL).shape, (2, 6))
 
 
 class TestBlackBoxPrepareTarget(unittest.TestCase):
@@ -320,17 +336,16 @@ class TestBlackBoxPrepareTarget(unittest.TestCase):
         self.model = BlackBox(
             input_size=8,
             annotations=self.ann,
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
-    
+
     def test_prepare_target(self):
         """Test prepare_target returns target unchanged for BlackBox."""
         x = torch.randn(2, 8)
         out = self.model(x)
-        target = torch.randint(0, 2, out.logits.shape)
-        
+        target = torch.randint(0, 2, _logits(out, ['c1', 'task']).shape)
+
         prepared = self.model.prepare_target(target)
         self.assertTrue(torch.allclose(prepared, target))
 
@@ -353,23 +368,24 @@ class TestBlackBoxRepr(unittest.TestCase):
             input_size=8,
             annotations=ann,
             backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            latent_size=8,
         )
-        
+
         repr_str = repr(model)
         self.assertIsInstance(repr_str, str)
         self.assertIn('BlackBox', repr_str)
-        self.assertIn('DummyBackbone', repr_str)
-    
+        self.assertIn('backbone=DummyBackbone', repr_str)
+        self.assertNotIn('latent_encoder=', repr_str)
+
     def test_repr_without_backbone(self):
-        """Test __repr__ when no backbone is used."""
+        """Test __repr__ when no backbone is used (defaults to Identity)."""
         ann = make_annotations(['output'], [1])
         model = BlackBox(input_size=8, annotations=ann)
-        
+
         repr_str = repr(model)
         self.assertIn('BlackBox', repr_str)
-        self.assertIn('None', repr_str)  # backbone=None
+        self.assertIn('backbone=Identity', repr_str)
+        self.assertNotIn('latent_encoder=', repr_str)
 
 
 # =============================================================================
@@ -481,21 +497,16 @@ class TestBlackBoxLightning(unittest.TestCase):
         config = model.configure_optimizers()
         self.assertIsNone(config)
     
-    def test_lightning_get_inference_kwargs_returns_empty(self):
-        """Test that _get_inference_kwargs returns {} for BlackBox."""
+    def test_lightning_no_inference_engine(self):
+        """Test that BlackBox with lightning=True does not have inference engines."""
         model = BlackBox(
             lightning=True,
             input_size=8,
             annotations=self.ann,
         )
-        
-        batch = {
-            'inputs': {'x': torch.randn(2, 8)},
-            'concepts': {'c': torch.randint(0, 2, (2, 2)).float()}
-        }
-        
-        kwargs = model._get_inference_kwargs(batch)
-        self.assertEqual(kwargs, {})
+
+        self.assertFalse(hasattr(model, 'eval_inference'))
+        self.assertFalse(hasattr(model, 'train_inference'))
 
 
 # =============================================================================
@@ -543,23 +554,23 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names='task1',
-            backbone=backbone
+            backbone=backbone,
+            latent_size=16,
         )
-        
+
         self.assertIsInstance(model.backbone, DummyBackbone)
-    
-    def test_init_with_latent_encoder(self):
-        """Test initialization with custom latent encoder."""
+
+    def test_init_with_backbone_encoder(self):
+        """Test initialization with a custom backbone mapping input to latent."""
         model = BlackBoxTaskOnly(
             input_size=8,
             annotations=self.ann,
             task_names='task1',
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
-        
-        self.assertIsInstance(model.latent_encoder, DummyLatentEncoder)
+
+        self.assertIsInstance(model.backbone, DummyLatentEncoder)
     
     def test_task_concept_idx_calculation(self):
         """Test that task concept-level indices are correctly calculated."""
@@ -596,8 +607,7 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
     
     def test_init_with_defaults(self):
         """Test initialization with default distributions."""
-        ann = Annotations({
-            1: AxisAnnotation(
+        ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
                 metadata={
@@ -605,7 +615,6 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
                     'task': {'type': 'discrete'}
                 }
             )
-        })
         
         model = BlackBoxTaskOnly(
             input_size=8,
@@ -643,9 +652,8 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names=task_names,
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
         defaults.update(kwargs)
         return BlackBoxTaskOnly(**defaults)
@@ -655,45 +663,47 @@ class TestBlackBoxTaskOnlyForward(unittest.TestCase):
         model = self._make_model(task_names='task1')
         x = torch.randn(2, 8)
         out = model(x)
-        
+
         # Only task1 output (cardinality 1)
-        self.assertEqual(out.logits.shape, (2, 1))
-    
+        self.assertEqual(_logits(out, ['task1']).shape, (2, 1))
+
     def test_forward_shape_multiple_tasks(self):
         """Test forward pass output shape with multiple tasks."""
         model = self._make_model(task_names=['task1', 'task2'])
         x = torch.randn(2, 8)
         out = model(x)
-        
+
         # task1(1) + task2(3) = 4
-        self.assertEqual(out.logits.shape, (2, 4))
-    
+        self.assertEqual(_logits(out, ['task1', 'task2']).shape, (2, 4))
+
     def test_forward_batch_sizes(self):
         """Test forward pass with different batch sizes."""
         model = self._make_model()
-        
+
         for batch_size in [1, 4, 16, 32]:
             x = torch.randn(batch_size, 8)
             out = model(x)
-            self.assertEqual(out.logits.shape[0], batch_size)
-    
+            self.assertEqual(_logits(out, ['task1']).shape[0], batch_size)
+
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic."""
         model = self._make_model()
         model.eval()
-        
+
         x = torch.randn(2, 8)
         out1 = model(x)
         out2 = model(x)
-        
-        self.assertTrue(torch.allclose(out1.logits, out2.logits))
-    
+
+        self.assertTrue(
+            torch.allclose(_logits(out1, ['task1']), _logits(out2, ['task1']))
+        )
+
     def test_forward_extra_kwargs_ignored(self):
         """Test that extra kwargs in forward are silently ignored."""
         model = self._make_model()
         x = torch.randn(2, 8)
         out = model(x, ground_truth=torch.ones(2, 1), concept_names=['a'])
-        self.assertEqual(out.logits.shape, (2, 1))
+        self.assertEqual(_logits(out, ['task1']).shape, (2, 1))
 
 
 class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
@@ -709,11 +719,10 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
             input_size=8,
             annotations=self.ann,
             task_names='task1',
-            backbone=DummyBackbone(),
-            latent_encoder=DummyLatentEncoder,
-            latent_encoder_kwargs={'hidden_size': 4}
+            backbone=DummyLatentEncoder(8, hidden_size=4),
+            latent_size=4,
         )
-    
+
     def test_prepare_target_slices_target(self):
         """Test prepare_target slices target to task columns."""
         # Full concept-level target: c1, c2, task1
@@ -730,8 +739,8 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
         """Test that forward pass preserves gradient flow."""
         x = torch.randn(2, 8)
         out = self.model(x)
-        
-        loss = out.logits.sum()
+
+        loss = _logits(out, ['task1']).sum()
         loss.backward()
         
         # Check gradients exist on model parameters
@@ -896,22 +905,17 @@ class TestBlackBoxTaskOnlyLightning(unittest.TestCase):
         self.assertIn('optimizer', config)
         self.assertIsInstance(config['optimizer'], torch.optim.AdamW)
     
-    def test_lightning_get_inference_kwargs_returns_empty(self):
-        """Test that _get_inference_kwargs returns {} for BlackBoxTaskOnly."""
+    def test_lightning_no_inference_engine(self):
+        """Test that BlackBoxTaskOnly with lightning=True does not have inference engines."""
         model = BlackBoxTaskOnly(
             lightning=True,
             input_size=8,
             annotations=self.ann,
             task_names='task',
         )
-        
-        batch = {
-            'inputs': {'x': torch.randn(2, 8)},
-            'concepts': {'c': torch.randint(0, 2, (2, 4)).float()}
-        }
-        
-        kwargs = model._get_inference_kwargs(batch)
-        self.assertEqual(kwargs, {})
+
+        self.assertFalse(hasattr(model, 'eval_inference'))
+        self.assertFalse(hasattr(model, 'train_inference'))
 
 
 class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
@@ -1031,11 +1035,11 @@ class TestBlackBoxTaskOnlySetupMetrics(unittest.TestCase):
 
 class TestBlackBoxDeviceConsistency(unittest.TestCase):
     """Test device consistency for BlackBox models."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.ann = make_annotations(['c1', 'task'], [1, 1])
-    
+
     def test_blackbox_device_consistency(self):
         """Test that BlackBox maintains device consistency."""
         if not torch.cuda.is_available():
@@ -1047,9 +1051,9 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         
         x = torch.randn(2, 8, device=device)
         out = model(x)
-        
-        self.assertEqual(out.logits.device.type, device.type)
-    
+
+        self.assertEqual(_logits(out, ['c1', 'task']).device.type, device.type)
+
     def test_blackbox_task_only_device_consistency(self):
         """Test that BlackBoxTaskOnly maintains device consistency."""
         if not torch.cuda.is_available():
@@ -1065,9 +1069,9 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         
         x = torch.randn(2, 8, device=device)
         out = model(x)
-        
-        self.assertEqual(out.logits.device.type, device.type)
-    
+
+        self.assertEqual(_logits(out, ['task']).device.type, device.type)
+
     def test_blackbox_task_only_prepare_target_preserves_device(self):
         """Test that prepare_target preserves tensor device."""
         if not torch.cuda.is_available():
@@ -1103,59 +1107,59 @@ class TestBlackBoxEdgeCases(unittest.TestCase):
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(2, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 1))
-    
+
+        self.assertEqual(_logits(out, ['output']).shape, (2, 1))
+
     def test_large_cardinalities(self):
         """Test with large cardinalities."""
         ann = make_annotations(['c1', 'c2'], [100, 50])
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(2, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 150))
-    
+
+        self.assertEqual(_logits(out, ['c1', 'c2']).shape, (2, 150))
+
     def test_batch_size_one(self):
         """Test with batch size of 1."""
         ann = make_annotations(['output'], [1])
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(1, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (1, 1))
-    
+
+        self.assertEqual(_logits(out, ['output']).shape, (1, 1))
+
     def test_gradient_flow(self):
         """Test that gradients flow through the model."""
         ann = make_annotations(['output'], [1])
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(2, 8, requires_grad=True)
         out = model(x)
-        loss = out.logits.sum()
+        loss = _logits(out, ['output']).sum()
         loss.backward()
-        
+
         self.assertIsNotNone(x.grad)
         self.assertFalse(torch.all(x.grad == 0))
-    
+
     def test_many_concepts(self):
         """Test with many concepts."""
         labels = [f'c{i}' for i in range(20)]
         cardinalities = [1] * 20
         ann = make_annotations(labels, cardinalities)
-        
+
         model = BlackBox(input_size=8, annotations=ann)
         x = torch.randn(2, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 20))
-    
+
+        self.assertEqual(_logits(out, labels).shape, (2, 20))
+
     def test_large_input_size(self):
         """Test with large input size."""
         ann = make_annotations(['c1'], [1])
         model = BlackBox(input_size=512, annotations=ann)
         x = torch.randn(2, 512)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 1))
+
+        self.assertEqual(_logits(out, ['c1']).shape, (2, 1))
 
 
 class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
@@ -1172,12 +1176,12 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         x = torch.randn(2, 8, requires_grad=True)
         out = model(x)
-        loss = out.logits.sum()
+        loss = _logits(out, ['task']).sum()
         loss.backward()
-        
+
         self.assertIsNotNone(x.grad)
         self.assertFalse(torch.all(x.grad == 0))
-    
+
     def test_large_task_cardinality(self):
         """Test with large task cardinality."""
         ann = make_annotations(['c1', 'task'], [1, 50])
@@ -1186,18 +1190,18 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
             annotations=ann,
             task_names='task'
         )
-        
+
         x = torch.randn(2, 8)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 50))
-        
+
+        self.assertEqual(_logits(out, ['task']).shape, (2, 50))
+
         # Full target has 2 concept-level columns (c1, task)
         target = torch.zeros(2, 2)
         prepared = model.prepare_target(target)
         # Target sliced to task column only
         self.assertEqual(prepared.shape, (2, 1))
-    
+
     def test_single_task_is_only_concept(self):
         """Test when the only concept is also the task."""
         ann = make_annotations(['task'], [1])
@@ -1206,18 +1210,18 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
             annotations=ann,
             task_names='task'
         )
-        
+
         self.assertEqual(model.task_concept_idx, [0])
-        
+
         x = torch.randn(2, 8)
         out = model(x)
-        self.assertEqual(out.logits.shape, (2, 1))
-        
+        self.assertEqual(_logits(out, ['task']).shape, (2, 1))
+
         # When task is the only concept, prepare_target is identity
         target = torch.zeros(2, 1)
         prepared = model.prepare_target(target)
         self.assertTrue(torch.allclose(prepared, target))
-    
+
     def test_batch_size_one(self):
         """Test with batch size of 1."""
         ann = make_annotations(['c1', 'task'], [1, 1])
@@ -1226,10 +1230,10 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
             annotations=ann,
             task_names='task'
         )
-        
+
         x = torch.randn(1, 8)
         out = model(x)
-        self.assertEqual(out.logits.shape, (1, 1))
+        self.assertEqual(_logits(out, ['task']).shape, (1, 1))
         
         # Full target has 2 concept-level columns
         target = torch.zeros(1, 2)
@@ -1257,34 +1261,34 @@ class TestBlackBoxTraining(unittest.TestCase):
         
         x = torch.randn(4, 8)
         target = torch.zeros(4, 2)
-        
+
         # Forward pass
         out = model(x)
         prepared = model.prepare_target(target)
         loss = nn.functional.binary_cross_entropy_with_logits(
-            out.logits, 
+            _logits(out, ['c1', 'task']),
             prepared
         )
-        
+
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
+
         # Check that parameters were updated
         self.assertTrue(loss.item() > 0)
-    
+
     def test_eval_mode(self):
         """Test model in evaluation mode."""
         model = BlackBox(input_size=8, annotations=self.ann)
         model.eval()
-        
+
         x = torch.randn(2, 8)
-        
+
         with torch.no_grad():
             out = model(x)
-        
-        self.assertFalse(out.logits.requires_grad)
+
+        self.assertFalse(_logits(out, ['c1', 'task']).requires_grad)
     
     def test_train_eval_toggle(self):
         """Test toggling between train and eval modes."""
@@ -1313,20 +1317,20 @@ class TestBlackBoxTraining(unittest.TestCase):
         x = torch.randn(4, 8)
         # Concept-level target: c1, task
         target = torch.zeros(4, 2)
-        
+
         out = model(x)
         prepared = model.prepare_target(target)
         loss = nn.functional.binary_cross_entropy_with_logits(
-            out.logits, 
+            _logits(out, ['task']),
             prepared
         )
-        
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
+
         self.assertTrue(loss.item() > 0)
-    
+
     def test_parameter_update(self):
         """Test that parameters actually change after optimization step."""
         ann = make_annotations(['c1'], [1])
@@ -1341,7 +1345,7 @@ class TestBlackBoxTraining(unittest.TestCase):
         target = torch.ones(2, 1)
         
         out = model(x)
-        loss = nn.functional.mse_loss(out.logits, target)
+        loss = nn.functional.mse_loss(_logits(out, ['c1']), target)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1361,42 +1365,44 @@ class TestBlackBoxBackboneIntegration(unittest.TestCase):
         """Test that backbone transforms input before linear layer."""
         ann = make_annotations(['c1'], [1])
         backbone = DummyBackbone(out_features=8)
-        
+
         model = BlackBox(
             input_size=8,
             annotations=ann,
-            backbone=backbone
+            backbone=backbone,
+            latent_size=8,
         )
-        
+
         # Input size doesn't matter since DummyBackbone produces fixed size
         x = torch.randn(2, 100)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 1))
-    
+
+        self.assertEqual(_logits(out, ['c1']).shape, (2, 1))
+
     def test_task_only_with_backbone(self):
         """Test BlackBoxTaskOnly with backbone."""
         ann = make_annotations(['c1', 'task'], [1, 1])
         backbone = DummyBackbone(out_features=8)
-        
+
         model = BlackBoxTaskOnly(
             input_size=8,
             annotations=ann,
             task_names='task',
-            backbone=backbone
+            backbone=backbone,
+            latent_size=8,
         )
-        
+
         x = torch.randn(2, 50)
         out = model(x)
-        
-        self.assertEqual(out.logits.shape, (2, 1))
-    
+
+        self.assertEqual(_logits(out, ['task']).shape, (2, 1))
+
     def test_no_backbone_uses_identity(self):
         """Test that no backbone means identity transform."""
         ann = make_annotations(['c1'], [1])
         model = BlackBox(input_size=8, annotations=ann)
-        
-        self.assertIsNone(model.backbone)
+
+        self.assertIsInstance(model.backbone, nn.Identity)
 
 
 if __name__ == '__main__':

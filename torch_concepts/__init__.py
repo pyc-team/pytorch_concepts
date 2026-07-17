@@ -7,13 +7,14 @@ from ._version import __version__
 from importlib import import_module
 from typing import Any
 
-from .annotations import Annotations, AxisAnnotation
+from .annotations import Annotations
+from .tensor import AnnotatedTensor
 from .nn.modules.utils import GroupConfig
-from .nn.modules.mid.constructors.concept_graph import ConceptGraph
-from .nn.modules.mid.models.variable import Variable, LatentVariable, InputVariable, ExogenousVariable, ConceptVariable, EndogenousVariable
+from .concept_graph import ConceptGraph
+from .nn.modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
+from .backbone import Backbone
 from . import nn, distributions
-from . import data
 
 def __getattr__(name: str) -> Any:
     if name in {"data", "nn"}:
@@ -26,19 +27,19 @@ __all__ = [
 
     # Data properties
     "Annotations",
-    "AxisAnnotation",
+    "AnnotatedTensor",
     "ConceptGraph",
 
     # Configuration
     "GroupConfig",
 
+    # Feature extraction
+    "Backbone",
+
     # Variables
     "Variable",
-    "LatentVariable",
-    "InputVariable",  # Backward compatibility alias
-    "ExogenousVariable",
     "ConceptVariable",
-    "EndogenousVariable",  # Backward compatibility alias
+    "EmbeddingVariable",
 
     "seed_everything",
 

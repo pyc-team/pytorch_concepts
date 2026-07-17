@@ -1,21 +1,31 @@
 import os
 import csv
+import zipfile
 import torch
 import pandas as pd
 import numpy as np
 import logging
 from typing import List, Optional, Union
 from tqdm import tqdm
-from torchvision.transforms import Compose
-from torchvision.datasets.utils import download_file_from_google_drive, extract_archive, check_integrity
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
-import torchvision.transforms as T
 from glob import glob
 import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "CelebADataset download/extraction requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 
 # CelebA file list from torchvision - Google Drive file IDs, MD5 hashes, and filenames
@@ -54,8 +64,9 @@ class CelebADataset(ConceptDataset):
             root = os.path.join(os.getcwd(), 'data', "celeba")
 
         self.root = root
-            
+
         self.label_descriptions = label_descriptions
+        self._zip = None  # lazy handle for reading images straight from the zip
         
         # Load data and annotations
         filenames, concepts, annotations, graph = self.load()
@@ -113,37 +124,18 @@ class CelebADataset(ConceptDataset):
                 continue
                 
             logger.info(f"Downloading {filename} from Google Drive to {celeba_folder}...")
-            download_file_from_google_drive(
-                file_id, 
-                celeba_folder, 
-                filename, 
+            tv = _import_torchvision()
+            tv.datasets.utils.download_file_from_google_drive(
+                file_id,
+                celeba_folder,
+                filename,
                 md5
             )
         
         logger.info(f"CelebA files downloaded to {celeba_folder}.")
 
-    def maybe_extract(self):
-        """Extract the CelebA images archive.
-        
-        Extracts img_align_celeba.zip to the raw celeba folder.
-        """
-        celeba_folder = os.path.join(self.root, "raw")
-        archive_path = os.path.join(celeba_folder, "img_align_celeba.zip")
-        
-        if os.path.isdir(os.path.join(celeba_folder, "img_align_celeba")):
-            logger.info("Images already extracted")
-            return
-            
-        if not os.path.exists(archive_path):
-            logger.warning(f"Archive not found: {archive_path}")
-            return
-            
-        logger.info("Extracting img_align_celeba.zip...")
-        extract_archive(archive_path)
-        logger.info(f"CelebA images extracted to {celeba_folder}")
-
     def maybe_download(self):
-        """Download and extract the dataset if needed."""
+        """Download the dataset files if needed."""
         super().maybe_download()
 
     def _load_csv(self, filename: str, header: Optional[int] = None):
@@ -173,15 +165,19 @@ class CelebADataset(ConceptDataset):
 
         return headers, indices, torch.tensor(data_int)
 
+    def __getstate__(self):
+        """Drop the (unpicklable) zip handle; workers reopen it lazily."""
+        state = self.__dict__.copy()
+        state['_zip'] = None
+        return state
+
     def build(self):
         """Build processed dataset: save concepts, annotations and splits metadata.
-        
-        Images are not saved as they are already in the downloaded folder and
-        will be loaded on-the-fly in __getitem__.
+
+        Images are not extracted: __getitem__ reads them on-the-fly, straight
+        from the zip (or from the extracted folder when one exists).
         """
         self.maybe_download()
-
-        self.maybe_extract()
 
         celeba_folder = os.path.join(self.root, "raw")
         logger.info(f"Building CelebA dataset from raw files in {celeba_folder}...")
@@ -202,13 +198,11 @@ class CelebADataset(ConceptDataset):
     
         # Create annotations
         cardinalities = tuple([1] * len(attr_names))
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=attr_names,
-                cardinalities=cardinalities,
-                metadata={name: {'type': 'discrete'} for name in attr_names}
-            )
-        })
+        annotations = Annotations(
+            labels=attr_names,
+            cardinalities=cardinalities,
+            types=['binary'] * len(attr_names),
+        )
 
         # --- Save processed data ---
         logger.info(f"Saving filenames, concepts, annotations and split mapping to {self.root_dir}")
@@ -233,7 +227,8 @@ class CelebADataset(ConceptDataset):
             filenames = f.read().strip().split('\n')
         
         concepts = pd.read_hdf(self.processed_paths[1], "concepts")
-        annotations = torch.load(self.processed_paths[2])
+        # locally-built pickle holding an Annotations object (not just weights)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
         graph = None
         
         return filenames, concepts, annotations, graph
@@ -263,7 +258,16 @@ class CelebADataset(ConceptDataset):
         else:
             filename = self.input_data[item]  # input_data contains filenames
             img_path = os.path.join(self.root, "raw", "img_align_celeba", filename)
-            img = Image.open(img_path)
+            if os.path.exists(img_path):  # extracted folder (if present)
+                img = Image.open(img_path)
+            else:  # read straight from the zip — no extraction needed
+                if self._zip is None:
+                    self._zip = zipfile.ZipFile(
+                        os.path.join(self.root, "raw", "img_align_celeba.zip")
+                    )
+                with self._zip.open(f"img_align_celeba/{filename}") as fh:
+                    img = Image.open(fh)
+                    img.load()  # force the read so the zip entry handle can close
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
         
         c = self.concepts[item]

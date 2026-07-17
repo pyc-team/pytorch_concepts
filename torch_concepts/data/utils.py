@@ -8,51 +8,31 @@ import os
 import numpy as np
 import pandas as pd
 import logging
-from typing import Any, List, Sequence, Union
+from typing import Sequence, Union
 import torch
 import random
 from torch import Tensor
-from torchvision.transforms import v2
+
+# Re-export for backward compatibility – the canonical definition lives in
+# torch_concepts.utils so that nn modules can import it without pulling in
+# the data package.
+from ..utils import ensure_list
 
 logger = logging.getLogger(__name__)
 
 
-def ensure_list(value: Any) -> List:
-    """
-    Ensure a value is converted to a list. If the value is iterable (but not a 
-    string or dict), converts it to a list. Otherwise, wraps it in a list.
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "affine_transform requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
-    Args:
-        value: Any value to convert to list.
 
-    Returns:
-        List: The value as a list.
-    
-    Examples:
-        >>> ensure_list([1, 2, 3])
-        [1, 2, 3]
-        >>> ensure_list((1, 2, 3))
-        [1, 2, 3]
-        >>> ensure_list(5)
-        [5]
-        >>> ensure_list("hello")
-        ['hello']
-        >>> ensure_list({'a': 1, 'b': 2})  # doctest: +SKIP
-        TypeError: Cannot convert dict to list. Use list(dict.values()) 
-        or list(dict.keys()) explicitly.
-    """
-    # Explicitly reject dictionaries to avoid silent conversion to keys
-    if isinstance(value, dict):
-        raise TypeError(
-            "Cannot convert dict to list. Use list(dict.values()) or " \
-            "list(dict.keys()) explicitly to make your intent clear."
-        )
-    
-    # Check for iterables (but not strings)
-    if hasattr(value, '__iter__') and not isinstance(value, str):
-        return list(value)
-    else:
-        return [value]
 
 def files_exist(files: Sequence[str]) -> bool:
     """
@@ -189,6 +169,7 @@ def affine_transform(images, degrees, scales, batch_size=512):
     Returns:
         Tensor: Transformed images with same shape as input.
     """
+    v2 = _import_torchvision().transforms.v2
     if degrees is None:
         logger.warning("Degrees for affine transformation of images not provided, setting to 0.")
         degrees = torch.zeros(images.shape[0], device=images.device)

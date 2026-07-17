@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from torch.func import jacrev, jvp, vjp
 from tqdm.auto import tqdm
 
-from torch_concepts.steerling import SteerlingModel
+from torch_concepts.nn import SteerlingModel
 
 # Keep these in sync with analyze_steerling_symmetryII.py so the cache
 # filenames match.

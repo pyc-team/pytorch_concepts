@@ -14,11 +14,12 @@ Note: Annotations and concept management are now handled by BaseModel,
 not BaseLearner. These tests focus on the core orchestration functionality.
 """
 import unittest
+import pytest
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -50,13 +51,31 @@ class FullMockLearner(BaseLearner):
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)
         self.n_concepts = n_concepts
-        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.concept_annotations = annotations
         self.concept_names = self.concept_annotations.labels
         self.dummy_param = nn.Parameter(torch.randn(1))
 
-    def forward(self, x, query=None, evidence=None, **kwargs):
-        logits = torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
-        return ModelOutput(logits=logits)
+    def build_query(self, ground_truth):
+        if ground_truth is None:
+            return {}
+        return {
+            name: ground_truth[:, i].float().unsqueeze(-1)
+            for i, name in enumerate(self.concept_names)
+        }
+
+    def forward(self, x=None, query=None, evidence=None, **kwargs):
+        if evidence is not None:
+            batch_size = evidence['input'].shape[0]
+        elif x is not None:
+            batch_size = x.shape[0]
+        else:
+            batch_size = 2
+        logits = torch.randn(batch_size, self.n_concepts, requires_grad=True)
+        params = {}
+        if query:
+            for i, name in enumerate(query.keys()):
+                params[name] = {'logits': logits[:, i:i+1]}
+        return ModelOutput(logits=logits, params=params)
 
     def prepare_target(self, target):
         return target
@@ -128,15 +147,13 @@ class TestBaseLearnerMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for ConceptMetrics testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli}
                 }
             )
-        })
 
     def test_metrics_none(self):
         """Test initialization with no metrics."""
@@ -204,15 +221,13 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli}
                 }
             )
-        })
 
     def test_update_and_log_metrics(self):
         """Test update_and_log_metrics method."""
@@ -401,44 +416,35 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
 # ======================================================================
 
 class TestGetInferenceKwargs(unittest.TestCase):
-    """Test _get_inference_kwargs with and without inference attribute."""
+    """Test shared_step's build_query/forward integration replaces the old _get_inference_kwargs."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
 
     def test_no_inference_returns_empty(self):
-        """Without inference attr, returns empty dict."""
-        learner = MockLearner(n_concepts=2)
-        # MockLearner has no .inference attribute
-        batch = {
-            'inputs': {'x': torch.randn(4, 3)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
-        }
-        result = learner._get_inference_kwargs(batch)
+        """FullMockLearner.build_query with None ground_truth returns empty dict."""
+        learner = FullMockLearner(self.annotations, n_concepts=2)
+        # build_query(None) returns an empty dict (no teacher-forcing)
+        result = learner.build_query(None)
+        self.assertIsInstance(result, dict)
         self.assertEqual(result, {})
 
     def test_with_inference_returns_kwargs(self):
-        """With inference attr, returns ground_truth / concept_names / return_logits."""
+        """FullMockLearner.build_query with a real ground_truth returns per-concept tensors."""
         learner = FullMockLearner(self.annotations, n_concepts=2)
-        learner.inference = True  # simulate having an inference engine
         c = torch.randint(0, 2, (4, 2)).float()
-        batch = {
-            'inputs': {'x': torch.randn(4, 3)},
-            'concepts': {'c': c},
-        }
-        result = learner._get_inference_kwargs(batch)
-        self.assertIn('ground_truth', result)
-        self.assertTrue(torch.equal(result['ground_truth'], c))
-        self.assertEqual(result['concept_names'], self.annotations.get_axis_annotation(1).labels)
-        self.assertTrue(result['return_logits'])
+        result = learner.build_query(c)
+        self.assertIsInstance(result, dict)
+        # build_query maps each concept name to a (batch, 1) tensor
+        for name in ('C1', 'C2'):
+            self.assertIn(name, result)
+            self.assertEqual(result[name].shape[0], 4)
 
 
 # ======================================================================
@@ -449,15 +455,13 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
     """Test shared_step and the per-split step methods."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
         self.loss_fn = ConceptLoss(
             self.annotations,
             binary=nn.BCEWithLogitsLoss(),
@@ -580,15 +584,13 @@ class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
     """Cover ConceptMetrics with empty collection and log_metrics else branch."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
                 metadata={
                     'C1': {'type': 'discrete', 'distribution': Bernoulli},
                     'C2': {'type': 'discrete', 'distribution': Bernoulli},
                 }
             )
-        })
 
     def test_concept_metrics_no_collection(self):
         """ConceptMetrics with empty collection sets split metrics to None."""

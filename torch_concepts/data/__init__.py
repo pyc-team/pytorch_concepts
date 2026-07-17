@@ -17,9 +17,6 @@ from . import splitters
 # Utilities
 from . import utils
 
-# Backbone utilities
-from . import backbone
-
 # IO utilities
 from . import io
 
@@ -55,9 +52,8 @@ __all__ = [
     "splitters",
 
     "utils",
-    "backbone",
     "io",
-    
+
     # Datasets
     "BnLearnDataset",
     "ToyDataset",

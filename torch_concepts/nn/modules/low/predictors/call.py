@@ -1,10 +1,10 @@
 import torch
 
-from ..base.layer import BasePredictor
+from ..base.layer import BaseConceptLayer
 from typing import Callable
 
 
-class CallableConceptToConcept(BasePredictor):
+class CallableConceptToConcept(BaseConceptLayer):
     """
     A predictor that applies a custom callable function to concept representations.
 
@@ -45,7 +45,8 @@ class CallableConceptToConcept(BasePredictor):
         ...     use_bias=True
         ... )
         >>> predictions = predictor(concepts)
-        >>> print(predictions.shape)  # torch.Size([32, 2])
+        >>> print(predictions.shape)
+        torch.Size([32, 2])
 
         References
             Pearl, J. "Causality", Cambridge University Press (2009).

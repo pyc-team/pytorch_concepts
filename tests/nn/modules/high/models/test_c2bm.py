@@ -5,9 +5,9 @@ Tests cover:
 - Model initialization with various configurations
 - Forward pass and output shapes (train and eval modes)
 - Different inference engines (deterministic, independent, ancestral)
-- Backbone and latent encoder integration
+- Backbone integration
 - Graph structure handling (chain, diamond, multi-output)
-- Training: manual PyTorch loop and Lightning integration
+- Training: manual PyTorch loop
 - Gradient flow
 - Target preparation (prepare_target)
 - Edge cases
@@ -15,22 +15,26 @@ Tests cover:
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import RelaxedBernoulli
+from torch.distributions import Bernoulli
 
-from torch_concepts.annotations import AxisAnnotation, Annotations
-from torch_concepts.nn import (
-    CausallyReliableConceptBottleneckModel,
-)
-from torch_concepts.nn.modules.mid.constructors.concept_graph import ConceptGraph
-from torch_concepts.nn.modules.mid.inference.deterministic import DeterministicInference
-from torch_concepts.nn.modules.mid.inference.independent import IndependentInference
-from torch_concepts.nn.modules.mid.inference.ancestral import AncestralSamplingInference
-from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.annotations import Annotations
+from torch_concepts.nn.modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from torch_concepts.nn import MLP
+from torch_concepts import ConceptGraph
+from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
+from torch_concepts.nn.modules.mid.inference.torch.independent import IndependentInference
+from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSamplingInference
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _logits(out, names):
+    """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
+    import torch
+    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+
 
 def _make_graph(adj, names):
     """Shorthand to build a ConceptGraph from a list-of-lists adjacency."""
@@ -60,19 +64,16 @@ def _diamond_graph():
 
 def _binary_annotations(names):
     """All-binary annotations for *names* (defaults will assign Bernoulli)."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=list(names),
             cardinalities=[1] * len(names),
             metadata={n: {'type': 'discrete'} for n in names},
         )
-    })
 
 
 def _mixed_annotations():
     """A (binary), B (3-class categorical), C (binary)  — chain graph."""
-    return Annotations({
-        1: AxisAnnotation(
+    return Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
             metadata={
@@ -81,7 +82,6 @@ def _mixed_annotations():
                 'C': {'type': 'discrete'},
             },
         )
-    })
 
 
 class DummyBackbone(nn.Module):
@@ -148,7 +148,7 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            exogenous_size=32,
+            embedding_size=32,
             hypernet_hidden_size=32,
         )
         assert model is not None
@@ -162,12 +162,14 @@ class TestC2BMInitialization:
         )
         assert model is not None
 
-    def test_with_latent_encoder(self, chain_graph, binary_chain_ann):
+    def test_with_mlp_backbone(self, chain_graph, binary_chain_ann):
+        """Custom backbone needs an explicit latent_size."""
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+            backbone=MLP(input_size=8, hidden_size=16, n_layers=1),
+            latent_size=16,
         )
         assert model.latent_size == 16
 
@@ -178,13 +180,13 @@ class TestC2BMInitialization:
             annotations=binary_chain_ann,
             graph=chain_graph,
             backbone=backbone,
+            latent_size=8,
         )
         assert model.backbone is not None
 
     def test_with_defaults(self, chain_graph):
-        """Annotations without distributions — defaults should be used."""
-        ann_no_dist = Annotations({
-            1: AxisAnnotation(
+        """Annotations without distributions — base-family defaults should be used."""
+        ann_no_dist = Annotations(
                 labels=['A', 'B', 'C'],
                 cardinalities=[1, 1, 1],
                 metadata={
@@ -193,16 +195,14 @@ class TestC2BMInitialization:
                     'C': {'type': 'discrete'},
                 },
             )
-        })
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=ann_no_dist,
             graph=chain_graph,
         )
         assert model.concept_names == ['A', 'B', 'C']
-        # Defaults should have been filled
-        meta = model.concept_annotations.metadata
-        assert meta['A']['distribution'] == RelaxedBernoulli
+        # Distributions live on the model, keyed by type.
+        assert model.variable_distributions['binary'] == Bernoulli
 
     def test_diamond_graph_init(self, diamond_graph, binary_diamond_ann):
         model = CausallyReliableConceptBottleneckModel(
@@ -213,14 +213,14 @@ class TestC2BMInitialization:
         assert model is not None
 
     def test_independent_train_inference(self, chain_graph, binary_chain_ann):
-        """Using a different train_inference class should raise ValueError."""
-        with pytest.raises(ValueError, match="must be the same class"):
-            CausallyReliableConceptBottleneckModel(
-                input_size=8,
-                annotations=binary_chain_ann,
-                graph=chain_graph,
-                train_inference=IndependentInference,
-            )
+        """IndependentInference is a subclass of DeterministicInference — allowed as train_inference."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            train_inference=IndependentInference,
+        )
+        assert model is not None
 
     def test_same_train_and_eval_inference_allowed(self, chain_graph, binary_chain_ann):
         """Passing the same class for train_inference and inference is allowed."""
@@ -258,11 +258,11 @@ class TestC2BMInitialization:
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference_kwargs={'detach': True},
-            train_inference_kwargs={'detach': False},
+            inference_kwargs={'p_int': 1.0},
+            train_inference_kwargs={'p_int': 0.0},
         )
-        assert model.eval_inference.detach is True
-        assert model.train_inference.detach is False
+        assert model.eval_inference.p_int == 1.0
+        assert model.train_inference.p_int == 0.0
 
 
 # ===========================================================================
@@ -282,36 +282,44 @@ class TestC2BMForward:
         self.x = torch.randn(4, 8)
 
     def test_query_all(self):
-        out = self.model(query=['A', 'B', 'C'], x=self.x)
-        assert out.probs.shape == (4, 3)
+        query = ['A', 'B', 'C']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 3)
 
     def test_query_subset(self):
-        out = self.model(query=['B', 'C'], x=self.x)
-        assert out.probs.shape == (4, 2)
+        query = ['B', 'C']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 2)
 
     def test_query_single(self):
-        out = self.model(query=['A'], x=self.x)
-        assert out.probs.shape == (4, 1)
+        query = ['A']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 1)
 
     def test_query_leaf_only(self):
-        out = self.model(query=['C'], x=self.x)
-        assert out.probs.shape == (4, 1)
+        query = ['C']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 1)
 
     def test_query_order_matters(self):
         """Output columns follow query order, not graph order."""
-        out_ab = self.model(query=['A', 'B'], x=self.x)
-        out_ba = self.model(query=['B', 'A'], x=self.x)
+        out_ab = self.model(query=['A', 'B'], input=self.x)
+        out_ba = self.model(query=['B', 'A'], input=self.x)
+        ab = _logits(out_ab, ['A', 'B'])
+        ba = _logits(out_ba, ['B', 'A'])
         # Columns should be swapped
-        assert torch.allclose(out_ab.probs[:, 0], out_ba.probs[:, 1])
-        assert torch.allclose(out_ab.probs[:, 1], out_ba.probs[:, 0])
+        assert torch.allclose(ab[:, 0], ba[:, 1])
+        assert torch.allclose(ab[:, 1], ba[:, 0])
 
     def test_batch_size_one(self):
-        out = self.model(query=['A', 'B', 'C'], x=torch.randn(1, 8))
-        assert out.probs.shape == (1, 3)
+        query = ['A', 'B', 'C']
+        out = self.model(query=query, input=torch.randn(1, 8))
+        assert _logits(out, query).shape == (1, 3)
 
     def test_large_batch(self):
-        out = self.model(query=['A', 'B', 'C'], x=torch.randn(128, 8))
-        assert out.probs.shape == (128, 3)
+        query = ['A', 'B', 'C']
+        out = self.model(query=query, input=torch.randn(128, 8))
+        assert _logits(out, query).shape == (128, 3)
 
 
 class TestC2BMForwardDiamond:
@@ -327,12 +335,14 @@ class TestC2BMForwardDiamond:
         self.x = torch.randn(4, 8)
 
     def test_query_all(self):
-        out = self.model(query=['A', 'B', 'C', 'D'], x=self.x)
-        assert out.probs.shape == (4, 4)
+        query = ['A', 'B', 'C', 'D']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 4)
 
     def test_query_leaf(self):
-        out = self.model(query=['D'], x=self.x)
-        assert out.probs.shape == (4, 1)
+        query = ['D']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 1)
 
 
 class TestC2BMForwardMixed:
@@ -348,13 +358,15 @@ class TestC2BMForwardMixed:
         self.x = torch.randn(4, 8)
 
     def test_output_dim(self):
-        out = self.model(query=['A', 'B', 'C'], x=self.x)
+        query = ['A', 'B', 'C']
+        out = self.model(query=query, input=self.x)
         # A=1, B=3, C=1 → total 5
-        assert out.probs.shape == (4, 5)
+        assert _logits(out, query).shape == (4, 5)
 
     def test_categorical_only(self):
-        out = self.model(query=['B'], x=self.x)
-        assert out.probs.shape == (4, 3)
+        query = ['B']
+        out = self.model(query=query, input=self.x)
+        assert _logits(out, query).shape == (4, 3)
 
 
 # ===========================================================================
@@ -384,31 +396,27 @@ class TestC2BMTrainEvalRouting:
 
 
 # ===========================================================================
-# return_logits
+# return_logits (API removed)
 # ===========================================================================
 
 class TestC2BMReturnLogits:
-    """Test return_logits pass-through to inference."""
+    """The return_logits API no longer exists — logits live in out.params[name]['logits']."""
 
-    @pytest.fixture(autouse=True)
-    def _setup(self, chain_graph, binary_chain_ann):
-        self.model = CausallyReliableConceptBottleneckModel(
+    def test_return_logits_shape(self, chain_graph, binary_chain_ann):
+        """Logits are accessed via out.params[name]['logits'], not a top-level attribute."""
+        model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
         )
-        self.x = torch.randn(4, 8)
-
-    def test_return_logits_shape(self):
-        out = self.model(query=['A', 'B', 'C'], x=self.x, return_logits=True)
-        assert out.logits.shape == (4, 3)
-
-    def test_return_logits_vs_activated(self):
-        """With return_logits the output is *not* squeezed through sigmoid."""
-        out = self.model(query=['A'], x=self.x, return_logits=False)
-        # Logits can be outside [0, 1], probs are in [0, 1]
-        assert out.probs.min() >= 0.0
-        assert out.probs.max() <= 1.0
+        x = torch.randn(4, 8)
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        # Each queried concept has logits in params
+        for name in query:
+            assert name in out.params
+            assert 'logits' in out.params[name]
+        assert _logits(out, query).shape == (4, 3)
 
 
 # ===========================================================================
@@ -425,34 +433,25 @@ class TestC2BMGradients:
             graph=chain_graph,
         )
         x = torch.randn(4, 8, requires_grad=True)
-        out = model(query=['A', 'B', 'C'], x=x)
-        out.probs.sum().backward()
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        _logits(out, query).sum().backward()
         assert x.grad is not None
         assert (x.grad != 0).any()
 
-    def test_gradients_with_return_logits(self, chain_graph, binary_chain_ann):
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-        )
-        x = torch.randn(4, 8, requires_grad=True)
-        out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-        out.logits.sum().backward()
-        assert x.grad is not None
-
     def test_detach_blocks_cross_level_gradients(self, chain_graph, binary_chain_ann):
-        """With detach=True, children receive detached parent activations."""
+        """Teacher-forcing (p_int) still lets gradients reach the input."""
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference_kwargs={'detach': True},
-            train_inference_kwargs={'detach': True},
+            inference_kwargs={'p_int': 1.0},
+            train_inference_kwargs={'p_int': 1.0},
         )
         x = torch.randn(4, 8, requires_grad=True)
-        out = model(query=['A', 'B', 'C'], x=x)
-        out.probs.sum().backward()
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        _logits(out, query).sum().backward()
         # Gradients should still flow to x (through at least root A)
         assert x.grad is not None
 
@@ -477,8 +476,9 @@ class TestC2BMManualTraining:
         x = torch.randn(4, 8)
         y = torch.randint(0, 2, (4, 3)).float()
 
-        out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-        loss = loss_fn(out.logits, y)
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        loss = loss_fn(_logits(out, query), y)
         loss.backward()
         optimizer.step()
         assert loss.item() >= 0
@@ -498,11 +498,12 @@ class TestC2BMManualTraining:
         y = torch.randint(0, 2, (16, 3)).float()
 
         model.train()
+        query = ['A', 'B', 'C']
         losses = []
         for _ in range(30):
             optimizer.zero_grad()
-            out = model(query=['A', 'B', 'C'], x=x, return_logits=True)
-            loss = loss_fn(out.logits, y)
+            out = model(query=query, input=x)
+            loss = loss_fn(_logits(out, query), y)
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
@@ -515,52 +516,40 @@ class TestC2BMManualTraining:
 # ===========================================================================
 
 class TestC2BMIndependentInference:
-    """Verify that IndependentInference as train_inference raises ValueError."""
+    """Verify that IndependentInference as train_inference is accepted."""
 
-    def test_different_train_inference_raises(self, chain_graph, binary_chain_ann):
-        with pytest.raises(ValueError, match="must be the same class"):
-            CausallyReliableConceptBottleneckModel(
-                input_size=8,
-                annotations=binary_chain_ann,
-                graph=chain_graph,
-                train_inference=IndependentInference,
-            )
+    def test_different_train_inference_allowed(self, chain_graph, binary_chain_ann):
+        """IndependentInference is a subclass of DeterministicInference — now allowed."""
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            train_inference=IndependentInference,
+        )
+        assert model is not None
 
 
 # ===========================================================================
 # Ancestral sampling inference
 # ===========================================================================
 
-class TestC2BMAncestralInference:
-    """Test forward pass with AncestralSamplingInference."""
+class TestC2BMAncestralSamplingInference:
+    """Test forward pass with AncestralSamplingInference as train_inference."""
 
     def test_sampling_produces_output(self, chain_graph, binary_chain_ann):
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            inference=AncestralSamplingInference,
-        )
-        model.eval()
-        x = torch.randn(4, 8)
-        out = model(query=['A', 'B', 'C'], x=x)
-        assert out.probs.shape == (4, 3)
-
-    def test_sampling_stochastic(self, chain_graph, binary_chain_ann):
-        """Multiple forward passes should (in general) differ."""
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            inference=AncestralSamplingInference,
             train_inference=AncestralSamplingInference,
         )
-        model.eval()
-        x = torch.randn(8, 8)
-        results = [model(query=['A'], x=x) for _ in range(10)]
-        # At least one pair should differ (highly unlikely all 10 are identical)
-        any_different = any(not torch.equal(results[0].probs, r.probs) for r in results[1:])
-        assert any_different, "Ancestral sampling should produce varying outputs"
+        assert isinstance(model.eval_inference, DeterministicInference)
+        assert isinstance(model.train_inference, AncestralSamplingInference)
+        x = torch.randn(4, 8)
+        names = binary_chain_ann.labels
+        out = model(query=list(names), input=x)
+        assert out.params
+        assert all('logits' in v for v in out.params.values())
 
 
 # ===========================================================================
@@ -591,62 +580,15 @@ class TestC2BMLightning:
     """Test Lightning training capabilities."""
 
     def test_lightning_mode_creates_learner(self, chain_graph, binary_chain_ann):
+        """Test that lightning=True creates a BaseLearner instance."""
+        from torch_concepts.nn.modules.high.base.learner import BaseLearner
         model = CausallyReliableConceptBottleneckModel(
+            lightning=True,
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01},
         )
         assert isinstance(model, BaseLearner)
-
-    def test_configure_optimizers(self, chain_graph, binary_chain_ann):
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01},
-        )
-        config = model.configure_optimizers()
-        assert 'optimizer' in config
-
-    def test_training_step(self, chain_graph, binary_chain_ann):
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01},
-        )
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()},
-        }
-        model.train()
-        loss = model.training_step(batch)
-        assert loss is not None
-        assert loss.requires_grad
-
-    def test_lightning_with_independent_inference(self, chain_graph, binary_chain_ann):
-        """Using IndependentInference as train_inference should raise ValueError."""
-        with pytest.raises(ValueError, match="must be the same class"):
-            CausallyReliableConceptBottleneckModel(
-                input_size=8,
-                annotations=binary_chain_ann,
-                graph=chain_graph,
-                train_inference=IndependentInference,
-                lightning=True,
-                loss=nn.BCEWithLogitsLoss(),
-                optim_class=torch.optim.Adam,
-                optim_kwargs={'lr': 0.01},
-            )
 
 
 # ===========================================================================
@@ -659,28 +601,30 @@ class TestC2BMBackbone:
     def test_backbone_forward(self, chain_graph, binary_chain_ann):
         backbone = DummyBackbone(out_features=8)
         model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
+            input_size=32,
             annotations=binary_chain_ann,
             graph=chain_graph,
             backbone=backbone,
+            latent_size=8,
         )
-        # Raw input larger than input_size, backbone projects down
+        # Raw input enters the PGM 'input' node, backbone projects to latent.
         x = torch.randn(4, 32)
-        out = model(query=['A', 'B', 'C'], x=x)
-        assert out.probs.shape == (4, 3)
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        assert _logits(out, query).shape == (4, 3)
 
-    def test_backbone_plus_latent_encoder(self, chain_graph, binary_chain_ann):
-        backbone = DummyBackbone(out_features=16)
+    def test_backbone_with_mlp(self, chain_graph, binary_chain_ann):
         model = CausallyReliableConceptBottleneckModel(
-            input_size=16,
+            input_size=64,
             annotations=binary_chain_ann,
             graph=chain_graph,
-            backbone=backbone,
-            latent_encoder_kwargs={'hidden_size': 8, 'n_layers': 1},
+            backbone=MLP(input_size=64, hidden_size=8, n_layers=1),
+            latent_size=8,
         )
         x = torch.randn(4, 64)
-        out = model(query=['A', 'B', 'C'], x=x)
-        assert out.probs.shape == (4, 3)
+        query = ['A', 'B', 'C']
+        out = model(query=query, input=x)
+        assert _logits(out, query).shape == (4, 3)
 
 
 # ===========================================================================
@@ -704,6 +648,7 @@ class TestC2BMRepr:
             annotations=binary_chain_ann,
             graph=chain_graph,
             backbone=DummyBackbone(out_features=8),
+            latent_size=8,
         )
         r = repr(model)
         assert 'DummyBackbone' in r

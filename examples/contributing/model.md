@@ -246,14 +246,14 @@ class YourModel(BaseBipartiteModel):
         embedding_cpd = ParametricCPD("embedding", parametrization=nn.Identity())
 
         # Step 2: Define concept variables
-        concept_names = [c for c in annotations.get_axis_labels(1)
+        concept_names = [c for c in annotations.labels
                          if c not in task_names]
         concepts = Variable(
             concept_names,
             parents=['embedding'],  # All concepts depend on embedding
-            distribution=[annotations[1].metadata[c]['distribution']
+            distribution=[annotations.metadata[c]['distribution']
                           for c in concept_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+            size=[annotations.cardinalities[annotations.get_index(c)]
                   for c in concept_names]
         )
 
@@ -261,9 +261,9 @@ class YourModel(BaseBipartiteModel):
         tasks = Variable(
             task_names,
             parents=concept_names,  # Tasks depend on concepts
-            distribution=[annotations[1].metadata[c]['distribution']
+            distribution=[annotations.metadata[c]['distribution']
                           for c in task_names],
-            size=[annotations[1].cardinalities[annotations[1].get_index(c)]
+            size=[annotations.cardinalities[annotations.get_index(c)]
                   for c in task_names]
         )
 

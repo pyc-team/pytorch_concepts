@@ -15,18 +15,29 @@ import shutil
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as transforms
 from PIL import Image
 from typing import List, Mapping, Optional
 import zipfile
 from pathlib import Path
 
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url_wget, zip_is_valid
 
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "AWA2Dataset image loading requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -399,16 +410,14 @@ class AWA2Dataset(ConceptDataset):
         class_states = [CLASS_NAMES]
         states = binary_states + class_states
         cardinalities = [1] * len(CONCEPT_SEMANTICS) + [N_CLASSES]
-        concept_metadata = {name: {'type': 'discrete'} for name in concept_names}
+        types = ['binary'] * len(CONCEPT_SEMANTICS) + ['categorical']
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concept_names,
-                states=states,
-                cardinalities=cardinalities,
-                metadata=concept_metadata,
-            )
-        })
+        annotations = Annotations(
+            labels=concept_names,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
+        )
 
         # Save artefacts
         os.makedirs(self.root, exist_ok=True)
@@ -445,10 +454,11 @@ class AWA2Dataset(ConceptDataset):
             x = self.input_data[item]
         else:
             img_path = self.input_data[item]
+            tv = _import_torchvision()
             x = Image.open(img_path)
             x = x.convert('RGB')  # Ensure 3 channels
-            x = transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
-            x = transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
+            x = tv.transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
+            x = tv.transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
         c = self.concepts[item]
         return {'inputs': {'x': x}, 'concepts': {'c': c}}
 
