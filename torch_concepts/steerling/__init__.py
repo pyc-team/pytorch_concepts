@@ -26,7 +26,6 @@ if os.environ.get("TORCH_CONCEPTS_ENABLE_TORCH_COMPILE", "0") != "1":
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 from .steerling_utils import (
-    KNOWN_CONCEPTS_URL,
     get_steerling_tokenizer,
     load_steerling_weights,
     load_steerling_concept_names,
@@ -48,7 +47,6 @@ from .steerling_predictor import MixFactorizedConceptExogenousToConcept
 __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
-    "KNOWN_CONCEPTS_URL",
     "load_steerling_hub_config",
     "get_steerling_tokenizer",
     "load_steerling_weights",

@@ -142,7 +142,7 @@ class SteerlingModel(SteerlingLowLevelModel):
         if len(self.known_names) != self.n_known:
             raise ValueError(
                 "SteerlingModel requires n_concepts to match the "
-                f"known-concept CSV ({len(self.known_names)}), got {self.n_known}."
+                f"known-concept catalog ({len(self.known_names)}), got {self.n_known}."
             )
         if use_unknown:
             self.unknown_names = [f"unsup_{i}" for i in range(self.unknown_concept_head.out_concepts)]
