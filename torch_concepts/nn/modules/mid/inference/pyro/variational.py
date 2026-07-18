@@ -10,7 +10,7 @@ orchestrates the effect-handler plumbing.
 """
 from __future__ import annotations
 
-import sys
+import warnings
 from typing import Callable, Dict, List, Optional, Union
 
 import torch
@@ -23,13 +23,14 @@ from ....outputs import InferenceOutput
 from .base import PyroBaseInference, trace_to_params, _import_pyro
 
 
-_YELLOW_START = "\033[33m"
-_YELLOW_END = "\033[0m"
+def _notice(msg: str) -> None:
+    """Emit an engine notice through the standard warnings machinery.
 
-
-def _yellow_notice(msg: str) -> None:
-    """Print a yellow notice on ``stderr``."""
-    print(f"{_YELLOW_START}{msg}{_YELLOW_END}", file=sys.stderr, flush=True)
+    Plain text on purpose: colouring and routing are the terminal's and the
+    logging configuration's job, and ANSI escapes corrupt captured logs and
+    notebook output.
+    """
+    warnings.warn(msg, UserWarning, stacklevel=3)
 
 
 class VariationalInference(PyroBaseInference):
@@ -98,23 +99,23 @@ class VariationalInference(PyroBaseInference):
             torch.tensor(float(self._schedule(self._step))),
         )
 
-        # Construction-time yellow notices.
+        # Construction-time notices.
         if self._latent_names:
-            _yellow_notice(
-                f"{self.name} Warning:\nDeclared latent (unobservable) variables: "
+            _notice(
+                f"{self.name}: Declared latent (unobservable) variables: "
                 f"{self._latent_names}. This inference algorithm expects to be queried "
                 "with those variables absent from `query` (or mapped to None). "
                 "No guarantees if you query with any of these variables observed, or if you "
                 "query with other unobserved variables that are not declared latent."
             )
         else:
-            _yellow_notice(
-                f"{self.name} Warning:\nYou are using variational inference without "
+            _notice(
+                f"{self.name}: You are using variational inference without "
                 "declaring unobservable variables. The engine might not "
                 "behave as expected."
             )
-        _yellow_notice(
-            f"{self.name} Warning:\nContract — pass all variables in `query`: observed "
+        _notice(
+            f"{self.name}: Contract — pass all variables in `query`: observed "
             "variables with tensor values, latent variables absent or set to None. "
             "`evidence` is still accepted and merged (`query` values take priority)."
         )
@@ -284,8 +285,8 @@ class VariationalInference(PyroBaseInference):
 
         supplied_latents = [name for name in self._latent_names if name in data]
         if supplied_latents and not self._warned_latent_evidence:
-            _yellow_notice(
-                f"{self.name} Warning:\nDeclared latent variables were supplied as "
+            _notice(
+                f"{self.name}: Declared latent variables were supplied as "
                 f"observations: {supplied_latents}. Variational inference is "
                 "guaranteed only when declared latent variables match the "
                 "unobserved variables."
@@ -298,8 +299,8 @@ class VariationalInference(PyroBaseInference):
             if v.name not in self._latent_names and v.name not in data
         ]
         if non_latent_missing:
-            _yellow_notice(
-                f"{self.name} Warning:\nThe following non-latent variables were not "
+            _notice(
+                f"{self.name}: The following non-latent variables were not "
                 f"supplied: {non_latent_missing}. They will be sampled from "
                 "the respective distributions; we cannot guarantee the result."
             )

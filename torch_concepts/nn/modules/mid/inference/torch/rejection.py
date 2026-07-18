@@ -35,12 +35,10 @@ import torch
 import torch.distributions as dist
 
 from ...models.bayesian_network import BayesianNetwork
+from ...models.distributions import maybe_spec_for
 from ....outputs import InferenceOutput
 from ..utils import reshape_value_to_event
 from .base import TorchBaseInference
-
-
-_DISCRETE = frozenset({dist.Bernoulli, dist.Categorical, dist.OneHotCategorical})
 
 
 def _match(sampled: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
@@ -75,7 +73,6 @@ class RejectionSampling(TorchBaseInference):
     """
 
     name = "RejectionSampling"
-    _DISCRETE = _DISCRETE
 
     def __init__(
         self,
@@ -100,12 +97,14 @@ class RejectionSampling(TorchBaseInference):
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
-            if not any(issubclass(v.distribution, d) for d in self._DISCRETE):
+            spec = maybe_spec_for(v.distribution)
+            if spec is None or not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: {role} variable {name!r} has "
-                    f"distribution {v.distribution.__name__!r} which is "
-                    "continuous. Only Bernoulli, Categorical and "
-                    "OneHotCategorical are supported for query/evidence variables."
+                    f"distribution {v.distribution.__name__!r} which is not "
+                    "discrete. Exact equality matching needs a discrete family "
+                    "(Bernoulli / Categorical / OneHotCategorical, or their "
+                    "relaxed variants) for query/evidence variables."
                 )
 
     def _require_tensor_values(self, d: Dict[str, object], role: str) -> None:

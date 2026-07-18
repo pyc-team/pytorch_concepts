@@ -9,7 +9,6 @@ from torch_concepts.nn.modules.mid.models.variable import (
     Variable,
     ConceptVariable,
     EmbeddingVariable,
-    PARAM_DIM,
 )
 from torch_concepts.distributions import Delta
 
@@ -293,7 +292,7 @@ class TestVariableProperties:
     def test_param_sizes_unknown_distribution_raises(self):
         v = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
         v.distribution = object  # inject unsupported distribution
-        with pytest.raises(ValueError, match="no PARAM_DIM entry"):
+        with pytest.raises(ValueError, match="not a supported family"):
             _ = v.param_sizes
 
     def test_members_list_for_single(self):

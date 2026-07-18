@@ -25,21 +25,10 @@ from typing import Dict, List, Mapping, Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.distributions as dist
 
+from .distributions import maybe_spec_for
 from .factor import ParametricFactor
 from .variable import Variable
-
-
-# ---------------------------------------------------------------------------
-# Discrete-state cardinality (used by the BP engine to enumerate assignments).
-# ---------------------------------------------------------------------------
-_BINARY_FAMILIES = (dist.Bernoulli, dist.RelaxedBernoulli)
-_CATEGORICAL_FAMILIES = (
-    dist.Categorical,
-    dist.OneHotCategorical,
-    dist.RelaxedOneHotCategorical,
-)
 
 
 def enumerable_cardinality(variable: Variable) -> int:
@@ -49,19 +38,20 @@ def enumerable_cardinality(variable: Variable) -> int:
     - Categorical/OneHot-family -> ``variable.size`` (one state per class).
 
     Raises ``ValueError`` for any other case (e.g. a size>1 Bernoulli, a Normal,
-    or a Delta), which cannot be enumerated by belief propagation.
+    or a Delta), which cannot be enumerated by belief propagation. The per-family
+    answer comes from ``DistributionSpec.state_count``.
     """
     D = variable.distribution
-    if any(issubclass(D, b) for b in _BINARY_FAMILIES):
-        if variable.size != 1:
-            raise ValueError(
-                f"Variable {variable.name!r}: a size>1 {D.__name__} is a set of "
-                "independent bits, not a single enumerable variable. Model each bit "
-                "as its own binary variable, or use a Categorical/OneHotCategorical."
-            )
-        return 2
-    if any(issubclass(D, c) for c in _CATEGORICAL_FAMILIES):
-        return variable.size
+    spec = maybe_spec_for(D)
+    if spec is not None and spec.is_enumerable:
+        card = spec.state_count(variable.size)
+        if card is not None:
+            return card
+        raise ValueError(
+            f"Variable {variable.name!r}: a size>1 {D.__name__} is a set of "
+            "independent bits, not a single enumerable variable. Model each bit "
+            "as its own binary variable, or use a Categorical/OneHotCategorical."
+        )
     raise ValueError(
         f"Variable {variable.name!r}: distribution {D.__name__} is not discretely "
         "enumerable, so it cannot be a free (queried/latent) variable under belief "
@@ -156,22 +146,6 @@ class ParametricPotential(ParametricFactor):
         """Observed conditioning inputs (not part of :attr:`scope`)."""
         return list(self._conditioning)
 
-    def _resolve_input(
-        self, v: Variable, values: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """Value for input ``v`` (exact name, or a plate-member column slice)."""
-        val = values.get(v.name)
-        if val is not None:
-            return val
-        owner = v.plate
-        val = values.get(owner.name)
-        if val is not None:
-            return val[..., owner.column_of(v.name)]
-        raise KeyError(
-            f"ParametricPotential({self.name!r}): no value for input {v.name!r} "
-            f"in keys {sorted(values)}."
-        )
-
     def energy(
         self,
         scope_values: Mapping[Variable, torch.Tensor],
@@ -187,7 +161,7 @@ class ParametricPotential(ParametricFactor):
         conditioning = conditioning or {}
         inputs: Dict[Variable, torch.Tensor] = {v: scope_values[v] for v in self._scope}
         for v in self._conditioning:
-            inputs[v] = self._resolve_input(v, conditioning)
+            inputs[v] = self.resolve_value(v, conditioning)
 
         mod = self.parametrization["energy"]
         cat = self._aggregators["energy"](inputs)
@@ -221,5 +195,5 @@ class ParametricPotential(ParametricFactor):
         """Energy for a name-keyed ``inputs`` dict holding all scope (and
         conditioning) values. Returns ``(batch,)``."""
         inputs = inputs or {}
-        scope_values = {v: self._resolve_input(v, inputs) for v in self._scope}
+        scope_values = {v: self.resolve_value(v, inputs) for v in self._scope}
         return self.energy(scope_values, inputs, **layer_kwargs)

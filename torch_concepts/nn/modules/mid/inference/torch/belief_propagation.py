@@ -57,7 +57,7 @@ class BeliefPropagation(TorchBaseInference):
 
     def __init__(
         self,
-        pgm: FactorGraph,
+        pgm: ProbabilisticModel,
         iters: int = 5,
         damping: float = 0.0,
         tol: Optional[float] = None,
@@ -137,11 +137,15 @@ class BeliefPropagation(TorchBaseInference):
     ) -> InferenceOutput:
         """Run loopy BP and return per-variable marginals.
 
-        ``out.params[name] = {'probs': marginal, 'logits': belief}`` where
-        ``marginal`` is the ``(batch, cardinality)`` posterior over the
-        variable's discrete states and ``logits`` is the un-normalized belief
-        (``softmax(logits) == probs``), so a plain
-        ``cross_entropy(out.params[name]['logits'], labels)`` trains the model.
+        ``out.params`` follows the same contract as every other engine: each
+        entry holds the variable's distribution parameters, keyed by parameter
+        name and shaped ``(batch, *variable.shape)``. The BP marginal is
+        therefore reported in the variable's *own* parametrization rather than
+        as a state-space belief — a binary concept gets Bernoulli
+        ``{'probs': P(x=1), 'logits': log-odds}`` of width 1, a ``k``-way
+        categorical gets ``{'probs', 'logits'}`` of width ``k``. The same
+        ``binary_cross_entropy_with_logits`` / ``cross_entropy`` call that trains
+        a :class:`~..forward.ForwardInference` model therefore trains this one.
 
         Only queried names that are *active* (free, computed) variables appear in
         ``params``; a fully-observed queried variable emits none (its value is
@@ -174,7 +178,7 @@ class BeliefPropagation(TorchBaseInference):
         # Active = free variables (not observed) that participate in some factor.
         active_vars = [
             v for v in self.pgm.variables.values()
-            if v.name not in evidence_names and self.pgm._var_factors[v.name]
+            if v.name not in evidence_names and self.pgm.factor_names_of(v.name)
         ]
         active_names = {v.name for v in active_vars}
         # Enumerability precondition (raises a clear error for continuous free vars).
@@ -197,7 +201,7 @@ class BeliefPropagation(TorchBaseInference):
 
         # Adjacency restricted to factors that actually carry a table.
         var_factors: Dict[str, List[str]] = {
-            vn: [fn for fn in self.pgm._var_factors[vn] if fn in factor_table]
+            vn: [fn for fn in self.pgm.factor_names_of(vn) if fn in factor_table]
             for vn in active_names
         }
 
@@ -205,18 +209,38 @@ class BeliefPropagation(TorchBaseInference):
             active_names, cards, factor_free, factor_table, var_factors, batch, dtype, device
         )
 
-        # Beliefs -> marginals.
+        # Beliefs -> marginals, expressed in each variable's own parametrization.
         out = InferenceOutput()
         for vn in active_names:
             belief = sum(m_fv[(fn, vn)] for fn in var_factors[vn])
-            out.params[vn] = {
-                "probs": torch.softmax(belief, dim=-1),
-                "logits": belief,
-            }
+            out.params[vn] = self._canonical_params(self.pgm.variables[vn], belief)
 
         out.params = self._expose_params(out.params, query_names)
         out.params = {n: p for n, p in out.params.items() if n in query_names}
         return out
+
+    @staticmethod
+    def _canonical_params(
+        variable: Variable, belief: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """Express a state-space belief in ``variable``'s own parametrization.
+
+        ``belief`` is the un-normalised log-belief over the variable's discrete
+        states, shape ``(batch, cardinality)``. The result matches what a
+        forward engine puts in ``out.params`` for the same variable:
+
+        - **binary** (2 states, width 1) -> Bernoulli ``probs`` = ``P(x=1)`` and
+          ``logits`` = the log-odds, both ``(batch, 1)``, satisfying
+          ``sigmoid(logits) == probs``;
+        - **categorical** (one state per class) -> ``probs`` and normalised
+          ``logits`` of width ``variable.size``, satisfying
+          ``softmax(logits) == probs``.
+        """
+        log_norm = belief - torch.logsumexp(belief, dim=-1, keepdim=True)
+        if enumerable_cardinality(variable) == 2 and variable.size == 1:
+            logits = log_norm[..., 1:2] - log_norm[..., 0:1]
+            return {"probs": torch.sigmoid(logits), "logits": logits}
+        return {"probs": log_norm.exp(), "logits": log_norm}
 
     def _check_conditioning(self, fname: str, factor, conditioning: Dict[str, torch.Tensor]) -> None:
         """A potential's conditioning inputs must all be observed evidence."""

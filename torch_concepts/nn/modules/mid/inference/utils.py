@@ -12,6 +12,7 @@ from typing import Callable, Dict, Union
 import torch
 import torch.distributions as dist
 
+from ..models.distributions import spec_for
 from ..models.variable import Variable
 
 
@@ -68,18 +69,11 @@ def build_distribution(
     # plate's whole flattened width (len(members) * member_size classes) rather
     # than one distribution per member. Tracked separately; out of scope here.
     D = variable.distribution
-    _univariate = (dist.Bernoulli, dist.Normal)
-    _is_delta = D.__name__ == "Delta"
-    if _is_delta:
-        # Delta is a deterministic point mass; wrapping it in ``Independent``
-        # doesn't make sense (no extra batch dims to reinterpret) and the
-        # ``torch_concepts.distributions.Delta`` we use here has
-        # ``batch_shape == ()`` by construction.
-        return D(**params, **variable.dist_kwargs)
-    if issubclass(D, _univariate):
-        d = D(**params, **variable.dist_kwargs)
-        return dist.Independent(d, 1)
-    return D(**params, **variable.dist_kwargs)
+    d = D(**params, **variable.dist_kwargs)
+    # ``wrap_independent`` marks the families whose event is univariate (a
+    # Delta point mass, by contrast, already has ``batch_shape == ()``).
+    spec = spec_for(D, f"Variable {variable.name!r}")
+    return dist.Independent(d, 1) if spec.wrap_independent else d
 
 
 

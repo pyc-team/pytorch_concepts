@@ -44,6 +44,7 @@ import torch
 import torch.distributions as dist
 
 from ....models.bayesian_network import BayesianNetwork
+from ....models.distributions import maybe_spec_for
 from ...utils import build_distribution, make_temperature_schedule
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference
@@ -51,15 +52,6 @@ from ..utils import build_relaxed_distribution
 from .base_proposal import BaseProposal
 
 
-# Discrete families admissible as query variables (relaxed variants included:
-# a variable declared as RelaxedBernoulli is conceptually a binary node).
-_DISCRETE = (
-    dist.Bernoulli,
-    dist.RelaxedBernoulli,
-    dist.Categorical,
-    dist.OneHotCategorical,
-    dist.RelaxedOneHotCategorical,
-)
 _BERNOULLI = (dist.Bernoulli, dist.RelaxedBernoulli)
 _ONEHOT = (dist.OneHotCategorical, dist.RelaxedOneHotCategorical)
 
@@ -117,7 +109,6 @@ class ImportanceSampling(TorchBaseInference):
     """
 
     name = "ImportanceSampling"
-    _DISCRETE = _DISCRETE
 
     def __init__(
         self,
@@ -345,10 +336,11 @@ class ImportanceSampling(TorchBaseInference):
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
-            if not issubclass(v.distribution, self._DISCRETE):
+            spec = maybe_spec_for(v.distribution)
+            if spec is None or not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "
-                    f"{v.distribution.__name__!r}, which is continuous. Only "
-                    "Bernoulli, Categorical and OneHotCategorical query variables "
-                    "are supported (the soft indicator needs a discrete target)."
+                    f"{v.distribution.__name__!r}, which is not discrete. Only "
+                    "discrete query variables are supported (the soft indicator "
+                    "needs a discrete target)."
                 )

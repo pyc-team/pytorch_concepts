@@ -10,47 +10,9 @@ from typing import Callable, Dict, List, Mapping, Optional, Union
 import torch
 import torch.nn as nn
 
-import torch.distributions as dist
-
+from .distributions import maybe_spec_for
 from .factor import ParametricFactor
-from .variable import Variable, Delta, PARAM_DIM
-
-
-# ---------------------------------------------------------------------------
-# Expected parameter names per distribution family, used to validate and
-# dispatch per-parameter module dicts.
-# ---------------------------------------------------------------------------
-# Maps each distribution family to valid parameter-key sets.
-# For families that accept both ``probs`` and ``logits``, both options are listed.
-# The user's parametrization dict must match EXACTLY ONE of the listed sets.
-_DIST_VALID_PARAM_SETS: Dict[type, List[set]] = {
-    dist.Bernoulli:                [{"probs"}, {"logits"}],
-    dist.RelaxedBernoulli:         [{"probs"}, {"logits"}],
-    dist.Categorical:              [{"probs"}, {"logits"}],
-    dist.OneHotCategorical:        [{"probs"}, {"logits"}],
-    dist.RelaxedOneHotCategorical: [{"probs"}, {"logits"}],
-    dist.Normal:                   [{"loc", "scale"}],
-    dist.MultivariateNormal:       [{"loc", "scale_tril"}],
-    Delta:                         [{"value"}],
-}
-
-# ---------------------------------------------------------------------------
-# Default parameter-name list per distribution (used for the nn.Module shorthand).
-# ---------------------------------------------------------------------------
-# For distributions whose only ambiguity is probs-vs-logits, ``probs`` is the
-# default.  For distributions that require *multiple distinct* parameters (e.g.
-# Normal needs both ``loc`` and ``scale``), the single-module shorthand is
-# rejected at construction time and the user must supply a dict.
-_DIST_DEFAULT_PARAM_SET: Dict[type, List[str]] = {
-    dist.Bernoulli:                ["probs"],
-    dist.RelaxedBernoulli:         ["probs"],
-    dist.Categorical:              ["probs"],
-    dist.OneHotCategorical:        ["probs"],
-    dist.RelaxedOneHotCategorical: ["probs"],
-    dist.Normal:                   ["loc", "scale"],
-    dist.MultivariateNormal:       ["loc", "scale_tril"],
-    Delta:                         ["value"],
-}
+from .variable import Variable, Delta
 
 
 class ParametricCPD(ParametricFactor):
@@ -164,6 +126,9 @@ class ParametricCPD(ParametricFactor):
                 )
 
         D = variable.distribution
+        # ``None`` for a user-supplied custom family: the shorthand and the key
+        # validation below are then skipped rather than rejecting the family.
+        spec = maybe_spec_for(D)
 
         # --- Expand parametrization shorthands ---
         if parametrization is None:
@@ -175,13 +140,9 @@ class ParametricCPD(ParametricFactor):
                 "e.g. parametrization={'logits': LearnablePrior(size)}."
             )
         elif isinstance(parametrization, nn.Module):
-            default_pnames = next(
-                (pnames for base, pnames in _DIST_DEFAULT_PARAM_SET.items()
-                 if issubclass(D, base)),
-                None,
-            )
+            default_pnames = spec.default_params if spec is not None else None
             if default_pnames is None or len(default_pnames) > 1:
-                pnames_str = default_pnames or "unknown"
+                pnames_str = list(default_pnames) if default_pnames else "unknown"
                 raise ValueError(
                     f"ParametricCPD({variable.name!r}): {D.__name__} requires multiple "
                     f"parameters {pnames_str}; pass a dict mapping each parameter name "
@@ -196,15 +157,12 @@ class ParametricCPD(ParametricFactor):
             )
 
         # --- Validate parameter keys against known distribution families ---
-        valid_sets = next(
-            (sets for base, sets in _DIST_VALID_PARAM_SETS.items() if issubclass(D, base)),
-            None,
-        )
         got_keys = set(parametrization.keys())
         if not got_keys:
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): `parametrization` dict must not be empty."
             )
+        valid_sets = spec.valid_param_sets if spec is not None else None
         if valid_sets is not None and not any(got_keys == vs for vs in valid_sets):
             options = [sorted(vs) for vs in valid_sets]
             raise ValueError(
@@ -289,24 +247,6 @@ class ParametricCPD(ParametricFactor):
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
-    def _resolve_parent_value(
-        self, p: Variable, parent_values: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """Tensor for parent ``p`` from ``parent_values``, keyed by ``p.name``
-        (exact, checked first) or by ``p.plate.name`` (a member column slice)."""
-        value = parent_values.get(p.name)
-        if value is not None:
-            return value
-        owner = p.plate
-        value = parent_values.get(owner.name)
-        if value is not None:
-            return value[..., owner.column_of(p.name)]
-        raise KeyError(
-            f"ParametricCPD({self.variable.name!r}): no value for parent "
-            f"{p.name!r} (owner {owner.name!r}) in parent_values keys "
-            f"{sorted(parent_values)}."
-        )
-
     def forward(
         self,
         parent_values: Optional[Mapping[str, torch.Tensor]] = None,
@@ -321,9 +261,9 @@ class ParametricCPD(ParametricFactor):
         :class:`~torch_concepts.nn.LearnablePrior`).
 
         Non-root CPDs receive a ``parent_values`` dict. Each parent is resolved
-        by :meth:`_resolve_parent_value`: keyed either by its exact name or by its
-        owning variable's name (a member column is sliced out), so callers may
-        pass a superset (e.g. an engine's whole value cache) and unknown keys are
+        by :meth:`~ParametricFactor.resolve_value`: keyed either by its exact name
+        or by its owning variable's name (a member column is sliced out), so callers
+        may pass a superset (e.g. an engine's whole value cache) and unknown keys are
         ignored. The resolved tensors (shape ``(*batch, *parent.shape)``) are
         passed to ``self.aggregate`` (default: flatten event dims and concatenate
         along the last axis) to produce a single input tensor, which is then
@@ -346,16 +286,19 @@ class ParametricCPD(ParametricFactor):
 
         # Compose the Variable → Tensor dict for the parents (ordered by parent list).
         parent_variable_values = {
-            p: self._resolve_parent_value(p, parent_values) for p in self.parents
+            p: self.resolve_value(p, parent_values) for p in self.parents
         }
 
         # Each parameter module uses its own pre-resolved aggregation function.
+        # The aggregated inputs are merged into a *fresh* kwargs dict per
+        # parameter: a PyC-style module contributes ``concepts``/``embeddings``
+        # keys that a standard module in the same parametrization cannot accept,
+        # so they must not leak across iterations.
         result = {}
         for pname, mod in self.parametrization.items():
             cat = self._aggregators[pname](parent_variable_values)
             if isinstance(cat, dict):
-                layer_kwargs.update(cat)
-                out = mod(**layer_kwargs)
+                out = mod(**{**layer_kwargs, **cat})
             else:
                 out = mod(cat, **layer_kwargs)
             result[pname] = out

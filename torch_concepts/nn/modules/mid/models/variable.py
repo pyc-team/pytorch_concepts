@@ -9,31 +9,18 @@ from __future__ import annotations
 import copy
 import math
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union
-from functools import partial
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.distributions as dist
 
 from .....distributions.delta import Delta
+from .distributions import maybe_spec_for, spec_for
 
 
-# ---------------------------------------------------------------------------
-# Per-parameter dimension lookup table.
-# ---------------------------------------------------------------------------
-PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
-    Delta:                         {"value": lambda size: size},
-    dist.Bernoulli:                {"probs": lambda size: size, "logits": lambda size: size},
-    dist.RelaxedBernoulli:         {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Categorical:              {"probs": lambda size: size, "logits": lambda size: size},
-    dist.OneHotCategorical:        {"probs": lambda size: size, "logits": lambda size: size},
-    dist.RelaxedOneHotCategorical: {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Normal:                   {"loc": lambda size: size, "scale": lambda size: size},
-    dist.MultivariateNormal:       {"loc": lambda size: size,
-                                    "scale_tril": lambda size: size * (size + 1) // 2},
-}
-
+# Semantic concept type -> distribution family. A high-level preset (which
+# family should a "binary" concept get?), not a fact about the families
+# themselves — those live in :mod:`.distributions`.
 _DEFAULT_DISTRIBUTIONS = {
     'binary': dist.Bernoulli,
     'categorical': dist.OneHotCategorical,
@@ -45,19 +32,6 @@ _DEFAULT_DIST_KWARGS = {
     dist.RelaxedOneHotCategorical: {'temperature': 0.5},
 }
 
-# Per-parameter activation mapping a raw network output to a valid distribution
-# parameter, keyed by distribution family and then by the parameter name the
-# CPD produced.
-DEFAULT_ACTIVATIONS = {
-    Delta:                         {"value": lambda x: x},
-    dist.Bernoulli:                {"probs": lambda x: x, "logits": torch.sigmoid},
-    dist.RelaxedBernoulli:         {"probs": lambda x: x, "logits": torch.sigmoid},
-    dist.Categorical:              {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.OneHotCategorical:        {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.RelaxedOneHotCategorical: {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.Normal:                   {"loc": lambda x: x, "scale": lambda x: x},
-    dist.MultivariateNormal:       {"loc": lambda x: x, "scale_tril": lambda x: x},
-}
 
 def _broadcast(value, n: int, name: str):
     """Return a list of length ``n``: broadcast scalar or check list length.
@@ -184,9 +158,8 @@ class Variable(ABC):
             # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
             # is triangular (size*(size+1)/2), so its members aren't sliceable —
             # model those as separate variables instead.
-            if distribution in PARAM_DIM and not all(
-                fn(total) == total for fn in PARAM_DIM[distribution].values()
-            ):
+            spec = maybe_spec_for(distribution) if distribution is not None else None
+            if spec is not None and not spec.is_per_element:
                 raise ValueError(
                     f"{type(self).__name__}({names!r}): plate `members` need a distribution "
                     f"with per-element parameters; {distribution.__name__} has a "
@@ -340,10 +313,15 @@ class Variable(ABC):
         observed tensors, leaving the unobserved members untouched. ``observed``
         maps member name -> observed tensor. Returns a new tensor (the input is
         not mutated); a no-op when ``observed`` is empty.
+
+        The clone is required: the caller caches this value and reuses it as a
+        parent input for downstream factors, so writing the observed columns
+        in place would corrupt that cache and break autograd on the tensor the
+        CPD produced.
         """
         if not observed:
             return value
-        value = value.clone() # FIXME: maybe the clone is not needed.
+        value = value.clone()
         for member, obs in observed.items():
             columns = self.column_of(member)
             slot = value[..., columns]
@@ -358,24 +336,19 @@ class Variable(ABC):
         ``Normal``, ``"probs"``/``"logits"`` for ``Bernoulli``) to the true
         number of scalar network outputs needed to produce it. Most equal
         :attr:`size` (one scalar per event element); the exceptions are encoded
-        in :data:`PARAM_DIM` — e.g. ``MultivariateNormal``'s ``scale_tril``
-        needs ``size * (size + 1) // 2`` lower-triangular Cholesky entries.
+        in the family's :class:`~.distributions.DistributionSpec` — e.g.
+        ``MultivariateNormal``'s ``scale_tril`` needs ``size * (size + 1) // 2``
+        lower-triangular Cholesky entries.
 
         Raises
         ------
         ValueError
-            If the distribution family has no :data:`PARAM_DIM` entry.
+            If the distribution family is not in the spec registry.
         """
-        if self.distribution not in PARAM_DIM:
-            raise ValueError(
-                f"{type(self).__name__}({self.name!r}): distribution "
-                f"{self.distribution.__name__} has no PARAM_DIM entry; cannot "
-                "resolve per-parameter sizes."
-            )
-        return {
-            param: fn(self.size)
-            for param, fn in PARAM_DIM[self.distribution].items()
-        }
+        spec = spec_for(
+            self.distribution, f"{type(self).__name__}({self.name!r})"
+        )
+        return {param: fn(self.size) for param, fn in spec.param_sizes.items()}
 
     def __repr__(self) -> str:
         s = (

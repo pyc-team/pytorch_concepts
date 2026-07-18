@@ -619,7 +619,7 @@ class TestRejectionSamplingValidation:
         """Delta is continuous — querying it should raise ValueError."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        with pytest.raises(ValueError, match="not discrete"):
             eng.query(
                 query={"x": torch.zeros(1, 4)},
                 evidence={},
@@ -629,7 +629,7 @@ class TestRejectionSamplingValidation:
         """Providing a continuous variable as evidence should raise ValueError."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        with pytest.raises(ValueError, match="not discrete"):
             eng.query(
                 query={"c": torch.tensor([[1.0]])},
                 evidence={"x": torch.zeros(1, 4)},
@@ -849,7 +849,7 @@ class TestImportanceSamplingValidation:
         m = _make_mixed_model()
         proposal = MutilatedNetworkProposal(m)
         eng = ImportanceSampling(m, proposal=proposal, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        with pytest.raises(ValueError, match="not discrete"):
             eng.query(
                 query={"x": torch.zeros(1, 4)},
                 evidence={},
@@ -1155,7 +1155,7 @@ class TestBuildRelaxedDistribution:
 
 
 # ===========================================================================
-# 20. propagated_value — new relaxed entries in _PRIMARY_PARAM
+# 20. propagated_value — relaxed families resolve via their DistributionSpec
 # ===========================================================================
 
 class TestPropagatedValue:
@@ -1168,12 +1168,12 @@ class TestPropagatedValue:
         assert torch.allclose(propagated_value(dist.Bernoulli, {"logits": lg}), lg)
 
     def test_relaxed_bernoulli_probs(self):
-        """RelaxedBernoulli is in _PRIMARY_PARAM — should resolve to probs."""
+        """RelaxedBernoulli's spec has primary_param="probs"."""
         p = torch.tensor([[0.4, 0.6]])
         assert torch.allclose(propagated_value(dist.RelaxedBernoulli, {"probs": p}), p)
 
     def test_relaxed_onehot_probs(self):
-        """RelaxedOneHotCategorical is in _PRIMARY_PARAM — should resolve to probs."""
+        """RelaxedOneHotCategorical's spec has primary_param="probs"."""
         p = torch.ones(1, 3) / 3
         assert torch.allclose(propagated_value(dist.RelaxedOneHotCategorical, {"probs": p}), p)
 
@@ -1182,5 +1182,5 @@ class TestPropagatedValue:
         assert torch.allclose(propagated_value(dist.Normal, {"loc": loc}), loc)
 
     def test_unsupported_raises(self):
-        with pytest.raises(ValueError, match="Unsupported distribution"):
+        with pytest.raises(ValueError, match="not a supported family"):
             propagated_value(dist.Poisson, {"rate": torch.ones(1, 1)})

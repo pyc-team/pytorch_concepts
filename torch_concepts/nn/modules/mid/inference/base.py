@@ -47,11 +47,9 @@ class BaseInference(nn.Module):
         ]
         if roots_needing_input:
             warnings.warn(
-                "\033[33m"
                 f"{self.name}: the following root variables have a parametrization "
                 f"that requires input arguments: {roots_needing_input}. "
-                "These must be supplied as constant evidence on every query call."
-                "\033[0m",
+                "These must be supplied as constant evidence on every query call.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -103,7 +101,11 @@ class BaseInference(nn.Module):
                 )
 
         if not query and not evidence:
-            raise ValueError("nothing to do")
+            raise ValueError(
+                f"{self.name}: nothing to do — both `query` and `evidence` are "
+                "empty. Provide at least one variable to compute (query) or to "
+                "condition on (evidence)."
+            )
 
         all_tensors = {name: val for name, val in query.items() if val is not None}
         all_tensors.update(evidence)

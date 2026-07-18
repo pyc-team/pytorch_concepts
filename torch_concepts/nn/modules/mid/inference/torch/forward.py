@@ -1,13 +1,15 @@
 """ForwardInference — pytorch forward pass through a :class:`BayesianNetwork`.
 
-Two modes:
+This module holds everything the forward engines share (topological traversal,
+evidence clamping, teacher forcing, temperature schedule). The single point of
+variation is :meth:`ForwardInference._resolve`, implemented by each concrete
+engine:
 
-- ``"deterministic"``: every variable is propagated by its "canonical"
-  parameter (``loc`` for Normal/MVN, ``probs`` for Bernoulli/OneHotCat,
-  ``value`` for Delta).
-- ``"ancestral"``: every variable is sampled with the same reparameterised
-  distributions used by :class:`BayesianNetwork.forward` for unobserved sites
-  (straight-through relaxations for the discrete families).
+- :class:`~.deterministic.DeterministicInference` propagates every variable by
+  its "canonical" parameter (``loc`` for Normal/MVN, ``probs`` for
+  Bernoulli/OneHotCat, ``value`` for Delta).
+- :class:`~.ancestral.AncestralSamplingInference` samples every variable from
+  the reparameterised (relaxed) distribution of its family.
 
 Evidence variables (root or non-root) are hard-conditioned: the observed
 value is propagated to children directly and their CPD is never evaluated,
@@ -16,6 +18,8 @@ so no parameters are produced for them.
 
 from __future__ import annotations
 
+import warnings
+from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -24,11 +28,12 @@ from ...models.bayesian_network import BayesianNetwork
 from ...models.variable import Variable
 from ..utils import make_temperature_schedule, reshape_value_to_event
 from ....outputs import InferenceOutput
-from .utils import propagated_value, sample_from
 from .base import TorchBaseInference
 
 
-def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+def _align_gt(
+    gt: torch.Tensor, ref: torch.Tensor, name: Optional[str] = None
+) -> torch.Tensor:
     """Cast and reshape ground-truth tensor to match the dtype and shape of ref.
 
     Step-by-step:
@@ -41,19 +46,54 @@ def _align_gt(gt: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
        - ``gt`` has one fewer dim than ``ref`` and ``ref``\'s last dim is 1 → unsqueeze.
     4. Finally, broadcast ``gt`` to exactly ``ref``\'s shape so downstream ops
        (e.g. per-element masking) can use ``gt`` in place of ``ref``.
+
+    Step 4 also silently rescues genuinely wrong targets — e.g. a ``(B,)`` label
+    stretched across a ``(B, k)`` output — so a broadcast that is not one of the
+    trailing-1 cases warns once per (name, shape) pair.
     """
     aligned = gt.to(ref.dtype) if gt.dtype != ref.dtype else gt
-    if aligned.shape != ref.shape:
-        if aligned.dim() == ref.dim() + 1 and aligned.shape[-1] == 1:
-            aligned = aligned.squeeze(-1)
-        elif aligned.dim() + 1 == ref.dim() and ref.shape[-1] == 1:
-            aligned = aligned.unsqueeze(-1)
-    return aligned.expand_as(ref) if aligned.shape != ref.shape else aligned
+    if aligned.shape == ref.shape:
+        return aligned
+
+    original_shape = tuple(aligned.shape)
+    if aligned.dim() == ref.dim() + 1 and aligned.shape[-1] == 1:
+        aligned = aligned.squeeze(-1)
+    elif aligned.dim() + 1 == ref.dim() and ref.shape[-1] == 1:
+        aligned = aligned.unsqueeze(-1)
+    if aligned.shape == ref.shape:
+        return aligned
+
+    _warn_broadcast(name, original_shape, tuple(ref.shape))
+    return aligned.expand_as(ref)
 
 
-def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> torch.Tensor:
+# (name, target shape, reference shape) triples already warned about, so a
+# training loop reports a suspicious target once rather than every step.
+_BROADCAST_WARNED: set = set()
+
+
+def _warn_broadcast(name: Optional[str], gt_shape: tuple, ref_shape: tuple) -> None:
+    key = (name, gt_shape, ref_shape)
+    if key in _BROADCAST_WARNED:
+        return
+    _BROADCAST_WARNED.add(key)
+    target = f"for {name!r}" if name else "for a query variable"
+    warnings.warn(
+        f"Teacher forcing {target}: the target of shape {gt_shape} does not match "
+        f"the predicted shape {ref_shape} and is being broadcast to fit. This is "
+        "usually a mis-shaped label (e.g. class indices where a one-hot or "
+        "per-element target is expected); pass a target of shape "
+        f"{ref_shape} to silence this.",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def _teacher_force(
+    nn_value: torch.Tensor, gt: torch.Tensor, p_int: float, name: Optional[str] = None
+) -> torch.Tensor:
     """Stochastically replace nn_value with ground truth at rate p_int."""
-    aligned = _align_gt(gt, nn_value)
+    aligned = _align_gt(gt, nn_value, name)
     if p_int >= 1.0:
         return aligned
     if p_int <= 0.0:
@@ -63,22 +103,32 @@ def _teacher_force(nn_value: torch.Tensor, gt: torch.Tensor, p_int: float) -> to
     return mask * aligned + (1.0 - mask) * nn_value
 
 
-class ForwardInference(TorchBaseInference):
+class ForwardInference(TorchBaseInference, ABC):
     """Abstract base class for torch based, forward-pass inference engines.
 
     Concrete subclasses (:class:`DeterministicInference`,
-    :class:`AncestralSamplingInference`) implement the :meth:`_propagate` method to
-    decide whether each variable is resolved deterministically (MAP estimate)
-    or by ancestral sampling.  All shared logic (topological traversal,
-    evidence clamping, teacher forcing, temperature schedule) lives here.
+    :class:`AncestralSamplingInference`) implement :meth:`_propagate` to decide
+    how each variable is resolved — deterministically (MAP estimate) or by
+    ancestral sampling — and set :attr:`is_stochastic` accordingly. All shared
+    logic (topological traversal, evidence clamping, teacher forcing,
+    temperature schedule) lives here.
+
+    Subclasses declare their behaviour with two class attributes:
+
+    - :attr:`is_stochastic` — whether :meth:`_propagate` draws samples. Controls
+      whether realisations are reported in ``out.samples`` and whether
+      :meth:`step` advances the temperature schedule.
+    - :attr:`name` — the engine name used in messages and ``repr``.
     """
 
     name = "ForwardInference"
 
+    #: Whether :meth:`_propagate` draws samples (vs. propagating a point estimate).
+    is_stochastic: bool = False
+
     def __init__(
         self,
         pgm: BayesianNetwork,
-        mode: str = "deterministic",
         p_int: float = 1.0,
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
@@ -88,16 +138,13 @@ class ForwardInference(TorchBaseInference):
     ):
         super().__init__(pgm)
         self._require_directed()
-        if mode not in {"deterministic", "ancestral"}:
-            raise ValueError(f"mode must be either 'deterministic' or 'ancestral', got {mode!r}.")
         if not 0.0 <= float(p_int) <= 1.0:
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
-        self.mode = mode
         self.p_int = float(p_int)
-        # When True (deterministic mode only), the propagated parameter is passed
-        # through its default activation before being fed to child CPDs. The
-        # parameters reported in the inference output stay the raw (non-activated)
-        # values produced by the CPD.
+        # When True (deterministic engines only), the propagated parameter is
+        # passed through its default activation before being fed to child CPDs.
+        # The parameters reported in the inference output stay the raw
+        # (non-activated) values produced by the CPD.
         self.activate_before_propagation = bool(activate_before_propagation)
         # When True, variables in the same topological level (conditionally
         # independent given the previous levels) are evaluated concurrently.
@@ -129,11 +176,21 @@ class ForwardInference(TorchBaseInference):
         )
 
     @property
+    def mode(self) -> str:
+        """``"ancestral"`` for a sampling engine, ``"deterministic"`` otherwise.
+
+        Derived from :attr:`is_stochastic` — the engine's behaviour is fixed by
+        its class, not by a constructor flag.
+        """
+        return "ancestral" if self.is_stochastic else "deterministic"
+
+    @property
     def temperature(self) -> torch.Tensor:
         return self._temperature
 
     def step(self) -> None:
-        if self.mode == "ancestral":
+        """Advance the temperature schedule (no-op for deterministic engines)."""
+        if self.is_stochastic:
             self._step += 1
             self._temperature.fill_(float(self._schedule(self._step)))
 
@@ -220,7 +277,7 @@ class ForwardInference(TorchBaseInference):
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
         if target is not None:
-            value = _teacher_force(value, target, self.p_int)
+            value = _teacher_force(value, target, self.p_int, name)
         # Partial-plate observation: splice the observed members over the computed
         # value (the CPD owns the column write). ``member_evidence`` is {} unless
         # this variable has individually-observed members.
@@ -249,7 +306,7 @@ class ForwardInference(TorchBaseInference):
         When :attr:`parallelize_levels` is enabled and the level holds more than
         one variable, each call is dispatched with :func:`torch.jit.fork` (real
         interop-thread parallelism, autograd-aware); otherwise they run
-        sequentially. With ``mode="ancestral"`` the per-thread RNG order is not
+        sequentially. For a stochastic engine the per-thread RNG order is not
         deterministic, so parallelism trades reproducibility for speed.
         """
         if not self.parallelize_levels or len(level) == 1:
@@ -277,7 +334,7 @@ class ForwardInference(TorchBaseInference):
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
-        layer_kwargs: Dict[str, Dict] = {},
+        layer_kwargs: Optional[Dict[str, Dict]] = None,
     ) -> InferenceOutput:
         """Run a forward pass in topological order, looping over variables.
 
@@ -296,6 +353,7 @@ class ForwardInference(TorchBaseInference):
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
+        layer_kwargs = layer_kwargs or {}
 
         query_names = set(query)
         tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
@@ -308,7 +366,7 @@ class ForwardInference(TorchBaseInference):
 
         required = self._required_variables(query_names, evidence_names)
         temperature = self.temperature
-        sampled = self.mode == "ancestral"
+        sampled = self.is_stochastic
 
         out = InferenceOutput()
         cache: Dict[str, torch.Tensor] = {}
@@ -334,18 +392,27 @@ class ForwardInference(TorchBaseInference):
         out.params = {name: p for name, p in out.params.items() if name in query_names}
         return out
 
+    @abstractmethod
+    def _resolve(
+        self,
+        variable: Variable,
+        params: Dict[str, torch.Tensor],
+        temperature: torch.Tensor,
+    ) -> torch.Tensor:
+        """Turn a CPD's parameters into a flat ``(batch, size)`` realisation.
+
+        The one behavioural difference between the forward engines: a point
+        estimate (:class:`DeterministicInference`) or a reparameterised draw
+        (:class:`AncestralSamplingInference`).
+        """
+
     def _propagate(
         self,
         variable: Variable,
         params: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
     ) -> torch.Tensor:
-        if self.mode == "deterministic":
-            value = propagated_value(
-                variable.distribution, params, activate=self.activate_before_propagation,
-            )
-        else:
-            value = sample_from(variable, params, temperature)
+        value = self._resolve(variable, params, temperature)
         # Reshape the realization to the variable's event shape. Samples are then
         # returned and cached (as parent values for downstream CPDs) as
         # (batch, *shape); the flat parameter dict is left as the CPD produced it.

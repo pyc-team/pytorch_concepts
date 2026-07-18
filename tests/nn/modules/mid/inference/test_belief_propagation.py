@@ -81,11 +81,32 @@ def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, ba
     return marg
 
 
-def _assert_marginals_match(out, exact, names, atol=1e-5):
+def _state_marginal(variable, params):
+    """Engine ``params`` -> ``(batch, cardinality)`` state marginal.
+
+    ``out.params`` follows the uniform engine contract: the marginal is
+    expressed in the variable's own parametrization (a binary variable gets a
+    width-1 ``P(x=1)``), so widen it back to a state distribution before
+    comparing against the enumerated reference.
+    """
+    probs = params["probs"]
+    if enumerable_cardinality(variable) == 2 and variable.size == 1:
+        return torch.cat([1.0 - probs, probs], dim=-1)
+    return probs
+
+
+def _assert_marginals_match(fg, out, exact, names, atol=1e-5):
     for n in names:
-        bp = out.params[n]["probs"]
+        bp = _state_marginal(fg.variables[n], out.params[n])
         assert torch.allclose(bp, exact[n], atol=atol), (n, bp, exact[n])
         assert torch.allclose(bp.sum(-1), torch.ones_like(bp.sum(-1)), atol=1e-5)
+
+
+def _binary_ce(params, target):
+    """Cross-entropy on a binary variable's canonical (log-odds) logits."""
+    return torch.nn.functional.binary_cross_entropy_with_logits(
+        params["logits"].squeeze(-1), target.to(params["logits"].dtype)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -103,7 +124,7 @@ class TestBPExactOnTrees:
         fg = self._chain_mrf()
         out = BeliefPropagation(fg, iters=25).query(query=["a", "b", "c"], evidence={})
         exact = _exact_marginals(fg, ["a", "b", "c"])
-        _assert_marginals_match(out, exact, ["a", "b", "c"])
+        _assert_marginals_match(fg, out, exact, ["a", "b", "c"])
 
     def test_star_marginals_exact(self):
         torch.manual_seed(1)
@@ -116,14 +137,14 @@ class TestBPExactOnTrees:
         names = ["h", "l0", "l1", "l2"]
         out = BeliefPropagation(fg, iters=25).query(query=names, evidence={})
         exact = _exact_marginals(fg, names)
-        _assert_marginals_match(out, exact, names)
+        _assert_marginals_match(fg, out, exact, names)
 
     def test_single_unary_marginal(self):
         a = _bin("a")
         fg = ProbabilisticModel(variables=[a], factors=[_pot([a], "ua")])
         out = BeliefPropagation(fg, iters=3).query(query=["a"], evidence={})
         exact = _exact_marginals(fg, ["a"])
-        _assert_marginals_match(out, exact, ["a"])
+        _assert_marginals_match(fg, out, exact, ["a"])
 
 
 class TestBPMatchesDirectedOnDAG:
@@ -135,7 +156,7 @@ class TestBPMatchesDirectedOnDAG:
         fg = ProbabilisticModel(variables=[a, b], factors=[cpd_a, cpd_b])
         out = BeliefPropagation(fg, iters=15).query(query=["a", "b"], evidence={})
         exact = _exact_marginals(fg, ["a", "b"])
-        _assert_marginals_match(out, exact, ["a", "b"])
+        _assert_marginals_match(fg, out, exact, ["a", "b"])
 
 
 class TestBPConditionalAndEvidence:
@@ -147,9 +168,9 @@ class TestBPConditionalAndEvidence:
         fg = ProbabilisticModel(variables=[a, b, emb], factors=[pot])
         e = torch.randn(7, 4)
         out = BeliefPropagation(fg, iters=10).query(query=["a", "b"], evidence={"emb": e})
-        assert out.params["a"]["probs"].shape == (7, 2)
+        assert out.params["a"]["probs"].shape == (7, 1)
         exact = _exact_marginals(fg, ["a", "b"], conditioning={"emb": e}, batch=7)
-        _assert_marginals_match(out, exact, ["a", "b"])
+        _assert_marginals_match(fg, out, exact, ["a", "b"])
 
     def test_discrete_evidence_matches_exact_conditional(self):
         torch.manual_seed(4)
@@ -157,7 +178,7 @@ class TestBPConditionalAndEvidence:
         fg = ProbabilisticModel(variables=[a, b], factors=[_pot([a], "ua"), _pot([a, b], "ab")])
         out = BeliefPropagation(fg, iters=10).query(query=["a"], evidence={"b": torch.ones(1, 1)})
         exact = _exact_marginals(fg, ["a"], evidence_states={"b": 1})
-        _assert_marginals_match(out, exact, ["a"])
+        _assert_marginals_match(fg, out, exact, ["a"])
 
     def test_observed_variable_emits_no_params(self):
         a, b = _bin("a"), _bin("b")
@@ -178,7 +199,7 @@ class TestBPTrainingAndMixed:
         fg = ProbabilisticModel(variables=[a, b, c], factors=[cpd_a, cpd_b, cpd_c, pot])
         assert fg.is_mixed
         out = BeliefPropagation(fg, iters=6).query(query=["c"], evidence={})
-        loss = torch.nn.functional.cross_entropy(out.params["c"]["logits"], torch.tensor([1]))
+        loss = _binary_ce(out.params["c"], torch.tensor([1]))
         loss.backward()
         grads = [p.grad for p in fg.parameters() if p.grad is not None]
         assert grads and any(g.abs().sum() > 0 for g in grads)
@@ -197,7 +218,7 @@ class TestBPTrainingAndMixed:
         for step in range(300):
             opt.zero_grad()
             out = eng.query(query=["a"], evidence={"emb": x})
-            loss = torch.nn.functional.cross_entropy(out.params["a"]["logits"], target)
+            loss = _binary_ce(out.params["a"], target)
             loss.backward()
             opt.step()
             if step == 0:

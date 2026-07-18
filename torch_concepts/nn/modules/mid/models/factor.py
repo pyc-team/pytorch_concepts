@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, List, Set, Tuple, Union
+from typing import Callable, Dict, Mapping, Optional, List, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -68,6 +68,13 @@ class ParametricFactor(nn.Module, ABC):
     Concrete factor types (directed: :class:`ParametricCPD`; undirected:
     ``ParametricPotential``) must subclass this and implement :meth:`forward`.
 
+    **Subclass contract.** Before calling ``super().__init__``, a subclass must
+    set ``self.parents``: the ordered list of input variables the aggregation
+    machinery feeds to the parametrization modules. For a
+    :class:`ParametricCPD` these are the CPD's parents; for a
+    ``ParametricPotential`` they are ``scope + conditioning``. This is the only
+    attribute the base class reads off the subclass.
+
     Subclasses call ``super().__init__(parametrization, aggregate)`` to store:
 
     - ``self.parametrization`` — an ``nn.ModuleDict`` mapping parameter names
@@ -95,6 +102,10 @@ class ParametricFactor(nn.Module, ABC):
     tensor. See :meth:`_resolve_aggregator`.
     """
 
+    # Ordered input variables, set by every concrete subclass before
+    # ``super().__init__`` (see the class docstring).
+    parents: List[Variable]
+
     def __init__(
         self,
         parametrization: Dict[str, nn.Module],
@@ -106,6 +117,12 @@ class ParametricFactor(nn.Module, ABC):
         ] = None,
     ):
         super().__init__()
+
+        if not hasattr(self, "parents"):
+            raise TypeError(
+                f"{type(self).__name__}: subclasses must set `self.parents` (the "
+                "ordered input variables) before calling super().__init__()."
+            )
 
         parametrization = self._initialize_parametrization(parametrization)
 
@@ -209,6 +226,28 @@ class ParametricFactor(nn.Module, ABC):
         """
         return _cat_parents(inputs)
 
+    def resolve_value(
+        self, v: Variable, values: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Tensor for input ``v`` from a name-keyed ``values`` mapping.
+
+        Looked up by ``v``'s exact name first (so a caller may key by the member
+        handle directly), then by its owning plate's name, in which case the
+        member's column span is sliced out (a view, no copy). A superset of keys
+        is fine — unrelated entries are ignored.
+        """
+        value = values.get(v.name)
+        if value is not None:
+            return value
+        owner = v.plate
+        value = values.get(owner.name)
+        if value is not None:
+            return value[..., owner.column_of(v.name)]
+        raise KeyError(
+            f"{type(self).__name__}({self.name!r}): no value for input "
+            f"{v.name!r} (owner {owner.name!r}) in keys {sorted(values)}."
+        )
+
     def _split_by_type(
         self,
         inputs: Dict[Variable, torch.Tensor],
@@ -226,7 +265,7 @@ class ParametricFactor(nn.Module, ABC):
                 embeddings[p] = inputs[p]
             else:
                 raise ValueError(
-                    f"ParametricCPD({self.variable.name!r}): parent "
+                    f"{type(self).__name__}({self.name!r}): input "
                     f"{p.name!r} has invalid type {p.variable_type!r}, "
                     "expected 'embedding' or 'concept'."
                 )

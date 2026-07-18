@@ -145,10 +145,19 @@ class ProbabilisticModel(nn.Module):
         return len(self.guides) > 0
 
     # ----------------------------------------------------------- graph queries
+    def factor_names_of(self, var: Union[str, Variable]) -> List[str]:
+        """Names of the factors whose ``scope`` includes ``var`` (or ``var``'s plate).
+
+        The name-level view of :meth:`factors_of`, for callers (e.g. belief
+        propagation) that key their own tables by factor name and would
+        otherwise reach into the private adjacency map.
+        """
+        name = var.name if isinstance(var, Variable) else var
+        return list(self._var_factors[name])
+
     def factors_of(self, var: Union[str, Variable]) -> List[ParametricFactor]:
         """All factors whose ``scope`` includes ``var`` (or ``var``'s plate)."""
-        name = var.name if isinstance(var, Variable) else var
-        return [self._factors[fn] for fn in self._var_factors[name]]
+        return [self._factors[fn] for fn in self.factor_names_of(var)]
 
     def neighbors(self, var: Union[str, Variable]) -> List[Variable]:
         """Variables that share at least one factor with ``var`` (excluding itself)."""

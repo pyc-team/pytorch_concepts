@@ -1,8 +1,14 @@
 """DeterministicInference — forward inference that evaluates MAP estimates."""
 from __future__ import annotations
 
+from typing import Dict
+
+import torch
+
 from ...models.bayesian_network import BayesianNetwork
+from ...models.variable import Variable
 from .forward import ForwardInference
+from .utils import propagated_value
 
 
 class DeterministicInference(ForwardInference):
@@ -21,7 +27,7 @@ class DeterministicInference(ForwardInference):
     activate_before_propagation : bool
         When ``True``, each variable's propagated parameter is passed
         through its default activation (see
-        :data:`~torch_concepts.nn.modules.mid.models.variable.DEFAULT_ACTIVATIONS`)
+        :attr:`~torch_concepts.nn.modules.mid.models.distributions.DistributionSpec.activations`)
         before being fed to child CPDs — e.g. a CPD producing ``logits``
         propagates probabilities downstream. The parameters returned in the
         inference output remain the raw (non-activated) values. When ``False``,
@@ -33,6 +39,7 @@ class DeterministicInference(ForwardInference):
     """
 
     name = "DeterministicInference"
+    is_stochastic = False
 
     def __init__(
             self,
@@ -43,8 +50,20 @@ class DeterministicInference(ForwardInference):
     ):
         super().__init__(
             pgm,
-            mode="deterministic",
             p_int=p_int,
             parallelize_levels=parallelize_levels,
             activate_before_propagation=activate_before_propagation,
+        )
+
+    def _resolve(
+        self,
+        variable: Variable,
+        params: Dict[str, torch.Tensor],
+        temperature: torch.Tensor,
+    ) -> torch.Tensor:
+        """The family's canonical parameter — no sampling (``temperature`` unused)."""
+        return propagated_value(
+            variable.distribution,
+            params,
+            activate=self.activate_before_propagation,
         )

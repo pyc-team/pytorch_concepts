@@ -58,47 +58,61 @@ def logits_from_params(
 class InferenceOutput:
     """Return value of every inference engine.
 
+    **Uniform contract.** An engine fills only the attributes it can produce —
+    a deterministic forward pass leaves ``samples`` empty, a rejection sampler
+    fills only ``probabilities`` — but whenever an attribute *is* filled, its
+    contents mean the same thing across every engine. Consumers can therefore
+    swap engines without rewriting their losses and metrics.
+
     Attributes
     ----------
     params : dict[str, ParamDict]
-        Per-variable named parameter tensors of the model-side distribution
-        (e.g. ``{'c': {'probs': ...}}``). 
+        Per-variable distribution parameters, keyed by the variable's own
+        parameter names and shaped ``(batch, *variable.shape)`` — exactly what
+        the variable's distribution family takes (``{'probs': ...}`` /
+        ``{'logits': ...}`` for a Bernoulli concept, ``{'loc': ..., 'scale':
+        ...}`` for a Normal). Engines that compute a posterior marginal
+        (e.g. :class:`~torch_concepts.nn.BeliefPropagation`) report it in this
+        same parametrization rather than as a state-space belief. Only queried
+        variables appear; fully-observed ones emit no parameters.
     guide_params : dict[str, ParamDict]
-        Per-latent named parameter tensors of the variational guide.
+        Per-latent parameters of the variational guide, same layout as
+        ``params``.
     samples : dict[str, torch.Tensor]
-        Per-variable sampled values.
+        Per-variable realisations, shaped ``(batch, *variable.shape)``. Filled
+        only by engines that actually draw samples.
     probabilities : torch.Tensor or None
-        Joint conditional probabilities for a fully realised query batch.
+        ``(batch,)`` estimate of ``P(query | evidence)`` for a fully realised
+        query batch. Filled only by the sampling estimators.
     """
 
     params: Dict[str, ParamDict] = field(default_factory=dict)
     guide_params: Dict[str, ParamDict] = field(default_factory=dict)
     samples: Dict[str, torch.Tensor] = field(default_factory=dict)
     probabilities: Optional[torch.Tensor] = None
-
 
 
 @dataclass
-class ModelOutput:
+class ModelOutput(InferenceOutput):
     """Structured output from a high-level model's ``forward()`` method.
+
+    An :class:`InferenceOutput` — same four attributes, same contract — plus
+    the extra fields the high level attaches around a query.
 
     Attributes
     ----------
-    params : dict[str, ParamDict]
-        Per-variable named parameter tensors of the model-side distribution
-        (e.g. ``{'c': {'probs': ...}}``). 
-    guide_params : dict[str, ParamDict]
-        Per-latent named parameter tensors of the variational guide.
-    samples : dict[str, torch.Tensor]
-        Per-variable sampled values.
-    probabilities : torch.Tensor or None
-        Joint conditional probabilities for a fully realised query batch.
+    logits : torch.Tensor or None
+        Flat ``(batch, sum_cardinalities)`` logits assembled from ``params``.
+
+        .. deprecated::
+           Derived state kept for the high-level losses/metrics; build it on
+           demand with :func:`logits_from_params` instead.
+    target : torch.Tensor or None
+        The prepared ground-truth tensor aligned with ``logits``.
+    extra : dict[str, torch.Tensor] or None
+        Model-specific extras that do not belong to the inference contract.
     """
 
-    params: Dict[str, ParamDict] = field(default_factory=dict)
-    guide_params: Dict[str, ParamDict] = field(default_factory=dict)
-    samples: Dict[str, torch.Tensor] = field(default_factory=dict)
-    probabilities: Optional[torch.Tensor] = None
-    logits: Optional[torch.Tensor] = None # FIXME: to be removed
+    logits: Optional[torch.Tensor] = None  # FIXME: to be removed
     target: Optional[torch.Tensor] = None
     extra: Optional[Dict[str, torch.Tensor]] = None

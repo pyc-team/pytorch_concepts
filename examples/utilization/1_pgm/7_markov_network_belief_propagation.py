@@ -4,8 +4,9 @@ propagation and cross-entropy on the BP marginals.
 Two binary concepts ``a`` and ``b`` are coupled by a learnable pairwise
 potential, and each has a unary potential conditioned on an observed embedding
 ``x``. Inference is loopy belief propagation (:class:`BeliefPropagation`), which
-returns per-variable marginals; training minimises the cross-entropy of those
-marginals against the labels — the partition function ``Z`` is never computed.
+returns per-variable marginals in each variable's own parametrization; training
+minimises the cross-entropy of those marginals against the labels — the
+partition function ``Z`` is never computed.
 
 This is the undirected counterpart of the directed ``BayesianNetwork`` examples
 in this folder, using the same ``query(query, evidence)`` API.
@@ -25,8 +26,10 @@ def main():
 
     # Data: a = (x0 > 0), b = (x1 > 0). The two concepts are correlated through x.
     x = torch.randn(n_samples, n_features)
-    a_lab = (x[:, 0] > 0).long()
-    b_lab = (x[:, 1] > 0).long()
+    # Targets match each concept's own parametrization: a width-1 float per
+    # binary variable, exactly as for a directed BayesianNetwork.
+    a_lab = (x[:, 0] > 0).float().unsqueeze(-1)
+    b_lab = (x[:, 1] > 0).float().unsqueeze(-1)
 
     # Variables. The embedding is an observed conditioning input (not in any scope).
     emb = EmbeddingVariable("x", distribution=Normal, size=n_features)
@@ -53,18 +56,20 @@ def main():
         optimizer.zero_grad()
 
         out = engine.query(query=["a", "b"], evidence={"x": x})
-        # BP returns categorical marginals over each variable's states (binary -> 2).
+        # BP reports each marginal in the variable's own parametrization, so a
+        # binary concept yields Bernoulli logits (log-odds) of width 1 — the
+        # same loss you would write against a directed engine's output.
         loss = (
-            nn.functional.cross_entropy(out.params["a"]["logits"], a_lab)
-            + nn.functional.cross_entropy(out.params["b"]["logits"], b_lab)
+            nn.functional.binary_cross_entropy_with_logits(out.params["a"]["logits"], a_lab)
+            + nn.functional.binary_cross_entropy_with_logits(out.params["b"]["logits"], b_lab)
         )
 
         loss.backward()
         optimizer.step()
 
         if epoch % 50 == 0:
-            a_acc = (out.params["a"]["probs"].argmax(-1) == a_lab).float().mean().item()
-            b_acc = (out.params["b"]["probs"].argmax(-1) == b_lab).float().mean().item()
+            a_acc = ((out.params["a"]["probs"] > 0.5).float() == a_lab).float().mean().item()
+            b_acc = ((out.params["b"]["probs"] > 0.5).float() == b_lab).float().mean().item()
             print(f"Epoch {epoch}: Loss {loss.item():.3f} | a acc {a_acc:.2f} | b acc {b_acc:.2f}")
 
 
