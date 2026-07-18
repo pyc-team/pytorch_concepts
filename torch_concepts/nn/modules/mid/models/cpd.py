@@ -10,7 +10,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Union
 import torch
 import torch.nn as nn
 
-from .distributions import maybe_spec_for
+from .distributions import spec_for
 from .factor import ParametricFactor
 from .variable import Variable, Delta
 
@@ -19,37 +19,74 @@ class ParametricCPD(ParametricFactor):
     """Conditional distribution parameterised by a neural network
     :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
 
-    ``parametrization`` is **required** (no default is inferred) and accepts two
-    forms:
+    Every parametrization module must already emit a value in the parameter's
+    natural domain — no activation is applied on its output. Root CPDs (no
+    parents) use the same interface: pass a
+    :class:`~torch_concepts.nn.LearnablePrior`, which holds a learnable
+    parameter and returns it from a no-argument ``forward()``.
 
-    * **Dict** ``{param_name: nn.Module}`` — explicit, works for any distribution.
-    * **Single** ``nn.Module`` — shorthand when the distribution has 
-      one parameter (e.g. Bernoulli → ``probs``, Delta → ``value``). Raises if the
-      distribution requires multiple distinct parameters (e.g. Normal needs both
-      ``loc`` and ``scale``); pass a dict in that case.
+    Parameters
+    ----------
+    variable : Variable or list of Variable
+        The child variable this CPD parametrizes. A **list** builds one
+        independent CPD per variable, all sharing the same ``parents``, and
+        returns them as a list. A plate (a ``Variable`` with named members) is
+        still a single variable: one CPD produces every member at once.
+    parametrization : nn.Module or dict[str, nn.Module] or list of dict
+        Required — no default is inferred. Accepts:
 
-    Every module must already emit a value in the parameter's natural domain. 
-    Root CPDs (no parents) use the same interface:
-    pass a :class:`~torch_concepts.nn.LearnablePrior` as the parametrization,
-    which holds a learnable parameter and returns it on ``forward()``.
+        - a **dict** ``{param_name: nn.Module}``, explicit and valid for any
+          distribution;
+        - a single **nn.Module**, shorthand for a family with exactly one
+          parameter (Bernoulli → ``probs``, Delta → ``value``). Rejected for a
+          family needing several distinct parameters (Normal needs both ``loc``
+          and ``scale``) — pass a dict there;
+        - a per-CPD **list of dicts**, only when ``variable`` is a list.
 
-    Example — root Bernoulli prior (logits parametrized by a LearnablePrior):
-    ```
-        prior = ParametricCPD(variable=z, parametrization={"logits": LearnablePrior(z.size)})
-    ```
+        A single dict or module passed alongside a list of variables is
+        deep-copied per CPD, so the CPDs do not share weights. Any unbuilt
+        :class:`LazyConstructor` entry is instantiated here, sized from the
+        parents and from ``variable.param_sizes``.
+    parents : list of Variable, optional
+        The conditioning set — this *is* the graph structure. Entries may be
+        whole variables or plate-member handles (``plate.member('c1')``), in
+        which case only that member's column is sliced out of the plate's value.
+        Empty or omitted makes this a **root** CPD, whose modules are called
+        with no arguments.
+    aggregate : callable or dict[str, callable], optional
+        How parent values are combined into each module's input; see
+        :class:`ParametricFactor`. Defaults to concatenating the parents along
+        the last dimension (or splitting them by variable type for a PyC-style
+        module).
 
-    Example — non-root Bernoulli CPD (single-module shorthand):
-    ```
-        cpd = ParametricCPD(
-            variable=c,
-            parametrization=nn.Linear(4, 1),       # expanded to {'probs': ...} automatically
-            parents=[x],
-        )
-    ```
+    Raises
+    ------
+    ValueError
+        If ``parametrization`` is omitted, is an empty dict, uses parameter
+        names the variable's distribution family does not accept, or uses the
+        single-module shorthand for a multi-parameter family.
+    TypeError
+        If ``variable`` is neither a ``Variable`` nor a list of them, if a
+        parent is not a ``Variable``, or if a parametrization value is not an
+        ``nn.Module``.
 
-    Passing a list of ``Variable`` instances returns a list of independent CPDs
-    sharing the same parent list; ``parametrization`` may be a single dict /
-    ``nn.Module`` (deep-copied per CPD), or a per-CPD list of dicts.
+    Examples
+    --------
+    A root Bernoulli prior, with the logits held by a learnable parameter:
+
+    >>> prior = ParametricCPD(
+    ...     variable=z,
+    ...     parametrization={"logits": LearnablePrior(z.size)},
+    ... )
+
+    A non-root Bernoulli CPD using the single-module shorthand, which expands
+    to ``{'probs': ...}`` automatically:
+
+    >>> cpd = ParametricCPD(
+    ...     variable=c,
+    ...     parametrization=nn.Linear(4, 1),
+    ...     parents=[x],
+    ... )
     """
 
     def __new__(
@@ -126,9 +163,9 @@ class ParametricCPD(ParametricFactor):
                 )
 
         D = variable.distribution
-        # ``None`` for a user-supplied custom family: the shorthand and the key
-        # validation below are then skipped rather than rejecting the family.
-        spec = maybe_spec_for(D)
+
+        # Get the distribution's parameter spec, which lists the valid parameter names.
+        spec = spec_for(D, f"ParametricCPD({variable.name!r})")
 
         # --- Expand parametrization shorthands ---
         if parametrization is None:
@@ -140,13 +177,12 @@ class ParametricCPD(ParametricFactor):
                 "e.g. parametrization={'logits': LearnablePrior(size)}."
             )
         elif isinstance(parametrization, nn.Module):
-            default_pnames = spec.default_params if spec is not None else None
-            if default_pnames is None or len(default_pnames) > 1:
-                pnames_str = list(default_pnames) if default_pnames else "unknown"
+            default_pnames = spec.default_params
+            if len(default_pnames) > 1:
                 raise ValueError(
                     f"ParametricCPD({variable.name!r}): {D.__name__} requires multiple "
-                    f"parameters {pnames_str}; pass a dict mapping each parameter name "
-                    "to its nn.Module."
+                    f"parameters {list(default_pnames)}; pass a dict mapping each "
+                    "parameter name to its nn.Module."
                 )
             parametrization = {default_pnames[0]: parametrization}
         elif not isinstance(parametrization, dict):
@@ -162,8 +198,8 @@ class ParametricCPD(ParametricFactor):
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): `parametrization` dict must not be empty."
             )
-        valid_sets = spec.valid_param_sets if spec is not None else None
-        if valid_sets is not None and not any(got_keys == vs for vs in valid_sets):
+        valid_sets = spec.valid_param_sets
+        if not any(got_keys == vs for vs in valid_sets):
             options = [sorted(vs) for vs in valid_sets]
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): invalid parametrization keys "

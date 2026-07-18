@@ -23,6 +23,20 @@ class BaseInference(nn.Module):
 
     ``query`` and ``evidence`` are attribute-style containers keyed by PGM
     variable name. ``__call__`` delegates to :meth:`query`.
+
+    Parameters
+    ----------
+    pgm : ProbabilisticModel
+        The model to run inference on. Held **by reference** — because
+        ``nn.Module.__setattr__`` registers it as a submodule, the engine shares
+        parameters with the model rather than copying them, so one optimizer
+        over ``pgm.parameters()`` trains the graph however many engines wrap it.
+
+    Warns
+    -----
+    UserWarning
+        If any root factor's parametrization requires input arguments; such a
+        root must be supplied as constant evidence on every ``query`` call.
     """
     
     name: str = "BaseInference"

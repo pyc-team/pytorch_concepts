@@ -9,17 +9,19 @@ logger = logging.getLogger(__name__)
 
 
 class IndependentInference(DeterministicInference):
-    """
-    Independent training inference.
+    """Independent (sequential) training inference.
 
-    This is a convenience subclass of :class:`DeterministicInference` that
-    forces ``p_int=1``, so ground truth concepts are always propagated to
-    downstream predictors during training.
+    A convenience subclass of :class:`DeterministicInference` that pins
+    ``p_int=1.0``, so ground-truth concepts are always propagated to downstream
+    predictors instead of the model's own predictions. Equivalent to
+    ``DeterministicInference(..., p_int=1.0)``.
 
-    Equivalent to ``DeterministicInference(..., p_int=1.0)``.
-
-    ``activate_before_propagation`` is forwarded to
-    :class:`DeterministicInference`.
+    Parameters
+    ----------
+    pgm : BayesianNetwork
+        The model to query.
+    activate_before_propagation : bool, optional
+        Forwarded to :class:`DeterministicInference`; see there.
     """
     def __init__(self, pgm: BayesianNetwork, activate_before_propagation: bool = True):
         super().__init__(

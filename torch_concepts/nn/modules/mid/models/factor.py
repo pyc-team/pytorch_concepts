@@ -85,21 +85,37 @@ class ParametricFactor(nn.Module, ABC):
       construction time. Standard modules get :meth:`_standard_aggregate`;
       PyC modules get :meth:`_pyc_aggregate`; user-supplied callables override.
 
-    ``aggregate`` accepts:
+    Parameters
+    ----------
+    parametrization : dict[str, nn.Module]
+        Maps each parameter name to the ``nn.Module`` producing it. Normalised
+        into an ``nn.ModuleDict``; an already-built :class:`LazyConstructor` is
+        unwrapped to its concrete module. Concrete subclasses resolve any
+        *unbuilt* lazy entries before calling ``super().__init__``, since the
+        sizes those need come from the factor's own variables.
+    aggregate : callable or dict[str, callable], optional
+        How the input values are combined into each parameter module's input.
 
-    - ``None`` — auto-select :meth:`_standard_aggregate` or :meth:`_pyc_aggregate`
-      per module based on its ``forward`` signature.
-    - A single ``Callable`` — use it for every parameter module.
-    - A ``Dict[str, Callable]`` — use the keyed callable for the matching
-      parameter module; auto-select the default for any missing key.
+        - ``None`` (the default) — auto-select :meth:`_standard_aggregate` or
+          :meth:`_pyc_aggregate` per module, from its ``forward`` signature.
+        - a single callable — used for every parameter module.
+        - a dict — the keyed callable is used for the matching parameter
+          module; any missing key falls back to the auto-selected default.
 
-    A user-supplied aggregate is called with a signature that matches the
-    parameter module's kind: for a **PyC** module it receives the parent values
-    already split by type — ``agg(concepts, embeddings)``, each a
-    ``Dict[Variable, Tensor]`` — and must return the ``{'concepts': ...,
-    'embeddings': ...}`` dict the module expects; for a **standard** module it
-    receives the single ``agg(inputs)`` dict and returns one concatenated
-    tensor. See :meth:`_resolve_aggregator`.
+        A user-supplied aggregate is called with a signature matching the
+        parameter module's kind: for a **PyC** module it receives the parent
+        values already split by type — ``agg(concepts, embeddings)``, each a
+        ``Dict[Variable, Tensor]`` — and must return the ``{'concepts': ...,
+        'embeddings': ...}`` dict the module expects; for a **standard** module
+        it receives the single ``agg(inputs)`` dict and returns one concatenated
+        tensor. See :meth:`_resolve_aggregator`.
+
+    Raises
+    ------
+    TypeError
+        If a subclass reaches ``super().__init__`` without having set
+        ``self.parents``, or if ``aggregate`` is neither ``None``, a callable,
+        nor a dict whose values are all callables.
     """
 
     # Ordered input variables, set by every concrete subclass before
@@ -180,14 +196,17 @@ class ParametricFactor(nn.Module, ABC):
             modules[pname] = module
         return nn.ModuleDict(modules)
 
+    # ----------- Signature-based aggregation selection -----------
+
     def _is_pyc(self, pname: str) -> bool:
         """Whether the parameter module follows the PyC ``concepts``/``embeddings``
-        calling convention (vs. a standard single-tensor module)."""
+        calling convention."""
         return self._module_signatures[pname] in _PYC_PARAM_SETS
 
     # For entries not covered by the user, pick _pyc_aggregate or
     # _standard_aggregate based on the cached module signature.
     def _select_default(self, pname: str) -> Callable:
+        """Select the default aggregation for a parameter module."""
         return self._pyc_aggregate if self._is_pyc(pname) else self._standard_aggregate
 
     def _resolve_aggregator(
@@ -195,17 +214,7 @@ class ParametricFactor(nn.Module, ABC):
         pname: str,
         user_aggregate: Optional[Callable],
     ) -> Callable:
-        """Adapt an aggregate to the uniform ``inputs -> result`` call site.
-
-        ``None`` selects the auto-chosen default (:meth:`_select_default`). A
-        user-supplied aggregate is dispatched by the parameter module's kind:
-
-        - **PyC** module — called as ``agg(concepts, embeddings)`` over the
-          type-split parent dicts (each ``Dict[Variable, Tensor]``); it returns
-          the ``{'concepts': ..., 'embeddings': ...}`` dict the module expects.
-        - **standard** module — called as ``agg(inputs)`` over the single
-          parent dict; it returns one concatenated tensor.
-        """
+        """Adapt an aggregate to the uniform ``inputs -> result`` call site."""
         if user_aggregate is None:
             return self._select_default(pname)
         if self._is_pyc(pname):
@@ -221,8 +230,7 @@ class ParametricFactor(nn.Module, ABC):
     ) -> torch.Tensor:
         """Default aggregation for standard torch modules.
 
-        Concatenates the parent values along the last dim without reshaping
-        (see :func:`_cat_parents`).
+        Concatenates the parent values along the last dim without reshaping.
         """
         return _cat_parents(inputs)
 
@@ -289,6 +297,8 @@ class ParametricFactor(nn.Module, ABC):
         if embeddings:
             out["embeddings"] = _cat_parents(embeddings)
         return out
+
+    # ----------- Abstract methods -----------
 
     @abstractmethod
     def forward(

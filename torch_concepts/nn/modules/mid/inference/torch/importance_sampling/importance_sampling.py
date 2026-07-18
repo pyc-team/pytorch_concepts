@@ -44,7 +44,7 @@ import torch
 import torch.distributions as dist
 
 from ....models.bayesian_network import BayesianNetwork
-from ....models.distributions import maybe_spec_for
+from ....models.distributions import spec_for
 from ...utils import build_distribution, make_temperature_schedule
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference
@@ -336,8 +336,8 @@ class ImportanceSampling(TorchBaseInference):
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
-            spec = maybe_spec_for(v.distribution)
-            if spec is None or not spec.is_discrete:
+            spec = spec_for(v.distribution, f"{self.name}: {name!r}")
+            if not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "
                     f"{v.distribution.__name__!r}, which is not discrete. Only "

@@ -1,23 +1,4 @@
-"""ParametricPotential — undirected, energy-based factor over a clique.
-
-A potential contributes ``exp(-E(scope ; conditioning))`` to the joint. Its
-``scope`` is a *symmetric* clique of variables (no child/parent asymmetry); an
-optional list of ``conditioning`` variables (e.g. an embedding) also feeds the
-energy but is observed — those inputs create no undirected edges and are not
-marginalized. This is the conditional random field (CRF) setting used by
-concept models.
-
-The energy is a **plain scalar function** of the assignment: the parametrization
-aggregates the scope values (and any conditioning values) exactly as a
-:class:`ParametricCPD` aggregates its parents, and maps them to a single scalar
-``E`` per batch element. ``log_potential = -E``. Belief propagation builds the
-factor tables it needs by enumerating discrete assignments and evaluating this
-energy — the same enumeration path it already uses for CPDs.
-
-Note the modelling consequence: a linear energy over the concatenated inputs is
-*additive* (no interaction between scope variables). Use an interaction-capable
-module (e.g. an MLP) when you need a genuine coupling between concepts.
-"""
+"""ParametricPotential — undirected, energy-based factor over a clique."""
 
 from __future__ import annotations
 
@@ -26,7 +7,7 @@ from typing import Dict, List, Mapping, Optional, Union
 import torch
 import torch.nn as nn
 
-from .distributions import maybe_spec_for
+from .distributions import spec_for
 from .factor import ParametricFactor
 from .variable import Variable
 
@@ -42,8 +23,8 @@ def enumerable_cardinality(variable: Variable) -> int:
     answer comes from ``DistributionSpec.state_count``.
     """
     D = variable.distribution
-    spec = maybe_spec_for(D)
-    if spec is not None and spec.is_enumerable:
+    spec = spec_for(D, f"Variable {variable.name!r}")
+    if spec.is_enumerable:
         card = spec.state_count(variable.size)
         if card is not None:
             return card

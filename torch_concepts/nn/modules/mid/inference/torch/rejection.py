@@ -35,7 +35,7 @@ import torch
 import torch.distributions as dist
 
 from ...models.bayesian_network import BayesianNetwork
-from ...models.distributions import maybe_spec_for
+from ...models.distributions import spec_for
 from ....outputs import InferenceOutput
 from ..utils import reshape_value_to_event
 from .base import TorchBaseInference
@@ -97,8 +97,8 @@ class RejectionSampling(TorchBaseInference):
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
-            spec = maybe_spec_for(v.distribution)
-            if spec is None or not spec.is_discrete:
+            spec = spec_for(v.distribution, f"{self.name}: {name!r}")
+            if not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: {role} variable {name!r} has "
                     f"distribution {v.distribution.__name__!r} which is not "

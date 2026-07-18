@@ -46,14 +46,44 @@ class Variable(ABC):
     """Abstract random variable.
 
     Holds the node name (``name``), its distribution family (``distribution``),
-    its event ``shape``, and any extra distribution kwargs.  ``size`` is a
-    read-only property equal to ``math.prod(shape)``.
+    its event ``shape``, and any extra distribution kwargs.
 
     Passing a list of names to the constructor returns a list of independent
     ``Variable`` instances (one per name); ``distribution``, ``shape``, and
     ``dist_kwargs`` may then be a single value (broadcast) or a per-name list.
 
     Concrete subclasses must implement :attr:`variable_type`.
+
+    Parameters
+    ----------
+    names : str or list of str
+        A single name builds one variable. A **list** of names builds one
+        independent variable per name and returns them as a list; the remaining
+        arguments are then either a single value (broadcast to every name) or a
+        per-name list of the same length.
+    distribution : type
+        The distribution family (e.g. ``dist.Bernoulli``, ``dist.Normal``,
+        ``Delta``). Required — there is no default. Determines which parameters
+        a CPD must produce for this variable, how engines propagate and sample
+        it, and whether belief propagation can enumerate it.
+    shape : int or tuple of int or torch.Size, optional
+        Event shape of a single realisation, e.g. ``(n_concepts, emb_dim)``.
+        Mutually exclusive with ``size``; defaults to ``(1,)``. Not allowed
+        together with ``members``.
+    dist_kwargs : dict, optional
+        Extra keyword arguments forwarded to the distribution constructor
+        (e.g. ``{'temperature': 0.5}`` for the relaxed families).
+    size : int, optional
+        Shorthand for ``shape=(size,)``. When ``members`` is given this is
+        instead the **per-member** size (default ``1``), and the total event
+        width becomes ``len(members) * size``.
+    members : list of str, optional
+        Turn this into a **plate**: one variable whose event stacks the named
+        members along the last dimension, each still addressable by its own name
+        for queries, evidence and interventions. Only valid with a single
+        (string) ``names``, mutually exclusive with ``shape``, and requires a
+        registered family whose parameters are one-scalar-per-element (so
+        ``MultivariateNormal`` is rejected).
     """
 
     @property
@@ -118,6 +148,16 @@ class Variable(ABC):
             return
         self.name: str = names
 
+        # A variable's family must be one the registry knows. This is the single
+        # gate every variable passes through.
+        if distribution is None:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): `distribution` is required. "
+                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
+                "or dist.Delta)."
+            )
+        spec = spec_for(distribution, f"{type(self).__name__}({names!r})")
+
         if members is not None:
             # Plate: a single variable holding several named members. ``size`` is
             # the per-member size (default 1); the total event width is
@@ -152,15 +192,13 @@ class Variable(ABC):
             # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
             # is triangular (size*(size+1)/2), so its members aren't sliceable —
             # model those as separate variables instead.
-            if distribution is not None:
-                spec = spec_for(distribution, f"{type(self).__name__}({names!r})")
-                if not spec.is_per_element:
-                    raise ValueError(
-                        f"{type(self).__name__}({names!r}): plate `members` need a distribution "
-                        f"with per-element parameters; {distribution.__name__} has a "
-                        "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
-                        "Model these members as separate variables instead."
-                    )
+            if not spec.is_per_element:
+                raise ValueError(
+                    f"{type(self).__name__}({names!r}): plate `members` need a distribution "
+                    f"with per-element parameters; {distribution.__name__} has a "
+                    "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
+                    "Model these members as separate variables instead."
+                )
             shape = torch.Size([total])
         else:
             # Ordinary variable: one member coinciding with the variable name.
@@ -193,15 +231,9 @@ class Variable(ABC):
             self.members = [self.name]
             self.member_size = math.prod(shape)
 
-        if distribution is None:
-            raise ValueError(
-                f"{type(self).__name__}({names!r}): `distribution` is required. "
-                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
-                "or dist.Delta)."
-            )
         self.distribution = distribution
         self._shape: torch.Size = shape
-        # Column span of each member within the event (last) dimension.
+        # Dictionary mapping member name -> slice corresponding to that member.
         self._column: Dict[str, slice] = {
             m: slice(i * self.member_size, (i + 1) * self.member_size)
             for i, m in enumerate(self.members)
@@ -223,17 +255,16 @@ class Variable(ABC):
         """The plate this variable belongs to.
 
         For a member handle (from :meth:`member`) this is the owning plate; for an
-        ordinary variable or a plate itself it is the variable. Graph code uses
-        ``p.plate.name`` to find the node an edge from ``p`` originates at.
+        ordinary variable or a plate itself it is the variable. 
         """
         return self._plate if self._plate is not None else self
 
     def column_of(self, member: str) -> slice:
-        """Column span of ``member`` within this variable's event (last) dimension."""
+        """The slice of the event dimension corresponding to a member."""
         return self._column[member]
 
     def member(self, name: str) -> "Variable":
-        """A handle to a single member, usable as a parent (an edge to that member only).
+        """A handle to a single member.
 
         A child can then depend on just this member of the plate; the engine
         slices the member's column out of the plate's output. The handle carries

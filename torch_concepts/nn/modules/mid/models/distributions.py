@@ -25,9 +25,14 @@ Field                        Answers the question
 ===========================  ==================================================
 
 Adding a family is therefore a single registry entry rather than an edit spread
-across the models and every inference backend. Consumers look a family up with
-:func:`spec_for` (raises when unsupported) or :func:`maybe_spec_for` (returns
-``None``, for the call sites that tolerate a user-supplied custom distribution).
+across the models and every inference backend.
+
+A variable's distribution **must** be one of the registered families:
+:meth:`Variable.__init__` resolves it through :func:`spec_for` and rejects
+anything else at construction time. Because that is the single gate every
+variable passes through, the rest of the mid level can look a spec up and rely
+on it existing, with no "unknown family" branch to carry. To support a new
+distribution, add its :class:`DistributionSpec` to :data:`SPECS` here.
 """
 
 from __future__ import annotations
@@ -271,13 +276,13 @@ _NAME_ALIASES: Dict[str, type] = {"Delta": Delta}
 
 
 @lru_cache(maxsize=None)
-def maybe_spec_for(distribution: type) -> Optional[DistributionSpec]:
+def _lookup(distribution: type) -> Optional[DistributionSpec]:
     """The spec for ``distribution``, or ``None`` if the family is unknown.
 
     Resolution order: exact class, then nearest registered base class
-    (``issubclass``), then a name alias. Use this at the call sites that
-    tolerate a user-supplied custom distribution; use :func:`spec_for`
-    where a spec is genuinely required.
+    (``issubclass``, so a Pyro distribution resolves to its torch base), then a
+    name alias. Internal — every caller goes through :func:`spec_for`, which
+    turns the ``None`` into a helpful error.
     """
     spec = SPECS.get(distribution)
     if spec is not None:
@@ -292,10 +297,29 @@ def maybe_spec_for(distribution: type) -> Optional[DistributionSpec]:
 def spec_for(distribution: type, context: str = "") -> DistributionSpec:
     """The spec for ``distribution``; raises ``ValueError`` when unsupported.
 
-    ``context`` is prefixed to the error message so the caller can name the
-    variable or factor that triggered the lookup.
+    Every distribution reaching the mid level must be a registered family —
+    :meth:`Variable.__init__` enforces this at the boundary — so this is the
+    only lookup callers need.
+
+    Parameters
+    ----------
+    distribution : type
+        The distribution family to look up.
+    context : str, optional
+        Prefixed to the error message so the caller can name the variable or
+        factor that triggered the lookup.
+
+    Returns
+    -------
+    DistributionSpec
+        The registered spec for this family.
+
+    Raises
+    ------
+    ValueError
+        If the family is not in :data:`SPECS`.
     """
-    spec = maybe_spec_for(distribution)
+    spec = _lookup(distribution)
     if spec is None:
         prefix = f"{context}: " if context else ""
         supported = ", ".join(sorted(d.__name__ for d in SPECS))

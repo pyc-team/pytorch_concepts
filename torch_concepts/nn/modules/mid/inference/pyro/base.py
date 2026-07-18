@@ -51,6 +51,14 @@ class PyroBaseInference(BaseInference):
     Bundles the model/guide stochastic functions and the Pyro-side parameter
     harvesters. Subclasses (e.g. :class:`VariationalInference`) supply
     their own ``query`` method that orchestrates effect handlers.
+
+    Parameters
+    ----------
+    pgm : BayesianNetwork
+        The directed model to run inference on, held by reference (see
+        :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`).
+        Pyro's model/guide traces walk the topological order, so a general
+        (undirected or mixed) ``ProbabilisticModel`` is not supported here.
     """
 
     name = "PyroBaseInference"

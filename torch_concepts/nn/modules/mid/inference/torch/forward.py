@@ -119,6 +119,44 @@ class ForwardInference(TorchBaseInference, ABC):
       whether realisations are reported in ``out.samples`` and whether
       :meth:`step` advances the temperature schedule.
     - :attr:`name` — the engine name used in messages and ``repr``.
+
+    Parameters
+    ----------
+    pgm : BayesianNetwork
+        The model to query. Must be directed: the pass walks ``pgm.levels`` in
+        topological order, which only a ``BayesianNetwork`` provides.
+    p_int : float, optional
+        Teacher-forcing probability in ``[0, 1]``: the per-sample chance of
+        propagating a query variable's ground-truth target instead of the
+        model's own prediction. ``1.0`` recovers sequential/independent CBM
+        training, ``0.0`` joint training, and an intermediate value the
+        CEM-style random-intervention regime. Only applies to query entries
+        that carry a target tensor.
+    initial_temperature : float, optional
+        Starting temperature of the relaxed-discrete distributions. Ignored by
+        the deterministic engines, which never sample.
+    annealing : str or callable, optional
+        Temperature schedule: ``'constant'``, ``'exponential'``, ``'linear'``,
+        or a custom ``f(step) -> float``. Advanced by :meth:`step`.
+    annealing_rate : float, optional
+        Decay rate consumed by the built-in ``annealing`` schedules.
+    parallelize_levels : bool, optional
+        Evaluate the conditionally independent variables of one topological
+        level concurrently via ``torch.jit.fork``. For a stochastic engine this
+        makes the RNG draw order non-deterministic, trading reproducibility for
+        speed.
+    activate_before_propagation : bool, optional
+        Deterministic engines only: pass each propagated parameter through its
+        family's default activation before feeding it to child CPDs, so a CPD
+        emitting ``logits`` propagates probabilities downstream. The parameters
+        reported in ``out.params`` stay the raw, non-activated values.
+
+    Raises
+    ------
+    ValueError
+        If ``p_int`` falls outside ``[0, 1]``.
+    TypeError
+        If ``pgm`` is not a directed :class:`BayesianNetwork`.
     """
 
     name = "ForwardInference"
