@@ -20,6 +20,8 @@ Field                        Answers the question
 ``state_count``              how many states does it enumerate (belief
                              propagation), if any?
 ``relaxed``                  what is its reparameterisable surrogate?
+``default_dist_kwargs``      which constructor kwargs does it always need
+                             (e.g. a Concrete family's temperature)?
 ===========================  ==================================================
 
 Adding a family is therefore a single registry entry rather than an edit spread
@@ -30,7 +32,7 @@ across the models and every inference backend. Consumers look a family up with
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from typing import Callable, Dict, Mapping, Optional, Tuple
 
@@ -126,6 +128,11 @@ class DistributionSpec:
     no_relaxed_reason : str, optional
         Set when the family has no usable surrogate; the message explains what
         to do instead.
+    default_dist_kwargs : mapping, optional
+        Constructor kwargs this family needs but cannot infer — currently the
+        relaxation ``temperature`` of the Concrete families. Collected across
+        the registry into :data:`DEFAULT_DIST_KWARGS`, which the high level uses
+        to populate a variable's ``dist_kwargs``.
     """
 
     param_sizes: Mapping[str, Callable[[int], int]]
@@ -138,6 +145,7 @@ class DistributionSpec:
     state_count: Optional[Callable[[int], Optional[int]]] = None
     relaxed: Optional[Callable[..., dist.Distribution]] = None
     no_relaxed_reason: Optional[str] = None
+    default_dist_kwargs: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def is_enumerable(self) -> bool:
@@ -181,6 +189,7 @@ SPECS: Dict[type, DistributionSpec] = {
         wrap_independent=True,
         state_count=_binary_states,
         relaxed=_relaxed_bernoulli,
+        default_dist_kwargs={"temperature": 0.5},
     ),
     dist.Bernoulli: DistributionSpec(
         param_sizes={"probs": _per_element, "logits": _per_element},
@@ -202,6 +211,7 @@ SPECS: Dict[type, DistributionSpec] = {
         is_discrete=True,
         state_count=_categorical_states,
         relaxed=_relaxed_one_hot,
+        default_dist_kwargs={"temperature": 0.5},
     ),
     dist.OneHotCategorical: DistributionSpec(
         param_sizes={"probs": _per_element, "logits": _per_element},
@@ -242,6 +252,17 @@ SPECS: Dict[type, DistributionSpec] = {
         activations={"loc": _identity, "scale_tril": _identity},
     ),
 }
+
+#: ``{family: default constructor kwargs}``, derived from the registry. The
+#: high-level models seed each variable's ``dist_kwargs`` from this, so a new
+#: family that needs a temperature (or any other fixed kwarg) only has to
+#: declare ``default_dist_kwargs`` on its spec.
+DEFAULT_DIST_KWARGS: Dict[type, dict] = {
+    D: dict(spec.default_dist_kwargs)
+    for D, spec in SPECS.items()
+    if spec.default_dist_kwargs
+}
+
 
 # Families identified by name rather than identity. Pyro ships its own ``Delta``
 # which is not a subclass of ours but plays the same role, and the Pyro backend

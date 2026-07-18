@@ -15,21 +15,15 @@ import torch
 import torch.distributions as dist
 
 from .....distributions.delta import Delta
-from .distributions import maybe_spec_for, spec_for
+from .distributions import spec_for
 
 
-# Semantic concept type -> distribution family. A high-level preset (which
-# family should a "binary" concept get?), not a fact about the families
-# themselves — those live in :mod:`.distributions`.
+# Semantic concept type -> distribution family. A high-level *policy* (which
+# family should a "binary" concept get?) that subclasses override.
 _DEFAULT_DISTRIBUTIONS = {
     'binary': dist.Bernoulli,
     'categorical': dist.OneHotCategorical,
     'continuous': dist.Normal,
-}
-
-_DEFAULT_DIST_KWARGS = {
-    dist.RelaxedBernoulli: {'temperature': 0.5},
-    dist.RelaxedOneHotCategorical: {'temperature': 0.5},
 }
 
 
@@ -158,14 +152,15 @@ class Variable(ABC):
             # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
             # is triangular (size*(size+1)/2), so its members aren't sliceable —
             # model those as separate variables instead.
-            spec = maybe_spec_for(distribution) if distribution is not None else None
-            if spec is not None and not spec.is_per_element:
-                raise ValueError(
-                    f"{type(self).__name__}({names!r}): plate `members` need a distribution "
-                    f"with per-element parameters; {distribution.__name__} has a "
-                    "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
-                    "Model these members as separate variables instead."
-                )
+            if distribution is not None:
+                spec = spec_for(distribution, f"{type(self).__name__}({names!r})")
+                if not spec.is_per_element:
+                    raise ValueError(
+                        f"{type(self).__name__}({names!r}): plate `members` need a distribution "
+                        f"with per-element parameters; {distribution.__name__} has a "
+                        "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
+                        "Model these members as separate variables instead."
+                    )
             shape = torch.Size([total])
         else:
             # Ordinary variable: one member coinciding with the variable name.
@@ -269,6 +264,7 @@ class Variable(ABC):
         """Total number of scalar elements: ``math.prod(self.shape)``."""
         return math.prod(self._shape)
 
+    # FIXME: there is a tricky for loop here. Maybe the same can be done without looping.
     def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
         """Flattened indices for member(s) in this variable's event dimension.
 

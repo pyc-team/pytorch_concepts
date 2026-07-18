@@ -21,7 +21,8 @@ from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.models.bayesian_network import BayesianNetwork
 from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable, _DEFAULT_DIST_KWARGS
+from ...mid.models.distributions import DEFAULT_DIST_KWARGS
+from ...mid.models.variable import ConceptVariable, EmbeddingVariable
 from ..base.bipartite import BipartiteModel
 
 
@@ -70,7 +71,7 @@ class ConceptBottleneckModel(BipartiteModel):
         'categorical': OneHotCategorical,
         'continuous': Normal,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,

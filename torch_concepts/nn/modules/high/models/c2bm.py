@@ -24,7 +24,7 @@ from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.variable import _DEFAULT_DIST_KWARGS
+from ...mid.models.distributions import DEFAULT_DIST_KWARGS
 from ..base.homogen import HomogenGraphModel
 
 
@@ -67,7 +67,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
         'binary': Bernoulli,
         'categorical': OneHotCategorical,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,

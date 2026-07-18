@@ -34,7 +34,8 @@ import torch.nn.functional as F
 from .....annotations import Annotations
 from ...utils import with_training_mode
 from ...outputs import ModelOutput, logits_from_params
-from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_DIST_KWARGS
+from ...mid.models.distributions import DEFAULT_DIST_KWARGS
+from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -213,7 +214,7 @@ class BaseModel(nn.Module, ABC):
     #: per instance with the ``variable_distributions`` constructor arg.
     variable_distributions: Dict[str, Type] = dict(_DEFAULT_DISTRIBUTIONS)
     #: Default keyword arguments per distribution class (e.g. relaxation temperature).
-    variable_dist_kwargs: Dict[Type, dict] = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs: Dict[Type, dict] = dict(DEFAULT_DIST_KWARGS)
 
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
