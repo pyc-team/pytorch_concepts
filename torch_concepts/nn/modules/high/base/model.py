@@ -34,8 +34,8 @@ import torch.nn.functional as F
 from .....annotations import Annotations
 from ...utils import with_training_mode
 from ...outputs import ModelOutput, logits_from_params
-from ...mid.models.distributions import DEFAULT_DIST_KWARGS
-from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.variable import _DEFAULT_DISTRIBUTIONS
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.

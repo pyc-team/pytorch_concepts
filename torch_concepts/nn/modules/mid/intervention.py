@@ -8,7 +8,7 @@ from ..low.base.intervention import (
     BaseInterventionPolicy,
 )
 from ..low.intervention.intervention import InterventionModule
-from .models.probabilistic_model import ProbabilisticModel
+from .graph.probabilistic_model import ProbabilisticModel
 
 
 @contextmanager
@@ -36,7 +36,7 @@ def intervention(
 
     ``members_to_intervene_on`` restricts the intervention to a subset of the
     variable's event columns; member *names* are resolved to column indices via
-    :meth:`~torch_concepts.nn.modules.mid.models.variable.Variable.get_slice`.
+    :meth:`~torch_concepts.nn.modules.mid.variable.Variable.get_slice`.
     ``None`` intervenes on every column.
     """
     # Resolve the target before entering the try block: a bad variable or

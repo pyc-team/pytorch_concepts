@@ -19,10 +19,10 @@ from ...low.predictors.linear import LinearConceptToConcept
 from ...low.priors import LearnablePrior
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.distributions import DEFAULT_DIST_KWARGS
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.variable import ConceptVariable, EmbeddingVariable
 from ..base.bipartite import BipartiteModel
 
 

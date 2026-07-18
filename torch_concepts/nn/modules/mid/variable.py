@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 import torch.distributions as dist
 
-from .....distributions.delta import Delta
+from ....distributions.delta import Delta
 from .distributions import spec_for
 
 

@@ -16,8 +16,8 @@ from typing import Dict, Optional
 import torch
 import torch.distributions as dist
 
-from ...models.distributions import spec_for
-from ...models.variable import Variable
+from ...distributions import spec_for
+from ...variable import Variable
 
 
 # ---------------------------------------------------------------------------

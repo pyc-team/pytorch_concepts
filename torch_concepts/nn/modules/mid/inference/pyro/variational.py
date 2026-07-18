@@ -16,8 +16,8 @@ from typing import Callable, Dict, List, Optional, Union
 import torch
 import torch.nn as nn
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.cpd import ParametricCPD
+from ...graph.bayesian_network import BayesianNetwork
+from ...factors.cpd import ParametricCPD
 from ..utils import make_temperature_schedule
 from ....outputs import InferenceOutput
 from .base import PyroBaseInference, trace_to_params, _import_pyro
@@ -48,7 +48,7 @@ class VariationalInference(PyroBaseInference):
     latents : dict, optional
         Declaration of latent (unobservable) variables and their guide CPDs.
         Maps each latent variable name to a user-provided
-        :class:`~torch_concepts.nn.modules.mid.models.cpd.ParametricCPD` that
+        :class:`~torch_concepts.nn.modules.mid.factors.cpd.ParametricCPD` that
         acts as the variational guide for that variable. If omitted or empty,
         no guides are registered and the engine warns that variational
         inference may not behave as expected.

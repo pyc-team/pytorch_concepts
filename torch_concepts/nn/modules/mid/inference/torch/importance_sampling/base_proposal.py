@@ -40,8 +40,8 @@ import torch.nn as nn
 
 import torch.distributions as dist
 
-from ....models.bayesian_network import BayesianNetwork
-from ....models.variable import Variable
+from ....graph.bayesian_network import BayesianNetwork
+from ....variable import Variable
 from ...utils import reshape_value_to_event
 from ..utils import build_relaxed_distribution
 

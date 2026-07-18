@@ -10,9 +10,9 @@ from typing import Callable, Dict, List, Mapping, Optional, Union
 import torch
 import torch.nn as nn
 
-from .distributions import spec_for
+from ..distributions import spec_for
 from .factor import ParametricFactor
-from .variable import Variable, Delta
+from ..variable import Variable, Delta
 
 
 class ParametricCPD(ParametricFactor):

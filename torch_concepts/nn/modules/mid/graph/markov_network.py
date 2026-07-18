@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from typing import List
 
-from .potential import ParametricPotential
+from ..factors.potential import ParametricPotential
 from .probabilistic_model import ProbabilisticModel
-from .variable import Variable
+from ..variable import Variable
 
 
 class MarkovNetwork(ProbabilisticModel):

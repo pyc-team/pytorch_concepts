@@ -2,7 +2,7 @@
 
 import logging
 
-from ...models.bayesian_network import BayesianNetwork
+from ...graph.bayesian_network import BayesianNetwork
 from .deterministic import DeterministicInference
 
 logger = logging.getLogger(__name__)

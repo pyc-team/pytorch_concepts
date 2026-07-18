@@ -10,7 +10,7 @@ from typing import Callable, Dict, Mapping, Optional, List, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
-from .variable import Variable
+from ..variable import Variable
 from ...low.lazy import LazyConstructor
 
 

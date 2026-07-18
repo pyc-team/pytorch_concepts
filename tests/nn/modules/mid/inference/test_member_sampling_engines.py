@@ -9,9 +9,9 @@ import torch.nn as nn
 import torch.distributions as dist
 
 from torch_concepts import seed_everything
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable, EmbeddingVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.low.priors import FixedPrior
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.mid.inference.torch.rejection import RejectionSampling

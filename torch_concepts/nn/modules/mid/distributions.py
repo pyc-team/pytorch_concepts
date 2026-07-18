@@ -44,7 +44,7 @@ from typing import Callable, Dict, Mapping, Optional, Tuple
 import torch
 import torch.distributions as dist
 
-from .....distributions.delta import Delta
+from ....distributions.delta import Delta
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +327,6 @@ def spec_for(distribution: type, context: str = "") -> DistributionSpec:
             f"{prefix}distribution {getattr(distribution, '__name__', distribution)!r} "
             f"is not a supported family. Supported families: {supported}. "
             "Register a DistributionSpec for it in "
-            "torch_concepts.nn.modules.mid.models.distributions to add support."
+            "torch_concepts.nn.modules.mid.distributions to add support."
         )
     return spec

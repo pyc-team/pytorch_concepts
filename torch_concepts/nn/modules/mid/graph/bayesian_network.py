@@ -7,9 +7,9 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
-from .cpd import ParametricCPD
+from ..factors.cpd import ParametricCPD
 from .probabilistic_model import ProbabilisticModel
-from .variable import Variable
+from ..variable import Variable
 
 class BayesianNetwork(ProbabilisticModel):
     """Directed factor graph wiring a list of ``Variable``s to a list of

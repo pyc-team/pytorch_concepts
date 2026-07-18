@@ -46,8 +46,8 @@ import torch
 import torch.distributions as td
 import torch.nn as nn
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.cpd import ParametricCPD
+from ...graph.bayesian_network import BayesianNetwork
+from ...factors.cpd import ParametricCPD
 from ..utils import build_distribution, reshape_value_to_event
 from ....outputs import InferenceOutput
 from .base import PyroBaseInference, _import_pyro

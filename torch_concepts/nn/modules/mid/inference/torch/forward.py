@@ -24,8 +24,8 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.variable import Variable
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Variable
 from ..utils import make_temperature_schedule, reshape_value_to_event
 from ....outputs import InferenceOutput
 from .base import TorchBaseInference

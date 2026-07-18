@@ -27,9 +27,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from ...models.potential import enumerable_cardinality
-from ...models.probabilistic_model import ProbabilisticModel
-from ...models.variable import Variable
+from ...factors.potential import enumerable_cardinality
+from ...graph.probabilistic_model import ProbabilisticModel
+from ...variable import Variable
 from ....outputs import InferenceOutput
 from ..utils import reshape_value_to_event
 from .base import TorchBaseInference

@@ -43,7 +43,7 @@ from typing import Dict
 
 import torch
 
-from ....models.variable import Variable
+from ....variable import Variable
 from .base_proposal import BaseProposal
 
 

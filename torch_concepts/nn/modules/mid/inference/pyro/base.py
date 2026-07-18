@@ -23,8 +23,8 @@ from typing import Dict, List, Optional
 import torch
 import torch.distributions as td
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.variable import Delta
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Delta
 from ..base import BaseInference
 from ..utils import build_distribution, reshape_value_to_event
 from .utils import dist_to_params, trace_to_params

@@ -57,13 +57,14 @@ from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 # Models (mid-level)
-from .modules.mid.models.factor import ParametricFactor
-from .modules.mid.models.cpd import ParametricCPD
-from .modules.mid.models.potential import ParametricPotential
-from .modules.mid.models.probabilistic_model import ProbabilisticModel
-from .modules.mid.models.bayesian_network import BayesianNetwork
-from .modules.mid.models.markov_network import MarkovNetwork
-from .modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
+from .modules.mid.factors.factor import ParametricFactor
+from .modules.mid.factors.cpd import ParametricCPD
+from .modules.mid.factors.potential import ParametricPotential
+from .modules.mid.graph.probabilistic_model import ProbabilisticModel
+from .modules.mid.graph.bayesian_network import BayesianNetwork
+from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.chain_graph import ChainGraph
+from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
 # base
@@ -168,6 +169,7 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
+    "ChainGraph",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",

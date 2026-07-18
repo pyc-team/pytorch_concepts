@@ -8,13 +8,20 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.potential import ParametricPotential, enumerable_cardinality
-from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
-from torch_concepts.nn.modules.mid.models.markov_network import MarkovNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential, enumerable_cardinality
+from torch_concepts.nn.modules.mid.graph.probabilistic_model import ProbabilisticModel
+from torch_concepts.nn.modules.mid.graph.markov_network import MarkovNetwork
 from torch_concepts.nn.modules.mid.inference.torch.belief_propagation import BeliefPropagation
 from torch_concepts.nn.modules.low.priors import LearnablePrior
+
+
+class _ConcreteModel(ProbabilisticModel):
+    """Minimal concrete subclass used to exercise the abstract base's shared
+    behaviour (factor registration, scope validation, adjacency, graph-kind
+    flags) without the structural constraints BayesianNetwork/MarkovNetwork
+    add. Also stands in for the mixed case until ChainGraph is implemented."""
 
 
 # --------------------------------------------------------------------------
@@ -141,7 +148,7 @@ class TestBPExactOnTrees:
 
     def test_single_unary_marginal(self):
         a = _bin("a")
-        fg = ProbabilisticModel(variables=[a], factors=[_pot([a], "ua")])
+        fg = _ConcreteModel(variables=[a], factors=[_pot([a], "ua")])
         out = BeliefPropagation(fg, iters=3).query(query=["a"], evidence={})
         exact = _exact_marginals(fg, ["a"])
         _assert_marginals_match(fg, out, exact, ["a"])
@@ -153,7 +160,7 @@ class TestBPMatchesDirectedOnDAG:
         a, b = _bin("a"), _bin("b")
         cpd_a = ParametricCPD(variable=a, parametrization={"logits": LearnablePrior(1)})
         cpd_b = ParametricCPD(variable=b, parametrization={"logits": nn.Linear(1, 1)}, parents=[a])
-        fg = ProbabilisticModel(variables=[a, b], factors=[cpd_a, cpd_b])
+        fg = _ConcreteModel(variables=[a, b], factors=[cpd_a, cpd_b])
         out = BeliefPropagation(fg, iters=15).query(query=["a", "b"], evidence={})
         exact = _exact_marginals(fg, ["a", "b"])
         _assert_marginals_match(fg, out, exact, ["a", "b"])
@@ -165,7 +172,7 @@ class TestBPConditionalAndEvidence:
         a, b = _bin("a"), _bin("b")
         emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
         pot = _pot([a, b], "phi", conditioning=[emb])
-        fg = ProbabilisticModel(variables=[a, b, emb], factors=[pot])
+        fg = _ConcreteModel(variables=[a, b, emb], factors=[pot])
         e = torch.randn(7, 4)
         out = BeliefPropagation(fg, iters=10).query(query=["a", "b"], evidence={"emb": e})
         assert out.params["a"]["probs"].shape == (7, 1)
@@ -175,14 +182,14 @@ class TestBPConditionalAndEvidence:
     def test_discrete_evidence_matches_exact_conditional(self):
         torch.manual_seed(4)
         a, b = _bin("a"), _bin("b")
-        fg = ProbabilisticModel(variables=[a, b], factors=[_pot([a], "ua"), _pot([a, b], "ab")])
+        fg = _ConcreteModel(variables=[a, b], factors=[_pot([a], "ua"), _pot([a, b], "ab")])
         out = BeliefPropagation(fg, iters=10).query(query=["a"], evidence={"b": torch.ones(1, 1)})
         exact = _exact_marginals(fg, ["a"], evidence_states={"b": 1})
         _assert_marginals_match(fg, out, exact, ["a"])
 
     def test_observed_variable_emits_no_params(self):
         a, b = _bin("a"), _bin("b")
-        fg = ProbabilisticModel(variables=[a, b], factors=[_pot([a, b], "ab")])
+        fg = _ConcreteModel(variables=[a, b], factors=[_pot([a, b], "ab")])
         out = BeliefPropagation(fg, iters=5).query(query=["a", "b"], evidence={"b": torch.ones(1, 1)})
         assert "b" not in out.params
         assert set(out.params) == {"a"}
@@ -196,7 +203,7 @@ class TestBPTrainingAndMixed:
         cpd_b = ParametricCPD(variable=b, parametrization={"logits": nn.Linear(1, 1)}, parents=[a])
         cpd_c = ParametricCPD(variable=c, parametrization={"logits": nn.Linear(1, 1)}, parents=[a])
         pot = _pot([b, c], "phi_bc")
-        fg = ProbabilisticModel(variables=[a, b, c], factors=[cpd_a, cpd_b, cpd_c, pot])
+        fg = _ConcreteModel(variables=[a, b, c], factors=[cpd_a, cpd_b, cpd_c, pot])
         assert fg.is_mixed
         out = BeliefPropagation(fg, iters=6).query(query=["c"], evidence={})
         loss = _binary_ce(out.params["c"], torch.tensor([1]))
@@ -209,7 +216,7 @@ class TestBPTrainingAndMixed:
         a = _bin("a")
         emb = ConceptVariable("emb", distribution=dist.Normal, size=3)
         pot = _pot([a], "ua", conditioning=[emb])
-        fg = ProbabilisticModel(variables=[a, emb], factors=[pot])
+        fg = _ConcreteModel(variables=[a, emb], factors=[pot])
         eng = BeliefPropagation(fg, iters=3)
         x = torch.randn(64, 3)
         target = (x[:, 0] > 0).long()
@@ -233,7 +240,7 @@ class TestBPErrors:
         cont = ConceptVariable("z", distribution=dist.Normal, size=2)
         cpd = ParametricCPD(variable=a, parametrization={"logits": nn.Linear(2, 1)}, parents=[cont])
         cpd_z = ParametricCPD(variable=cont, parametrization={"loc": LearnablePrior(2), "scale": LearnablePrior(2)})
-        fg = ProbabilisticModel(variables=[a, cont], factors=[cpd, cpd_z])
+        fg = _ConcreteModel(variables=[a, cont], factors=[cpd, cpd_z])
         with pytest.raises(ValueError, match="not discretely enumerable"):
             BeliefPropagation(fg, iters=3).query(query=["a"], evidence={})
 
@@ -251,6 +258,6 @@ class TestBPErrors:
     def test_member_evidence_not_supported(self):
         plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
         a = _bin("a")
-        fg = ProbabilisticModel(variables=[a, plate], factors=[_pot([a], "ua")])
+        fg = _ConcreteModel(variables=[a, plate], factors=[_pot([a], "ua")])
         with pytest.raises(NotImplementedError, match="member"):
             BeliefPropagation(fg, iters=3).query(query=["a"], evidence={"m1": torch.ones(1, 1)})

@@ -43,8 +43,8 @@ from typing import Callable, Dict, List, Set, Union
 import torch
 import torch.distributions as dist
 
-from ....models.bayesian_network import BayesianNetwork
-from ....models.distributions import spec_for
+from ....graph.bayesian_network import BayesianNetwork
+from ....distributions import spec_for
 from ...utils import build_distribution, make_temperature_schedule
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference

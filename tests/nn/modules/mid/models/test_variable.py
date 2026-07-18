@@ -5,7 +5,7 @@ import pytest
 import torch
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import (
+from torch_concepts.nn.modules.mid.variable import (
     Variable,
     ConceptVariable,
     EmbeddingVariable,

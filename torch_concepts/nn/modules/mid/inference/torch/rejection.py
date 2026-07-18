@@ -34,8 +34,8 @@ from typing import Dict, List
 import torch
 import torch.distributions as dist
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.distributions import spec_for
+from ...graph.bayesian_network import BayesianNetwork
+from ...distributions import spec_for
 from ....outputs import InferenceOutput
 from ..utils import reshape_value_to_event
 from .base import TorchBaseInference

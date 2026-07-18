@@ -1,33 +1,44 @@
 """
 Probabilistic graphical model, structured as a factor graph.
 
-``ProbabilisticModel`` is the concrete, general graph: a list of
+``ProbabilisticModel`` is the **abstract** general graph: a list of
 :class:`Variable`s wired to a heterogeneous list of :class:`ParametricFactor`s
 (directed :class:`ParametricCPD`s, undirected :class:`ParametricPotential`s, or
 any mix). Because every factor exposes the same ``scope`` / ``log_potential``
 interface, one inference engine (e.g. :class:`BeliefPropagation`) consumes
-directed, undirected, and mixed (chain) graphs with no special-casing — a
-partially-directed model is *just* a ``ProbabilisticModel`` holding both factor
-kinds, needing no new class.
+directed, undirected, and mixed (chain) graphs with no special-casing.
 
-:class:`BayesianNetwork` (directed) and :class:`MarkovNetwork` (undirected) are
-the two specializations that add structure-specific validation.
+It is never instantiated directly — a model is always one of the concrete
+specializations, each of which declares which factor kinds it admits:
+
+- :class:`BayesianNetwork` — directed, all :class:`ParametricCPD`, acyclic;
+- :class:`MarkovNetwork` — undirected, all :class:`ParametricPotential`;
+- :class:`ChainGraph` — mixed (partially directed). **Not implemented yet.**
+
+This class holds everything the three share: factor registration, scope
+validation, the bipartite adjacency, and plate-member name resolution.
 """
 
 from __future__ import annotations
 
+from abc import ABC
 from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
 
-from .cpd import ParametricCPD
-from .factor import ParametricFactor
-from .variable import Variable
+from ..factors.cpd import ParametricCPD
+from ..factors.factor import ParametricFactor
+from ..variable import Variable
 
 
-class ProbabilisticModel(nn.Module):
-    """A probabilistic graphical model represented as a factor graph.
+class ProbabilisticModel(nn.Module, ABC):
+    """Abstract probabilistic graphical model represented as a factor graph.
+
+    **Abstract**: instantiate :class:`BayesianNetwork`, :class:`MarkovNetwork`
+    or :class:`ChainGraph` instead. Subclasses inherit the shared machinery and
+    add their own structural validation by overriding
+    :meth:`_validate_factors`.
 
     Parameters
     ----------
@@ -39,6 +50,11 @@ class ProbabilisticModel(nn.Module):
         Any mix of :class:`ParametricCPD` and :class:`ParametricPotential`.
         Registered under ``factor.name`` (unique); every variable in a factor's
         ``scope`` must be one of ``variables`` (the same object).
+
+    Raises
+    ------
+    TypeError
+        If instantiated directly rather than through a concrete subclass.
     """
 
     def __init__(
@@ -46,6 +62,17 @@ class ProbabilisticModel(nn.Module):
         variables: List[Variable],
         factors: Optional[List[ParametricFactor]] = None,
     ) -> None:
+        # ``ABC`` alone does not block instantiation when there are no abstract
+        # methods, and there is no method every subclass must override — the
+        # shared implementation is the point. So the abstractness is enforced
+        # explicitly here.
+        if type(self) is ProbabilisticModel:
+            raise TypeError(
+                "ProbabilisticModel is abstract and cannot be instantiated directly. "
+                "Use BayesianNetwork (all directed CPDs), MarkovNetwork (all "
+                "undirected potentials), or ChainGraph (a mix of both)."
+            )
+
         super().__init__()
 
         variables = list(variables)

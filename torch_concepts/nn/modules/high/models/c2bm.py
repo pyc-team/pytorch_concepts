@@ -24,7 +24,7 @@ from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.distributions import DEFAULT_DIST_KWARGS
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.homogen import HomogenGraphModel
 
 

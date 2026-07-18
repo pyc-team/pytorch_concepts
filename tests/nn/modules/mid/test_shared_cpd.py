@@ -9,9 +9,9 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
 from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSamplingInference
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
@@ -367,10 +367,10 @@ import torch.nn as nn
 import torch.distributions as dist
 
 from torch_concepts.nn.modules.mid.intervention import intervention
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.probabilistic_model import ProbabilisticModel
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.probabilistic_model import ProbabilisticModel
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.low.priors import FixedPrior
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
@@ -420,7 +420,7 @@ class TestMidIntervention:
 
     def test_members_to_intervene_on_string(self):
         """String member names are converted to integer indices."""
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
         x = ConceptVariable("x", distribution=Delta, size=4)
         g = ConceptVariable("g", members=["m0", "m1"], distribution=dist.Bernoulli)
         cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})

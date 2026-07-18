@@ -5,8 +5,8 @@ from typing import Dict
 
 import torch
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.variable import Variable
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Variable
 from .forward import ForwardInference
 from .utils import propagated_value
 
@@ -27,7 +27,7 @@ class DeterministicInference(ForwardInference):
     activate_before_propagation : bool
         When ``True``, each variable's propagated parameter is passed
         through its default activation (see
-        :attr:`~torch_concepts.nn.modules.mid.models.distributions.DistributionSpec.activations`)
+        :attr:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec.activations`)
         before being fed to child CPDs — e.g. a CPD producing ``logits``
         propagates probabilities downstream. The parameters returned in the
         inference output remain the raw (non-activated) values. When ``False``,

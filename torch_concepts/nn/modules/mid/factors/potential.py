@@ -7,9 +7,9 @@ from typing import Dict, List, Mapping, Optional, Union
 import torch
 import torch.nn as nn
 
-from .distributions import spec_for
+from ..distributions import spec_for
 from .factor import ParametricFactor
-from .variable import Variable
+from ..variable import Variable
 
 
 def enumerable_cardinality(variable: Variable) -> int:

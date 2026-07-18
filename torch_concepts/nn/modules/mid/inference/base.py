@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ..models.probabilistic_model import ProbabilisticModel
+from ..graph.probabilistic_model import ProbabilisticModel
 from ...outputs import InferenceOutput
 
 
@@ -76,7 +76,7 @@ class BaseInference(nn.Module):
         (undirected or mixed) :class:`ProbabilisticModel` raises a clear error
         pointing at :class:`BeliefPropagation`.
         """
-        from ..models.bayesian_network import BayesianNetwork
+        from ..graph.bayesian_network import BayesianNetwork
 
         if not isinstance(self.pgm, BayesianNetwork):
             raise TypeError(

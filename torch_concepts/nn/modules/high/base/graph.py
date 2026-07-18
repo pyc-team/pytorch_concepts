@@ -173,7 +173,7 @@ class DirectedGraphModel(GraphModel, ABC):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
 
         The dict's keys are the distribution's parameter names — taken from
-        :class:`~torch_concepts.nn.modules.mid.models.distributions.DistributionSpec` and exposed
+        :class:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec` and exposed
         per-variable as ``variable.param_sizes``:
 
         * **Discrete** families (Bernoulli / Categorical and their relaxed variants)

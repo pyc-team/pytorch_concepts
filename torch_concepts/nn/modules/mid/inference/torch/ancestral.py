@@ -5,8 +5,8 @@ from typing import Callable, Dict, Union
 
 import torch
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.variable import Variable
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Variable
 from .forward import ForwardInference
 from .utils import sample_from
 
