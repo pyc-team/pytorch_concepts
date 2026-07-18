@@ -1,23 +1,4 @@
-"""
-Probabilistic graphical model, structured as a factor graph.
-
-``ProbabilisticModel`` is the **abstract** general graph: a list of
-:class:`Variable`s wired to a heterogeneous list of :class:`ParametricFactor`s
-(directed :class:`ParametricCPD`s, undirected :class:`ParametricPotential`s, or
-any mix). Because every factor exposes the same ``scope`` / ``log_potential``
-interface, one inference engine (e.g. :class:`BeliefPropagation`) consumes
-directed, undirected, and mixed (chain) graphs with no special-casing.
-
-It is never instantiated directly — a model is always one of the concrete
-specializations, each of which declares which factor kinds it admits:
-
-- :class:`BayesianNetwork` — directed, all :class:`ParametricCPD`, acyclic;
-- :class:`MarkovNetwork` — undirected, all :class:`ParametricPotential`;
-- :class:`ChainGraph` — mixed (partially directed). **Not implemented yet.**
-
-This class holds everything the three share: factor registration, scope
-validation, the bipartite adjacency, and plate-member name resolution.
-"""
+"""Probabilistic graphical model, structured as a factor graph."""
 
 from __future__ import annotations
 
@@ -149,7 +130,7 @@ class ProbabilisticModel(nn.Module, ABC):
             )
 
     def _build_adjacency(self) -> None:
-        """Bipartite adjacency: ``self._var_factors[var_name] -> [factor name, ...]``."""
+        """We build a mapping between each variable and the factors that reference it."""
         self._var_factors: Dict[str, List[str]] = {name: [] for name in self.variables}
         for fname, f in self._factors.items():
             for v in f.scope:

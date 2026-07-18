@@ -7,11 +7,11 @@ import torch.distributions as dist
 
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.factors.potential import (
-    ParametricPotential,
+from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential
+from torch_concepts.nn.modules.mid.inference.utils import (
+    build_distribution,
     enumerable_cardinality,
 )
-from torch_concepts.nn.modules.mid.inference.utils import build_distribution
 from torch_concepts.nn.modules.low.priors import LearnablePrior
 
 
@@ -68,22 +68,35 @@ class TestParametricPotential:
         e = pot.energy({a: av, b: bv})
         assert torch.allclose(lp, -e)
 
-    def test_conditional_energy_uses_embedding(self):
+    def test_energy_uses_embedding_in_scope(self):
+        """An embedding is an ordinary scope variable — no separate conditioning."""
         a = _bin("a")
         emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
-        pot = ParametricPotential(scope=[a], parametrization=nn.Linear(1 + 4, 1),
-                                  conditioning=[emb], name="phi")
-        e = pot.energy({a: torch.tensor([[1.0], [0.0], [1.0]])},
-                       conditioning={"emb": torch.randn(3, 4)})
+        pot = ParametricPotential(scope=[a, emb], parametrization=nn.Linear(1 + 4, 1),
+                                  name="phi")
+        e = pot.energy({a: torch.tensor([[1.0], [0.0], [1.0]]),
+                        emb: torch.randn(3, 4)})
         assert e.shape == (3,)
 
-    def test_scope_name_conditioning(self):
+    def test_log_potential_requires_complete_assignment(self):
+        """Every scope variable must be in the assignment — the observed ones
+        (an embedding) at their evidence value, not passed separately."""
+        a = _bin("a")
+        emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
+        pot = ParametricPotential(scope=[a, emb], parametrization=nn.Linear(1 + 4, 1),
+                                  name="phi")
+        av = torch.tensor([[1.0], [0.0], [1.0]])
+        lp = pot.log_potential({a: av, emb: torch.randn(3, 4)})
+        assert lp.shape == (3,)
+        with pytest.raises(KeyError, match="no value for scope variable"):
+            pot.log_potential({a: av})
+
+    def test_scope_and_name(self):
         a, b = _bin("a"), _bin("b")
         emb = ConceptVariable("emb", distribution=dist.Normal, size=2)
-        pot = ParametricPotential(scope=[a, b], parametrization=nn.Linear(4, 1),
-                                  conditioning=[emb], name="phi")
-        assert [v.name for v in pot.scope] == ["a", "b"]
-        assert [v.name for v in pot.conditioning] == ["emb"]
+        pot = ParametricPotential(scope=[a, b, emb], parametrization=nn.Linear(4, 1),
+                                  name="phi")
+        assert [v.name for v in pot.scope] == ["a", "b", "emb"]
         assert pot.name == "phi"
 
     def test_default_name(self):

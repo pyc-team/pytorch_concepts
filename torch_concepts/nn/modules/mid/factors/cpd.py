@@ -280,6 +280,16 @@ class ParametricCPD(ParametricFactor):
         return resolved
 
     @property
+    def inputs(self) -> List[Variable]:
+        """The aggregation inputs required by :class:`ParametricFactor` — for a
+        directed CPD these are exactly its parents.
+
+        A property rather than a copy, so it keeps tracking ``parents`` when
+        :meth:`BayesianNetwork._validate_graph` rewrites that list to dedup it.
+        """
+        return self.parents
+
+    @property
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
@@ -367,25 +377,17 @@ class ParametricCPD(ParametricFactor):
     def log_potential(
         self,
         assignment: Mapping["Variable", torch.Tensor],
-        conditioning: Optional[Mapping[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         """``log p(child | parents)`` evaluated at ``assignment``.
 
         Directed factors act as ordinary factor-graph factors: the child value
-        is scored against the distribution built from its parents' values. Parent
-        (and child) values may come from ``assignment`` (keyed by ``Variable``) or
-        from ``conditioning`` (keyed by name); the former wins on conflict.
+        is scored against the distribution built from its parents' values, all
+        taken from ``assignment`` (keyed by ``Variable``).
         """
         from ..inference.utils import build_distribution  # local: avoid import cycle
 
-        values: Dict[str, torch.Tensor] = dict(conditioning) if conditioning else {}
-        child_value: Optional[torch.Tensor] = None
-        for var, val in assignment.items():
-            values[var.name] = val
-            if var.name == self.variable.name:
-                child_value = val
-        if child_value is None:
-            child_value = values.get(self.variable.name)
+        values: Dict[str, torch.Tensor] = {var.name: val for var, val in assignment.items()}
+        child_value: Optional[torch.Tensor] = values.get(self.variable.name)
         if child_value is None:
             raise KeyError(
                 f"ParametricCPD({self.variable.name!r}).log_potential: no value for "

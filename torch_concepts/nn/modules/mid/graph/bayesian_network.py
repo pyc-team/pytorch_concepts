@@ -15,9 +15,9 @@ class BayesianNetwork(ProbabilisticModel):
     """Directed factor graph wiring a list of ``Variable``s to a list of
     ``ParametricCPD``s.
 
-    The directed special case of :class:`ProbabilisticModel`: validates the
-    structure (one factor per variable, no duplicate names, every parent
-    reference resolves, DAG only), runs a topological sort, and stores the graph
+    A :class:`ProbabilisticModel`: whose underlying graph is a directed acyclic graph (DAG). 
+    The constructor validates the structure (one factor per variable, no duplicate names, 
+    every parent reference resolves, DAG only), runs a topological sort, and stores the graph
     ready for inference engines. ``factors`` is keyed by child variable name
     (which is a ``ParametricCPD``'s ``name``), preserving the historical API.
 

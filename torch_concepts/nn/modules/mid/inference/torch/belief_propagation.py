@@ -10,8 +10,8 @@ Preconditions (see FACTOR_GRAPH_INSTRUCTIONS.md §1)
 ---------------------------------------------------
 Every **free** (non-evidence) variable must be discrete with finite cardinality
 (Bernoulli with ``size == 1``, or a Categorical/OneHot family). Continuous
-variables are supported only as **observed evidence / conditioning inputs** to
-the factors' energies. A continuous free variable raises a clear error; lifting
+variables are supported only as **observed evidence** feeding the factors'
+energies. A continuous free variable raises a clear error; lifting
 that needs a future MCMC/variational engine (the energy representation already
 supports it).
 
@@ -27,11 +27,10 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from ...factors.potential import enumerable_cardinality
 from ...graph.probabilistic_model import ProbabilisticModel
 from ...variable import Variable
 from ....outputs import InferenceOutput
-from ..utils import reshape_value_to_event
+from ..utils import enumerable_cardinality, reshape_value_to_event
 from .base import TorchBaseInference
 
 
@@ -105,7 +104,6 @@ class BeliefPropagation(TorchBaseInference):
         factor,
         free_vars: List[Variable],
         fixed: Dict[Variable, torch.Tensor],
-        conditioning: Dict[str, torch.Tensor],
         batch: int,
         dtype: torch.dtype,
         device: torch.device,
@@ -126,7 +124,7 @@ class BeliefPropagation(TorchBaseInference):
             assignment: Dict[Variable, torch.Tensor] = dict(fixed)
             for v, s in zip(free_vars, combo):
                 assignment[v] = self._encode_state(v, s, batch, dtype, device)
-            cells.append(factor.log_potential(assignment, conditioning))
+            cells.append(factor.log_potential(assignment))
         return torch.stack(cells, dim=-1).reshape(batch, *free_cards)
 
     # ------------------------------------------------------------------ query
@@ -160,8 +158,7 @@ class BeliefPropagation(TorchBaseInference):
         dtype = self._dtype()
         device = tensors[0].device if tensors else torch.device("cpu")
 
-        # Whole-variable evidence becomes conditioning; member (partial-plate)
-        # evidence is not supported on active plates in v1.
+        # Member (partial-plate) evidence is not supported on active plates in v1.
         whole_ev, member_ev = self._split_evidence(evidence)
         if member_ev:
             raise NotImplementedError(
@@ -170,7 +167,7 @@ class BeliefPropagation(TorchBaseInference):
                 "in v1; observe the whole plate variable instead."
             )
         evidence_names = set(whole_ev)
-        conditioning: Dict[str, torch.Tensor] = {
+        observed: Dict[str, torch.Tensor] = {
             name: self._format_evidence(self.pgm.variables[name], val)
             for name, val in whole_ev.items()
         }
@@ -188,12 +185,11 @@ class BeliefPropagation(TorchBaseInference):
         factor_free: Dict[str, List[Variable]] = {}
         factor_table: Dict[str, torch.Tensor] = {}
         for fname, f in self.pgm.factors.items():
-            self._check_conditioning(fname, f, conditioning)
             free_vars = [v for v in f.scope if v.name in active_names]
             fixed = {
-                v: conditioning[v.name] for v in f.scope if v.name in evidence_names
+                v: observed[v.name] for v in f.scope if v.name in evidence_names
             }
-            table = self._factor_table(f, free_vars, fixed, conditioning, batch, dtype, device)
+            table = self._factor_table(f, free_vars, fixed, batch, dtype, device)
             if table is None:
                 continue
             factor_free[fname] = free_vars
@@ -241,15 +237,6 @@ class BeliefPropagation(TorchBaseInference):
             logits = log_norm[..., 1:2] - log_norm[..., 0:1]
             return {"probs": torch.sigmoid(logits), "logits": logits}
         return {"probs": log_norm.exp(), "logits": log_norm}
-
-    def _check_conditioning(self, fname: str, factor, conditioning: Dict[str, torch.Tensor]) -> None:
-        """A potential's conditioning inputs must all be observed evidence."""
-        for v in getattr(factor, "conditioning", []):
-            if v.name not in conditioning:
-                raise ValueError(
-                    f"BeliefPropagation: factor {fname!r} conditions on {v.name!r}, "
-                    "which must be provided as evidence."
-                )
 
     # --------------------------------------------------------- message passing
     def _run_message_passing(

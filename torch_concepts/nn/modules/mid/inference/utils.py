@@ -1,7 +1,8 @@
 """Distribution utilities shared across all inference backends.
 
-Only ``build_distribution`` lives here — it is used by both the pure-PyTorch
-and Pyro backends. 
+Backend-agnostic helpers used by both the pure-PyTorch and the Pyro engines:
+temperature schedules, event reshaping, exact distribution construction, and
+the discrete-state count an enumeration-based engine needs.
 """
 
 from __future__ import annotations
@@ -14,6 +15,53 @@ import torch.distributions as dist
 
 from ..distributions import spec_for
 from ..variable import Variable
+
+
+def enumerable_cardinality(variable: Variable) -> int:
+    """Number of discrete states of ``variable``.
+
+    Used by the enumeration-based engines (currently
+    :class:`~torch_concepts.nn.BeliefPropagation`) to size the state axis of a
+    variable's messages and to build a factor's log-potential table.
+
+    - Bernoulli-family with ``size == 1`` -> ``2`` (states ``0`` and ``1``).
+    - Categorical/OneHot-family -> ``variable.size`` (one state per class).
+
+    The per-family answer comes from ``DistributionSpec.state_count``.
+
+    Parameters
+    ----------
+    variable : Variable
+        The variable whose discrete states are being counted.
+
+    Returns
+    -------
+    int
+        The number of states.
+
+    Raises
+    ------
+    ValueError
+        If the variable cannot be enumerated — either a ``size > 1``
+        Bernoulli (a set of independent bits, not one variable) or a
+        non-discrete family such as ``Normal`` or ``Delta``.
+    """
+    D = variable.distribution
+    spec = spec_for(D, f"Variable {variable.name!r}")
+    if spec.is_enumerable:
+        card = spec.state_count(variable.size)
+        if card is not None:
+            return card
+        raise ValueError(
+            f"Variable {variable.name!r}: a size>1 {D.__name__} is a set of "
+            "independent bits, not a single enumerable variable. Model each bit "
+            "as its own binary variable, or use a Categorical/OneHotCategorical."
+        )
+    raise ValueError(
+        f"Variable {variable.name!r}: distribution {D.__name__} is not discretely "
+        "enumerable, so it cannot be a free (queried/latent) variable under belief "
+        "propagation. Observe it as evidence, or use a discrete distribution."
+    )
 
 
 def make_temperature_schedule(

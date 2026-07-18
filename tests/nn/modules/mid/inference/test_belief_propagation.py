@@ -10,7 +10,8 @@ import torch.distributions as dist
 
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential, enumerable_cardinality
+from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential
+from torch_concepts.nn.modules.mid.inference.utils import enumerable_cardinality
 from torch_concepts.nn.modules.mid.graph.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.graph.markov_network import MarkovNetwork
 from torch_concepts.nn.modules.mid.inference.torch.belief_propagation import BeliefPropagation
@@ -43,11 +44,16 @@ def _energy_net(scope, conditioning=None, hidden=16):
 
 
 def _pot(scope, name, conditioning=None):
-    """An energy-based potential with an interaction-capable (MLP) energy."""
+    """An energy-based potential with an interaction-capable (MLP) energy.
+
+    ``conditioning`` is a test-helper convenience only: those variables are
+    appended to the scope and observed as evidence by the caller, which is how
+    conditional (CRF-style) behaviour is expressed now that
+    ``ParametricPotential`` has no separate conditioning argument.
+    """
     return ParametricPotential(
-        scope=scope,
+        scope=list(scope) + list(conditioning or []),
         parametrization=_energy_net(scope, conditioning),
-        conditioning=conditioning,
         name=name,
     )
 
@@ -70,6 +76,10 @@ def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, ba
         fg.variables[n]: _encode(fg.variables[n], s, batch)
         for n, s in evidence_states.items()
     }
+    # ``log_potential`` requires a complete assignment, so observed (continuous)
+    # values go in alongside the enumerated states rather than being passed
+    # separately.
+    ev_assign.update({fg.variables[n]: t for n, t in (conditioning or {}).items()})
     scores = []
     for combo in itertools.product(*[range(c) for c in cards]):
         assignment = dict(ev_assign)
@@ -77,7 +87,7 @@ def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, ba
             assignment[v] = _encode(v, s, batch)
         tot = 0.0
         for f in fg.factors.values():
-            tot = tot + f.log_potential(assignment, conditioning)
+            tot = tot + f.log_potential(assignment)
         scores.append(tot)
     logj = torch.stack(scores, dim=-1)  # (batch, prod)
     joint = torch.softmax(logj, dim=-1).reshape(batch, *cards)

@@ -26,12 +26,9 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Concatenate parent values along the last dim, preserving their shape.
 
     No flattening or reshaping is performed: every parent value keeps its full
-    event shape and the tensors are concatenated along ``dim=-1``. This
-    deliberately raises when the values have mismatched non-concatenation
-    dimensions (e.g. a matrix-valued parent alongside a vector-valued one) —
-    such combinations are ambiguous and must be resolved with a custom
-    ``aggregate``. Values are cast to floating point so discrete parents can
-    feed float layers, but their shape is left untouched.
+    event shape and the tensors are concatenated along ``dim=-1``. 
+    This deliberately raises when the values have mismatched non-concatenation
+    dimensions (e.g. a matrix-valued parent alongside a vector-valued one).
     """
     vals = [
         v.float() if not v.is_floating_point() else v
@@ -69,11 +66,11 @@ class ParametricFactor(nn.Module, ABC):
     ``ParametricPotential``) must subclass this and implement :meth:`forward`.
 
     **Subclass contract.** Before calling ``super().__init__``, a subclass must
-    set ``self.parents``: the ordered list of input variables the aggregation
-    machinery feeds to the parametrization modules. For a
-    :class:`ParametricCPD` these are the CPD's parents; for a
-    ``ParametricPotential`` they are ``scope + conditioning``. This is the only
-    attribute the base class reads off the subclass.
+    set ``self.inputs``: the ordered list of variables the aggregation machinery
+    feeds to the parametrization modules. For a :class:`ParametricCPD` these are
+    the CPD's parents; for a ``ParametricPotential`` they are its ``scope``
+    (an undirected factor has no parents, hence the neutral name). This is the
+    only attribute the base class reads off the subclass.
 
     Subclasses call ``super().__init__(parametrization, aggregate)`` to store:
 
@@ -114,13 +111,13 @@ class ParametricFactor(nn.Module, ABC):
     ------
     TypeError
         If a subclass reaches ``super().__init__`` without having set
-        ``self.parents``, or if ``aggregate`` is neither ``None``, a callable,
+        ``self.inputs``, or if ``aggregate`` is neither ``None``, a callable,
         nor a dict whose values are all callables.
     """
 
-    # Ordered input variables, set by every concrete subclass before
+    # Ordered aggregation inputs, set by every concrete subclass before
     # ``super().__init__`` (see the class docstring).
-    parents: List[Variable]
+    inputs: List[Variable]
 
     def __init__(
         self,
@@ -134,10 +131,10 @@ class ParametricFactor(nn.Module, ABC):
     ):
         super().__init__()
 
-        if not hasattr(self, "parents"):
+        if not hasattr(self, "inputs"):
             raise TypeError(
-                f"{type(self).__name__}: subclasses must set `self.parents` (the "
-                "ordered input variables) before calling super().__init__()."
+                f"{type(self).__name__}: subclasses must set `self.inputs` (the "
+                "ordered aggregation inputs) before calling super().__init__()."
             )
 
         parametrization = self._initialize_parametrization(parametrization)
@@ -260,11 +257,11 @@ class ParametricFactor(nn.Module, ABC):
         self,
         inputs: Dict[Variable, torch.Tensor],
     ) -> Tuple[Dict[Variable, torch.Tensor], Dict[Variable, torch.Tensor]]:
-        """Partition parent values into ``(concepts, embeddings)`` dicts by
-        variable type, preserving parent order."""
+        """Partition input values into ``(concepts, embeddings)`` dicts by
+        variable type, preserving the declared input order."""
         concepts: Dict[Variable, torch.Tensor] = {}
         embeddings: Dict[Variable, torch.Tensor] = {}
-        for p in self.parents:
+        for p in self.inputs:
             if p not in inputs:
                 continue
             if p.variable_type == "concept":
@@ -332,31 +329,29 @@ class ParametricFactor(nn.Module, ABC):
         """The variables this factor touches (its factor-graph edges).
 
         For a directed CPD this is ``[child, *parents]``; for an undirected
-        potential it is the clique of variables the energy ranges over. Observed
-        *conditioning* inputs of a potential are **not** part of the scope — they
-        feed the neural energy but create no undirected edges.
+        potential it is the clique of variables the energy ranges over —
+        including any that happen to be observed, since a potential has no
+        separate notion of a conditioning input.
         """
 
     @abstractmethod
     def log_potential(
         self,
         assignment: Dict["Variable", torch.Tensor],
-        conditioning: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         """Log score ``log φ_f`` of a joint assignment over :attr:`scope`.
 
         - :class:`ParametricCPD` returns ``log p(child | parents)`` evaluated at
           the assignment.
-        - :class:`ParametricPotential` returns ``-E(scope ; conditioning)``.
+        - :class:`ParametricPotential` returns ``-E(scope)``.
 
         Parameters
         ----------
         assignment : dict[Variable, Tensor]
-            Value ``(batch, *var.shape)`` for each scope variable being scored.
-        conditioning : dict[str, Tensor], optional
-            Name-keyed observed values (a superset is fine; unused keys are
-            ignored). Provides observed scope variables and any conditioning
-            inputs the factor's parametrization depends on.
+            Value ``(batch, *var.shape)`` for **every** variable in
+            :attr:`scope` — free ones at the value being scored, observed ones
+            at their evidence. The assignment must be complete; the factor does
+            not fall back to any other source.
 
         Returns
         -------

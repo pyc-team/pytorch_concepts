@@ -86,6 +86,31 @@ class BaseInference(nn.Module):
                 "or mixed (chain) graphs."
             )
 
+    def _reject_plate_and_members(self, names, container: str) -> None:
+        """Forbid observing a plate *and* any of its members at the same time.
+
+        A plate may be observed either as a whole (its own name) or through a
+        subset of its members — never both at once, because the two would
+        contradict each other on the shared columns and the member would
+        silently win. Several members together are fine; that is the "subset"
+        case.
+
+        Applied to ``evidence`` only. Naming a plate alongside its members in a
+        **query** is legitimate and deliberately allowed: it asks for the
+        stacked tensor plus named views into it (``params['m1']`` is a
+        zero-copy view of ``params['g']``), which is not a contradiction.
+        """
+        resolve = self.pgm.resolve
+        names = set(names)
+        for name in sorted(names):
+            owner = resolve(name).name
+            if name != owner and owner in names:
+                raise ValueError(
+                    f"{self.name}: {container} names both the plate {owner!r} and "
+                    f"its member {name!r}. Observe either the whole plate or a "
+                    "subset of its members, not both."
+                )
+
     def _validate_containers(
         self,
         query: Dict[str, Optional[torch.Tensor]],
@@ -93,6 +118,7 @@ class BaseInference(nn.Module):
     ) -> None:
         """Check that:
          - query and evidence keys are valid variable names,
+         - evidence does not name both a plate and one of its members,
          - all values are tensors, and
          - batch sizes match.
         """
@@ -106,6 +132,9 @@ class BaseInference(nn.Module):
         unknown_e = set(evidence.keys()) - all_names
         if unknown_e:
             raise ValueError(f"{self.name}: unknown evidence names {sorted(unknown_e)}.")
+
+        # Only after the names are known to be valid, so ``resolve`` cannot KeyError.
+        self._reject_plate_and_members(evidence, "evidence")
 
         for name, val in evidence.items():
             if not isinstance(val, torch.Tensor):

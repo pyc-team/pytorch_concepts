@@ -31,19 +31,20 @@ def main():
     a_lab = (x[:, 0] > 0).float().unsqueeze(-1)
     b_lab = (x[:, 1] > 0).float().unsqueeze(-1)
 
-    # Variables. The embedding is an observed conditioning input (not in any scope).
+    # Variables. The embedding is an ordinary scope variable that happens to be
+    # observed: supplied as evidence, it is held fixed rather than enumerated.
     emb = EmbeddingVariable("x", distribution=Normal, size=n_features)
     a = ConceptVariable("a", distribution=Bernoulli, size=1)
     b = ConceptVariable("b", distribution=Bernoulli, size=1)
 
-    # A single energy-based potential over both concepts, conditioned on the
-    # embedding: E(a, b ; x) = MLP([onehot(a), onehot(b), x]). The MLP lets x
-    # shape each concept AND couples a with b (a linear energy would be additive).
+    # A single energy-based potential over both concepts and the embedding:
+    # E(a, b, x) = MLP([a, b, x]). The MLP lets x shape each concept AND couples
+    # a with b (a linear energy would be additive). Observing x as evidence
+    # yields p(a, b | x) without any separate conditioning mechanism.
     energy = nn.Sequential(
         nn.Linear(1 + 1 + n_features, 128), nn.ReLU(), nn.Linear(128, 1)
     )
-    phi = ParametricPotential(scope=[a, b], parametrization=energy,
-                              conditioning=[emb], name="phi")
+    phi = ParametricPotential(scope=[a, b, emb], parametrization=energy, name="phi")
 
     mrf = MarkovNetwork(variables=[emb, a, b], factors=[phi])
 
