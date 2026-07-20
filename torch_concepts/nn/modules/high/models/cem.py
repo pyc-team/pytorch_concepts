@@ -3,14 +3,18 @@
 A bipartite model where each concept is represented by learned per-state
 embeddings (Espinosa Zarlenga et al., NeurIPS 2022): the input is mapped to
 per-concept embeddings, each concept is decoded from its embedding, and tasks
-are predicted by *mixing* concept activations with their embeddings. Two building
-paths are provided (mirroring :class:`ConceptBottleneckModel`):
-:meth:`_build_plate_model` (``plate=True``, default when all graph levels are
-homogeneous) groups each bipartite level into a single plate variable and encodes
-all of a level's embeddings in one batched layer; :meth:`_build_individual_model`
-(``plate=False``) creates one embedding/concept variable per concept. The
-graph/inference lifecycle is inherited from
-:class:`~torch_concepts.nn.modules.high.base.bipartite.BipartiteModel`.
+are predicted by *mixing* concept activations with their embeddings.
+
+The model is assembled by a single builder, :meth:`_build_model`. Both the
+concepts and their embeddings are grouped into the minimum number of plates by
+the shared factories
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`
+and
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_embedding_variables`.
+Because both use the same grouping, the two lists align element-by-element:
+group ``i``'s embedding matrix produces group ``i``'s concept scores. A fully
+homogeneous level collapses to a single plate (one batched embedding matrix); a
+heterogeneous level splits into one plate per ``(type, cardinality)`` family.
 
 References
 ----------
@@ -35,7 +39,7 @@ from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.models.bayesian_network import BayesianNetwork
 from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable, _DEFAULT_DIST_KWARGS
+from ...mid.models.variable import EmbeddingVariable, _DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
 
@@ -44,7 +48,8 @@ class ConceptEmbeddingModel(BipartiteModel):
 
     Root concepts are decoded from per-concept embeddings (produced from the
     latent representation); tasks are predicted by mixing the parent concepts'
-    activations with their embeddings.
+    activations with their embeddings. Works as a pure PyTorch module by default,
+    or as a Lightning module when ``lightning=True``.
 
     Parameters
     ----------
@@ -54,20 +59,20 @@ class ConceptEmbeddingModel(BipartiteModel):
         Concept annotations (labels, cardinalities, types).
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
-    embedding_size : int, default 16
+    embedding_size : int, default 8
         Width of each per-state concept embedding.
-    plate : bool or None, default None
-        Controls which building path is used.  ``None`` (default) auto-detects:
-        uses plates only when **all** graph levels are plate-compatible (see
-        :meth:`~torch_concepts.nn.modules.high.base.graph.DirectedGraphModel.plate_compatible_levels`),
-        otherwise falls back to individual variables.  Pass ``True`` to force
-        plates or ``False`` to force individual variables.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration (see :class:`ConceptBottleneckModel`).
     lightning : bool, default False
         If True, adds Lightning training capabilities.
+    plate : bool or None, default None
+        Per-level plate preference (forwarded to :class:`BaseModel` and consumed by
+        the level factories). ``None`` (default) and ``True`` group homogeneous
+        concepts into the minimum number of plates — even a lone concept becomes a
+        single-member plate. ``False`` uses one individual variable per concept.
     **kwargs
-        Forwarded to :class:`BaseModel`.
+        Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
+        the Lightning training arguments).
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
@@ -92,6 +97,7 @@ class ConceptEmbeddingModel(BipartiteModel):
         train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
+        plate: Optional[bool] = None,
         **kwargs,
     ):
         super().__init__(
@@ -99,6 +105,7 @@ class ConceptEmbeddingModel(BipartiteModel):
             annotations=annotations,
             task_names=task_names,
             lightning=lightning,
+            plate=plate,
             **kwargs,
         )
         self.embedding_size = embedding_size
@@ -107,13 +114,8 @@ class ConceptEmbeddingModel(BipartiteModel):
         self.axis_concepts = self.concept_annotations.subset(self.intermediate_concept_names)
         self.axis_tasks = self.concept_annotations.subset(self.task_names)
 
-        if all(self.plate):
-            # if all graph levels are plate-compatible
-            # build the model with one plate variable per bipartite level (concepts, tasks)
-            self.pgm = self._build_plate_model()
-        else:
-            # build the model with one variable per concept and one per task
-            self.pgm = self._build_individual_model()
+        # One builder for both layouts (plate / individual, decided per group).
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(
@@ -127,207 +129,122 @@ class ConceptEmbeddingModel(BipartiteModel):
     # Shared helpers
     # ------------------------------------------------------------------
     def _input_latent_block(self):
-        """Raw input → latent block shared by both building paths.
+        """Raw input → latent block.
 
-        Returns ``(input_var, latent_var, [input_cpd, latent_cpd])``: the raw
+        Returns ``(input_var, latent_var, input_cpd, latent_cpd)``: the raw
         ``input`` enters the PGM as evidence and the backbone runs *inside* the
         PGM as the ``latent | input`` CPD.
         """
         input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
         latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
-            input_var, 
+            input_var,
             parents=[],
             parametrization=LearnablePrior(input_var.shape),
         )
         latent_cpd = ParametricCPD(
-            latent_var, 
+            latent_var,
             parents=[input_var],
             parametrization=self.backbone,
         )
         return input_var, latent_var, input_cpd, latent_cpd
 
     # ------------------------------------------------------------------
-    # Building paths
+    # Model assembly (written once for both layouts)
     # ------------------------------------------------------------------
-    def _build_plate_model(self) -> BayesianNetwork:
-        """Optimised path for homogeneous levels: one plate variable per level.
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble the CEM Bayesian network: ``input → latent → embeddings → concepts → tasks``.
 
-        All intermediate concepts share a single plate concept variable and a
-        single batched embedding variable (``n_concepts * card`` state embeddings
-        produced in one layer); likewise all tasks share a single plate. Requires
-        every level to be homogeneous (same type and cardinality) — enforced by
-        the ``plate`` auto-detection.
+        The concepts and their state embeddings are grouped identically (same
+        minimum-plate layout), so ``embeddings[i]`` holds ``concepts[i]``'s state
+        embeddings. Per group: ``latent`` produces the embedding matrix in one
+        batched layer; each concept is decoded with one score per state embedding;
+        tasks mix every concept's activation with its embedding. The mixer reads
+        concept cardinalities/types positionally, so it is given the concept axis in
+        the concatenation (group-member) order rather than annotation order.
         """
-
         input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
-        n_concepts = len(self.intermediate_concept_names)
-        n_tasks = len(self.task_names)
-        concept0 = self.axis_concepts.concept(self.intermediate_concept_names[0])
-        task0 = self.axis_tasks.concept(self.task_names[0])
-        concept_card = concept0.cardinality
-        task_card = task0.cardinality
-
-        # All concepts' state embeddings in one batched variable: (n_concepts * card, emb).
-        embedding = EmbeddingVariable(
-            "embeddings",
-            distribution=Delta,
-            shape=(n_concepts * concept_card, self.embedding_size),
+        # Concepts and their embeddings share the grouping, hence align 1:1.
+        concepts = self.build_concept_variables(
+            self.intermediate_concept_names, 
+            plate_name="concepts"
         )
-        # Single plate concept variable; decode all members in one shot.
-        concepts = ConceptVariable(
-            names="concepts",
-            members=self.intermediate_concept_names,
-            distribution=self.distribution_of(concept0.name),
-            dist_kwargs=self.dist_kwargs_of(concept0.name),
-            size=concept_card,
+        embeddings = self.build_concept_embedding_variables(
+            self.intermediate_concept_names, 
+            self.embedding_size, 
+            plate_name="embeddings"
         )
-        tasks = ConceptVariable(
-            names="tasks",
-            members=self.task_names,
-            distribution=self.distribution_of(task0.name),
-            dist_kwargs=self.dist_kwargs_of(task0.name),
-            size=task_card,
-        )
-        
-        emb_cpd = ParametricCPD(
-            variable=embedding,
-            parents=[latent_var],
-            parametrization={
-                "value": LinearEmbeddingEncoder(
-                    in_features=self.latent_size, 
-                    out_features=self.embedding_size,
-                    n_embeddings=n_concepts * concept_card,
-                )
-            }
-        )
-        concept_cpd = ParametricCPD(
-            variable=concepts, 
-            parents=[embedding],
-            parametrization=self._flexible_parametrization(
-                variable=concepts,
-                first=Sequential(
-                    LinearEmbeddingToConcept(
-                        in_embeddings=self.embedding_size, 
-                        out_concepts=1
-                    ),
-                    nn.Flatten(start_dim=1),
-                ),
-                # flexible_parametrization will add a second CPD for variance, if needed
-                # TODO: to be updated once a layer producing variance is implemented
-                second=None # will be partial(...)
-            )
-        )
-        task_cpd = ParametricCPD(
-            variable=tasks, 
-            parents=[concepts, embedding],
-            parametrization=self._flexible_parametrization(
-                variable=tasks,
-                first=MixConceptEmbeddingToConcept(
-                    in_concepts=self.axis_concepts,
-                    in_embeddings=self.embedding_size,
-                    out_concepts=n_tasks * task_card,
-                ),
-                # flexible_parametrization will add a second CPD for variance, if needed
-                # TODO: to be updated once a layer producing variance is implemented
-                second=None # will be partial(...)
-            ),
+        tasks = self.build_concept_variables(
+            self.task_names, 
+            plate_name="tasks"
         )
 
-        return BayesianNetwork(
-            variables=[input_var, latent_var, embedding, concepts, tasks],
-            factors=[input_cpd, latent_cpd, emb_cpd, concept_cpd, task_cpd],
-        )
-
-    def _build_individual_model(self) -> BayesianNetwork:
-        """Assemble the CEM Bayesian network: input → embeddings → concepts → tasks.
-
-        Each concept gets ``cardinality`` per-state embeddings (produced from the
-        latent input); the concept is decoded with one score per state embedding,
-        and tasks mix the parent concepts' activations with their embeddings.
-        """
-
-        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
-
-        intermediate = [self.axis_concepts.concept(name) for name in self.intermediate_concept_names]
-        task_concepts = [self.axis_tasks.concept(name) for name in self.task_names]
-
-        # One embedding variable per concept (its per-state embeddings, shape
-        # (card, emb)), one concept variable, and one task variable each.
-        embeddings = EmbeddingVariable(
-            names=[f"emb_{c.name}" for c in intermediate],
-            distribution=Delta,
-            shape=[(c.cardinality, self.embedding_size) for c in intermediate]
-        )
-        concepts = ConceptVariable(
-            names=self.intermediate_concept_names,
-            distribution=[self.distribution_of(c.name) for c in intermediate],
-            dist_kwargs=[self.dist_kwargs_of(c.name) for c in intermediate],
-            size=[c.cardinality for c in intermediate]
-        )
-        tasks = ConceptVariable(
-            names=self.task_names,
-            distribution=[self.distribution_of(t.name) for t in task_concepts],
-            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
-            size=[t.cardinality for t in task_concepts]
-        )
-
-        # Aggregate the parents for the mixer: concept activations concatenated on
-        # the feature axis, embeddings stacked on the concept axis.
-        def mix_parents(concepts, embeddings):
-            return {
-                "concepts": torch.cat(list(concepts.values()), dim=-1),
-                "embeddings": torch.cat(list(embeddings.values()), dim=1),
-            }
-
+        # latent → embeddings: one batched encoder per group, producing that
+        # group's (n_states, embedding_size) matrix.
         emb_encoders = ParametricCPD(
             variable=embeddings,
             parents=[latent_var],
-            parametrization=[{
-                "value": LinearEmbeddingEncoder(  # (batch, latent) -> (batch, card, emb_size)
+            parametrization=[
+                {"value": LinearEmbeddingEncoder(
                     in_features=self.latent_size,
                     out_features=self.embedding_size,
-                    n_embeddings=c.cardinality,
-                )
-            } for c in intermediate],
+                    n_embeddings=e.shape[0],
+                )}
+                for e in embeddings
+            ],
         )
-        # One CPD per concept: each concept is decoded from its *own* embedding
-        # (batch, card, emb_size) -> (batch, card).
+        # embeddings → concepts: decode one score per state embedding (per group).
         c_encoders = [
             ParametricCPD(
-                variable=concept,
-                parents=[embedding],
+                variable=cvar,
+                parents=[evar],
                 parametrization=self._flexible_parametrization(
-                    variable=concept,
+                    variable=cvar,
                     first=Sequential(
                         LinearEmbeddingToConcept(
                             in_embeddings=self.embedding_size,
-                            out_concepts=1
+                            out_concepts=1,
                         ),
-                        nn.Flatten(start_dim=1),
+                        # Collapse the (n_concepts, 1) score dims -> n_concepts
+                        nn.Flatten(start_dim=-2),
                     ),
-                    # flexible_parametrization will add a second CPD for variance, if needed
-                    # TODO: to be updated once a layer producing variance is implemented
-                    second=None  # will be partial(...)
+                    second=None,  # will be partial(...)
                 ),
             )
-            for concept, embedding in zip(concepts, embeddings)
+            for cvar, evar in zip(concepts, embeddings)
         ]
+
+        # concepts + embeddings → tasks: mix each concept activation with its
+        # embedding. The mixer indexes concepts positionally, so its axis must
+        # follow the concatenation (group-member) order, not the annotation order.
+        ordered_names = [m for cvar in concepts for m in cvar.members]
+        mix_axis = self.axis_concepts.subset(ordered_names)
+
+        # by default, the concatenation of concepts and embeddings is done along the last axis, 
+        # but the mixer expects the embeddings to be the second-last axis (the last axis is the concept states). 
+        # So we define a custom aggregation function to mix them correctly.
+        def mix_parents(concepts, embeddings):
+            return {
+                "concepts": torch.cat(list(concepts.values()), dim=-1),
+                "embeddings": torch.cat(list(embeddings.values()), dim=-2),
+            }
+
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts, *embeddings],
-            parametrization=[self._flexible_parametrization(
-                variable=task,
-                first=MixConceptEmbeddingToConcept(  # (batch, sum(card)) & (batch, sum(card), emb_size) -> (batch, card)
-                    in_concepts=self.axis_concepts,
-                    in_embeddings=self.embedding_size,
-                    out_concepts=task.size,
-                ),
-                # flexible_parametrization will add a second CPD for variance, if needed
-                # TODO: to be updated once a layer producing variance is implemented
-                second=None  # will be partial(...)
-            ) for task in tasks],
+            parametrization=[
+                self._flexible_parametrization(
+                    variable=tvar,
+                    first=MixConceptEmbeddingToConcept(
+                        in_concepts=mix_axis,
+                        in_embeddings=self.embedding_size,
+                        out_concepts=tvar.size,
+                    ),
+                    second=None,  # will be partial(...)
+                )
+                for tvar in tasks
+            ],
             aggregate=mix_parents,
         )
 
