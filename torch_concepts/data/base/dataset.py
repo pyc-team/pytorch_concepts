@@ -189,7 +189,11 @@ class ConceptDataset(Dataset):
             if isinstance(concepts, dict):
                 c = concepts.get('c')
                 if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.size:
-                    concepts['c'] = AnnotatedTensor(c, annotation)
+                    # axis=1 to match how the concepts are stored (see the
+                    # explanatory comment in ``_set_concepts``); for this 2-D
+                    # batch it is the same axis as the default -1, but pinning it
+                    # keeps the stored and collated representations consistent.
+                    concepts['c'] = AnnotatedTensor(c, annotation, axis=1)
         return batch
 
 
