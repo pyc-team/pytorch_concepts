@@ -104,6 +104,6 @@ datamodule:
 default_task_names: [class]
 
 backbone:
-  _target_: torch_concepts.backbone.Backbone
+  _target_: torch_concepts.backbone.ImageBackbone
   name: resnet50
   freeze: True

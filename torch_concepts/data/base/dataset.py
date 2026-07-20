@@ -366,7 +366,7 @@ class ConceptDataset(Dataset):
         Parameters
         ----------
         backbone : Backbone
-            Feature extractor (needs ``filename``, ``is_huggingface`` and
+            Feature extractor (needs ``filename``, ``source`` and
             ``__call__``).
         batch_size : int, default 64
             Batch size for the extraction pass.
@@ -407,7 +407,7 @@ class ConceptDataset(Dataset):
         the stacked ``(n_samples, emb_dim)`` embeddings on CPU."""
         def collate_fn(batch):
             images = [sample['inputs']['x'] for sample in batch]
-            if not backbone.is_huggingface and isinstance(images[0], Tensor):
+            if backbone.source != "huggingface" and isinstance(images[0], Tensor):
                 return torch.stack(images)
             return images
 

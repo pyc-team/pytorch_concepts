@@ -17,6 +17,9 @@ Encoders
    LinearEmbeddingToConcept
    LinearEmbeddingEncoder
    SelectorEmbeddingEncoder
+   ConceptWhitening
+   WhitenedEmbeddingToConcept
+   CAVEmbeddingToConcept
 
 Predictors
 ----------
