@@ -22,7 +22,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
 from ...metrics import ConceptMetrics
-from ...outputs import ModelOutput, logits_from_params
+from ...outputs import ModelOutput
 
 
 class BaseLearner(pl.LightningModule):
@@ -292,13 +292,13 @@ class BaseLearner(pl.LightningModule):
                 # ConceptLoss-style: consumes the ModelOutput (reads out.params).
                 loss = self.loss(out)
             else:
-                # Plain loss(logits, target), e.g. BCEWithLogitsLoss: assemble the
-                # queried concepts' logits from out.params and align the target with
-                # build_query's per-variable tensors (same keys/order -> they line up,
-                # and the query values are already the one-hot-expanded ground truth).
-                logits = logits_from_params(out.params, keys=list(query))
+                # Plain loss(logits, target), e.g. BCEWithLogitsLoss. ``out.logits``
+                # already spans the queried concepts in query order, so it lines up
+                # column-for-column with build_query's per-variable tensors
+                # concatenated the same way (whose values are the one-hot-expanded
+                # ground truth).
                 target = torch.cat([query[v] for v in query], dim=-1)
-                loss = self.loss(logits, target)
+                loss = self.loss(out.logits, target)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---

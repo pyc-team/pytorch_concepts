@@ -78,9 +78,9 @@ def main():
         out = model(query=query, input=x_batch)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output {concept_names[0]} shape: {out.params[concept_names[0]]['logits'].shape}")
-    print(f"Output {concept_names[1]} shape: {out.params[concept_names[1]]['logits'].shape}")
-    print(f"Output {task_names[0]} shape: {out.params[task_names[0]]['logits'].shape}")
+    print(f"Output {concept_names[0]} shape: {out.logits[concept_names[0]].shape}")
+    print(f"Output {concept_names[1]} shape: {out.logits[concept_names[1]].shape}")
+    print(f"Output {task_names[0]} shape: {out.logits[task_names[0]].shape}")
 
     # Test forward pass
     print("\n" + "=" * 60)
@@ -102,7 +102,7 @@ def main():
         out = model(query=query, input=x_train)
         
         # Compute loss on all outputs
-        logits = torch.cat([out.params[name]['logits'] for name in query], dim=1)
+        logits = out.logits[list(query)]
         loss = loss_fn(logits, target)
         
         loss.backward()
@@ -121,8 +121,8 @@ def main():
     model.eval()
     with torch.no_grad():
         out = model(query=query, input=x_train)
-        c_pred = torch.cat([out.params[name]['logits'] for name in concept_names], dim=1)
-        y_pred = torch.cat([out.params[name]['logits'] for name in task_names], dim=1)
+        c_pred = out.logits[list(concept_names)]
+        y_pred = out.logits[list(task_names)]
         
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()

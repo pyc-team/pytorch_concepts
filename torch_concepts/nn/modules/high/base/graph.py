@@ -173,7 +173,7 @@ class DirectedGraphModel(GraphModel, ABC):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
 
         The dict's keys are the distribution's parameter names — taken from
-        :data:`~torch_concepts.nn.modules.mid.models.variable.PARAM_DIM` and exposed
+        :class:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec` and exposed
         per-variable as ``variable.param_sizes``:
 
         * **Discrete** families (Bernoulli / Categorical and their relaxed variants)
@@ -204,7 +204,7 @@ class DirectedGraphModel(GraphModel, ABC):
         ValueError
             If the variable's distribution is unsupported.
         """
-        param_sizes = variable.param_sizes  # {param_name: output_size}, from PARAM_DIM
+        param_sizes = variable.param_sizes  # {param_name: output_size}, from the DistributionSpec
         names = set(param_sizes)
 
         if names == {"value"}:
@@ -214,7 +214,7 @@ class DirectedGraphModel(GraphModel, ABC):
         if "loc" in names:
             # Continuous: location from ``first``; the scale parameter
             # (``scale`` for Normal, ``scale_tril`` for MultivariateNormal) needs a
-            # layer whose output size comes from PARAM_DIM via ``param_sizes``.
+            # layer whose output size comes from the spec via ``param_sizes``.
             scale_param = (names - {"loc"}).pop()
             scale_size = param_sizes[scale_param]
             raise NotImplementedError(

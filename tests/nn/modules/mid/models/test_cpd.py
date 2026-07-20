@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable, EmbeddingVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
 from torch_concepts.distributions import Delta
 
@@ -259,14 +259,14 @@ class TestRootParams:
         v = _bernoulli_var(size=3)
         prior = FixedPrior([0.1, 0.5, 0.9])
         cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
-        params = cpd.root_params(batch_size=7)
+        params = cpd.root_params(7)
         assert "probs" in params
         assert params["probs"].shape == (7, 3)
 
     def test_root_params_values_correct(self):
         v = _bernoulli_var(size=2)
         cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior([0.3, 0.7])})
-        params = cpd.root_params(batch_size=4)
+        params = cpd.root_params(4)
         expected = torch.tensor([0.3, 0.7]).expand(4, 2)
         assert torch.allclose(params["probs"], expected)
 
@@ -439,7 +439,7 @@ class TestCPDIntegration:
     def test_root_params_then_select(self):
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
         cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior([0.3, 0.7])})
-        params = cpd.root_params(batch_size=4)
+        params = cpd.root_params(4)
         a_params = cpd.select(params, "a")
         assert torch.allclose(a_params["probs"], torch.full((4, 1), 0.3))
 
@@ -547,7 +547,7 @@ class TestParametricFactorAggregate:
     def test_split_by_type_invalid_variable_type_raises(self):
         # factor.py lines 222-228: _split_by_type raises for invalid variable_type
         import torch.distributions as dist
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
 
         # Create a CPD with a parent, then monkey-patch parent's variable_type
         x = _delta_var(size=4)
@@ -555,7 +555,7 @@ class TestParametricFactorAggregate:
 
         # Need a pyc-style module to trigger _pyc_aggregate -> _split_by_type.
         # We'll use an EmbeddingVariable with a modified variable_type.
-        from torch_concepts.nn.modules.mid.models.variable import EmbeddingVariable
+        from torch_concepts.nn.modules.mid.variable import EmbeddingVariable
         e = EmbeddingVariable("e", distribution=dist.Normal, size=4)
         # Monkey-patch to an invalid type so _split_by_type raises
         e.__class__ = type("BrokenVar", (EmbeddingVariable,), {"variable_type": property(lambda self: "invalid")})

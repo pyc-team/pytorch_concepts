@@ -40,9 +40,9 @@ from ...low.dense_layers import LinearEmbeddingEncoder
 from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ..base.graph import DirectedGraphModel
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.bayesian_network import BayesianNetwork
+from ...mid.variable import ConceptVariable, EmbeddingVariable
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.graph.bayesian_network import BayesianNetwork
 
 
 class HomogenGraphModel(DirectedGraphModel, ABC):

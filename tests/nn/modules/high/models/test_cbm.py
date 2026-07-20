@@ -24,7 +24,7 @@ from torch_concepts.annotations import Annotations
 def _logits(out, names):
     """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 class DummyBackbone(nn.Module):
@@ -633,7 +633,7 @@ class TestDirectedGraphModelBase:
     def test_flexible_parametrization_continuous_raises(self):
         """_flexible_parametrization raises NotImplementedError for continuous vars."""
         import torch.distributions as dist
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
         from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
