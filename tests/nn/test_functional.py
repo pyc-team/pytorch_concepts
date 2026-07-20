@@ -18,6 +18,7 @@ from torch_concepts.nn.functional import (
     soft_select,
     completeness_score,
     intervention_score,
+    tcav_score,
     number_of_effective_concepts,
     number_of_contributing_concepts,
     cace_score,
@@ -640,6 +641,186 @@ class TestInterventionScore(unittest.TestCase):
         )
         self.assertIsInstance(scores, list)
         self.assertEqual(len(scores), 2)
+
+
+def _fit_cav_on_planted_direction(d=16, n=2000, seed=0):
+    """Fit a CAV on data with a planted concept direction (first basis)."""
+    from torch_concepts.nn import CAVEmbeddingToConcept
+    torch.manual_seed(seed)
+    v_true = torch.zeros(d)
+    v_true[0] = 1.0
+    x = torch.randn(n, d)
+    c = (x @ v_true > 0).float().unsqueeze(1)
+    layer = CAVEmbeddingToConcept(in_embeddings=d, out_concepts=1)
+    layer.fit(x, c)
+    return layer, x, c, v_true
+
+
+class TestTCAVScore(unittest.TestCase):
+    """Test TCAV score."""
+
+    def test_output_shape(self):
+        """The score has one entry per concept."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        score = tcav_score(x, torch.nn.Linear(16, 3), layer.cavs,
+                           target=0)
+        self.assertEqual(score.shape, (1,))
+
+    def test_linear_head_follows_analytic_gradient_sign(self):
+        """For a linear head the sensitivity W[:, k] . cav is constant, so
+        the score degenerates to the sign of that dot product."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        head = torch.nn.Linear(16, 2)
+        analytic = head.weight[1] @ layer.cavs[0]
+        score = tcav_score(x, head, layer.cavs, target=1)
+        self.assertEqual(score.item(), float(analytic > 0))
+
+    def test_works_under_no_grad_without_side_effects(self):
+        """Works inside no_grad and leaves the caller's tensor untouched."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        emb = x.clone().requires_grad_(True)
+        with torch.no_grad():
+            score = tcav_score(emb, torch.nn.Linear(16, 2), layer.cavs)
+        self.assertEqual(score.shape, (1,))
+        self.assertIsNone(emb.grad)
+
+    def test_head_along_concept_scores_one(self):
+        """A head that IS the concept direction gives TCAV score 1 (0 when
+        negated)."""
+        layer, x, _, v_true = _fit_cav_on_planted_direction()
+        head_pos = lambda z: (z @ v_true).unsqueeze(1)
+        head_neg = lambda z: -(z @ v_true).unsqueeze(1)
+        self.assertEqual(tcav_score(x, head_pos, layer.cavs).item(), 1.0)
+        self.assertEqual(tcav_score(x, head_neg, layer.cavs).item(), 0.0)
+
+    def test_one_dimensional_head_output(self):
+        """A head returning (batch_size,) is used as-is."""
+        layer, x, _, v_true = _fit_cav_on_planted_direction()
+        score = tcav_score(x, lambda z: z @ v_true, layer.cavs)
+        self.assertEqual(score.item(), 1.0)
+
+    def test_random_cavs_score_near_half_on_average(self):
+        """CAVs fit on random labels are irrelevant to the head on average.
+
+        A single random CAV can score anywhere in [0, 1] (any fixed head
+        has a preferred gradient direction), which is why the paper
+        averages over many random CAVs: by symmetry the mean score is 0.5.
+        """
+        from torch_concepts.nn import CAVEmbeddingToConcept
+        torch.manual_seed(0)
+        d = 16
+        x = torch.randn(2000, d)
+        c_random = torch.randint(0, 2, (2000, 20)).float()
+        layer = CAVEmbeddingToConcept(in_embeddings=d, out_concepts=20)
+        layer.fit(x, c_random)
+        head = torch.nn.Sequential(
+            torch.nn.Linear(d, 32), torch.nn.Tanh(), torch.nn.Linear(32, 1)
+        )
+        scores = tcav_score(x, head, layer.cavs)
+        self.assertEqual(scores.shape, (20,))
+        self.assertGreater(scores.mean().item(), 0.3)
+        self.assertLess(scores.mean().item(), 0.7)
+
+    def test_scores_in_unit_interval(self):
+        """Scores are in [0, 1] with one entry per concept."""
+        torch.manual_seed(0)
+        cavs = torch.nn.functional.normalize(torch.randn(4, 16), dim=1)
+        x = torch.randn(64, 16)
+        scores = tcav_score(x, torch.nn.Linear(16, 3), cavs, target=2)
+        self.assertEqual(scores.shape, (4,))
+        self.assertTrue(((scores >= 0) & (scores <= 1)).all())
+
+    def test_target_by_name_matches_index(self):
+        """A named target resolves against the head's annotation and
+        matches the equivalent integer index."""
+        from torch_concepts import Annotations
+        from torch_concepts.tensor import AnnotatedTensor
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        labels = ["cat", "dog", "bird"]
+        linear = torch.nn.Linear(16, 3)
+
+        class AnnotatedHead(torch.nn.Module):
+            def forward(self, z):
+                return AnnotatedTensor(linear(z), Annotations(labels=labels))
+
+        head = AnnotatedHead()
+        by_name = tcav_score(x, head, layer.cavs, target="dog")
+        by_index = tcav_score(x, head, layer.cavs, target=1)
+        self.assertTrue(torch.equal(by_name, by_index))
+
+    def test_target_by_name_needs_annotated_head(self):
+        """Naming a target against a bare-tensor head is a clear error."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        with self.assertRaises(TypeError):
+            tcav_score(x, torch.nn.Linear(16, 3), layer.cavs, target="dog")
+
+    def test_target_name_in_nested_annotation(self):
+        """Names resolve to flattened logit columns, not concept indices:
+        with 'color' (3 states) before 'fine', 'fine' is column 3, and a
+        (concept, state) pair picks one categorical state logit."""
+        from torch_concepts import Annotations
+        from torch_concepts.tensor import AnnotatedTensor
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        ann = Annotations(labels=["color", "fine"], cardinalities=[3, 1])
+        linear = torch.nn.Linear(16, 4)
+
+        class AnnotatedHead(torch.nn.Module):
+            def forward(self, z):
+                return AnnotatedTensor(linear(z), ann)
+
+        head = AnnotatedHead()
+        self.assertTrue(torch.equal(
+            tcav_score(x, head, layer.cavs, target="fine"),
+            tcav_score(x, head, layer.cavs, target=3),
+        ))
+        self.assertTrue(torch.equal(
+            tcav_score(x, head, layer.cavs, target=("color", "1")),
+            tcav_score(x, head, layer.cavs, target=1),
+        ))
+        # a bare categorical name is ambiguous (which state logit?)
+        with self.assertRaises(ValueError):
+            tcav_score(x, head, layer.cavs, target="color")
+
+    def test_numpy_integer_target(self):
+        """Numpy integers (e.g. from np.argmax) index like Python ints."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        head = torch.nn.Linear(16, 3)
+        self.assertTrue(torch.equal(
+            tcav_score(x, head, layer.cavs, target=np.int64(1)),
+            tcav_score(x, head, layer.cavs, target=1),
+        ))
+
+    def test_bool_target_rejected(self):
+        """A bool target would index as a mask, not column 1: reject it."""
+        layer, x, _, _ = _fit_cav_on_planted_direction()
+        with self.assertRaises(TypeError):
+            tcav_score(x, torch.nn.Linear(16, 3), layer.cavs, target=True)
+
+    def test_per_sample_gradients_match_looped_computation(self):
+        """The batched score equals the official one-example-at-a-time loop
+        on a nonlinear head, where per-sample gradients genuinely differ
+        (a batch-mean gradient would fail this test)."""
+        layer, x, _, v_true = _fit_cav_on_planted_direction(n=200)
+        # grad of sin(z . v) is cos(z . v) v: its sign varies per sample
+        head = lambda z: torch.sin(z @ v_true).unsqueeze(1)
+        signs = []
+        for i in range(len(x)):
+            xi = x[i: i + 1].clone().requires_grad_(True)
+            head(xi)[0, 0].backward()
+            signs.append((xi.grad @ layer.cavs.t() > 0).float())
+        looped = torch.cat(signs).mean(dim=0)
+        score = tcav_score(x, head, layer.cavs)
+        self.assertTrue(torch.equal(score, looped))
+        # per-sample signs must actually disagree for this test to bite
+        self.assertGreater(score.item(), 0.0)
+        self.assertLess(score.item(), 1.0)
+
+    def test_empty_batch_raises(self):
+        """An empty batch is a clear error, not silent NaN scores."""
+        layer, _, _, _ = _fit_cav_on_planted_direction()
+        with self.assertRaises(ValueError):
+            tcav_score(torch.randn(0, 16), torch.nn.Linear(16, 2),
+                       layer.cavs)
 
 
 class TestNumberOfEffectiveConcepts(unittest.TestCase):

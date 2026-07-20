@@ -1,15 +1,65 @@
 """
 Backbone utilities for feature extraction.
+
+- :class:`Backbone` — abstract base holding all modality-independent logic:
+  device resolution, freeze semantics, cache filename, common properties,
+  and the per-source loader registry. Not instantiable directly.
+- :class:`ImageBackbone` — image embeddings. Built-in sources:
+  ``'torchvision'`` (ResNet, VGG, EfficientNet, DenseNet) and
+  ``'huggingface'`` (DINOv2, ViT, ...).
+- :class:`TextBackbone` — text embeddings. Built-in source:
+  ``'huggingface'`` (``AutoTokenizer`` + ``AutoModel``), with mean / CLS /
+  no pooling.
+
+Extensibility:
+
+- **per-name** (resnet18 vs resnet50): a string, zero code;
+- **per-family** (resnet vs vgg): one entry in ``_TORCHVISION_FAMILIES``;
+- **per-source** (torchvision vs huggingface vs your own): a registered
+  loader — additive, no library changes::
+
+      @ImageBackbone.register_source("mylab")
+      def _load_mylab(name, device):
+          model = ...                       # nn.Module on `device`
+          def embed(model, processor, x):   # x -> (B, out_features)
+              return model(x)
+          return BackboneSpec(model, None, embed, out_features=512)
+
+      backbone = ImageBackbone("my-model-v2", source="mylab")
+
+- **per-modality** (image vs text): a :class:`Backbone` subclass; freezing,
+  device handling, caching and ``precompute_embeddings`` compatibility are
+  inherited.
 """
 import torch
 import torch.nn as nn
 import logging
 import warnings
-from typing import Union, List, Tuple, Optional
+from typing import Callable, List, NamedTuple, Optional, Tuple, Union
 
 from .utils import resolve_hf_token
 
 logger = logging.getLogger(__name__)
+
+
+class BackboneSpec(NamedTuple):
+    """What a source loader returns.
+    
+    Attributes
+    ----------
+    model : nn.Module
+        Loaded model on the target device.
+    processor : object
+        Transform/tokenizer for preprocessing (may be None).
+    embed : Callable
+        Function ``embed(model, processor, x)`` to turn raw inputs into embeddings.
+    out_features : int
+        Embedding dimension.
+    """
+    model: nn.Module
+    processor: object
+    embed: Callable
+    out_features: int
 
 
 def _resolve_device(device: Optional[str] = None) -> torch.device:
@@ -48,7 +98,9 @@ def _resolve_device(device: Optional[str] = None) -> torch.device:
 
 
 def _is_huggingface_model(name: str) -> bool:
-    """Check if backbone string refers to a HuggingFace model.
+    """Heuristic used by ``source='auto'``: a '/' or a known keyword in the
+    name means HuggingFace. Pass an explicit ``source`` to bypass it (e.g.
+    for new HuggingFace families whose names carry no known keyword).
 
     Detection is based on:
     1. Presence of '/' in the name (e.g., 'facebook/dinov2-base')
@@ -74,10 +126,10 @@ def _is_huggingface_model(name: str) -> bool:
 
 
 def _load_huggingface_model(
-    name: str, 
+    name: str,
     device: torch.device
 ) -> Tuple[nn.Module, object]:
-    """Load a HuggingFace model and processor.
+    """Load a HuggingFace model and its AutoImageProcessor..
 
     Supported model families:
     - DINOv2 (facebook/dinov2-base, facebook/dinov2-large)
@@ -102,17 +154,24 @@ def _load_huggingface_model(
     return model, processor
 
 
+# Family -> feature-extractor builder (drop the classification head).
+# Supporting a new torchvision family is one entry here.
+_TORCHVISION_FAMILIES = {
+    'resnet': lambda m: nn.Sequential(*list(m.children())[:-1], nn.Flatten()),
+    'vgg': lambda m: nn.Sequential(m.features, m.avgpool, nn.Flatten()),
+    'efficientnet': lambda m: nn.Sequential(m.features, m.avgpool, nn.Flatten()),
+    'densenet': lambda m: nn.Sequential(m.features, nn.AdaptiveAvgPool2d(1), nn.Flatten()),
+}
+
+
 def _load_torchvision_model(
-    name: str, 
+    name: str,
     device: torch.device
 ) -> Tuple[nn.Module, object]:
-    """Load a torchvision model and its preprocessing transforms.
+    """Load a torchvision model as a headless feature extractor
+    together with its preprocessing transforms.
 
-    Supported model families:
-    - ResNet (resnet18, resnet34, resnet50, resnet101, resnet152)
-    - VGG (vgg11, vgg13, vgg16, vgg19)
-    - EfficientNet (efficientnet_b0 through efficientnet_b7)
-    - DenseNet (densenet121, densenet161, densenet169, densenet201)
+    Supported model families are in _TORCHVISION_FAMILIES:
 
     Parameters
     ----------
@@ -130,7 +189,7 @@ def _load_torchvision_model(
     Raises
     ------
     ValueError
-        If the model name is not supported.
+        If the model family is not in ``_TORCHVISION_FAMILIES``.
     """
     from torchvision.models import get_model, get_model_weights
 
@@ -138,14 +197,10 @@ def _load_torchvision_model(
     full_model = get_model(name, weights=weights)
 
     name_lower = name.lower()
-    if 'resnet' in name_lower:
-        model = nn.Sequential(*list(full_model.children())[:-1], nn.Flatten())
-    elif 'vgg' in name_lower:
-        model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
-    elif 'efficientnet' in name_lower:
-        model = nn.Sequential(full_model.features, full_model.avgpool, nn.Flatten())
-    elif 'densenet' in name_lower:
-        model = nn.Sequential(full_model.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+    for family, build in _TORCHVISION_FAMILIES.items():
+        if family in name_lower:
+            model = build(full_model)
+            break
     else:
         raise ValueError(f"Unsupported torchvision backbone: {name}")
 
@@ -156,20 +211,20 @@ def _load_torchvision_model(
 
 class Backbone(nn.Module):
     """
-    This module provides the :class:`Backbone` class for extracting embeddings
-    from pre-trained models. It supports both HuggingFace models (DINOv2, ViT, etc.)
-    and torchvision models (ResNet, VGG, EfficientNet, DenseNet).
+    Abstract base class for feature-extraction backbones.
 
-    The backbone is a regular :class:`torch.nn.Module`. 
-    Pass it to :meth:`ConceptDataset.precompute_embeddings` /
-    :meth:`ConceptDataModule.precompute_embeddings` to precompute and cache embeddings,
-    or pass it to a high-level model as its ``backbone`` (frozen or unfrozen).
+    Holds all modality-independent logic; subclasses only choose sources
+    and, if needed, override :meth:`forward`. Not instantiable directly —
+    use :class:`ImageBackbone`, :class:`TextBackbone`, or your own
+    subclass. To support a new *source* of models within an existing
+    modality, register a loader instead of subclassing (see the module
+    docstring).
 
     Parameters
     ----------
     name : str
-        Model name for feature extraction. Can be:
-
+        Model identifier. Interpretation is source-specific.
+        For example:
         - **HuggingFace model**: 'facebook/dinov2-base', 'google/vit-base-patch16-224'
         - **torchvision model**: 'resnet18', 'resnet50', 'vgg16', 'efficientnet_b0'
 
@@ -178,50 +233,65 @@ class Backbone(nn.Module):
         If None, auto-detects available hardware (CUDA > CPU).
         Default is None.
     freeze : bool, default True
-        If True, parameters are excluded from gradients. 
-        Pass ``freeze=False`` to fine-tune.
-
-    Attributes
-    ----------
-    name : str
-        The model name used for initialization.
-    frozen : bool
-        Whether the backbone is frozen.
-    device : torch.device
-        The device the model currently lives on.
-    processor : object
-        The preprocessing transform/processor (varies by model type).
-    is_huggingface : bool
-        Whether this is a HuggingFace model.
-    filename : str
-        Safe filename for caching embeddings (e.g., 'bkb_embs_resnet50.pt').
-
-    Examples
-    --------
-    >>> from torch_concepts import Backbone
-    >>> import torch
-    >>>
-    >>> backbone = Backbone('resnet50', device='cpu')
-    >>>
-    >>> images = torch.randn(4, 3, 224, 224)  # batch of 4 images
-    >>> embeddings = backbone(images)
-    >>> embeddings.shape
-    torch.Size([4, 2048])
+        If True, parameters take no gradients and the module stays in eval
+        mode. Pass ``freeze=False`` to fine-tune.
     """
 
+    _loaders: dict = {}  # per-source loaders; each subclass has its own dict
+
     def __init__(self, name: str, device: Optional[str] = None, freeze: bool = True):
+        if type(self) is Backbone:
+            raise TypeError(
+                "Backbone is abstract; instantiate ImageBackbone, "
+                "TextBackbone, or a custom subclass instead."
+            )
         super().__init__()
         self.name = name
         self.frozen = freeze
         self._device = _resolve_device(device)
-        self._is_huggingface = _is_huggingface_model(name)
-        self._model = None
-        self._processor = None
-        self._out_features = None
         self._load_model()
         if freeze:
             self.requires_grad_(False)
             self.eval()  # fixed feature extractor: lock BatchNorm/Dropout
+
+    @classmethod
+    def register_source(cls, source: str) -> Callable:
+        """Register a loader for ``source`` on this backbone class.
+
+        The decorated function must have signature
+        ``loader(name: str, device: torch.device) -> BackboneSpec``.
+        Registration is additive: user code can add sources without
+        modifying the library.
+        """
+        def decorator(fn: Callable) -> Callable:
+            cls._loaders[source] = fn
+            return fn
+        return decorator
+
+    def _resolve_source(self) -> str:
+        """The source key to load from; subclasses may override (e.g. for
+        an ``'auto'`` heuristic)."""
+        return self._source
+
+    def _load_model(self) -> None:
+        """Resolve the source, run its loader, and store the results."""
+        source = self._resolve_source()
+        if source not in self._loaders:
+            raise ValueError(
+                f"Unknown source {source!r} for {type(self).__name__}; "
+                f"registered sources: {sorted(self._loaders)}. Register new "
+                f"ones with @{type(self).__name__}.register_source(...)."
+            )
+        spec = BackboneSpec(*self._loaders[source](self.name, self._device))
+        self._model = spec.model
+        self._processor = spec.processor
+        self._embed = spec.embed
+        self._out_features = spec.out_features
+        self.source = source  # resolved source key ('torchvision', 'huggingface', ...)
+
+    def forward(self, x):
+        """Extract embeddings from ``x`` using the source's embed function."""
+        return self._embed(self._model, self._processor, x)
 
     def train(self, mode: bool = True):
         """Set train mode, but keep a frozen backbone in eval.
@@ -232,30 +302,6 @@ class Backbone(nn.Module):
         mode. Unfrozen backbones behave like a normal ``nn.Module``.
         """
         return super().train(mode and not self.frozen)
-
-    def _load_model(self) -> None:
-        """Load the backbone model and processor based on model type.
-
-        For HuggingFace models, loads via transformers library.
-        For torchvision models, loads pretrained weights and removes
-        classification head to create a feature extractor.
-
-        Also computes the output feature dimension via a dummy forward pass.
-        """
-        if self._is_huggingface:
-            self._model, self._processor = _load_huggingface_model(self.name, self._device)
-            # Get output size from model config
-            self._out_features = self._model.config.hidden_size
-        else:
-            self._model, self._processor = _load_torchvision_model(self.name, self._device)
-            # Cache ToTensor transform for PIL image conversion
-            from torchvision import transforms
-            self._to_tensor = transforms.ToTensor()
-            # Compute output size with dummy forward pass
-            with torch.no_grad():
-                dummy_input = torch.zeros(1, 3, 224, 224, device=self._device)
-                dummy_output = self._model(dummy_input)
-                self._out_features = dummy_output.shape[-1]
 
     @property
     def device(self) -> torch.device:
@@ -289,6 +335,7 @@ class Backbone(nn.Module):
 
         For HuggingFace models, this is an AutoImageProcessor.
         For torchvision models, this is a transforms.Compose pipeline.
+        For text, this can be a tokenizer.
 
         Returns
         -------
@@ -296,17 +343,6 @@ class Backbone(nn.Module):
             The preprocessor appropriate for the model type.
         """
         return self._processor
-
-    @property
-    def is_huggingface(self) -> bool:
-        """Whether this is a HuggingFace model.
-
-        Returns
-        -------
-        bool
-            True if the backbone is a HuggingFace model.
-        """
-        return self._is_huggingface
 
     @property
     def filename(self) -> str:
@@ -321,57 +357,195 @@ class Backbone(nn.Module):
         """
         return f"bkb_embs_{self.name.replace('/', '-')}.pt"
 
-    def forward(self, x: Union[torch.Tensor, List]) -> torch.Tensor:
-        """Forward pass through the backbone to extract embeddings.
-
-        Parameters
-        ----------
-        x : torch.Tensor or list
-            Input data. Format depends on model type:
-
-            - **torchvision**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
-            - **HuggingFace**: Tensor of shape (B, C, H, W), (C, H, W), or list of PIL Images
-
-        Returns
-        -------
-        torch.Tensor
-            Embeddings of shape (B, embedding_dim) or (embedding_dim,) for single images,
-            where embedding_dim depends on the model (e.g., 2048 for ResNet50, 768 for DINOv2-base).
-
-        Notes
-        -----
-        For HuggingFace models, the CLS token embedding is returned.
-        For torchvision models, the output of the average pooling layer is used.
-        Single images (3D tensors) are automatically batched and the result is squeezed.
-        """
-        if self._is_huggingface:
-            inputs = self._processor(images=x, return_tensors="pt")
-            outputs = self._model(**inputs)
-            return outputs.last_hidden_state[:, 0, :]  # CLS token
-        else:
-            if isinstance(x, list):
-                # list of PIL Images case
-                x = torch.stack([self._to_tensor(img) for img in x])
-            # Handle single image (3D tensor) by adding batch dimension
-            squeeze_output = False
-            if x.dim() == 3:
-                # single image case
-                x = x.unsqueeze(0)
-                squeeze_output = True
-            x = self._processor(x)
-            out = self._model(x)
-            if squeeze_output:
-                out = out.squeeze(0)
-            return out
-
     def __repr__(self) -> str:
-        """Return string representation of the Backbone.
+        return (f"{type(self).__name__}(name='{self.name}', source={self.source}, "
+                f"device={self.device}, frozen={self.frozen})")
 
-        Returns
-        -------
-        str
-            Formatted string with model name, type, and device.
-        """
-        model_type = "HuggingFace" if self._is_huggingface else "torchvision"
-        return f"Backbone(name='{self.name}', type={model_type}, device={self.device}, frozen={self.frozen})"
 
+class ImageBackbone(Backbone):
+    """
+    Image feature-extraction backbone.
+
+    Accepts a tensor of shape ``(B, C, H, W)`` or ``(C, H, W)``, or a list
+    of PIL Images; returns embeddings of shape ``(B, out_features)`` (a
+    single 3D image is squeezed back to ``(out_features,)``). HuggingFace
+    models return the CLS token; torchvision models the pooled features.
+
+    Parameters
+    ----------
+    name : str
+        Model name: HuggingFace ('facebook/dinov2-base', ...) or
+        torchvision ('resnet50', 'vgg16', ...).
+    device : str, optional
+        Device string; auto-detected if None.
+    freeze : bool, default True
+        Freeze parameters (see :class:`Backbone`).
+    source : str, default 'auto'
+        Which registered source to load from (``'torchvision'``,
+        ``'huggingface'``, or a custom key). ``'auto'`` infers from the
+        name; pass it explicitly for HuggingFace models the heuristic does
+        not recognize.
+
+    Examples
+    --------
+    >>> from torch_concepts import ImageBackbone
+    >>> import torch
+    >>>
+    >>> backbone = ImageBackbone('resnet50')
+    >>> backbone(torch.randn(4, 3, 224, 224)).shape
+    torch.Size([4, 2048])
+    """
+
+    _loaders: dict = {}
+
+    def __init__(
+        self,
+        name: str,
+        device: Optional[str] = None,
+        freeze: bool = True,
+        source: str = "auto",
+    ):
+        self._source = source
+        super().__init__(name=name, device=device, freeze=freeze)
+
+    def _resolve_source(self) -> str:
+        if self._source == "auto":
+            return "huggingface" if _is_huggingface_model(self.name) else "torchvision"
+        return self._source
+
+
+@ImageBackbone.register_source("huggingface")
+def _load_hf_image_source(name: str, device: torch.device) -> BackboneSpec:
+    """Built-in HuggingFace vision source: processor -> model -> CLS token."""
+    model, processor = _load_huggingface_model(name, device)
+
+    def embed(model, processor, x):
+        inputs = processor(images=x, return_tensors="pt").to(
+            next(model.parameters()).device
+        )
+        outputs = model(**inputs)
+        return outputs.last_hidden_state[:, 0, :]  # CLS token
+
+    return BackboneSpec(model, processor, embed, model.config.hidden_size)
+
+
+@ImageBackbone.register_source("torchvision")
+def _load_torchvision_source(name: str, device: torch.device) -> BackboneSpec:
+    """Built-in torchvision source: transforms -> headless model."""
+    model, preprocess = _load_torchvision_model(name, device)
+    from torchvision import transforms
+    to_tensor = transforms.ToTensor()  # for PIL-image lists
+
+    def embed(model, processor, x):
+        if isinstance(x, list):  # list of PIL Images
+            x = torch.stack([to_tensor(img) for img in x])
+        if squeeze_single := x.dim() == 3:  # single image: batch it
+            x = x.unsqueeze(0)
+        out = model(processor(x))
+        return out.squeeze(0) if squeeze_single else out
+
+    with torch.no_grad():  # output size via dummy forward pass
+        out_features = model(torch.zeros(1, 3, 224, 224, device=device)).shape[-1]
+
+    return BackboneSpec(model, preprocess, embed, out_features)
+
+
+class TextBackbone(Backbone):
+    """
+    Text embedding backbone.
+
+    Accepts a string or a list of strings. Pooling of the per-token hidden
+    states is applied by this class, uniformly across sources:
+
+    - ``'mean'`` (default): attention-mask-weighted mean — the standard
+      recipe for sentence embeddings. Output ``(B, out_features)``.
+    - ``'cls'``: first-token ([CLS]) embedding. Output ``(B, out_features)``.
+    - ``'none'``: unpooled ``(B, T, out_features)`` — the hook for
+      token-level pipelines. Not usable with ``precompute_embeddings``
+      caching (T varies per batch).
+
+    A single input string is squeezed to ``(out_features,)``. A custom text
+    source's ``embed`` must return ``(hidden_states, attention_mask)``.
+
+    Parameters
+    ----------
+    name : str
+        HuggingFace model identifier (e.g., 'bert-base-uncased',
+        'sentence-transformers/all-MiniLM-L6-v2').
+    device : str, optional
+        Device string; auto-detected if None.
+    freeze : bool, default True
+        Freeze parameters (see :class:`Backbone`).
+    pooling : str, default 'mean'
+        How to pool token hidden states: 'mean', 'cls' or 'none'.
+    source : str, default 'huggingface'
+        Which registered source to load from.
+
+    Examples
+    --------
+    >>> from torch_concepts import TextBackbone
+    >>>
+    >>> backbone = TextBackbone('sentence-transformers/all-MiniLM-L6-v2',
+    ...                         device='cpu')
+    >>> backbone(["a smiling person", "a person wearing a hat"]).shape
+    torch.Size([2, 384])
+    """
+
+    _loaders: dict = {}
+
+    def __init__(
+        self,
+        name: str,
+        device: Optional[str] = None,
+        freeze: bool = True,
+        pooling: str = "mean",
+        source: str = "huggingface",
+    ):
+        if pooling not in ("mean", "cls", "none"):
+            raise ValueError(
+                f"pooling must be 'mean', 'cls' or 'none', got {pooling!r}."
+            )
+        self.pooling = pooling
+        self._source = source
+        super().__init__(name=name, device=device, freeze=freeze)
+
+    def forward(self, x: Union[str, List[str]]) -> torch.Tensor:
+        """Embed a string or a batch of strings (see class docstring for
+        output shapes per pooling mode)."""
+        if squeeze_single := isinstance(x, str):
+            x = [x]
+
+        hidden, mask = self._embed(self._model, self._processor, x)  # (B, T, H)
+
+        if self.pooling == "mean":
+            mask = mask.unsqueeze(-1)  # (B, T, 1)
+            out = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1)
+        elif self.pooling == "cls":
+            out = hidden[:, 0, :]
+        else:  # 'none'
+            out = hidden
+
+        return out.squeeze(0) if squeeze_single else out
+
+
+@TextBackbone.register_source("huggingface")
+def _load_hf_text_source(name: str, device: torch.device) -> BackboneSpec:
+    """Built-in HuggingFace text source: tokenizer -> model hidden states.
+
+    The embed function returns ``(last_hidden_state, attention_mask)``;
+    pooling is applied by :class:`TextBackbone`.
+    """
+    from transformers import AutoTokenizer, AutoModel
+    token = resolve_hf_token()
+    tokenizer = AutoTokenizer.from_pretrained(name, token=token)
+    model = AutoModel.from_pretrained(name, token=token).to(device)
+    if tokenizer.pad_token is None:  # decoder-style tokenizers (GPT-family)
+        tokenizer.pad_token = tokenizer.eos_token
+
+    def embed(model, tokenizer, texts):
+        inputs = tokenizer(
+            texts, padding=True, truncation=True, return_tensors="pt"
+        ).to(next(model.parameters()).device)
+        return model(**inputs).last_hidden_state, inputs["attention_mask"]
+
+    return BackboneSpec(model, tokenizer, embed, model.config.hidden_size)
