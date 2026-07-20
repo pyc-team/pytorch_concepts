@@ -365,7 +365,7 @@ class TestParallelizeLevels:
 
 
 # ===========================================================================
-# 9. step() and temperature annealing
+# 9. temperature_step() and temperature annealing
 # ===========================================================================
 
 class TestTemperatureAnnealing:
@@ -374,19 +374,19 @@ class TestTemperatureAnnealing:
         eng = AncestralSamplingInference(m, initial_temperature=1.0)
         assert float(eng.temperature) == pytest.approx(1.0)
 
-    def test_step_increments_in_ancestral(self):
+    def test_temperature_step_increments_in_ancestral(self):
         m = _make_simple_model()
         eng = AncestralSamplingInference(m, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t1 != t0
 
-    def test_step_noop_in_deterministic(self):
+    def test_temperature_step_noop_in_deterministic(self):
         m = _make_simple_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t0 == pytest.approx(t1)
 
