@@ -1485,9 +1485,15 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.AnnotatedTensor = AnnotatedTensor
         self.t = AnnotatedTensor(_torch.rand(4, 3), self.ann)
 
-    def test_init_1d_tensor_raises(self):
+    def test_init_1d_tensor_raises_for_axis_1(self):
+        # axis=1 needs 2+ dims for that axis to exist at all.
         with self.assertRaises(ValueError):
-            self.AnnotatedTensor(self.torch.rand(3), self.ann)
+            self.AnnotatedTensor(self.torch.rand(3), self.ann, axis=1)
+
+    def test_init_1d_tensor_allowed_on_last_axis(self):
+        # The default axis=-1 annotates the last axis, which a 1-D tensor has.
+        t = self.AnnotatedTensor(self.torch.rand(3), self.ann)
+        self.assertEqual(t.annotation.labels, ['a', 'b', 'c'])
 
     def test_init_mismatched_size_raises(self):
         with self.assertRaises(ValueError):
@@ -1506,11 +1512,17 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.assertIsInstance(result, self.AnnotatedTensor)
         self.assertEqual(result.annotation.labels, ['a', 'b'])
 
-    def test_getitem_fallback_index(self):
-        # Integer row indexing — axis-1 unchanged → still annotated
+    def test_getitem_fallback_index_keeps_annotation_on_last_axis(self):
+        # Under the default axis=-1, indexing a row of (4, 3) leaves a (3,)
+        # whose last axis is still the annotated one, so the labels survive.
         result = self.t[0]
-        # shape is (3,) → < 2 dims, so annotation is dropped
-        self.assertIsInstance(result, self.torch.Tensor)
+        self.assertIsInstance(result, self.AnnotatedTensor)
+        self.assertEqual(result.annotation.labels, ['a', 'b', 'c'])
+
+    def test_getitem_fallback_index_drops_annotation_for_axis_1(self):
+        # With axis=1 the same index drops to 1-D, so axis 1 no longer exists.
+        t = self.AnnotatedTensor(self.torch.rand(4, 3), self.ann, axis=1)
+        self.assertNotIsInstance(t[0], self.AnnotatedTensor)
 
     def test_union_with_type_error(self):
         with self.assertRaises(TypeError):

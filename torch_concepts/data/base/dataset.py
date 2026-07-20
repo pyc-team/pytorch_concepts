@@ -538,12 +538,19 @@ class ConceptDataset(Dataset):
 
         # Wrap the full concept tensor with a *concept-space* annotation (one
         # integer-coded column per concept, so categorical labels are class
-        # indices) so it carries the concept labels/types. Per-sample
-        # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
-        # axis 1); batches are re-annotated by :meth:`collate`.
+        # indices) so it carries the concept labels/types.
+        #
+        # ``axis=1`` is passed explicitly rather than taking the default: it is
+        # what makes per-sample ``__getitem__`` indexing return a *plain* 1-D
+        # row. An annotation on axis 1 needs 2+ dims, so indexing a row drops
+        # it, and ``default_collate`` can then stack the rows as ordinary
+        # tensors; :meth:`collate` re-annotates the assembled batch. Under the
+        # default ``axis=-1`` the row would keep its annotation (its last axis
+        # is still the concept axis) and collation would fail on a list of
+        # AnnotatedTensors.
         concept_ann = self.annotations.to_concept_space()
         if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(concepts, concept_ann)
+            self.concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
         else:
             self.concepts = concepts
 

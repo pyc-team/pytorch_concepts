@@ -3,8 +3,8 @@ Annotated tensor for concept-based neural networks.
 
 This module provides :class:`AnnotatedTensor`, a lightweight wrapper around a
 :class:`torch.Tensor` that carries an :class:`~torch_concepts.Annotations`
-for one of its axes (axis 1 by default), enabling label-based column slicing
-and annotation-preserving tensor operations.
+for one of its axes (the last axis by default), enabling label-based column
+slicing and annotation-preserving tensor operations.
 """
 from typing import Optional, Union, Dict
 
@@ -30,7 +30,7 @@ def _as_contiguous_slice(indices):
 
 class AnnotatedTensor:
     """
-    A tensor annotated along one axis (axis 1 by default).
+    A tensor annotated along one axis (the last axis by default).
 
     Wraps a :class:`torch.Tensor` together with an :class:`Annotations`
     that describes the semantics of the annotated axis.  Supports:
@@ -41,32 +41,37 @@ class AnnotatedTensor:
         sliced = t[["cat", "dog"]] # same via list syntax
 
     * **Annotation-preserving operations** — any tensor operation that leaves
-      the size of axis 1 unchanged automatically returns a new
-      ``AnnotatedTensor`` carrying the same (or a subset) annotation::
+      the annotated axis at the same size (and position) automatically returns
+      a new ``AnnotatedTensor`` carrying the same (or a subset) annotation::
 
-        t.sum(dim=0)    # aggregation over batch → still annotated on axis 1
-        t.mean(dim=-1)  # aggregation over last axis → still annotated on axis 1
-        t.reshape(8, 3, -1)  # reshape that keeps axis-1 size → still annotated
+        t * 2                # elementwise → still annotated
+        t[:2]                # batch subset → still annotated
+        t.unsqueeze(0)       # extra leading dim → still annotated (axis=-1)
+
+      Operations that resize the annotated axis drop it and return a plain
+      tensor. See ``examples/utilization/0_layer/annotation_propagation.py``
+      for a runnable tour of which is which.
 
     * **Transparent tensor proxy** — all tensor attributes and methods not
       defined on this class (``shape``, ``dtype``, ``.detach()``, ``.to()``,
       …) are forwarded to the underlying tensor via ``__getattr__``.
 
     * **``torch.*`` function protocol** — module-level functions such as
-      ``torch.sum(t, dim=0)`` also propagate the annotation when axis 1 is
-      unchanged.
+      ``torch.sum(t, dim=0)`` always drop the annotation and return a plain
+      :class:`torch.Tensor`.
 
     Args:
-        data: The underlying tensor. Must have at least 2 dimensions when
-            ``axis == 1``, and at least 1 when annotating the last axis.
+        data: The underlying tensor. Must have at least 1 dimension when
+            annotating the last axis, and at least 2 when ``axis == 1``.
         annotation: Annotation for the annotated axis. ``annotation.size``
             must equal ``data.shape[axis]``.
-        axis: Which axis the annotation describes. ``1`` (the default) is the
-            classic concept axis of a ``(batch, concepts)`` tensor. ``-1``
-            annotates the **last** axis, which is what the mid level uses so a
-            tensor may carry any number of leading (batch) dimensions
-            ``(*leading, concepts)``. For a 2-D tensor the two are the same
-            axis, so ``-1`` is a strict generalisation.
+        axis: Which axis the annotation describes. ``-1`` (the default)
+            annotates the **last** axis, so a tensor may carry any number of
+            leading (batch) dimensions ``(*leading, concepts)``. ``1`` is the
+            classic concept axis of a ``(batch, concepts)`` tensor; pass it
+            explicitly when annotating axis 1 of a 3-D+ tensor, such as the
+            concept axis of a ``(batch, concepts, embedding)`` tensor. For a
+            2-D tensor the two are the same axis.
 
     Raises:
         ValueError: If ``data`` has too few dimensions, ``axis`` is neither
@@ -89,7 +94,7 @@ class AnnotatedTensor:
         torch.Size([4, 2])
     """
 
-    def __init__(self, data: torch.Tensor, annotation: Annotations, axis: int = 1):
+    def __init__(self, data: torch.Tensor, annotation: Annotations, axis: int = -1):
         if axis not in (1, -1):
             raise ValueError(
                 f"AnnotatedTensor: `axis` must be 1 or -1, got {axis!r}."
@@ -170,7 +175,7 @@ class AnnotatedTensor:
             ``t[["cat", "dog"]]``   – list syntax    → ``AnnotatedTensor``
 
         Any other key is forwarded to the underlying tensor; the annotation is
-        preserved when the result's axis-1 size equals the original.
+        preserved when the result's annotated-axis size equals the original.
         """
         # Normalise to tuple-of-strings when possible
         if isinstance(key, str):
@@ -186,7 +191,7 @@ class AnnotatedTensor:
                 self._data[self._index(indices)], new_ann, self._axis
             )
 
-        # Regular tensor indexing; re-wrap if axis 1 is unchanged
+        # Regular tensor indexing; re-wrap if the annotated axis is unchanged
         return self._wrap(self._data[key])
 
     #: Metadata key naming the group a label belongs to. A key that is not
@@ -222,10 +227,10 @@ class AnnotatedTensor:
     def union_with(self, *others: 'AnnotatedTensor') -> 'AnnotatedTensor':
         """
         Concatenate this tensor with one or more ``AnnotatedTensor`` instances
-        along axis 1 (the annotated axis), merging their annotations.
+        along the annotated axis, merging their annotations.
 
-        All tensors must share the same shape on every axis **except** axis 1.
-        The merged annotation is built by chaining
+        All tensors must share the same shape on every **other** axis, and must
+        annotate the same axis. The merged annotation is built by chaining
         :meth:`~torch_concepts.Annotations.union_with`: labels that already
         appear on the left are not duplicated; metadata is merged with
         left-wins semantics.
@@ -235,14 +240,14 @@ class AnnotatedTensor:
 
         Returns:
             A new :class:`AnnotatedTensor` whose underlying tensor is the
-            concatenation along axis 1 and whose annotation is the union of
-            all input annotations.
+            concatenation along the annotated axis and whose annotation is the
+            union of all input annotations.
 
         Raises:
             TypeError:  If any element of *others* is not an
                         :class:`AnnotatedTensor`.
-            ValueError: If any tensor's non-axis-1 shape differs from this
-                        tensor's non-axis-1 shape.
+            ValueError: If any tensor annotates a different axis, or its shape
+                        off the annotated axis differs from this tensor's.
 
         Example:
             >>> ann_a = Annotations(labels=["cat", "dog"])
@@ -344,7 +349,7 @@ class AnnotatedTensor:
         ``nn.Module``, the annotation is silently dropped and the result is a
         plain :class:`torch.Tensor`.  This prevents surprising behaviour inside
         module ``forward`` methods and avoids conflicts with operations that
-        change the meaning of axis 1.
+        change the meaning of the annotated axis.
 
         Annotation-preserving behaviour is still available through direct
         method calls on the instance (e.g. ``t.sum(dim=0, keepdim=True)``).
@@ -373,7 +378,8 @@ class AnnotatedTensor:
         """
         Forward attribute lookups not found on this class to the underlying
         tensor. Callable attributes are wrapped so that any result that still
-        has the same axis-1 size is returned as an :class:`AnnotatedTensor`.
+        has the same annotated-axis size is returned as an
+        :class:`AnnotatedTensor`.
         """
         attr = getattr(self._data, name)
         if callable(attr):
@@ -387,7 +393,31 @@ class AnnotatedTensor:
     # ------------------------------------------------------------------ #
 
     def _wrap(self, result) -> Union['AnnotatedTensor', torch.Tensor]:
-        """Re-wrap *result* when it is a tensor whose annotated axis is unchanged."""
+        """Re-wrap *result* when it is a tensor whose annotated axis is unchanged.
+
+        FIXME: matching only the *size* of the annotated axis can mislabel the
+        result. An op that drops or moves axes may slide a different axis of the
+        same size into that position, and the annotation then silently describes
+        the wrong dimension — the tensor keeps answering label lookups, but with
+        the wrong columns. Example: ``(B, 3, 3)`` annotated on axis 1 with three
+        concept labels, ``.sum(dim=1)`` → ``(B, 3)`` whose axis 1 is now the
+        embedding axis, yet it passes this check and comes back labelled as
+        concepts.
+
+        The conservative fix is to require the whole shape to be unchanged
+        (``result.shape == self._data.shape``), which drops the annotation on any
+        reshape/reduction. That was measured to be safe for the current test
+        suite, but it silently breaks one documented round trip:
+        ``BaseInference._restore_leading`` (mid/inference/base.py) reshapes
+        ``(batch, K)`` back to ``(*leading, K)`` and relies on the labels
+        surviving. That reshape *is* annotation-safe — it only expands the
+        leading dims — so it should re-wrap explicitly via the constructor before
+        this rule is tightened. Only reachable from Pyro ``VariationalInference``
+        with more than one leading dim, which has no test coverage yet.
+
+        See ``examples/utilization/0_layer/annotation_propagation.py`` for a
+        runnable demo of which transformations keep or drop the annotation.
+        """
         min_dim = 2 if self._axis == 1 else 1
         if (
             isinstance(result, torch.Tensor)
