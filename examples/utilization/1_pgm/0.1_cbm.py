@@ -86,7 +86,7 @@ def main():
             query=query_concepts,
             evidence=evidence
         )
-        c_pred = torch.cat([cy_pred.logits['c1'], cy_pred.logits['c2']], dim=1)
+        c_pred = cy_pred.logits['c1', 'c2']
         y_pred = cy_pred.logits['xor']
 
         # compute loss

@@ -1,4 +1,4 @@
-"""Same model as ``1.2_cbm_plate.py``, but every tensor carries an extra
+"""Same model as ``0.2_cbm_plate.py``, but every tensor carries an extra
 leading dimension.
 
 The engines treat the last axis as the only operating one: a tensor is
