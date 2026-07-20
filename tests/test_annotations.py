@@ -7,7 +7,9 @@ validation, properties, and methods.
 import unittest
 import warnings
 import pytest
+import torch
 from torch_concepts.annotations import Annotations, Concept
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class TestAnnotationsBasics(unittest.TestCase):
@@ -1483,9 +1485,15 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.AnnotatedTensor = AnnotatedTensor
         self.t = AnnotatedTensor(_torch.rand(4, 3), self.ann)
 
-    def test_init_1d_tensor_raises(self):
+    def test_init_1d_tensor_raises_for_axis_1(self):
+        # axis=1 needs 2+ dims for that axis to exist at all.
         with self.assertRaises(ValueError):
-            self.AnnotatedTensor(self.torch.rand(3), self.ann)
+            self.AnnotatedTensor(self.torch.rand(3), self.ann, axis=1)
+
+    def test_init_1d_tensor_allowed_on_last_axis(self):
+        # The default axis=-1 annotates the last axis, which a 1-D tensor has.
+        t = self.AnnotatedTensor(self.torch.rand(3), self.ann)
+        self.assertEqual(t.annotation.labels, ['a', 'b', 'c'])
 
     def test_init_mismatched_size_raises(self):
         with self.assertRaises(ValueError):
@@ -1504,11 +1512,17 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.assertIsInstance(result, self.AnnotatedTensor)
         self.assertEqual(result.annotation.labels, ['a', 'b'])
 
-    def test_getitem_fallback_index(self):
-        # Integer row indexing — axis-1 unchanged → still annotated
+    def test_getitem_fallback_index_keeps_annotation_on_last_axis(self):
+        # Under the default axis=-1, indexing a row of (4, 3) leaves a (3,)
+        # whose last axis is still the annotated one, so the labels survive.
         result = self.t[0]
-        # shape is (3,) → < 2 dims, so annotation is dropped
-        self.assertIsInstance(result, self.torch.Tensor)
+        self.assertIsInstance(result, self.AnnotatedTensor)
+        self.assertEqual(result.annotation.labels, ['a', 'b', 'c'])
+
+    def test_getitem_fallback_index_drops_annotation_for_axis_1(self):
+        # With axis=1 the same index drops to 1-D, so axis 1 no longer exists.
+        t = self.AnnotatedTensor(self.torch.rand(4, 3), self.ann, axis=1)
+        self.assertNotIsInstance(t[0], self.AnnotatedTensor)
 
     def test_union_with_type_error(self):
         with self.assertRaises(TypeError):
@@ -1581,3 +1595,143 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnnotatedTensorLastAxis(unittest.TestCase):
+    """``axis=-1`` annotates the last axis, so a tensor may carry any number of
+    leading dimensions. For a 2-D tensor it coincides with the default axis 1."""
+
+    def setUp(self):
+        self.ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 2, 1])
+
+    def test_matches_axis_1_for_a_2d_tensor(self):
+        data = torch.arange(24.0).reshape(6, 4)
+        default = AnnotatedTensor(data, self.ann)
+        last = AnnotatedTensor(data, self.ann, axis=-1)
+        self.assertTrue(torch.equal(default['b'].tensor, last['b'].tensor))
+
+    def test_slices_the_last_axis_with_leading_dims(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        self.assertEqual(tuple(t['b'].tensor.shape), (2, 3, 2, 2))
+        self.assertTrue(torch.equal(t['b'].tensor, t.tensor[..., 1:3]))
+
+    def test_rejects_a_size_mismatch_on_the_last_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 3, 5), self.ann, axis=-1)
+
+    def test_rejects_an_unsupported_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 4), self.ann, axis=0)
+
+    def test_contiguous_labels_slice_without_copying(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        storage = t.tensor.untyped_storage().data_ptr()
+        # A single label and an adjacent run both become plain slices (views).
+        self.assertEqual(t['b'].tensor.untyped_storage().data_ptr(), storage)
+        self.assertEqual(t['a', 'b'].tensor.untyped_storage().data_ptr(), storage)
+
+    def test_label_membership(self):
+        t = AnnotatedTensor(torch.zeros(2, 3, 4), self.ann, axis=-1)
+        self.assertIn('b', t)
+        self.assertNotIn('zzz', t)
+
+    def test_group_metadata_resolves_to_its_labels(self):
+        ann = Annotations(
+            labels=['m1', 'm2'],
+            cardinalities=[1, 1],
+            metadata={'m1': {'variable': 'g'}, 'm2': {'variable': 'g'}},
+        )
+        t = AnnotatedTensor(torch.arange(12.0).reshape(2, 3, 2), ann, axis=-1)
+        # 'g' is not a label, but it names the group both labels came from.
+        self.assertIn('g', t)
+        self.assertTrue(torch.equal(t['g'].tensor, t.tensor))
+        self.assertEqual(t['g'].annotation.labels, ['m1', 'm2'])
+
+    def test_union_with_concatenates_on_the_last_axis(self):
+        left = AnnotatedTensor(
+            torch.zeros(2, 3, 2), Annotations(labels=['a'], cardinalities=[2]), axis=-1
+        )
+        right = AnnotatedTensor(
+            torch.ones(2, 3, 1), Annotations(labels=['b'], cardinalities=[1]), axis=-1
+        )
+        merged = left.union_with(right)
+        self.assertEqual(tuple(merged.tensor.shape), (2, 3, 3))
+        self.assertEqual(merged.annotation.labels, ['a', 'b'])
+
+    def test_requires_explicit_axis_for_more_than_2d(self):
+        # The default is only well-defined where axis 1 and -1 coincide (<=2-D).
+        # A 3-D+ tensor must name the axis, so concepts can never silently land
+        # on the embedding axis of a (batch, concept, embedding) tensor.
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 3, 4), self.ann)
+
+    def test_explicit_axis_allows_more_than_2d(self):
+        for axis in (1, -1):
+            t = AnnotatedTensor(torch.zeros(2, 4, 4), self.ann, axis=axis)
+            self.assertEqual(t.axis, axis)
+
+    def test_axis_1_slices_the_concept_axis_of_a_3d_tensor(self):
+        # (batch, concepts, embedding): axis=1 addresses the concept axis while
+        # the trailing embedding axis rides along untouched.
+        ann = Annotations(labels=['p', 'q'])
+        t = AnnotatedTensor(torch.randn(8, 2, 5), ann, axis=1)
+        self.assertEqual(tuple(t['q'].tensor.shape), (8, 1, 5))
+        self.assertTrue(torch.equal(t['q'].tensor, t.tensor[:, 1:2]))
+
+    def test_annotation_survives_unsqueeze_and_expand(self):
+        # Adding a leading dim keeps the last (annotated) axis, so the labels
+        # survive — the mechanism the multiple-leading-dims examples rely on.
+        t = AnnotatedTensor(torch.randn(5, 4), self.ann, axis=-1)
+        u = t.unsqueeze(0)
+        self.assertIsInstance(u, AnnotatedTensor)
+        self.assertEqual(u.annotation.labels, ['a', 'b', 'c'])
+        e = u.expand(3, 5, 4)
+        self.assertIsInstance(e, AnnotatedTensor)
+        self.assertEqual(tuple(e['b'].tensor.shape), (3, 5, 2))
+
+    def test_reshape_expanding_leading_keeps_annotation(self):
+        # (batch, K) -> (*leading, K): the ``_restore_leading`` round trip used by
+        # the estimator/Pyro engines. Raising the rank keeps the last axis, so
+        # the annotation must survive.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        r = AnnotatedTensor(torch.randn(6, 3), ann, axis=-1).reshape(2, 3, 3)
+        self.assertIsInstance(r, AnnotatedTensor)
+        self.assertEqual(r.annotation.labels, ['a', 'b', 'c'])
+
+    def test_reduction_dropping_an_axis_on_3d_drops_annotation(self):
+        # The mislabel hazard: on a 3-D source a reduction can slide a different,
+        # equal-sized axis into the annotated slot. A size-only match would keep
+        # a wrongly-labelled tensor, so a drop in rank must drop the annotation.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        # axis=1: sum(dim=1) removes the concept axis; the last (size-3) axis
+        # would slide into position 1.
+        self.assertNotIsInstance(
+            AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=1).sum(dim=1),
+            AnnotatedTensor,
+        )
+        # axis=-1: sum(dim=-1) removes the concept axis; the middle (size-3) axis
+        # would slide to the end.
+        self.assertNotIsInstance(
+            AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=-1).sum(dim=-1),
+            AnnotatedTensor,
+        )
+
+    def test_moving_the_annotated_axis_drops_annotation(self):
+        # A move that shifts the annotated axis out of its slot returns a plain
+        # tensor (re-annotate explicitly if it still applies).
+        ann = Annotations(labels=['a', 'b', 'c'])
+        t = AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=-1)
+        for moved in (t.transpose(1, 2), t.permute(0, 2, 1),
+                      t.movedim(-1, 0), t.swapaxes(1, 2)):
+            self.assertNotIsInstance(moved, AnnotatedTensor)
+        self.assertNotIsInstance(t.mT, AnnotatedTensor)  # property, already plain
+
+    def test_permuting_only_leading_axes_keeps_annotation(self):
+        # A move that leaves the annotated (last) axis in place keeps the labels.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        t = AnnotatedTensor(torch.randn(2, 5, 3), ann, axis=-1)
+        moved = t.transpose(0, 1)  # swaps the two leading axes; last axis intact
+        self.assertIsInstance(moved, AnnotatedTensor)
+        self.assertEqual(moved.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(tuple(moved.tensor.shape), (5, 2, 3))
+        self.assertTrue(torch.equal(moved.tensor, t.tensor.transpose(0, 1)))

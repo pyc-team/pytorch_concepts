@@ -6,7 +6,8 @@ from .....utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
 from ...loss import ConceptLoss
-from ...outputs import ModelOutput, logits_from_params
+from ...outputs import ModelOutput
+from .....tensor import AnnotatedTensor
 
 from ...low.dense_layers import MLP
 from ..base.model import BaseModel
@@ -114,12 +115,13 @@ class BlackBox(BaseModel):
         if isinstance(query, dict):
             names = list(query.keys()) if query else axis.labels
         else:
-            names = query if query is not None else axis.labels
-        params = {name: {"logits": output[:, axis.concept_slices[name]]} for name in names}
-        out = ModelOutput(params=params)
+            names = list(query) if query is not None else axis.labels
 
-        # FIXME: update ModelOutput to generalize beyond logits
-        out.logits = logits_from_params(params, keys=list(names))
+        # The head spans the whole concept annotation; label-slice it down to the
+        # queried concepts (a no-op, and no copy, when everything is queried).
+        logits = AnnotatedTensor(output, axis, axis=-1)
+        out = ModelOutput()
+        out.logits = logits if names == axis.labels else logits[names]
         return out
 
 
@@ -251,13 +253,9 @@ class BlackBoxTaskOnly(BaseModel):
 
         output = self.linear(self.backbone(x))
 
-        # The linear head spans the task sub-annotation; slice it per task.
-        slices = self.task_annotations.concept_slices
-        params = {name: {"logits": output[:, slices[name]]} for name in self.task_names}
-        out = ModelOutput(params=params)
-
-        # FIXME: update ModelOutput to generalize beyond logits
-        out.logits = logits_from_params(params, keys=list(self.task_names))
+        # The linear head spans exactly the task sub-annotation.
+        out = ModelOutput()
+        out.logits = AnnotatedTensor(output, self.task_annotations, axis=-1)
         return out
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:

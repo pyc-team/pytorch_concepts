@@ -37,9 +37,10 @@ from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import EmbeddingVariable, _DEFAULT_DIST_KWARGS
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
 
@@ -84,7 +85,7 @@ class ConceptEmbeddingModel(BipartiteModel):
         'categorical': OneHotCategorical,
         'continuous': Normal,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,

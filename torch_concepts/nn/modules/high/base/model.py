@@ -34,13 +34,9 @@ import torch.nn.functional as F
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...utils import with_training_mode
-from ...outputs import ModelOutput, logits_from_params
-from ...mid.models.variable import (
-    _DEFAULT_DISTRIBUTIONS,
-    _DEFAULT_DIST_KWARGS,
-    ConceptVariable,
-    EmbeddingVariable,
-)
+from ...outputs import ModelOutput
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.variable import _DEFAULT_DISTRIBUTIONS, ConceptVariable, EmbeddingVariable
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -219,7 +215,7 @@ class BaseModel(nn.Module, ABC):
     #: per instance with the ``variable_distributions`` constructor arg.
     variable_distributions: Dict[str, Type] = dict(_DEFAULT_DISTRIBUTIONS)
     #: Default keyword arguments per distribution class (e.g. relaxation temperature).
-    variable_dist_kwargs: Dict[Type, dict] = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs: Dict[Type, dict] = dict(DEFAULT_DIST_KWARGS)
 
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
@@ -597,10 +593,10 @@ class BaseModel(nn.Module, ABC):
 
         The active inference engine is selected automatically based on
         ``self.training`` (toggled by ``.train()`` / ``.eval()``). The result is
-        returned as raw per-variable parameters under ``ModelOutput.params``:
-        ``out.params[name]`` is the queried variable's parameter dict (e.g.
-        ``{'logits': ...}`` or ``{'value': ...}``). Callers assemble the columns
-        they need, e.g. ``torch.cat([out.params[n]['logits'] for n in query], -1)``.
+        keyed by *quantity*: ``out.logits`` (equivalently ``out.params['logits']``)
+        is one annotated tensor spanning every queried concept, sliceable by name
+        — ``out.logits['c1']`` — with the columns of a variable that reports a
+        different quantity living under its own key (``out.loc`` / ``out.scale``).
 
         Parameters
         ----------
@@ -628,16 +624,12 @@ class BaseModel(nn.Module, ABC):
             **inference_kwargs,
         )
 
-        out = ModelOutput(
+        return ModelOutput(
             params=result.params,
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
         )
-
-        # FIXME: update ModelOutput to generalize beyond logits
-        out.logits = logits_from_params(result.params)
-        return out
 
     @functools.cached_property
     def _query_plan(self):

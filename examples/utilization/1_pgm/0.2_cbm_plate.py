@@ -1,6 +1,17 @@
+"""
+This example is equivalent to the previous one (0.1_cbm.py), but it uses plate notation for the concepts variable.
+The plate notation allows to instantiate a single nn.Module which produces the parameters for multiple conditionally 
+independent variables.
+This allows to:
+- make inference faster: the inference engine do not has to loop over the conditionally independent variables, 
+but it can compute the parameters for all of them at once.
+- easier implementation: we can specify only one variable (e.g., "concepts") which includes mulitple conditionally 
+independent variables (e.g., "c1" and "c2"), instead of specifying each variable separately.
+"""
+
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
@@ -29,7 +40,7 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    concepts = ConceptVariable(["c1","c2"], distribution=Bernoulli)
+    concepts = ConceptVariable("concepts", distribution=Bernoulli, size=1, members=["c1", "c2"])
     tasks = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
     # ParametricCPD setup
@@ -42,26 +53,26 @@ def main():
 
     c_encoder = ParametricCPD(
         concepts, 
-        parametrization={'logits': Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=1))}, 
+        parametrization={'logits': Sequential(LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=2))}, 
         parents=[latent_var]
     )
 
     y_predictor = ParametricCPD(
         tasks, 
         parametrization={'logits': Sequential(LinearConceptToConcept(in_concepts=2, out_concepts=2))}, 
-        parents=[*concepts]
+        parents=[concepts]
     )
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, *concepts, tasks],
-        factors=[input_cpd, backbone, *c_encoder, y_predictor]
+        variables=[input_var, latent_var, concepts, tasks],
+        factors=[input_cpd, backbone, c_encoder, y_predictor]
     )
 
     # Inference Initialization
     inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
     evidence = {'input': x_train}
-    query_concepts = {"c1": c_train[:,0], "c2": c_train[:,1], "xor": y_train}
+    query_concepts = {"concepts": c_train, "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
     loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -74,8 +85,8 @@ def main():
             query=query_concepts,
             evidence=evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['logits'], cy_pred.params['c2']['logits']], dim=1)
-        y_pred = cy_pred.params['xor']['logits']
+        c_pred = cy_pred.logits['concepts'] # equivalent to cy_pred.logits['c1', 'c2']
+        y_pred = cy_pred.logits['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

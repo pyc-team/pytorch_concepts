@@ -14,10 +14,11 @@ Algorithm
 
 Inputs / Outputs
 ----------------
-Query and evidence tensors must always have a leading batch dimension ``(B, *event)``.
-Outputs are ragged because different rows may accept different numbers of samples:
+Query and evidence tensors are ``(*leading, *event)`` with at least one leading
+(batch-like) dimension. Outputs are ragged because different rows may accept
+different numbers of samples:
 
-- ``out.probabilities``  — ``(B,)`` tensor of P(Q=q_b | E=e_b).
+- ``out.probabilities``  — ``(*leading,)`` tensor of P(Q=q_b | E=e_b).
 
 Constraints
 -----------
@@ -28,19 +29,18 @@ Constraints
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Dict, List
 
 import torch
 import torch.distributions as dist
 
-from ...models.bayesian_network import BayesianNetwork
+from ...graph.bayesian_network import BayesianNetwork
+from ...distributions import spec_for
 from ....outputs import InferenceOutput
 from ..utils import reshape_value_to_event
 from .base import TorchBaseInference
-
-
-_DISCRETE = frozenset({dist.Bernoulli, dist.Categorical, dist.OneHotCategorical})
 
 
 def _match(sampled: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
@@ -75,7 +75,6 @@ class RejectionSampling(TorchBaseInference):
     """
 
     name = "RejectionSampling"
-    _DISCRETE = _DISCRETE
 
     def __init__(
         self,
@@ -84,6 +83,7 @@ class RejectionSampling(TorchBaseInference):
         warn_low_acceptance: float = 0.01,
     ) -> None:
         super().__init__(pgm)
+        self._require_directed()
         if int(n_samples) < 1:
             raise ValueError(f"n_samples must be >= 1, got {n_samples}.")
         self.n_samples = int(n_samples)
@@ -98,13 +98,15 @@ class RejectionSampling(TorchBaseInference):
     # ------------------------------------------------------------------
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
-            v = self.pgm.variables[name]
-            if not any(issubclass(v.distribution, d) for d in self._DISCRETE):
+            v = self.pgm.resolve(name)  # a member's family is its plate's family
+            spec = spec_for(v.distribution, f"{self.name}: {name!r}")
+            if not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: {role} variable {name!r} has "
-                    f"distribution {v.distribution.__name__!r} which is "
-                    "continuous. Only Bernoulli, Categorical and "
-                    "OneHotCategorical are supported for query/evidence variables."
+                    f"distribution {v.distribution.__name__!r} which is not "
+                    "discrete. Exact equality matching needs a discrete family "
+                    "(Bernoulli / Categorical / OneHotCategorical, or their "
+                    "relaxed variants) for query/evidence variables."
                 )
 
     def _require_tensor_values(self, d: Dict[str, object], role: str) -> None:
@@ -148,8 +150,9 @@ class RejectionSampling(TorchBaseInference):
                         params = {k: v.unsqueeze(0).expand(N, *v.shape)
                                   for k, v in params.items()}
                     else:
-                        parent_values = {p.name: samples[p.name] for p in cpd.parents}
-                        params = cpd(parent_values=parent_values,
+                        # ``samples`` is keyed by whole-variable names; the CPD
+                        # resolves member-handle parents from the plate value.
+                        params = cpd(parent_values=samples,
                                      **layer_kwargs.get(name, {}))
 
                     D = var.distribution
@@ -177,7 +180,9 @@ class RejectionSampling(TorchBaseInference):
         """Build an ``(N,)`` boolean mask for a single-observation dict."""
         mask = torch.ones(self.n_samples, dtype=torch.bool)
         for name, val in obs_dict.items():
-            mask = mask & _match(stacked_samples[name], val)
+            # ``extract`` reads a whole variable or a member column uniformly, so
+            # member evidence joins the rejection mask (exact conditioning).
+            mask = mask & _match(self.pgm.extract(name, stacked_samples), val)
         return mask
 
     # ------------------------------------------------------------------
@@ -187,11 +192,25 @@ class RejectionSampling(TorchBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Run rejection sampling to estimate P(Q=q_b | E=e_b) for a batch."""
+        """Run rejection sampling to estimate P(Q=q_b | E=e_b) for a batch.
+
+        Query and evidence accept plate-member names as well as variable names.
+        Member evidence joins the rejection mask, so for this engine it is **exact
+        conditioning** (not the value forcing the other engines apply).
+
+        Tensors may carry any number of leading (batch-like) dimensions. Because
+        the estimator loops over observations independently, those dimensions are
+        collapsed into one batch axis for the run and restored on
+        ``out.probabilities``, which comes back shaped ``(*leading,)``.
+        """
         if evidence is None:
             evidence = {}
 
-        B = self._validate(query, evidence)
+        self._validate(query, evidence)
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
+        B = math.prod(leading)
 
         # Partition evidence into root vars (conditioned during generation)
         # and non-root vars (handled by rejection filtering). The PGM might
@@ -237,16 +256,16 @@ class RejectionSampling(TorchBaseInference):
                     )
             probs.append(prob_b)
 
-        out = InferenceOutput()
-        out.probabilities = torch.tensor(probs)
-        return out
+        return InferenceOutput(
+            probabilities=self._restore_leading(torch.tensor(probs), leading)
+        )
 
     def _validate(
         self,
         query: Dict[str, torch.Tensor],
         evidence: Dict[str, torch.Tensor],
-    ) -> int:
-        """Validate inputs and return ``B`` (the batch size)."""
+    ) -> None:
+        """Validate the query/evidence containers."""
         if not isinstance(query, dict):
             raise ValueError(
                 f"{self.name}.query() requires 'query' to be a dict mapping "
@@ -259,27 +278,25 @@ class RejectionSampling(TorchBaseInference):
 
         all_tensors = {**query, **evidence}
 
+        unknown = set(all_tensors.keys()) - self.pgm.queryable_names
+        if unknown:
+            raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
+
         for name, v in all_tensors.items():
             if v.dim() < 2:
                 raise ValueError(
                     f"{self.name}: tensor for '{name}' has shape {tuple(v.shape)} "
-                    "but a leading batch dimension is required, e.g. shape (B, *event). "
-                    "Use tensor.unsqueeze(0) for a single observation."
+                    "but at least one leading batch dimension is required, e.g. shape "
+                    "(*leading, *event). Use tensor.unsqueeze(0) for a single observation."
                 )
 
-        batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
+        leadings = {
+            name: tuple(self._leading_shape(name, v)) for name, v in all_tensors.items()
+        }
+        if len(set(leadings.values())) > 1:
             raise ValueError(
-                f"{self.name}: mismatched batch sizes {batch_sizes}."
+                f"{self.name}: mismatched leading (batch) dimensions {leadings}."
             )
-        B = next(iter(batch_sizes.values()))
-
-        all_names = {v.name for v in self.pgm.variables.values()}
-        unknown = set(all_tensors.keys()) - all_names
-        if unknown:
-            raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
 
         self._require_discrete(list(query.keys()), "query")
         self._require_discrete(list(evidence.keys()), "evidence")
-
-        return B
