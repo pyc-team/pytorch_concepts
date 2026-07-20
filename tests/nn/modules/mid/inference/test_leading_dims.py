@@ -142,6 +142,24 @@ class TestForwardLeadingDims:
             p.grad is not None and p.grad.abs().sum() > 0 for p in net.parameters()
         )
 
+    @pytest.mark.parametrize("leading", LEADINGS)
+    def test_ancestral_backward_in_training_mode(self, net, leading):
+        # Regression + coverage: in training mode the engine advances its
+        # relaxation-temperature buffer, which several relaxed samples (the plate
+        # ``g`` and ``y``) share within one query. The loss below flows back
+        # through those samples into that buffer, so a backward must succeed for
+        # any number of leading dims. (An in-place temperature update used to
+        # corrupt this graph and raise an in-place-modification error.)
+        eng = _engine(AncestralSamplingInference, net, p_int=0.0)
+        eng.train()
+        out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(*leading, 4)})
+        loss = out.logits.tensor.pow(2).mean() + out.loc.tensor.pow(2).mean()
+        loss.backward()
+        assert any(
+            p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
+            for p in net.parameters()
+        )
+
     def test_mismatched_leading_shapes_raise(self, net):
         eng = _engine(DeterministicInference, net, p_int=0.0)
         with pytest.raises(ValueError, match="mismatched leading"):
@@ -169,6 +187,18 @@ class TestBeliefPropagationLeadingDims:
         flat = eng.query(query=["c1"], evidence={"c2": ev.reshape(-1, 1)})
         assert out.probs.shape == (*leading, 1)
         assert torch.allclose(out.probs.tensor.reshape(-1, 1), flat.probs.tensor, atol=1e-5)
+
+    @pytest.mark.parametrize("leading", LEADINGS)
+    def test_gradients_flow_with_several_leading_dims(self, chain, leading):
+        # The whole message-passing pass is differentiable; a marginal loss must
+        # reach the factor parametrizations for any number of leading dims.
+        eng = BeliefPropagation(chain, iters=5)
+        out = eng.query(query=["c1"], evidence={"c2": torch.rand(*leading, 1).round()})
+        out.logits.tensor.pow(2).mean().backward()
+        assert any(
+            p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
+            for p in chain.parameters()
+        )
 
 
 class TestEstimatorLeadingDims:
@@ -225,3 +255,96 @@ class TestAnnotatedOutput:
         out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(5, 4)})
         assert out.logits.split_by_type()["binary"].annotation.labels == ["m1", "m2", "y"]
         assert out.loc.split_by_type()["continuous"].annotation.labels == ["n"]
+
+
+class TestAnnotationSurvivesAcrossEngines:
+    """Labels must survive the leading-dim round trip for *every* engine that
+    returns annotated tensors, not only the deterministic forward pass."""
+
+    @pytest.mark.parametrize("leading", LEADINGS)
+    def test_ancestral_labels_survive(self, net, leading):
+        eng = _engine(AncestralSamplingInference, net, p_int=0.0)
+        out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(*leading, 4)})
+        assert out.logits.annotation.labels == ["m1", "m2", "y"]
+        assert out.samples.annotation.labels == ["m1", "m2", "y", "n"]
+        assert out.samples.shape == (*leading, 6)  # m1,m2,y (1 each) + n (3)
+
+    @pytest.mark.parametrize("leading", LEADINGS)
+    def test_belief_propagation_labels_survive(self, chain, leading):
+        eng = BeliefPropagation(chain, iters=5)
+        out = eng.query(query=["c1"], evidence={"c2": torch.rand(*leading, 1).round()})
+        assert out.probs.annotation.labels == ["c1"]
+        assert out.probs["c1"].shape == (*leading, 1)
+
+
+class TestPyroVariationalLeadingDims:
+    """The Pyro backend collapses the leading dims into one batch axis and
+    restores them on the reported tensors. Runs only where pyro is installed."""
+
+    @staticmethod
+    def _engine_and_pgm():
+        torch.manual_seed(0)
+        x = EmbeddingVariable("x", distribution=Delta, size=3)
+        z = ConceptVariable("z", distribution=dist.Bernoulli, size=1)
+        y = ConceptVariable("y", distribution=dist.Bernoulli, size=1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pgm = BayesianNetwork(
+                variables=[x, y, z],
+                factors=[
+                    # Pyro traces the root (it does not clamp-and-skip observed
+                    # roots the way the forward engines do), so the root CPD is
+                    # actually called with no args — it needs a real prior.
+                    ParametricCPD(variable=x, parametrization=LearnablePrior(3)),
+                    ParametricCPD(variable=z, parametrization={"logits": nn.Linear(3, 1)}, parents=[x]),
+                    ParametricCPD(variable=y, parametrization={"logits": nn.Linear(1, 1)}, parents=[z]),
+                ],
+            )
+            guide = ParametricCPD(variable=z, parametrization={"logits": nn.Linear(3, 1)}, parents=[x])
+            from torch_concepts.nn import VariationalInference
+            eng = VariationalInference(pgm, latents={"z": guide})
+        return eng, pgm
+
+    @pytest.mark.parametrize("leading", [(4,), (2, 3), (2, 3, 1)])
+    def test_restore_shapes_and_labels(self, leading):
+        pytest.importorskip("pyro")
+        eng, _ = self._engine_and_pgm()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = eng.query(query={"y": torch.zeros(*leading, 1), "z": None},
+                            evidence={"x": torch.randn(*leading, 3)})
+        for tensor in list(out.params.values()) + list(out.guide_params.values()):
+            assert tensor.shape[:len(leading)] == leading
+            assert hasattr(tensor, "annotation")
+
+    def test_matches_the_flattened_run(self):
+        pytest.importorskip("pyro")
+        import pyro
+        eng, _ = self._engine_and_pgm()
+        x = torch.randn(2, 3, 3)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pyro.set_rng_seed(0); torch.manual_seed(0)
+            multi = eng.query(query={"y": torch.zeros(2, 3, 1), "z": None}, evidence={"x": x})
+            pyro.set_rng_seed(0); torch.manual_seed(0)
+            flat = eng.query(query={"y": torch.zeros(6, 1), "z": None}, evidence={"x": x.reshape(6, 3)})
+        for key in multi.params:
+            assert torch.allclose(
+                multi.params[key].tensor.reshape(6, -1), flat.params[key].tensor, atol=1e-5
+            )
+
+    @pytest.mark.parametrize("leading", [(4,), (2, 3)])
+    def test_backward_with_leading_dims(self, leading):
+        pytest.importorskip("pyro")
+        eng, pgm = self._engine_and_pgm()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = eng.query(query={"y": torch.zeros(*leading, 1), "z": None},
+                            evidence={"x": torch.randn(*leading, 3)})
+        loss = sum(t.tensor.pow(2).mean() for t in out.params.values())
+        loss = loss + sum(t.tensor.pow(2).mean() for t in out.guide_params.values())
+        loss.backward()
+        assert any(
+            p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
+            for p in pgm.parameters()
+        )
