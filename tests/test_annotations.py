@@ -7,7 +7,9 @@ validation, properties, and methods.
 import unittest
 import warnings
 import pytest
+import torch
 from torch_concepts.annotations import Annotations, Concept
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class TestAnnotationsBasics(unittest.TestCase):
@@ -1581,3 +1583,65 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnnotatedTensorLastAxis(unittest.TestCase):
+    """``axis=-1`` annotates the last axis, so a tensor may carry any number of
+    leading dimensions. For a 2-D tensor it coincides with the default axis 1."""
+
+    def setUp(self):
+        self.ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 2, 1])
+
+    def test_matches_axis_1_for_a_2d_tensor(self):
+        data = torch.arange(24.0).reshape(6, 4)
+        default = AnnotatedTensor(data, self.ann)
+        last = AnnotatedTensor(data, self.ann, axis=-1)
+        self.assertTrue(torch.equal(default['b'].tensor, last['b'].tensor))
+
+    def test_slices_the_last_axis_with_leading_dims(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        self.assertEqual(tuple(t['b'].tensor.shape), (2, 3, 2, 2))
+        self.assertTrue(torch.equal(t['b'].tensor, t.tensor[..., 1:3]))
+
+    def test_rejects_a_size_mismatch_on_the_last_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 3, 5), self.ann, axis=-1)
+
+    def test_rejects_an_unsupported_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 4), self.ann, axis=0)
+
+    def test_contiguous_labels_slice_without_copying(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        storage = t.tensor.untyped_storage().data_ptr()
+        # A single label and an adjacent run both become plain slices (views).
+        self.assertEqual(t['b'].tensor.untyped_storage().data_ptr(), storage)
+        self.assertEqual(t['a', 'b'].tensor.untyped_storage().data_ptr(), storage)
+
+    def test_label_membership(self):
+        t = AnnotatedTensor(torch.zeros(2, 3, 4), self.ann, axis=-1)
+        self.assertIn('b', t)
+        self.assertNotIn('zzz', t)
+
+    def test_group_metadata_resolves_to_its_labels(self):
+        ann = Annotations(
+            labels=['m1', 'm2'],
+            cardinalities=[1, 1],
+            metadata={'m1': {'variable': 'g'}, 'm2': {'variable': 'g'}},
+        )
+        t = AnnotatedTensor(torch.arange(12.0).reshape(2, 3, 2), ann, axis=-1)
+        # 'g' is not a label, but it names the group both labels came from.
+        self.assertIn('g', t)
+        self.assertTrue(torch.equal(t['g'].tensor, t.tensor))
+        self.assertEqual(t['g'].annotation.labels, ['m1', 'm2'])
+
+    def test_union_with_concatenates_on_the_last_axis(self):
+        left = AnnotatedTensor(
+            torch.zeros(2, 3, 2), Annotations(labels=['a'], cardinalities=[2]), axis=-1
+        )
+        right = AnnotatedTensor(
+            torch.ones(2, 3, 1), Annotations(labels=['b'], cardinalities=[1]), axis=-1
+        )
+        merged = left.union_with(right)
+        self.assertEqual(tuple(merged.tensor.shape), (2, 3, 3))
+        self.assertEqual(merged.annotation.labels, ['a', 'b'])

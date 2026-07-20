@@ -115,10 +115,10 @@ def main():
         )
 
         c_pred = torch.cat([
-            cy_pred.params['c1']['probs'], 
-            cy_pred.params['c2']['probs']
+            cy_pred.probs['c1'], 
+            cy_pred.probs['c2']
         ], dim=1)
-        y_pred = cy_pred.params['xor']['probs']
+        y_pred = cy_pred.probs['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -140,21 +140,21 @@ def main():
 
     # (1) Query a single concept — only its slice of the shared CPD is needed.
     only_c1 = inference_engine.query({"c1": None}, evidence={"input": x_train})
-    print(f"\nP(c1 | input)         [:5]: {only_c1.params['c1']['probs'][:5].flatten().tolist()}")
+    print(f"\nP(c1 | input)         [:5]: {only_c1.probs['c1'][:5].flatten().tolist()}")
 
     only_c1 = inference_engine.query({"c1": c_train[:, 0]}, evidence={"input": x_train})
-    print(f"\nP(c1 | input) with data        [:5]: {only_c1.params['c1']['probs'][:5].flatten().tolist()}")
+    print(f"\nP(c1 | input) with data        [:5]: {only_c1.probs['c1'][:5].flatten().tolist()}")
 
     # (2) Query one concept with the others observed (partial evidence on the group).
     others = {name: c_train[:, i:i + 1] for i, name in enumerate(concept_names) if name != "c1"}
     cond_c1 = inference_engine.query({"c1": None}, evidence={**{"input": x_train}, **others})
-    print(f"P(c1 | input, c2) [:5]: {cond_c1.params['c1']['probs'][:5].flatten().tolist()}")
+    print(f"P(c1 | input, c2) [:5]: {cond_c1.probs['c1'][:5].flatten().tolist()}")
 
     out = inference_engine.query({"xor": None}, evidence={"input": x_train})
-    print(f"\nP(xor | input) [:5]: {out.params['xor']['probs'][:5].flatten().tolist()}")
+    print(f"\nP(xor | input) [:5]: {out.probs['xor'][:5].flatten().tolist()}")
 
     out = inference_engine.query({"xor": None}, evidence={"input": x_train, **others})
-    print(f"\nP(xor | input, c1, c2) [:5]: {out.params['xor']['probs'][:5].flatten().tolist()}")
+    print(f"\nP(xor | input, c1, c2) [:5]: {out.probs['xor'][:5].flatten().tolist()}")
 
     return
 

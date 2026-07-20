@@ -266,6 +266,10 @@ class VariationalInference(PyroBaseInference):
         conditioning (obs-scored); member evidence is **value forcing** — the
         member's column is forced on the plate value and propagates to descendants,
         contributing no likelihood of its own.
+
+        Tensors may carry any number of leading (batch-like) dimensions. Pyro
+        plates are tied to a single batch dimension, so those are collapsed into
+        one axis for the trace and restored on the returned tensors.
         """
         _, _, poutine = _import_pyro()
         if query is None:
@@ -274,6 +278,10 @@ class VariationalInference(PyroBaseInference):
             evidence = {}
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
+
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
 
         data = self._merge_observables(query, evidence)
         # Whole-variable observations are scored (obs=); member observations are
@@ -322,8 +330,14 @@ class VariationalInference(PyroBaseInference):
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
-        model_params = self._expose_params(
-            self._align_param_keys(trace_to_params(model_tr), use_guides=False),
-            set(query),
+        model_params = self._align_param_keys(
+            trace_to_params(model_tr), use_guides=False
         )
-        return InferenceOutput(params=model_params, guide_params=guide_params)
+        # Every traced site is reported, not just the queried names: under this
+        # engine's contract the *latents* are precisely the variables absent from
+        # ``query``, and their model-side parameters are what a KL term needs.
+        out = InferenceOutput(
+            params=self._assemble_params(model_params, []),
+            guide_params=self._assemble_params(guide_params, []),
+        )
+        return self._restore_output_leading(out, leading)

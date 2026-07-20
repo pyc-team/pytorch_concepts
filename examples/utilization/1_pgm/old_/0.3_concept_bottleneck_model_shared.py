@@ -81,8 +81,8 @@ def main():
             query = query_concepts,
             evidence = evidence
         )
-        c_pred = cy_pred.params['concepts']['probs']
-        y_pred = cy_pred.params['xor']['probs']
+        c_pred = cy_pred.probs['concepts']
+        y_pred = cy_pred.probs['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -98,7 +98,7 @@ def main():
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     print("=== Interventions ===")
-    print(cy_pred.params['concepts']['probs'][:3])
+    print(cy_pred.probs['concepts'][:3])
 
     int_policy_c = RandomPolicy(scale=100)
     int_strategy_c = DoIntervention(constants=1)
@@ -112,7 +112,7 @@ def main():
         query=query_concepts,
         evidence=evidence
     )
-    print(cy_pred.params['concepts']['probs'][:3])
+    print(cy_pred.probs['concepts'][:3])
 
     with intervention(
             concept_model,
@@ -126,13 +126,13 @@ def main():
             query=query_concepts,
             evidence=evidence
         )
-        print(cy_pred.params['concepts']['probs'][:3])
+        print(cy_pred.probs['concepts'][:3])
 
     cy_pred = inference_engine.query(
         query=query_concepts,
         evidence=evidence
     )
-    print(cy_pred.params['concepts']['probs'][:3])
+    print(cy_pred.probs['concepts'][:3])
 
 
 

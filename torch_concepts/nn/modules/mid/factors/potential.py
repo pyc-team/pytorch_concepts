@@ -21,7 +21,8 @@ class ParametricPotential(ParametricFactor):
     parametrization : nn.Module or dict[str, nn.Module]
         The energy module. It receives the aggregated scope values, concatenated
         along the last dim in ``scope`` order, and must return **one scalar per
-        batch element** (shape ``(batch,)`` or ``(batch, 1)``).
+        leading (batch-like) element** (shape ``(*leading,)`` or
+        ``(*leading, 1)``).
     name : str, optional
         Factor-graph key. Defaults to ``"phi(<scope names>)"``.
     aggregate : callable or dict, optional
@@ -99,22 +100,31 @@ class ParametricPotential(ParametricFactor):
         scope_values: Mapping[Variable, torch.Tensor],
         **layer_kwargs,
     ) -> torch.Tensor:
-        """Scalar energy ``E(scope)`` of shape ``(batch,)``.
+        """Scalar energy ``E(scope)`` of shape ``(*leading,)``.
 
-        Aggregates the scope values and applies the energy module.
+        Aggregates the scope values and applies the energy module. The leading
+        (batch-like) dimensions are read off the aggregated input, whose last
+        axis is the feature axis, so the energy is reduced to one scalar per
+        leading element whether the module emits ``(*leading,)`` or
+        ``(*leading, 1)``.
         """
         inputs: Dict[Variable, torch.Tensor] = {v: scope_values[v] for v in self._scope}
 
         mod = self.parametrization["energy"]
         cat = self._aggregators["energy"](inputs)
-        out = mod(**cat, **layer_kwargs) if isinstance(cat, dict) else mod(cat, **layer_kwargs)
-        return out.reshape(out.shape[0])
+        if isinstance(cat, dict):
+            leading = next(iter(cat.values())).shape[:-1]
+            out = mod(**cat, **layer_kwargs)
+        else:
+            leading = cat.shape[:-1]
+            out = mod(cat, **layer_kwargs)
+        return out.reshape(*leading)
 
     def log_potential(
         self,
         assignment: Mapping[Variable, torch.Tensor],
     ) -> torch.Tensor:
-        """``-E(scope)`` at the given assignment (shape ``(batch,)``).
+        """``-E(scope)`` at the given assignment (shape ``(*leading,)``).
 
         ``assignment`` must cover the whole scope: free variables at the value
         being scored, observed ones (an embedding, say) at their evidence.
@@ -136,7 +146,7 @@ class ParametricPotential(ParametricFactor):
         **layer_kwargs,
     ) -> torch.Tensor:
         """Energy for a name-keyed ``inputs`` dict holding every scope value.
-        Returns ``(batch,)``."""
+        Returns ``(*leading,)``."""
         inputs = inputs or {}
         scope_values = {v: self.resolve_value(v, inputs) for v in self._scope}
         return self.energy(scope_values, **layer_kwargs)

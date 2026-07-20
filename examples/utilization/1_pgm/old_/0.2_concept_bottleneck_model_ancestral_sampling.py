@@ -63,8 +63,8 @@ def main():
             query = query_concepts,
             evidence = evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['probs'], cy_pred.params['c2']['probs']], dim=1)
-        y_pred = cy_pred.params['xor']['probs']
+        c_pred = torch.cat([cy_pred.probs['c1'], cy_pred.probs['c2']], dim=1)
+        y_pred = cy_pred.probs['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

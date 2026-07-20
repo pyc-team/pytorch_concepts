@@ -1,11 +1,11 @@
-"""Backward queries with importance sampling on the XOR dataset.
+"""Backward queries with rejection sampling on the XOR dataset.
 
 A Bayesian network (C1, C2 -> XOR) is trained forward with ancestral sampling,
 then queried backward: evidence on the task leaf (XOR=y), query on the root
 concepts (C1, C2). Forward inference cannot answer P(C1,C2|XOR=y) because
-there is no forward edge from a leaf to its parents. Importance sampling
-proposes the root variables from their priors and reweights by the evidence
-likelihood P(XOR=y | C1, C2).
+there is no forward edge from a leaf to its parents. Rejection sampling draws
+joint samples from the prior and keeps only those that match the evidence,
+estimating P(Q=q | E=e) = |{samples matching Q and E}| / |{samples matching E}|.
 """
 import torch
 import torch.nn as nn
@@ -15,8 +15,7 @@ from torch_concepts import seed_everything, ConceptVariable
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
     ParametricCPD, BayesianNetwork, LearnablePrior,
-    AncestralSamplingInference, ImportanceSampling, MutilatedNetworkProposal,
-    PyroImportanceSampling,
+    AncestralSamplingInference, RejectionSampling, Sequential, LearnablePrior
 )
 
 
@@ -55,7 +54,6 @@ def main():
     )
 
     # ---- Training: forward with ancestral sampling (teacher-forced) ----------
-    # Parameters are logits, so the loss operates on logits directly.
     engine    = AncestralSamplingInference(model, p_int=1.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.05)
     bce       = nn.BCEWithLogitsLoss()
@@ -68,9 +66,9 @@ def main():
             query={"c1": c_train[:, 0:1], "c2": c_train[:, 1:2], "xor": y_train_oh},
             evidence={},
         )
-        c1_logit  = out.params["c1"]["logits"].expand_as(c_train[:, 0:1])
-        c2_logit  = out.params["c2"]["logits"].expand_as(c_train[:, 1:2])
-        xor_logit = out.params["xor"]["logits"]                 # (N, 2)
+        c1_logit  = out.logits["c1"].expand_as(c_train[:, 0:1])
+        c2_logit  = out.logits["c2"].expand_as(c_train[:, 1:2])
+        xor_logit = out.logits["xor"]                 # (N, 2)
         loss = (
             bce(c1_logit,  c_train[:, 0:1])
             + bce(c2_logit,  c_train[:, 1:2])
@@ -83,13 +81,9 @@ def main():
     model.eval()
 
     # ---- Backward query: P(C1, C2 | XOR=y) ----------------------------------
-    # Both engines use the mutilated-network / likelihood-weighting proposal:
-    # sample roots from the prior, reweight by P(XOR=y | C1, C2).
-    torch_is = ImportanceSampling(
-        model, MutilatedNetworkProposal(model),
-        n_samples=40_000, initial_temperature=0.1,
-    )
-    pyro_is = PyroImportanceSampling(model, n_samples=40_000)
+    # Rejection sampling: draw 40k joint samples from the prior, keep those
+    # where XOR matches the evidence, count how many also satisfy the query.
+    rs = RejectionSampling(model, n_samples=40_000)
 
     combos = [(0, 0), (0, 1), (1, 0), (1, 1)]
     c1_q = torch.tensor([[float(a)] for a, _ in combos])       # (4, 1)
@@ -100,8 +94,7 @@ def main():
         y_ev = torch.zeros(4, 2)
         y_ev[:, 0 if xor_val == 1 else 1] = 1.0
 
-        torch_p = torch_is.query({"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
-        pyro_p  = pyro_is.query( {"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
+        rs_p = rs.query({"c1": c1_q, "c2": c2_q}, {"xor": y_ev}).probabilities
 
         # Empirical posterior from the dataset: among the rows whose XOR equals
         # xor_val, the fraction taking each (C1, C2) assignment.
@@ -117,14 +110,12 @@ def main():
         print(f"\n=== P(C1, C2 | XOR={xor_val}) — evidence on leaf, query on roots ===")
         print(f"{'(C1,C2)':>10} | {header}")
         print(f"{'empirical':>10} | {fmt(emp)}")
-        print(f"{'torch IS':>10} | {fmt(torch_p)}")
-        print(f"{'pyro  IS':>10} | {fmt(pyro_p)}")
-        print(f"{'':>10}   torch err {float((torch_p - emp).abs().max()):.3f}"
-              f"   pyro err {float((pyro_p - emp).abs().max()):.3f}")
+        print(f"{'reject S':>10} | {fmt(rs_p)}")
+        print(f"{'':>10}   reject err {float((rs_p - emp).abs().max()):.3f}")
 
     # ---- Backward query with additional concept evidence: P(C2 | C1=1, XOR=y) -
-    # C1=1 is now observed alongside XOR — the posterior over the remaining root
-    # C2 should become deterministic: XOR=1 forces C2=0, XOR=0 forces C2=1.
+    # C1=1 is a root variable, so it is clamped during generation (no rejection
+    # needed for it). XOR is still a non-root, filtered by rejection.
     c2_targets = torch.tensor([[0.0], [1.0]])              # query C2=0 and C2=1
     c1_ev      = torch.ones(2, 1)                          # C1=1 for both rows
 
@@ -132,8 +123,7 @@ def main():
         y_ev2 = torch.zeros(2, 2)
         y_ev2[:, 0 if xor_val == 1 else 1] = 1.0
 
-        torch_p2 = torch_is.query({"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
-        pyro_p2  = pyro_is.query( {"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
+        rs_p2 = rs.query({"c2": c2_targets}, {"c1": c1_ev, "xor": y_ev2}).probabilities
 
         # Empirical: among rows with C1=1 and XOR=xor_val, the fraction with each C2.
         mask2 = (c_train[:, 0] == 1) & (y_train[:, 0] == xor_val)
@@ -146,10 +136,8 @@ def main():
         print(f"\n=== P(C2 | C1=1, XOR={xor_val}) — evidence on concept+leaf, query on remaining root ===")
         print(f"{'C2':>10} |  C2=0   C2=1")
         print(f"{'empirical':>10} | {fmt2(emp2)}")
-        print(f"{'torch IS':>10} | {fmt2(torch_p2)}")
-        print(f"{'pyro  IS':>10} | {fmt2(pyro_p2)}")
-        print(f"{'':>10}   torch err {float((torch_p2 - emp2).abs().max()):.3f}"
-              f"   pyro err {float((pyro_p2 - emp2).abs().max()):.3f}")
+        print(f"{'reject S':>10} | {fmt2(rs_p2)}")
+        print(f"{'':>10}   reject err {float((rs_p2 - emp2).abs().max()):.3f}")
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from torch_concepts.annotations import Annotations
 def _logits(out, names):
     """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 class DummyBackbone(nn.Module):

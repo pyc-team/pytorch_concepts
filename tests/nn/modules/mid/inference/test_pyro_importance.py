@@ -147,7 +147,7 @@ class TestValidate:
     def test_batch_size_mismatch_raises(self):
         pgm, x, c = _make_bernoulli_pgm()
         eng = PyroImportanceSampling(pgm, n_samples=10)
-        with pytest.raises(ValueError, match="batch sizes"):
+        with pytest.raises(ValueError, match="mismatched leading"):
             eng.query(query={"c": torch.ones(2, 2)}, evidence={"x": torch.randn(3, 4)})
 
     def test_unknown_variable_name_raises(self):

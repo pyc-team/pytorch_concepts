@@ -14,10 +14,11 @@ Algorithm
 
 Inputs / Outputs
 ----------------
-Query and evidence tensors must always have a leading batch dimension ``(B, *event)``.
-Outputs are ragged because different rows may accept different numbers of samples:
+Query and evidence tensors are ``(*leading, *event)`` with at least one leading
+(batch-like) dimension. Outputs are ragged because different rows may accept
+different numbers of samples:
 
-- ``out.probabilities``  — ``(B,)`` tensor of P(Q=q_b | E=e_b).
+- ``out.probabilities``  — ``(*leading,)`` tensor of P(Q=q_b | E=e_b).
 
 Constraints
 -----------
@@ -28,6 +29,7 @@ Constraints
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Dict, List
 
@@ -195,11 +197,20 @@ class RejectionSampling(TorchBaseInference):
         Query and evidence accept plate-member names as well as variable names.
         Member evidence joins the rejection mask, so for this engine it is **exact
         conditioning** (not the value forcing the other engines apply).
+
+        Tensors may carry any number of leading (batch-like) dimensions. Because
+        the estimator loops over observations independently, those dimensions are
+        collapsed into one batch axis for the run and restored on
+        ``out.probabilities``, which comes back shaped ``(*leading,)``.
         """
         if evidence is None:
             evidence = {}
 
-        B = self._validate(query, evidence)
+        self._validate(query, evidence)
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
+        B = math.prod(leading)
 
         # Partition evidence into root vars (conditioned during generation)
         # and non-root vars (handled by rejection filtering). The PGM might
@@ -245,16 +256,16 @@ class RejectionSampling(TorchBaseInference):
                     )
             probs.append(prob_b)
 
-        out = InferenceOutput()
-        out.probabilities = torch.tensor(probs)
-        return out
+        return InferenceOutput(
+            probabilities=self._restore_leading(torch.tensor(probs), leading)
+        )
 
     def _validate(
         self,
         query: Dict[str, torch.Tensor],
         evidence: Dict[str, torch.Tensor],
-    ) -> int:
-        """Validate inputs and return ``B`` (the batch size)."""
+    ) -> None:
+        """Validate the query/evidence containers."""
         if not isinstance(query, dict):
             raise ValueError(
                 f"{self.name}.query() requires 'query' to be a dict mapping "
@@ -267,26 +278,25 @@ class RejectionSampling(TorchBaseInference):
 
         all_tensors = {**query, **evidence}
 
-        for name, v in all_tensors.items():
-            if v.dim() < 2:
-                raise ValueError(
-                    f"{self.name}: tensor for '{name}' has shape {tuple(v.shape)} "
-                    "but a leading batch dimension is required, e.g. shape (B, *event). "
-                    "Use tensor.unsqueeze(0) for a single observation."
-                )
-
-        batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
-            raise ValueError(
-                f"{self.name}: mismatched batch sizes {batch_sizes}."
-            )
-        B = next(iter(batch_sizes.values()))
-
         unknown = set(all_tensors.keys()) - self.pgm.queryable_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
 
+        for name, v in all_tensors.items():
+            if v.dim() < 2:
+                raise ValueError(
+                    f"{self.name}: tensor for '{name}' has shape {tuple(v.shape)} "
+                    "but at least one leading batch dimension is required, e.g. shape "
+                    "(*leading, *event). Use tensor.unsqueeze(0) for a single observation."
+                )
+
+        leadings = {
+            name: tuple(self._leading_shape(name, v)) for name, v in all_tensors.items()
+        }
+        if len(set(leadings.values())) > 1:
+            raise ValueError(
+                f"{self.name}: mismatched leading (batch) dimensions {leadings}."
+            )
+
         self._require_discrete(list(query.keys()), "query")
         self._require_discrete(list(evidence.keys()), "evidence")
-
-        return B

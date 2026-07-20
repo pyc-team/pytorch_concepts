@@ -1,6 +1,6 @@
 import torch
 from sklearn.metrics import accuracy_score
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
@@ -29,7 +29,7 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    concepts = ConceptVariable(["c1","c2"], distribution=Bernoulli)
+    concepts = ConceptVariable(["c1","c2"], distribution=Bernoulli, size=1)
     tasks = ConceptVariable("xor", distribution=OneHotCategorical, size=2)
 
     # ParametricCPD setup
@@ -74,8 +74,8 @@ def main():
             query=query_concepts,
             evidence=evidence
         )
-        c_pred = torch.cat([cy_pred.params['c1']['logits'], cy_pred.params['c2']['logits']], dim=1)
-        y_pred = cy_pred.params['xor']['logits']
+        c_pred = torch.cat([cy_pred.logits['c1'], cy_pred.logits['c2']], dim=1)
+        y_pred = cy_pred.logits['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)

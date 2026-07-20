@@ -45,9 +45,9 @@ def test_member_evidence_forcing_moves_downstream_task():
     ones, zeros = torch.ones(B, 1), torch.zeros(B, 1)
     # Re-seed so the only difference between the two runs is the forced member.
     seed_everything(0)
-    y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).params["y"]["probs"]
+    y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).probs["y"]
     seed_everything(0)
-    y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).params["y"]["probs"]
+    y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).probs["y"]
     assert not torch.allclose(y_hi, y_lo)
 
 
@@ -76,5 +76,5 @@ def test_guide_conditions_on_member_handle_parent():
         vi = VariationalInference(pgm, latents={"z": guide})
     B = 4
     out = vi.query(query=["z"], evidence={"x": torch.randn(B, 6), "concepts": torch.rand(B, 2)})
-    assert "z" in out.guide_params
-    assert out.guide_params["z"]["probs"].shape == (B, 1)
+    assert "z" in out.guide_variables
+    assert out.guide_params["probs"]["z"].shape == (B, 1)

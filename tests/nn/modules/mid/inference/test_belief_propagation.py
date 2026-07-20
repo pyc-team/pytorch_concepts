@@ -98,15 +98,14 @@ def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, ba
     return marg
 
 
-def _state_marginal(variable, params):
-    """Engine ``params`` -> ``(batch, cardinality)`` state marginal.
+def _state_marginal(variable, probs):
+    """Engine ``probs`` -> ``(batch, cardinality)`` state marginal.
 
-    ``out.params`` follows the uniform engine contract: the marginal is
+    ``out.probs`` follows the uniform engine contract: the marginal is
     expressed in the variable's own parametrization (a binary variable gets a
     width-1 ``P(x=1)``), so widen it back to a state distribution before
     comparing against the enumerated reference.
     """
-    probs = params["probs"]
     if enumerable_cardinality(variable) == 2 and variable.size == 1:
         return torch.cat([1.0 - probs, probs], dim=-1)
     return probs
@@ -114,15 +113,15 @@ def _state_marginal(variable, params):
 
 def _assert_marginals_match(fg, out, exact, names, atol=1e-5):
     for n in names:
-        bp = _state_marginal(fg.variables[n], out.params[n])
+        bp = _state_marginal(fg.variables[n], out.probs[n])
         assert torch.allclose(bp, exact[n], atol=atol), (n, bp, exact[n])
         assert torch.allclose(bp.sum(-1), torch.ones_like(bp.sum(-1)), atol=1e-5)
 
 
-def _binary_ce(params, target):
+def _binary_ce(logits, target):
     """Cross-entropy on a binary variable's canonical (log-odds) logits."""
     return torch.nn.functional.binary_cross_entropy_with_logits(
-        params["logits"].squeeze(-1), target.to(params["logits"].dtype)
+        logits.squeeze(-1), target.to(logits.dtype)
     )
 
 
@@ -185,7 +184,7 @@ class TestBPConditionalAndEvidence:
         fg = _ConcreteModel(variables=[a, b, emb], factors=[pot])
         e = torch.randn(7, 4)
         out = BeliefPropagation(fg, iters=10).query(query=["a", "b"], evidence={"emb": e})
-        assert out.params["a"]["probs"].shape == (7, 1)
+        assert out.probs["a"].shape == (7, 1)
         exact = _exact_marginals(fg, ["a", "b"], conditioning={"emb": e}, batch=7)
         _assert_marginals_match(fg, out, exact, ["a", "b"])
 
@@ -201,8 +200,8 @@ class TestBPConditionalAndEvidence:
         a, b = _bin("a"), _bin("b")
         fg = _ConcreteModel(variables=[a, b], factors=[_pot([a, b], "ab")])
         out = BeliefPropagation(fg, iters=5).query(query=["a", "b"], evidence={"b": torch.ones(1, 1)})
-        assert "b" not in out.params
-        assert set(out.params) == {"a"}
+        assert "b" not in out.variables
+        assert set(out.variables) == {"a"}
 
 
 class TestBPTrainingAndMixed:
@@ -216,7 +215,7 @@ class TestBPTrainingAndMixed:
         fg = _ConcreteModel(variables=[a, b, c], factors=[cpd_a, cpd_b, cpd_c, pot])
         assert fg.is_mixed
         out = BeliefPropagation(fg, iters=6).query(query=["c"], evidence={})
-        loss = _binary_ce(out.params["c"], torch.tensor([1]))
+        loss = _binary_ce(out.logits["c"], torch.tensor([1]))
         loss.backward()
         grads = [p.grad for p in fg.parameters() if p.grad is not None]
         assert grads and any(g.abs().sum() > 0 for g in grads)
@@ -235,7 +234,7 @@ class TestBPTrainingAndMixed:
         for step in range(300):
             opt.zero_grad()
             out = eng.query(query=["a"], evidence={"emb": x})
-            loss = _binary_ce(out.params["a"], target)
+            loss = _binary_ce(out.logits["a"], target)
             loss.backward()
             opt.step()
             if step == 0:

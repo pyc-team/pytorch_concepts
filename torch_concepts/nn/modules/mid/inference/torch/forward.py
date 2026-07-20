@@ -1,20 +1,4 @@
-"""ForwardInference — pytorch forward pass through a :class:`BayesianNetwork`.
-
-This module holds everything the forward engines share (topological traversal,
-evidence clamping, teacher forcing, temperature schedule). The single point of
-variation is :meth:`ForwardInference._resolve`, implemented by each concrete
-engine:
-
-- :class:`~.deterministic.DeterministicInference` propagates every variable by
-  its "canonical" parameter (``loc`` for Normal/MVN, ``probs`` for
-  Bernoulli/OneHotCat, ``value`` for Delta).
-- :class:`~.ancestral.AncestralSamplingInference` samples every variable from
-  the reparameterised (relaxed) distribution of its family.
-
-Evidence variables (root or non-root) are hard-conditioned: the observed
-value is propagated to children directly and their CPD is never evaluated,
-so no parameters are produced for them.
-"""
+"""ForwardInference — pytorch forward pass through a :class:`BayesianNetwork`."""
 
 from __future__ import annotations
 
@@ -90,15 +74,24 @@ def _warn_broadcast(name: Optional[str], gt_shape: tuple, ref_shape: tuple) -> N
 
 
 def _teacher_force(
-    nn_value: torch.Tensor, gt: torch.Tensor, p_int: float, name: Optional[str] = None
+    nn_value: torch.Tensor,
+    gt: torch.Tensor,
+    p_int: float,
+    n_leading: int,
+    name: Optional[str] = None,
 ) -> torch.Tensor:
-    """Stochastically replace nn_value with ground truth at rate p_int."""
+    """Stochastically replace nn_value with ground truth at rate p_int.
+
+    The draw is per leading (batch-like) element: ``n_leading`` says how many of
+    ``nn_value``'s dimensions are leading, so a variable is forced or not as a
+    whole, whatever its event shape and however many batch axes there are.
+    """
     aligned = _align_gt(gt, nn_value, name)
     if p_int >= 1.0:
         return aligned
     if p_int <= 0.0:
         return nn_value
-    mask_shape = nn_value.shape[:1] + (1,) * (nn_value.dim() - 1)
+    mask_shape = nn_value.shape[:n_leading] + (1,) * (nn_value.dim() - n_leading)
     mask = (torch.rand(mask_shape, device=nn_value.device) < p_int).to(nn_value.dtype)
     return mask * aligned + (1.0 - mask) * nn_value
 
@@ -226,9 +219,9 @@ class ForwardInference(TorchBaseInference, ABC):
     def temperature(self) -> torch.Tensor:
         return self._temperature
 
-    def step(self) -> None:
+    def temperature_step(self) -> None:
         """Advance the temperature schedule (no-op for deterministic engines)."""
-        if self.is_stochastic:
+        if self.is_stochastic and self.training:
             self._step += 1
             self._temperature.fill_(float(self._schedule(self._step)))
 
@@ -241,7 +234,7 @@ class ForwardInference(TorchBaseInference, ABC):
 
         Evidence bypasses the CPD, so there is no network output to align
         against: the value is cast to the PGM's parameter dtype (what child
-        CPDs expect as input) and reshaped to ``(batch, *variable.shape)``.
+        CPDs expect as input) and reshaped to ``(*leading, *variable.shape)``.
         A numel mismatch raises instead of silently broadcasting.
         """
         try:
@@ -284,7 +277,7 @@ class ForwardInference(TorchBaseInference, ABC):
         self,
         variable: Variable,
         cache: Dict[str, torch.Tensor],
-        batch_size: int,
+        leading: torch.Size,
         temperature: torch.Tensor,
         evidence: Dict[str, torch.Tensor],
         query: Dict[str, Optional[torch.Tensor]],
@@ -306,7 +299,7 @@ class ForwardInference(TorchBaseInference, ABC):
 
         cpd = self.pgm.factors[name]
         if cpd.is_root:
-            params = cpd.root_params(batch_size)
+            params = cpd.root_params(leading)
         else:
             # ``cache`` is keyed by whole-variable names; the CPD resolves each
             # parent (slicing member-handle parents out of their plate's value).
@@ -315,7 +308,7 @@ class ForwardInference(TorchBaseInference, ABC):
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
         if target is not None:
-            value = _teacher_force(value, target, self.p_int, name)
+            value = _teacher_force(value, target, self.p_int, len(leading), name)
         # Partial-plate observation: splice the observed members over the computed
         # value (the CPD owns the column write). ``member_evidence`` is {} unless
         # this variable has individually-observed members.
@@ -326,7 +319,7 @@ class ForwardInference(TorchBaseInference, ABC):
         self,
         level: List[Variable],
         cache: Dict[str, torch.Tensor],
-        batch_size: int,
+        leading: torch.Size,
         temperature: torch.Tensor,
         evidence: Dict[str, torch.Tensor],
         query: Dict[str, Optional[torch.Tensor]],
@@ -350,7 +343,7 @@ class ForwardInference(TorchBaseInference, ABC):
         if not self.parallelize_levels or len(level) == 1:
             return [
                 self.predict_variable(
-                    var, cache, batch_size, temperature, evidence, query,
+                    var, cache, leading, temperature, evidence, query,
                     evidence_names, layer_kwargs.get(var.name, {}),
                     observed_members.get(var.name, {}),
                 )
@@ -360,7 +353,7 @@ class ForwardInference(TorchBaseInference, ABC):
         futures = [
             torch.jit.fork(
                 self.predict_variable,
-                var, cache, batch_size, temperature, evidence, query,
+                var, cache, leading, temperature, evidence, query,
                 evidence_names, layer_kwargs.get(var.name, {}),
                 observed_members.get(var.name, {}),
             )
@@ -388,47 +381,56 @@ class ForwardInference(TorchBaseInference, ABC):
         Member (partial-plate) evidence is **value forcing**: the member's column
         is overwritten after the plate is produced and the forced value propagates
         to descendants, contributing no likelihood of its own.
+
+        Every tensor may carry any number of leading (batch-like) dimensions —
+        ``(*leading, *event)`` — and the results come back with that same leading
+        shape. The event always lives on the last axis.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         layer_kwargs = layer_kwargs or {}
 
-        query_names = set(query)
-        tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
-        batch_size = tensors[0].shape[0] if tensors else 1
+        query_names = list(query)
+        leading = self._query_leading_shape(query, evidence)
 
         # Whole-variable evidence clamps-and-skips its CPD; member evidence is
         # threaded to ``clamp_members`` (a no-op for the empty dict).
         evidence, observed_members = self._split_evidence(evidence)
         evidence_names = set(evidence)
 
-        required = self._required_variables(query_names, evidence_names)
+        required = self._required_variables(set(query_names), evidence_names)
         temperature = self.temperature
-        sampled = self.is_stochastic
 
-        out = InferenceOutput()
         cache: Dict[str, torch.Tensor] = {}
+        computed: Dict[str, Dict[str, torch.Tensor]] = {}
         for level in self.pgm.levels:
             active = [var for var in level if var in required]
             if not active:
                 continue
             for name, params, value in self.predict_level(
-                active, cache, batch_size, temperature, evidence, query,
+                active, cache, leading, temperature, evidence, query,
                 evidence_names, layer_kwargs, observed_members,
             ):
                 cache[name] = value
                 if params is None:
                     continue  # fully-observed variable: clamped, no params emitted
-                out.params[name] = params
-                if sampled:
-                    out.samples[name] = value
+                computed[name] = params
 
-        # Add queried member views, then keep only the queried names in params.
-        out.params = self._expose_params(out.params, query_names)
-        if sampled:
-            out.samples = self._expose_values(out.samples, query_names)
-        out.params = {name: p for name, p in out.params.items() if name in query_names}
-        return out
+        # advance the temperature schedule if stochastic and training mode.
+        self.temperature_step()  
+
+        # Assemble once. ``params`` covers the queried names; ``samples`` covers
+        # every variable the pass actually drew, queried or not — an ancestor
+        # sampled only to reach the query is still a draw the caller may want.
+        return InferenceOutput(
+            params=self._assemble_params(computed, query_names),
+            samples=(
+                self._assemble_samples(
+                    {name: cache[name] for name in computed}, list(computed)
+                )
+                if self.is_stochastic else None
+            ),
+        )
 
     @abstractmethod
     def _resolve(

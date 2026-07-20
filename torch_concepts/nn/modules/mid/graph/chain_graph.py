@@ -1,40 +1,4 @@
-"""
-ChainGraph: a mixed (partially directed) probabilistic graphical model.
-
-.. warning::
-    **Not implemented yet — this is a placeholder.** Constructing a
-    ``ChainGraph`` raises :class:`NotImplementedError`.
-
-The third concrete specialization of :class:`ProbabilisticModel`, alongside
-:class:`BayesianNetwork` (all directed) and :class:`MarkovNetwork` (all
-undirected). A chain graph mixes both factor kinds: some variables are given by
-a directed conditional ``p(child | parents)``, others are coupled by an
-undirected potential ``exp(-E(scope))``. The joint is the product of the two
-families, normalised over the undirected part.
-
-Nothing new is needed at the *inference* level: every factor already exposes the
-same ``scope`` / ``log_potential`` interface, so
-:class:`~torch_concepts.nn.BeliefPropagation` consumes a mixed graph exactly as
-it consumes a directed or undirected one. What is missing here is the
-*structural* validation this class owes, which is why it is a stub rather than a
-bare ``pass``:
-
-TODO — to implement:
-  * validate that every variable is covered consistently: a variable must not be
-    both the child of a CPD and a free member of a potential's scope, or its
-    conditional would be specified twice;
-  * identify the chain components (the connected components left after removing
-    directed edges) and check that the graph of components is acyclic — the
-    defining condition of a chain graph;
-  * decide the normalisation contract: whether the undirected blocks are
-    normalised per chain component (the standard LWF semantics) or globally,
-    since that determines what ``log_potential`` must return for scoring;
-  * extend :attr:`ProbabilisticModel.is_mixed` coverage and the topological
-    helpers (``levels`` / ``sorted_variables``) to the component ordering, so
-    the forward engines can traverse a chain graph too.
-
-Until then, use :class:`BayesianNetwork` or :class:`MarkovNetwork`.
-"""
+"""ChainGraph: a mixed (partially directed) probabilistic graphical model."""
 
 from __future__ import annotations
 

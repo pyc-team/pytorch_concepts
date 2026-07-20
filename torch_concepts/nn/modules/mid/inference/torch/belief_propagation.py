@@ -1,23 +1,4 @@
-"""BeliefPropagation — loopy sum-product inference over a :class:`ProbabilisticModel`.
-
-Consumes the unified factor interface (``scope`` + ``log_potential``), so it runs
-on directed (:class:`BayesianNetwork`), undirected (:class:`MarkovNetwork`), and
-mixed (chain) :class:`ProbabilisticModel` graphs identically.
-It returns per-variable **marginals**; training is cross-entropy on those
-marginals, which never touches the partition function ``Z``.
-
-Preconditions (see FACTOR_GRAPH_INSTRUCTIONS.md §1)
----------------------------------------------------
-Every **free** (non-evidence) variable must be discrete with finite cardinality
-(Bernoulli with ``size == 1``, or a Categorical/OneHot family). Continuous
-variables are supported only as **observed evidence** feeding the factors'
-energies. A continuous free variable raises a clear error; lifting
-that needs a future MCMC/variational engine (the energy representation already
-supports it).
-
-The whole pass is differentiable (unrolled message passing), so gradients flow
-from a marginal loss into every factor/CPD parametrization.
-"""
+"""BeliefPropagation — loopy sum-product inference over a :class:`ProbabilisticModel`."""
 
 from __future__ import annotations
 
@@ -36,6 +17,14 @@ from .base import TorchBaseInference
 
 class BeliefPropagation(TorchBaseInference):
     """Loopy belief propagation (sum-product) over a :class:`ProbabilisticModel`.
+
+    Consumes the unified factor interface (``scope`` + ``log_potential``).
+    Every **free** (non-evidence) variable must be discrete with finite cardinality. 
+    Continuous variables are supported only as **observed evidence** feeding the factors'
+    energies. A continuous free variable raises a clear error.
+
+    The whole pass is differentiable (unrolled message passing), so gradients flow
+    from a marginal loss into every factor/CPD parametrization.
 
     Parameters
     ----------
@@ -85,18 +74,27 @@ class BeliefPropagation(TorchBaseInference):
             return torch.get_default_dtype()
 
     def _format_evidence(self, variable: Variable, value: torch.Tensor) -> torch.Tensor:
-        """Cast to the model dtype and reshape to ``(batch, *variable.shape)``."""
+        """Cast to the model dtype and reshape to ``(*leading, *variable.shape)``."""
         return reshape_value_to_event(variable, value.to(self._dtype()))
 
     def _encode_state(
-        self, v: Variable, state: int, batch: int, dtype: torch.dtype, device: torch.device
+        self,
+        v: Variable,
+        state: int,
+        leading: torch.Size,
+        dtype: torch.dtype,
+        device: torch.device,
     ) -> torch.Tensor:
-        """Value tensor for discrete ``state`` of ``v``: scalar {0,1} (binary) or one-hot."""
+        """Value tensor for discrete ``state`` of ``v``: scalar {0,1} (binary) or one-hot.
+
+        Broadcast over the whole leading shape, so the enumeration works for any
+        number of batch-like dimensions.
+        """
         card = enumerable_cardinality(v)
         if card == 2 and v.size == 1:
-            return torch.full((batch, 1), float(state), dtype=dtype, device=device)
-        val = torch.zeros(batch, v.size, dtype=dtype, device=device)
-        val[:, state] = 1.0
+            return torch.full((*leading, 1), float(state), dtype=dtype, device=device)
+        val = torch.zeros(*leading, v.size, dtype=dtype, device=device)
+        val[..., state] = 1.0
         return val
 
     def _factor_table(
@@ -104,7 +102,7 @@ class BeliefPropagation(TorchBaseInference):
         factor,
         free_vars: List[Variable],
         fixed: Dict[Variable, torch.Tensor],
-        batch: int,
+        leading: torch.Size,
         dtype: torch.dtype,
         device: torch.device,
     ) -> Optional[torch.Tensor]:
@@ -112,9 +110,12 @@ class BeliefPropagation(TorchBaseInference):
 
         Built by enumerating the free grid and evaluating ``factor.log_potential``
         per cell — uniform for CPDs and energy-based potentials alike. Observed
-        scope variables in ``fixed`` are baked in (per-batch). Returns ``None``
-        when the factor has no free variable (a constant w.r.t. the active
-        variables, contributing nothing to messages).
+        scope variables in ``fixed`` are baked in (per observation). Returns
+        ``None`` when the factor has no free variable (a constant w.r.t. the
+        active variables, contributing nothing to messages).
+
+        The result is shaped ``(*leading, *free_cards)``: the state axes are
+        appended after however many leading dimensions the query carries.
         """
         free_cards = [enumerable_cardinality(v) for v in free_vars]
         if not free_cards:
@@ -123,9 +124,9 @@ class BeliefPropagation(TorchBaseInference):
         for combo in itertools.product(*[range(c) for c in free_cards]):
             assignment: Dict[Variable, torch.Tensor] = dict(fixed)
             for v, s in zip(free_vars, combo):
-                assignment[v] = self._encode_state(v, s, batch, dtype, device)
+                assignment[v] = self._encode_state(v, s, leading, dtype, device)
             cells.append(factor.log_potential(assignment))
-        return torch.stack(cells, dim=-1).reshape(batch, *free_cards)
+        return torch.stack(cells, dim=-1).reshape(*leading, *free_cards)
 
     # ------------------------------------------------------------------ query
     def query(
@@ -135,9 +136,9 @@ class BeliefPropagation(TorchBaseInference):
     ) -> InferenceOutput:
         """Run loopy BP and return per-variable marginals.
 
-        ``out.params`` follows the same contract as every other engine: each
-        entry holds the variable's distribution parameters, keyed by parameter
-        name and shaped ``(batch, *variable.shape)``. The BP marginal is
+        ``out.params`` follows the same contract as every other engine: it is
+        keyed by parameter name, each entry an annotated tensor shaped
+        ``(*leading, width)`` and sliceable by variable name. The BP marginal is
         therefore reported in the variable's *own* parametrization rather than
         as a state-space belief — a binary concept gets Bernoulli
         ``{'probs': P(x=1), 'logits': log-odds}`` of width 1, a ``k``-way
@@ -148,13 +149,16 @@ class BeliefPropagation(TorchBaseInference):
         Only queried names that are *active* (free, computed) variables appear in
         ``params``; a fully-observed queried variable emits none (its value is
         its evidence), mirroring the directed engines.
+
+        Query and evidence tensors may carry any number of leading (batch-like)
+        dimensions; messages and marginals carry the same ones.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
-        query_names = set(query)
+        query_names = list(query)
 
         tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
-        batch = tensors[0].shape[0] if tensors else 1
+        leading = self._query_leading_shape(query, evidence)
         dtype = self._dtype()
         device = tensors[0].device if tensors else torch.device("cpu")
 
@@ -189,7 +193,7 @@ class BeliefPropagation(TorchBaseInference):
             fixed = {
                 v: observed[v.name] for v in f.scope if v.name in evidence_names
             }
-            table = self._factor_table(f, free_vars, fixed, batch, dtype, device)
+            table = self._factor_table(f, free_vars, fixed, leading, dtype, device)
             if table is None:
                 continue
             factor_free[fname] = free_vars
@@ -202,18 +206,17 @@ class BeliefPropagation(TorchBaseInference):
         }
 
         m_fv = self._run_message_passing(
-            active_names, cards, factor_free, factor_table, var_factors, batch, dtype, device
+            active_names, cards, factor_free, factor_table, var_factors,
+            leading, dtype, device,
         )
 
         # Beliefs -> marginals, expressed in each variable's own parametrization.
-        out = InferenceOutput()
+        computed: Dict[str, Dict[str, torch.Tensor]] = {}
         for vn in active_names:
             belief = sum(m_fv[(fn, vn)] for fn in var_factors[vn])
-            out.params[vn] = self._canonical_params(self.pgm.variables[vn], belief)
+            computed[vn] = self._canonical_params(self.pgm.variables[vn], belief)
 
-        out.params = self._expose_params(out.params, query_names)
-        out.params = {n: p for n, p in out.params.items() if n in query_names}
-        return out
+        return InferenceOutput(params=self._assemble_params(computed, query_names))
 
     @staticmethod
     def _canonical_params(
@@ -246,14 +249,22 @@ class BeliefPropagation(TorchBaseInference):
         factor_free,
         factor_table,
         var_factors,
-        batch: int,
+        leading: torch.Size,
         dtype: torch.dtype,
         device: torch.device,
     ) -> Dict[Tuple[str, str], torch.Tensor]:
-        """Synchronous log-domain sum-product; returns final factor->variable messages."""
+        """Synchronous log-domain sum-product; returns final factor->variable messages.
+
+        Every message is shaped ``(*leading, cardinality)``: the state axis is
+        always last, and the ``n_leading`` batch-like axes in front are carried
+        through untouched.
+        """
+        n_leading = len(leading)
         # Init factor->variable messages to uniform (log 1 == 0).
         m_fv: Dict[Tuple[str, str], torch.Tensor] = {
-            (fn, v.name): torch.zeros(batch, cards[v.name], dtype=dtype, device=device)
+            (fn, v.name): torch.zeros(
+                *leading, cards[v.name], dtype=dtype, device=device
+            )
             for fn, free_vars in factor_free.items()
             for v in free_vars
         }
@@ -278,15 +289,20 @@ class BeliefPropagation(TorchBaseInference):
             for fn, free_vars in factor_free.items():
                 n = len(free_vars)
                 combined = factor_table[fn]
+                # A message over variable ``a`` is broadcast onto state axis
+                # ``n_leading + a`` of the table, leaving the leading axes alone.
                 for a, w in enumerate(free_vars):
-                    shape = [batch] + [1] * n
-                    shape[a + 1] = cards[w.name]
+                    shape = list(leading) + [1] * n
+                    shape[n_leading + a] = cards[w.name]
                     combined = combined + m_vf[(w.name, fn)].reshape(shape)
                 for a, v in enumerate(free_vars):
-                    shape = [batch] + [1] * n
-                    shape[a + 1] = cards[v.name]
+                    shape = list(leading) + [1] * n
+                    shape[n_leading + a] = cards[v.name]
                     tmp = combined - m_vf[(v.name, fn)].reshape(shape)
-                    reduce_axes = [ax for ax in range(1, n + 1) if ax != a + 1]
+                    reduce_axes = [
+                        ax for ax in range(n_leading, n_leading + n)
+                        if ax != n_leading + a
+                    ]
                     msg = torch.logsumexp(tmp, dim=reduce_axes) if reduce_axes else tmp
                     msg = msg - torch.logsumexp(msg, dim=-1, keepdim=True)
                     if log_d is not None:

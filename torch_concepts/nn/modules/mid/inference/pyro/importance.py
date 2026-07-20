@@ -33,11 +33,12 @@ The estimate is self-normalised over the ``N`` particles::
 
     P(Q=q | E=e) ~= sum_n softmax(log w)_n * 1[Q_n = q].
 
-``out.probabilities`` is a ``(B,)`` tensor. Query variables must be discrete
+``out.probabilities`` is a ``(*leading,)`` tensor. Query variables must be discrete
 (Bernoulli / OneHotCategorical); evidence may be continuous.
 """
 from __future__ import annotations
 
+import math
 import warnings
 from collections import ChainMap
 from typing import Dict, List, Optional
@@ -275,11 +276,19 @@ class PyroImportanceSampling(PyroBaseInference):
         Query and evidence accept plate-member names. Whole-variable evidence is
         conditioning; member evidence is **value forcing** — forced onto the plate
         value in model and guide alike, so its site log-probs cancel in the weight.
+
+        Tensors may carry any number of leading (batch-like) dimensions; they are
+        collapsed into the single plate axis Pyro needs and restored on
+        ``out.probabilities``, which comes back shaped ``(*leading,)``.
         """
         _, _, poutine = _import_pyro()
         if evidence is None:
             evidence = {}
-        B = self._validate(query, evidence)
+        self._validate(query, evidence)
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
+        B = math.prod(leading)
 
         N = self.n_samples
         M = N * B
@@ -330,9 +339,9 @@ class PyroImportanceSampling(PyroBaseInference):
         prob = (w_tilde * match).sum(dim=0)  # (B,)
         self._warn_ess(w_tilde)
 
-        out = InferenceOutput()
-        out.probabilities = prob
-        return out
+        return InferenceOutput(
+            probabilities=self._restore_leading(prob, leading)
+        )
 
     # ------------------------------------------------------------------
     def _warn_ess(self, w_tilde: torch.Tensor) -> None:
@@ -349,7 +358,7 @@ class PyroImportanceSampling(PyroBaseInference):
     # ------------------------------------------------------------------
     def _validate(
         self, query: Dict[str, torch.Tensor], evidence: Dict[str, torch.Tensor]
-    ) -> int:
+    ) -> None:
         if not isinstance(query, dict) or not query:
             raise ValueError(
                 f"{self.name}.query() requires a non-empty 'query' dict mapping "
@@ -370,21 +379,25 @@ class PyroImportanceSampling(PyroBaseInference):
                 "and evidence; a variable is either queried or observed, not both."
             )
         all_tensors = {**query, **evidence}
-        for vname, val in all_tensors.items():
-            if val.dim() < 2:
-                raise ValueError(
-                    f"{self.name}: tensor for '{vname}' has shape {tuple(val.shape)} "
-                    "but a leading batch dimension is required, e.g. (B, *event)."
-                )
-        batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
-            raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
         all_names = self.pgm.queryable_names  # variables plus plate members
         unknown = set(all_tensors.keys()) - all_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
+        for vname, val in all_tensors.items():
+            if val.dim() < 2:
+                raise ValueError(
+                    f"{self.name}: tensor for '{vname}' has shape {tuple(val.shape)} "
+                    "but at least one leading batch dimension is required, e.g. "
+                    "(*leading, *event)."
+                )
+        leadings = {
+            name: tuple(self._leading_shape(name, v)) for name, v in all_tensors.items()
+        }
+        if len(set(leadings.values())) > 1:
+            raise ValueError(
+                f"{self.name}: mismatched leading (batch) dimensions {leadings}."
+            )
         self._require_discrete(list(query.keys()))
-        return next(iter(batch_sizes.values()))
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:

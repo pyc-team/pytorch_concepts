@@ -15,7 +15,7 @@ Tests cover:
 Migrated to the high-level model API:
 - forward takes ``input=`` (not ``x=``) and returns ``ModelOutput`` with
   ``.params`` only (no ``.probs`` / ``.logits``). For each queried concept,
-  ``out.params[name]`` is ``{'logits': tensor(B, cardinality)}`` (CEM sets
+  ``out.logits[name]`` is a ``(B, cardinality)`` tensor (CEM sets
   ``param_for_discrete_var='logits'``).
 - ``model.model`` -> ``model.pgm``.
 - default distributions are now BASE families (Bernoulli / OneHotCategorical),
@@ -42,7 +42,7 @@ from torch_concepts.nn import (
 def _logits(out, names):
     """Concatenate the queried concepts' logits into a (B, sum(card)) tensor."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 class DummyBackbone(nn.Module):

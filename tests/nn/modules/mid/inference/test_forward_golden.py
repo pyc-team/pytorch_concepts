@@ -40,44 +40,44 @@ class TestForwardGoldenContract:
         m = _plate_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         out = eng.query(query=["g", "y", "m1"], evidence={"x": torch.randn(3, 4)})
-        assert set(out.params) == {"g", "y", "m1"}
-        assert out.samples == {}  # deterministic mode never emits samples
+        assert set(out.variables) == {"g", "m1", "m2", "y"}
+        assert out.samples is None  # deterministic mode never emits samples
 
     def test_deterministic_member_params_are_views_of_plate(self):
         m = _plate_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         out = eng.query(query=["g", "m1", "m2"], evidence={"x": torch.randn(2, 4)})
-        g = out.params["g"]["probs"]
-        assert out.params["m1"]["probs"].shape == (2, 1)
-        assert _is_view_of(out.params["m1"]["probs"], g)
-        assert _is_view_of(out.params["m2"]["probs"], g)
-        assert torch.allclose(out.params["m1"]["probs"], g[:, 0:1])
-        assert torch.allclose(out.params["m2"]["probs"], g[:, 1:2])
+        g = out.probs["g"]
+        assert out.probs["m1"].shape == (2, 1)
+        assert _is_view_of(out.probs["m1"], g)
+        assert _is_view_of(out.probs["m2"], g)
+        assert torch.allclose(out.probs["m1"], g[:, 0:1])
+        assert torch.allclose(out.probs["m2"], g[:, 1:2])
 
     def test_whole_plate_evidence_emits_no_params_for_plate(self):
         m = _plate_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         out = eng.query(query=["y"], evidence={"x": torch.randn(2, 4), "g": torch.rand(2, 2)})
-        assert "g" not in out.params
-        assert set(out.params) == {"y"}
+        assert "g" not in out.variables
+        assert set(out.variables) == {"y"}
 
     def test_ancestral_samples_expose_computed_vars_plus_queried_members(self):
         m = _plate_model()
         eng = AncestralSamplingInference(m)
         out = eng.query(query=["g", "y", "m1"], evidence={"x": torch.randn(3, 4)})
         # params: only queried names; samples: every computed var + queried member.
-        assert set(out.params) == {"g", "y", "m1"}
-        assert set(out.samples) == {"g", "y", "m1"}
+        assert set(out.variables) == {"g", "m1", "m2", "y"}
+        assert set(out.samples.annotation.labels) == {"m1", "m2", "y"}
         assert out.samples["g"].shape == (3, 2)
         assert out.samples["y"].shape == (3, 1)
         assert _is_view_of(out.samples["m1"], out.samples["g"])
         assert torch.allclose(out.samples["m1"], out.samples["g"][:, 0:1])
-        assert _is_view_of(out.params["m1"]["probs"], out.params["g"]["probs"])
+        assert _is_view_of(out.probs["m1"], out.probs["g"])
 
     def test_ancestral_samples_include_unqueried_ancestor(self):
         m = _plate_model()
         eng = AncestralSamplingInference(m)
         out = eng.query(query=["y"], evidence={"x": torch.randn(3, 4)})
         # y's ancestor g is sampled (hence in samples) but not queried (not in params).
-        assert set(out.params) == {"y"}
-        assert set(out.samples) == {"g", "y"}
+        assert set(out.variables) == {"y"}
+        assert set(out.samples.annotation.labels) == {"m1", "m2", "y"}

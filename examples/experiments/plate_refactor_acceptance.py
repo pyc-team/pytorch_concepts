@@ -105,29 +105,29 @@ def verify():
 
     # 1. group vs member addressing (existing behavior)
     base = eng.query(["concepts", "y", "y1"], evidence={"x": xt})
-    c = base.params["concepts"]["probs"]
+    c = base.probs["concepts"]
     assert c.shape == (B, 3), f"plate params shape {tuple(c.shape)} != {(B, 3)}"
     mem = eng.query(["c1", "c2", "c3"], evidence={"x": xt})
     for i, name in enumerate(["c1", "c2", "c3"]):
-        assert torch.allclose(mem.params[name]["probs"], c[:, i:i + 1]), \
+        assert torch.allclose(mem.probs[name], c[:, i:i + 1]), \
             f"member {name} != its plate column"
     print("1. group/member query addressing                          OK")
 
     # 2. whole-plate evidence propagates (existing behavior)
     obs = eng.query(["y"], evidence={"x": xt, "concepts": torch.cat([ones, zeros, ones], dim=1)})
-    assert not torch.allclose(obs.params["y"]["probs"], base.params["y"]["probs"])
+    assert not torch.allclose(obs.probs["y"], base.probs["y"])
     print("2. whole-plate evidence moves the task                    OK")
 
     # 3. partial member evidence: c1 forced, c2/c3 untouched, y moves (existing)
     part = eng.query(["y", "c2", "c3"], evidence={"x": xt, "c1": ones})
-    assert torch.allclose(part.params["c2"]["probs"], c[:, 1:2])
-    assert torch.allclose(part.params["c3"]["probs"], c[:, 2:3])
-    assert not torch.allclose(part.params["y"]["probs"], base.params["y"]["probs"])
+    assert torch.allclose(part.probs["c2"], c[:, 1:2])
+    assert torch.allclose(part.probs["c3"], c[:, 2:3])
+    assert not torch.allclose(part.probs["y"], base.probs["y"])
     print("3. partial (member) evidence = forcing                    OK")
 
     # 4. member-handle parent: c1 moves y1, c2 does not (existing behavior)
-    y1_c1 = [eng.query(["y1"], evidence={"x": xt, "c1": v}).params["y1"]["probs"] for v in (ones, zeros)]
-    y1_c2 = [eng.query(["y1"], evidence={"x": xt, "c2": v}).params["y1"]["probs"] for v in (ones, zeros)]
+    y1_c1 = [eng.query(["y1"], evidence={"x": xt, "c1": v}).probs["y1"] for v in (ones, zeros)]
+    y1_c2 = [eng.query(["y1"], evidence={"x": xt, "c2": v}).probs["y1"] for v in (ones, zeros)]
     assert not torch.allclose(y1_c1[0], y1_c1[1])
     assert torch.allclose(y1_c2[0], y1_c2[1])
     print("4. member-handle parent edge (y1 <- c1 only)              OK")
@@ -180,9 +180,9 @@ def verify():
         from torch_concepts.nn import VariationalInference, PyroImportanceSampling
         vi = VariationalInference(pgm)
         seed_everything(0)
-        y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).params["y"]["probs"]
+        y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).probs["y"]
         seed_everything(0)
-        y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).params["y"]["probs"]
+        y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).probs["y"]
         assert not torch.allclose(y_hi, y_lo), "member evidence ignored by model_fn"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -213,12 +213,12 @@ def verify():
     neng = DeterministicInference(npgm)
     nout = neng.query(["lat", "m1", "m2", "z"], evidence={"x": xt})
     for param in ("loc", "scale"):
-        assert nout.params["lat"][param].shape == (B, 2)
-        assert torch.allclose(nout.params["m1"][param], nout.params["lat"][param][:, 0:1])
-        assert torch.allclose(nout.params["m2"][param], nout.params["lat"][param][:, 1:2])
+        assert nout.params[param]["lat"].shape == (B, 2)
+        assert torch.allclose(nout.params[param]["m1"], nout.params[param]["lat"][:, 0:1])
+        assert torch.allclose(nout.params[param]["m2"], nout.params[param]["lat"][:, 1:2])
     # member evidence on a Normal member forces z through the member edge
-    z_hi = neng.query(["z"], evidence={"x": xt, "m1": ones}).params["z"]["probs"]
-    z_lo = neng.query(["z"], evidence={"x": xt, "m1": -ones}).params["z"]["probs"]
+    z_hi = neng.query(["z"], evidence={"x": xt, "m1": ones}).probs["z"]
+    z_lo = neng.query(["z"], evidence={"x": xt, "m1": -ones}).probs["z"]
     assert not torch.allclose(z_hi, z_lo)
     # ancestral sampling draws the whole plate with reparameterised Normals
     ns = AncestralSamplingInference(npgm).query(["lat", "m2"], evidence={"x": xt})

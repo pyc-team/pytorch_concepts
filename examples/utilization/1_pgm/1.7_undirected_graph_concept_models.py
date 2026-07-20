@@ -1,5 +1,4 @@
-"""Undirected concept model (a conditional random field) trained with belief
-propagation and cross-entropy on the BP marginals.
+"""Undirected graphical concept model trained with belief propagation.
 
 Two binary concepts ``a`` and ``b`` are coupled by a learnable pairwise
 potential, and each has a unary potential conditioned on an observed embedding
@@ -11,6 +10,7 @@ partition function ``Z`` is never computed.
 This is the undirected counterpart of the directed ``BayesianNetwork`` examples
 in this folder, using the same ``query(query, evidence)`` API.
 """
+
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, Normal
@@ -61,16 +61,16 @@ def main():
         # binary concept yields Bernoulli logits (log-odds) of width 1 — the
         # same loss you would write against a directed engine's output.
         loss = (
-            nn.functional.binary_cross_entropy_with_logits(out.params["a"]["logits"], a_lab)
-            + nn.functional.binary_cross_entropy_with_logits(out.params["b"]["logits"], b_lab)
+            nn.functional.binary_cross_entropy_with_logits(out.logits["a"], a_lab)
+            + nn.functional.binary_cross_entropy_with_logits(out.logits["b"], b_lab)
         )
 
         loss.backward()
         optimizer.step()
 
         if epoch % 50 == 0:
-            a_acc = ((out.params["a"]["probs"] > 0.5).float() == a_lab).float().mean().item()
-            b_acc = ((out.params["b"]["probs"] > 0.5).float() == b_lab).float().mean().item()
+            a_acc = ((out.probs["a"] > 0.5).float() == a_lab).float().mean().item()
+            b_acc = ((out.probs["b"] > 0.5).float() == b_lab).float().mean().item()
             print(f"Epoch {epoch}: Loss {loss.item():.3f} | a acc {a_acc:.2f} | b acc {b_acc:.2f}")
 
 

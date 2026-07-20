@@ -30,13 +30,16 @@ Let ``z`` denote the non-evidence variables (query ``Q`` and hidden ``H``).
 Inputs / Outputs
 ----------------
 ``query`` maps each query variable to its **target** tensor ``q`` (shape
-``(B, *event)``); ``evidence`` maps each observed variable to ``e``. Query
-variables must be discrete (Bernoulli / Categorical / OneHotCategorical
-families). Evidence may be continuous. ``out.probabilities`` is a ``(B,)``
-tensor of ``P(Q=q | E=e)``.
+``(*leading, *event)``, with at least one leading batch-like dimension);
+``evidence`` maps each observed variable to ``e``. Query variables must be
+discrete (Bernoulli / Categorical / OneHotCategorical families). Evidence may be
+continuous. ``out.probabilities`` is a ``(*leading,)`` tensor of
+``P(Q=q | E=e)``.
 """
+
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Callable, Dict, List, Set, Union
 
@@ -220,10 +223,19 @@ class ImportanceSampling(TorchBaseInference):
         conditioning; member evidence is **value forcing** — the member's column
         is forced on the sampled plate value, scored identically by proposal and
         model, contributing no likelihood of its own.
+
+        Tensors may carry any number of leading (batch-like) dimensions. The
+        estimator packs samples and observations into a single axis, so those
+        dimensions are collapsed for the run and restored on
+        ``out.probabilities``, which comes back shaped ``(*leading,)``.
         """
         if evidence is None:
             evidence = {}
-        B = self._validate(query, evidence)
+        self._validate(query, evidence)
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
+        B = math.prod(leading)
 
         N = self.n_samples
         M = N * B
@@ -267,9 +279,7 @@ class ImportanceSampling(TorchBaseInference):
 
         self._warn_ess(w_tilde)
 
-        out = InferenceOutput()
-        out.probabilities = prob
-        return out
+        return InferenceOutput(probabilities=self._restore_leading(prob, leading))
 
     # ------------------------------------------------------------------
     def _warn_ess(self, w_tilde: torch.Tensor) -> None:
@@ -290,8 +300,8 @@ class ImportanceSampling(TorchBaseInference):
         self,
         query: Dict[str, torch.Tensor],
         evidence: Dict[str, torch.Tensor],
-    ) -> int:
-        """Validate inputs and return ``B`` (the batch size)."""
+    ) -> None:
+        """Validate the query/evidence containers."""
         if not isinstance(query, dict) or not query:
             raise ValueError(
                 f"{self.name}.query() requires a non-empty 'query' dict mapping "
@@ -314,24 +324,28 @@ class ImportanceSampling(TorchBaseInference):
             )
 
         all_tensors = {**query, **evidence}
-        for vname, val in all_tensors.items():
-            if val.dim() < 2:
-                raise ValueError(
-                    f"{self.name}: tensor for '{vname}' has shape {tuple(val.shape)} "
-                    "but a leading batch dimension is required, e.g. (B, *event). "
-                    "Use tensor.unsqueeze(0) for a single observation."
-                )
-
-        batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
-            raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
 
         unknown = set(all_tensors.keys()) - self.pgm.queryable_names
         if unknown:
             raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
 
+        for vname, val in all_tensors.items():
+            if val.dim() < 2:
+                raise ValueError(
+                    f"{self.name}: tensor for '{vname}' has shape {tuple(val.shape)} "
+                    "but at least one leading batch dimension is required, e.g. "
+                    "(*leading, *event). Use tensor.unsqueeze(0) for a single observation."
+                )
+
+        leadings = {
+            name: tuple(self._leading_shape(name, v)) for name, v in all_tensors.items()
+        }
+        if len(set(leadings.values())) > 1:
+            raise ValueError(
+                f"{self.name}: mismatched leading (batch) dimensions {leadings}."
+            )
+
         self._require_discrete(list(query.keys()))
-        return next(iter(batch_sizes.values()))
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:

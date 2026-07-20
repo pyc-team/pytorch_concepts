@@ -348,13 +348,14 @@ class ParametricFactor(nn.Module, ABC):
         Parameters
         ----------
         assignment : dict[Variable, Tensor]
-            Value ``(batch, *var.shape)`` for **every** variable in
+            Value ``(*leading, *var.shape)`` for **every** variable in
             :attr:`scope` — free ones at the value being scored, observed ones
-            at their evidence. The assignment must be complete; the factor does
-            not fall back to any other source.
+            at their evidence. Any number of leading (batch-like) dimensions is
+            allowed, as long as every entry agrees on them. The assignment must
+            be complete; the factor does not fall back to any other source.
 
         Returns
         -------
         torch.Tensor
-            Log-potential of shape ``(batch,)``.
+            Log-potential of shape ``(*leading,)``.
         """

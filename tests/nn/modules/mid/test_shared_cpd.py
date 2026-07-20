@@ -307,14 +307,14 @@ class TestInferenceWithPlate:
         eng = DeterministicInference(m, activate_before_propagation=False)
         B = 3
         out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4)})
-        assert out.params["g"]["probs"].shape == (B, 3)
+        assert out.probs["g"].shape == (B, 3)
 
     def test_deterministic_query_member_c1(self):
         m = self._make_model()
         eng = DeterministicInference(m, activate_before_propagation=False)
         B = 3
         out = eng.query(query=["c1"], evidence={"x": torch.randn(B, 4)})
-        assert out.params["c1"]["probs"].shape == (B, 1)
+        assert out.probs["c1"].shape == (B, 1)
 
     def test_deterministic_query_all_members(self):
         m = self._make_model()
@@ -322,8 +322,8 @@ class TestInferenceWithPlate:
         B = 3
         out = eng.query(query=["c1", "c2", "c3"], evidence={"x": torch.randn(B, 4)})
         for name in ["c1", "c2", "c3"]:
-            assert name in out.params
-            assert out.params[name]["probs"].shape == (B, 1)
+            assert name in out.variables
+            assert out.probs[name].shape == (B, 1)
 
     def test_ancestral_samples_plate(self):
         m = self._make_model()
@@ -346,8 +346,8 @@ class TestInferenceWithPlate:
         B = 2
         c1_obs = torch.ones(B, 1)
         out = eng.query(query=["c2", "c3"], evidence={"x": torch.randn(B, 4), "c1": c1_obs})
-        assert "c2" in out.params
-        assert "c3" in out.params
+        assert "c2" in out.variables
+        assert "c3" in out.variables
 
     def test_whole_plate_evidence_skips_cpd(self):
         m = self._make_model()
@@ -356,7 +356,7 @@ class TestInferenceWithPlate:
         g_obs = torch.rand(B, 3)
         out = eng.query(query=[], evidence={"x": torch.randn(B, 4), "g": g_obs})
         # g is evidence; no params for it
-        assert "g" not in out.params
+        assert "g" not in out.variables
 
 
 # ===========================================================================

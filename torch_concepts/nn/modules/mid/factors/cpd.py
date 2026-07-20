@@ -5,7 +5,7 @@ ParametricCPD — Conditional distribution parameterised by a neural network.
 from __future__ import annotations
 
 import copy
-from typing import Callable, Dict, List, Mapping, Optional, Union
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -350,15 +350,23 @@ class ParametricCPD(ParametricFactor):
             result[pname] = out
         return result
 
-    def root_params(self, batch_size: int) -> Dict[str, torch.Tensor]:
-        """Root (parent-less) params broadcast to a batch.
+    def root_params(
+        self, leading: Union[int, torch.Size, Tuple[int, ...]]
+    ) -> Dict[str, torch.Tensor]:
+        """Root (parent-less) params broadcast over the leading dimensions.
 
-        A root CPD's parametrization produces a single batch-less prior; this runs
-        it and expands each parameter to ``(batch_size, *param_shape)`` so the
-        engine doesn't have to. Only meaningful for root CPDs.
+        A root CPD's parametrization produces a single batch-less prior; this
+        runs it and expands each parameter to ``(*leading, *param_shape)`` so the
+        engine doesn't have to. ``leading`` may be a plain batch size or any
+        leading shape, e.g. ``(batch1, batch2)``. Only meaningful for root CPDs.
+
+        The expansion is a broadcast view, not a copy.
         """
+        if isinstance(leading, int):
+            leading = (leading,)
+        leading = tuple(leading)
         return {
-            key: value.unsqueeze(0).expand(batch_size, *value.shape)
+            key: value.expand(*leading, *value.shape)
             for key, value in self(parent_values={}).items()
         }
 
@@ -384,7 +392,8 @@ class ParametricCPD(ParametricFactor):
         is scored against the distribution built from its parents' values, all
         taken from ``assignment`` (keyed by ``Variable``).
         """
-        from ..inference.utils import build_distribution  # local: avoid import cycle
+        # local imports: avoid an import cycle with the inference package
+        from ..inference.utils import build_distribution, leading_shape
 
         values: Dict[str, torch.Tensor] = {var.name: val for var, val in assignment.items()}
         child_value: Optional[torch.Tensor] = values.get(self.variable.name)
@@ -394,11 +403,14 @@ class ParametricCPD(ParametricFactor):
                 f"the child variable {self.variable.name!r} in the assignment."
             )
 
-        B = child_value.shape[0]
-        params = self.root_params(B) if self.is_root else self(parent_values=values)
+        leading = leading_shape(
+            self.variable.shape, self.variable.size, child_value,
+            f"ParametricCPD({self.variable.name!r}).log_potential",
+        )
+        params = self.root_params(leading) if self.is_root else self(parent_values=values)
         d = build_distribution(self.variable, params)
         param_dtype = next(iter(params.values())).dtype
-        child_flat = child_value.reshape(B, self.variable.size).to(param_dtype)
+        child_flat = child_value.reshape(*leading, self.variable.size).to(param_dtype)
         return d.log_prob(child_flat)
 
     # ---- member addressing (delegates to Variable; kept for back-compat) -----

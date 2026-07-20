@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import torch
 from sklearn.metrics import accuracy_score
 from torch.distributions import Bernoulli, OneHotCategorical
@@ -30,8 +32,8 @@ def main():
     # Variable setup
     input_var = EmbeddingVariable("input", distribution=Delta, size=x_train.shape[1])
     latent_var = EmbeddingVariable("latent", distribution=Delta, size=latent_dims)
-    embs = EmbeddingVariable('embs', distribution=Delta, shape=(2, emb_dims))
-    concepts = ConceptVariable('concepts', distribution=Bernoulli, size=2)
+    embs = EmbeddingVariable(['emb1', 'emb2'], distribution=Delta, shape=(1, emb_dims))
+    concepts = ConceptVariable(['c1', 'c2'], distribution=Bernoulli)
     tasks = ConceptVariable("xor", distribution=Bernoulli)
 
     layers = {
@@ -44,13 +46,12 @@ def main():
         ),
         # embedding encoder: (batch, latent_dims) -> (batch, n_concepts, embedding_size)
         "emb_encoder": pyc.nn.Sequential(
-            torch.nn.Linear(latent_dims, 2 * emb_dims),
-            torch.nn.Unflatten(unflattened_size=(2, emb_dims), dim=1),
+            torch.nn.Linear(latent_dims, emb_dims),
+            torch.nn.Unflatten(unflattened_size=(1, emb_dims), dim=1),
         ),
         # concept encoder: (batch, n_concepts, embedding_size) -> (batch, n_concepts)
         "concept_encoder": pyc.nn.Sequential(
             LinearEmbeddingToConcept(in_embeddings=emb_dims, out_concepts=1),
-            torch.nn.Sigmoid(),
             torch.nn.Flatten()
         ),
         # predictor: (batch, n_concepts) + (batch, n_concepts, embedding_size) -> (batch, n_tasks)
@@ -62,30 +63,46 @@ def main():
                 in_embeddings=emb_dims,
                 out_concepts=1,
             ),
-            torch.nn.Sigmoid(),
-        ),
+        )
     }
-
+    
     # ParametricCPD setup
     input_cpd = ParametricCPD(input_var, parametrization=LearnablePrior(input_var.size), parents=[])
     backbone = ParametricCPD(latent_var, parametrization=layers['backbone'], parents=[input_var])
     emb_encoder = ParametricCPD(embs, parametrization=layers['emb_encoder'], parents=[latent_var])
-    c_encoder = ParametricCPD(concepts, parametrization=layers['concept_encoder'], parents=[embs])
-    y_predictor = ParametricCPD(tasks, parametrization=layers['task_predictor'], parents=[concepts, embs])
+    c1_encoder = ParametricCPD(
+        concepts[0], 
+        parametrization={'logits': layers['concept_encoder']}, 
+        parents=[embs[0]]
+    )
+    c2_encoder = ParametricCPD(
+        concepts[1], 
+        parametrization={'logits': deepcopy(layers['concept_encoder'])}, 
+        parents=[embs[1]]
+    )
+    y_predictor = ParametricCPD(
+        tasks, 
+        parametrization={'logits': layers['task_predictor']}, 
+        parents=[*concepts, *embs], 
+        aggregate=lambda concepts, embeddings: {
+            'concepts': torch.cat(list(concepts.values()), dim=-1), 
+            'embeddings': torch.cat(list(embeddings.values()), dim=1)
+        }
+    )
 
     # ProbabilisticModel Initialization
     concept_model = BayesianNetwork(
-        variables=[input_var, latent_var, embs, concepts, tasks], 
-        factors=[input_cpd, backbone, emb_encoder, c_encoder, y_predictor]
+        variables=[input_var, latent_var, *embs, *concepts, tasks], 
+        factors=[input_cpd, backbone, *emb_encoder, c1_encoder, c2_encoder, y_predictor]
     )
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model)
+    inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
     evidence = {'input': x_train}
-    query_concepts = {"concepts": c_train, "xor": y_train}
+    query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
 
     optimizer = torch.optim.AdamW(concept_model.parameters(), lr=0.01)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     concept_model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -95,8 +112,8 @@ def main():
             query = query_concepts,
             evidence = evidence
         )
-        c_pred = cy_pred.params['concepts']['probs']
-        y_pred = cy_pred.params['xor']['probs']
+        c_pred = torch.cat([cy_pred.logits['c1'], cy_pred.logits['c2']], dim=1)
+        y_pred = cy_pred.logits['xor']
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
@@ -107,8 +124,8 @@ def main():
         optimizer.step()
 
         if epoch % 100 == 0:
-            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.5)
-            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.5)
+            task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
+            concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
 
     # print("=== Interventions ===")

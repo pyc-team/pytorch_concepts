@@ -88,10 +88,10 @@ def main():
     # 1) Equivalence: plate members == N independent CPDs with the same weights.
     runs["n"] = 0
     shared_out = shared_eng.query(NAMES, evidence={"embs": embs_value})
-    shared_probs = torch.cat([shared_out.params[n]["probs"] for n in NAMES], dim=1)  # (B, N)
+    shared_probs = shared_out.probs[list(NAMES)]  # (B, N)
 
     indiv_out = indiv_eng.query(NAMES, evidence={f"e{i}": embs_value[:, i, :] for i in range(N)})
-    indiv_probs = torch.cat([indiv_out.params[n]["probs"] for n in NAMES], dim=1)    # (B, N)
+    indiv_probs = indiv_out.probs[list(NAMES)]    # (B, N)
 
     print(f"shared {tuple(shared_probs.shape)} vs individual {tuple(indiv_probs.shape)}")
     assert torch.allclose(shared_probs, indiv_probs, atol=1e-6), "shared != individual"
@@ -101,8 +101,8 @@ def main():
     assert runs["n"] == 1, runs["n"]
 
     # 3) Member params are views into one stacked tensor (no memory duplication).
-    same_storage = shared_out.params["c0"]["probs"].untyped_storage().data_ptr() == \
-        shared_out.params["c1"]["probs"].untyped_storage().data_ptr()
+    same_storage = shared_out.probs["c0"].untyped_storage().data_ptr() == \
+        shared_out.probs["c1"].untyped_storage().data_ptr()
     print(f"member params share storage (views): {same_storage}")
     assert same_storage
 
@@ -114,12 +114,12 @@ def main():
     # 5) Individual addressing: query a single member, with the rest optionally observed.
     runs["n"] = 0
     one = shared_eng.query(["c0"], evidence={"embs": embs_value})
-    print(f"query only c0 -> keys {sorted(one.params)}, encoder runs {runs['n']}")
-    assert set(one.params) == {"c0"} and runs["n"] == 1
+    print(f"query only c0 -> labels {one.probs.annotation.labels}, encoder runs {runs['n']}")
+    assert set(one.probs.annotation.labels) == {"c0"} and runs["n"] == 1
 
     others = {"c1": torch.ones(B, 1), "c2": torch.zeros(B, 1), "c3": torch.ones(B, 1)}
     partial = shared_eng.query(["c0"], evidence={"embs": embs_value, **others})
-    assert tuple(partial.params["c0"]["probs"].shape) == (B, 1)
+    assert tuple(partial.probs["c0"].shape) == (B, 1)
     print("partial evidence (c0 queried, c1..c3 observed): OK")
 
     # 6) A different backend works unchanged.
