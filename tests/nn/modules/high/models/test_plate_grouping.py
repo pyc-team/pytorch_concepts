@@ -13,10 +13,11 @@ two concrete models. They cover every layout the grouping can produce:
 
 and every ``plate`` preference (``None`` auto, ``True`` force, ``False`` forbid).
 
-The load-bearing correctness check is that each queried concept/task returns
-``logits`` of shape ``(batch, cardinality)`` — a wrong member slice, wrong
-grouping, or scrambled concept/embedding pairing shows up as a wrong per-name
-shape or a build/forward failure.
+The load-bearing correctness check is that each queried concept/task is
+accessible by name on ``out.logits`` (an ``AnnotatedTensor`` carrying the concept
+axis) at shape ``(batch, cardinality)`` — a wrong member slice, wrong grouping, or
+scrambled concept/embedding pairing shows up as a wrong per-name shape or a
+build/forward failure.
 """
 import pytest
 import torch
@@ -151,20 +152,18 @@ def test_forward_shapes(kind, case, plate):
 
     query = list(ann.labels)                     # all concepts + task
     x = torch.randn(BATCH, INPUT_SIZE)
-    out = m(query=query, input=x)
+    lg = m(query=query, input=x).logits          # AnnotatedTensor (batch, sum cards)
 
     total = 0
     for name in query:
         card = ann.concept(name).cardinality
-        assert name in out.params, f"{name} missing from params"
-        logits = out.params[name]['logits']
-        assert logits.shape == (BATCH, card), (
-            f"{kind}/{case}/plate={plate}: {name} logits {tuple(logits.shape)} != {(BATCH, card)}"
+        per = lg[name]                           # name-based access via the concept axis
+        assert per.shape == (BATCH, card), (
+            f"{kind}/{case}/plate={plate}: {name} logits {tuple(per.shape)} != {(BATCH, card)}"
         )
         total += card
-    # Concatenated width matches the sum of cardinalities.
-    concat = torch.cat([out.params[n]['logits'] for n in query], dim=1)
-    assert concat.shape == (BATCH, total)
+    # Full logits width matches the sum of cardinalities.
+    assert lg.shape == (BATCH, total)
 
 
 # ===========================================================================
@@ -182,7 +181,7 @@ def test_gradients_flow(kind, case, plate):
     query = list(ann.labels)
     x = torch.randn(BATCH, INPUT_SIZE)
     out = m(query=query, input=x)
-    loss = torch.cat([out.params[n]['logits'] for n in query], dim=1).sum()
+    loss = out.logits.sum()
     loss.backward()
 
     grads = [p.grad for p in m.parameters() if p.requires_grad]
@@ -204,10 +203,10 @@ def test_interleaved_types_forward(kind, plate):
     # reordered relative to the annotation. Each concept must still come back at
     # its own cardinality.
     x = torch.randn(BATCH, INPUT_SIZE)
-    out = m(query=['b0', 'k0', 'b1', 'k1', 't'], input=x)
+    lg = m(query=['b0', 'k0', 'b1', 'k1', 't'], input=x).logits
     for name in ['b0', 'k0', 'b1', 'k1', 't']:
         card = ann.concept(name).cardinality
-        assert out.params[name]['logits'].shape == (BATCH, card)
+        assert lg[name].shape == (BATCH, card)
 
 
 # ===========================================================================
@@ -230,7 +229,7 @@ def test_overfit_fixed_batch(kind):
     for _ in range(200):
         opt.zero_grad()
         out = m(query=query, input=x)
-        pred = torch.cat([out.params[n]['logits'] for n in query], dim=1)
+        pred = out.logits
         loss = nn.functional.mse_loss(pred, target)
         loss.backward()
         opt.step()

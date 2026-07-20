@@ -240,6 +240,23 @@ class BaseLearner(pl.LightningModule):
         """List of concept variable names (plate names or individual concepts)."""
         return [var.name for var in self.pgm.variables.values() if var.variable_type == 'concept']
 
+    def default_query(self, c):
+        """Default query for a training/eval step: observe **every** concept,
+        teacher-forced to its ground-truth value (via :meth:`build_query`).
+
+        This is the full-observation query the standard step uses. Override in a
+        learner that should observe only a subset of concepts (or leave them
+        latent) — e.g. a task-only learner.
+        """
+        return self.build_query(c)
+
+    def default_evidence(self, inputs):
+        """Default evidence for a training/eval step: the raw input only
+        (``{"input": inputs["x"]}``).
+
+        Override to supply additional observed (non-concept) variables.
+        """
+        return {"input": inputs["x"]}
 
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
@@ -266,12 +283,11 @@ class BaseLearner(pl.LightningModule):
         #                                         transforms)
 
         # TODO: add option to semi-supervise a subset of concepts?
-        # TODO: handle backbone kwargs when present
 
         # --- Model forward ---
-        # Observe ALL concepts. Evidence is only the raw input var.
-        query = self.build_query(c)
-        out = self.forward(query=query, evidence={"input": inputs['x']})
+        # Defaults: observe all concepts, pass the raw input as evidence.
+        query = self.default_query(c)
+        out = self.forward(query=query, evidence=self.default_evidence(inputs))
 
         # Attach target to the output (prepare_target handles slicing for
         # models like BlackBoxTaskOnly that predict a subset of concepts).
@@ -292,13 +308,9 @@ class BaseLearner(pl.LightningModule):
                 # ConceptLoss-style: consumes the ModelOutput (reads out.params).
                 loss = self.loss(out)
             else:
-                # Plain loss(logits, target), e.g. BCEWithLogitsLoss. ``out.logits``
-                # already spans the queried concepts in query order, so it lines up
-                # column-for-column with build_query's per-variable tensors
-                # concatenated the same way (whose values are the one-hot-expanded
-                # ground truth).
-                target = torch.cat([query[v] for v in query], dim=-1)
-                loss = self.loss(out.logits, target)
+                # Plain loss(logits, target), e.g. BCEWithLogitsLoss.
+                raise NotImplementedError("Loss functions that do not take ModelOutput " \
+                "are not yet supported. Please use the ConceptLoss class.")
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---
