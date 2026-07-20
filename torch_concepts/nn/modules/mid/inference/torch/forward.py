@@ -220,10 +220,16 @@ class ForwardInference(TorchBaseInference, ABC):
         return self._temperature
 
     def temperature_step(self) -> None:
-        """Advance the temperature schedule (no-op for deterministic engines)."""
+        """Advance the temperature schedule (no-op for deterministic engines).
+
+        Rebinds the ``_temperature`` buffer to a fresh scalar rather than
+        filling it in place.
+        """
         if self.is_stochastic and self.training:
             self._step += 1
-            self._temperature.fill_(float(self._schedule(self._step)))
+            self._temperature = self._temperature.new_full(
+                (), float(self._schedule(self._step))
+            )
 
     # ------------------------------------------------------------------
     # Per-variable and per-level prediction
