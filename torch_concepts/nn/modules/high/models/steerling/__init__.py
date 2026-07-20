@@ -33,12 +33,14 @@ from .steerling_configs import (
 )
 from .steerling_low import SteerlingLowLevelModel
 from .steerling import SteerlingModel
+from .steerling_low_proto import SteerlingLowLevelModelPrototypes
 
 __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
     "top_concepts",
     "SteerlingLowLevelModel",
+    "SteerlingLowLevelModelPrototypes",
     # out-of-the-box model
     "SteerlingModel",
 ]
