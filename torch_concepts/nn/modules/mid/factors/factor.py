@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, List, Set, Tuple, Union
+from typing import Callable, Dict, Mapping, Optional, List, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
-from .variable import Variable
+from ..variable import Variable
 from ...low.lazy import LazyConstructor
 
 
@@ -26,12 +26,9 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Concatenate parent values along the last dim, preserving their shape.
 
     No flattening or reshaping is performed: every parent value keeps its full
-    event shape and the tensors are concatenated along ``dim=-1``. This
-    deliberately raises when the values have mismatched non-concatenation
-    dimensions (e.g. a matrix-valued parent alongside a vector-valued one) —
-    such combinations are ambiguous and must be resolved with a custom
-    ``aggregate``. Values are cast to floating point so discrete parents can
-    feed float layers, but their shape is left untouched.
+    event shape and the tensors are concatenated along ``dim=-1``. 
+    This deliberately raises when the values have mismatched non-concatenation
+    dimensions (e.g. a matrix-valued parent alongside a vector-valued one).
     """
     vals = [
         v.float() if not v.is_floating_point() else v
@@ -68,6 +65,13 @@ class ParametricFactor(nn.Module, ABC):
     Concrete factor types (directed: :class:`ParametricCPD`; undirected:
     ``ParametricPotential``) must subclass this and implement :meth:`forward`.
 
+    **Subclass contract.** Before calling ``super().__init__``, a subclass must
+    set ``self.inputs``: the ordered list of variables the aggregation machinery
+    feeds to the parametrization modules. For a :class:`ParametricCPD` these are
+    the CPD's parents; for a ``ParametricPotential`` they are its ``scope``
+    (an undirected factor has no parents, hence the neutral name). This is the
+    only attribute the base class reads off the subclass.
+
     Subclasses call ``super().__init__(parametrization, aggregate)`` to store:
 
     - ``self.parametrization`` — an ``nn.ModuleDict`` mapping parameter names
@@ -78,22 +82,42 @@ class ParametricFactor(nn.Module, ABC):
       construction time. Standard modules get :meth:`_standard_aggregate`;
       PyC modules get :meth:`_pyc_aggregate`; user-supplied callables override.
 
-    ``aggregate`` accepts:
+    Parameters
+    ----------
+    parametrization : dict[str, nn.Module]
+        Maps each parameter name to the ``nn.Module`` producing it. Normalised
+        into an ``nn.ModuleDict``; an already-built :class:`LazyConstructor` is
+        unwrapped to its concrete module. Concrete subclasses resolve any
+        *unbuilt* lazy entries before calling ``super().__init__``, since the
+        sizes those need come from the factor's own variables.
+    aggregate : callable or dict[str, callable], optional
+        How the input values are combined into each parameter module's input.
 
-    - ``None`` — auto-select :meth:`_standard_aggregate` or :meth:`_pyc_aggregate`
-      per module based on its ``forward`` signature.
-    - A single ``Callable`` — use it for every parameter module.
-    - A ``Dict[str, Callable]`` — use the keyed callable for the matching
-      parameter module; auto-select the default for any missing key.
+        - ``None`` (the default) — auto-select :meth:`_standard_aggregate` or
+          :meth:`_pyc_aggregate` per module, from its ``forward`` signature.
+        - a single callable — used for every parameter module.
+        - a dict — the keyed callable is used for the matching parameter
+          module; any missing key falls back to the auto-selected default.
 
-    A user-supplied aggregate is called with a signature that matches the
-    parameter module's kind: for a **PyC** module it receives the parent values
-    already split by type — ``agg(concepts, embeddings)``, each a
-    ``Dict[Variable, Tensor]`` — and must return the ``{'concepts': ...,
-    'embeddings': ...}`` dict the module expects; for a **standard** module it
-    receives the single ``agg(inputs)`` dict and returns one concatenated
-    tensor. See :meth:`_resolve_aggregator`.
+        A user-supplied aggregate is called with a signature matching the
+        parameter module's kind: for a **PyC** module it receives the parent
+        values already split by type — ``agg(concepts, embeddings)``, each a
+        ``Dict[Variable, Tensor]`` — and must return the ``{'concepts': ...,
+        'embeddings': ...}`` dict the module expects; for a **standard** module
+        it receives the single ``agg(inputs)`` dict and returns one concatenated
+        tensor. See :meth:`_resolve_aggregator`.
+
+    Raises
+    ------
+    TypeError
+        If a subclass reaches ``super().__init__`` without having set
+        ``self.inputs``, or if ``aggregate`` is neither ``None``, a callable,
+        nor a dict whose values are all callables.
     """
+
+    # Ordered aggregation inputs, set by every concrete subclass before
+    # ``super().__init__`` (see the class docstring).
+    inputs: List[Variable]
 
     def __init__(
         self,
@@ -106,6 +130,12 @@ class ParametricFactor(nn.Module, ABC):
         ] = None,
     ):
         super().__init__()
+
+        if not hasattr(self, "inputs"):
+            raise TypeError(
+                f"{type(self).__name__}: subclasses must set `self.inputs` (the "
+                "ordered aggregation inputs) before calling super().__init__()."
+            )
 
         parametrization = self._initialize_parametrization(parametrization)
 
@@ -163,14 +193,17 @@ class ParametricFactor(nn.Module, ABC):
             modules[pname] = module
         return nn.ModuleDict(modules)
 
+    # ----------- Signature-based aggregation selection -----------
+
     def _is_pyc(self, pname: str) -> bool:
         """Whether the parameter module follows the PyC ``concepts``/``embeddings``
-        calling convention (vs. a standard single-tensor module)."""
+        calling convention."""
         return self._module_signatures[pname] in _PYC_PARAM_SETS
 
     # For entries not covered by the user, pick _pyc_aggregate or
     # _standard_aggregate based on the cached module signature.
     def _select_default(self, pname: str) -> Callable:
+        """Select the default aggregation for a parameter module."""
         return self._pyc_aggregate if self._is_pyc(pname) else self._standard_aggregate
 
     def _resolve_aggregator(
@@ -178,17 +211,7 @@ class ParametricFactor(nn.Module, ABC):
         pname: str,
         user_aggregate: Optional[Callable],
     ) -> Callable:
-        """Adapt an aggregate to the uniform ``inputs -> result`` call site.
-
-        ``None`` selects the auto-chosen default (:meth:`_select_default`). A
-        user-supplied aggregate is dispatched by the parameter module's kind:
-
-        - **PyC** module — called as ``agg(concepts, embeddings)`` over the
-          type-split parent dicts (each ``Dict[Variable, Tensor]``); it returns
-          the ``{'concepts': ..., 'embeddings': ...}`` dict the module expects.
-        - **standard** module — called as ``agg(inputs)`` over the single
-          parent dict; it returns one concatenated tensor.
-        """
+        """Adapt an aggregate to the uniform ``inputs -> result`` call site."""
         if user_aggregate is None:
             return self._select_default(pname)
         if self._is_pyc(pname):
@@ -204,20 +227,41 @@ class ParametricFactor(nn.Module, ABC):
     ) -> torch.Tensor:
         """Default aggregation for standard torch modules.
 
-        Concatenates the parent values along the last dim without reshaping
-        (see :func:`_cat_parents`).
+        Concatenates the parent values along the last dim without reshaping.
         """
         return _cat_parents(inputs)
+
+    def resolve_value(
+        self, v: Variable, values: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Tensor for input ``v`` from a name-keyed ``values`` mapping.
+
+        Looked up by ``v``'s exact name first (so a caller may key by the member
+        handle directly), then by its owning plate's name, in which case the
+        member's column span is sliced out (a view, no copy). A superset of keys
+        is fine — unrelated entries are ignored.
+        """
+        value = values.get(v.name)
+        if value is not None:
+            return value
+        owner = v.plate
+        value = values.get(owner.name)
+        if value is not None:
+            return value[..., owner.column_of(v.name)]
+        raise KeyError(
+            f"{type(self).__name__}({self.name!r}): no value for input "
+            f"{v.name!r} (owner {owner.name!r}) in keys {sorted(values)}."
+        )
 
     def _split_by_type(
         self,
         inputs: Dict[Variable, torch.Tensor],
     ) -> Tuple[Dict[Variable, torch.Tensor], Dict[Variable, torch.Tensor]]:
-        """Partition parent values into ``(concepts, embeddings)`` dicts by
-        variable type, preserving parent order."""
+        """Partition input values into ``(concepts, embeddings)`` dicts by
+        variable type, preserving the declared input order."""
         concepts: Dict[Variable, torch.Tensor] = {}
         embeddings: Dict[Variable, torch.Tensor] = {}
-        for p in self.parents:
+        for p in self.inputs:
             if p not in inputs:
                 continue
             if p.variable_type == "concept":
@@ -226,7 +270,7 @@ class ParametricFactor(nn.Module, ABC):
                 embeddings[p] = inputs[p]
             else:
                 raise ValueError(
-                    f"ParametricCPD({self.variable.name!r}): parent "
+                    f"{type(self).__name__}({self.name!r}): input "
                     f"{p.name!r} has invalid type {p.variable_type!r}, "
                     "expected 'embedding' or 'concept'."
                 )
@@ -251,6 +295,8 @@ class ParametricFactor(nn.Module, ABC):
             out["embeddings"] = _cat_parents(embeddings)
         return out
 
+    # ----------- Abstract methods -----------
+
     @abstractmethod
     def forward(
         self,
@@ -262,6 +308,54 @@ class ParametricFactor(nn.Module, ABC):
 
         - :class:`ParametricCPD` accepts ``parent_values`` and returns a
           named distribution-parameter dict (e.g. ``{"probs": ...}``).
-        - A future ``ParametricPotential`` will accept clique variable values
-          and return a log-potential tensor.
+        - :class:`ParametricPotential` accepts clique variable values
+          and returns a named energy-parameter dict.
+        """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Stable key under which a :class:`ProbabilisticModel` registers this factor.
+
+        A :class:`ParametricCPD` uses its child variable's name (so a
+        :class:`BayesianNetwork`'s ``factors`` keeps its historical
+        ``{child_name: cpd}`` keying); a :class:`ParametricPotential` uses an
+        explicit or scope-derived name.
+        """
+
+    @property
+    @abstractmethod
+    def scope(self) -> List[Variable]:
+        """The variables this factor touches (its factor-graph edges).
+
+        For a directed CPD this is ``[child, *parents]``; for an undirected
+        potential it is the clique of variables the energy ranges over —
+        including any that happen to be observed, since a potential has no
+        separate notion of a conditioning input.
+        """
+
+    @abstractmethod
+    def log_potential(
+        self,
+        assignment: Dict["Variable", torch.Tensor],
+    ) -> torch.Tensor:
+        """Log score ``log φ_f`` of a joint assignment over :attr:`scope`.
+
+        - :class:`ParametricCPD` returns ``log p(child | parents)`` evaluated at
+          the assignment.
+        - :class:`ParametricPotential` returns ``-E(scope)``.
+
+        Parameters
+        ----------
+        assignment : dict[Variable, Tensor]
+            Value ``(*leading, *var.shape)`` for **every** variable in
+            :attr:`scope` — free ones at the value being scored, observed ones
+            at their evidence. Any number of leading (batch-like) dimensions is
+            allowed, as long as every entry agrees on them. The assignment must
+            be complete; the factor does not fall back to any other source.
+
+        Returns
+        -------
+        torch.Tensor
+            Log-potential of shape ``(*leading,)``.
         """

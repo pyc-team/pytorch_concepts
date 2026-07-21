@@ -93,8 +93,8 @@ def main():
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
             out = model(query=query, input=batch['inputs']['x'])
-            c_pred = torch.cat([out.params[n]['logits'] for n in concept_names], dim=1)
-            y_pred = torch.cat([out.params[n]['logits'] for n in task_names], dim=1)
+            c_pred = out.logits[list(concept_names)]
+            y_pred = out.logits[list(task_names)]
 
             c = batch['concepts']['c']
             c_true = c[:, :n_concepts]

@@ -1,6 +1,6 @@
 """Scalability of the concept module: shared vs individual CPDs (inference only).
 
-Measures the wall-clock time to run ONE forward pass (a :class:`ForwardInference`
+Measures the wall-clock time to run ONE forward pass (a :class:`DeterministicInference`
 ``query``) over an entire random dataset — one epoch, all batches, **no
 backward** — as the number of concepts ``N`` grows, comparing two mid-level
 :class:`BayesianNetwork` formulations of the same CBM concept module:
@@ -41,7 +41,7 @@ from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
     BayesianNetwork,
-    ForwardInference,
+    DeterministicInference,
     LinearEmbeddingToConcept,
     LearnablePrior,
     Sequential,
@@ -111,7 +111,7 @@ def time_epoch(model: BayesianNetwork, query, make_evidence, x: torch.Tensor) ->
     excluded from timing.
     """
     model.to(DEVICE).eval()
-    engine = ForwardInference(model, mode="deterministic")
+    engine = DeterministicInference(model)
     with torch.no_grad():
         engine.query(query, evidence=make_evidence(x[:BATCH_SIZE]))  # warm-up (not timed)
         t0 = time.perf_counter()
