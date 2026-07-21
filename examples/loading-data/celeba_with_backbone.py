@@ -22,7 +22,7 @@ from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything, ImageBackbone
 from torch_concepts.data import CelebADataModule
-from torch_concepts.nn import MLP, ConceptBottleneckModel
+from torch_concepts.nn import MLP, ConceptBottleneckModel, ConceptLoss
 
 
 def main():
@@ -79,7 +79,7 @@ def main():
         latent_size=64,
 
         lightning=True,
-        loss=torch.nn.BCEWithLogitsLoss(),
+        loss=ConceptLoss(binary=torch.nn.BCEWithLogitsLoss()),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.01},
     )

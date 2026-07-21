@@ -18,6 +18,7 @@ from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, 
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn import MLP
+from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.annotations import Annotations
 
 
@@ -478,7 +479,7 @@ class TestLearnerIntegration(unittest.TestCase):
 
     def _make_model(self, lightning=True, with_loss=True, train_inference=None):
         """Helper to create model with optional loss."""
-        loss = nn.BCEWithLogitsLoss() if with_loss else None
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss()) if with_loss else None
         kwargs = {
             'lightning': lightning,
             'input_size': 8,

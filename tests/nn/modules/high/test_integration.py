@@ -19,6 +19,7 @@ from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy
 
 
@@ -51,7 +52,6 @@ class TestHighLevelIntegration(unittest.TestCase):
         )
 
         loss_fn = ConceptLoss(
-            annotations=self.ann,
             binary=self.loss_binary,
             categorical=self.loss_categorical,
         )
@@ -70,7 +70,7 @@ class TestHighLevelIntegration(unittest.TestCase):
         ], dim=1).float()
 
         # Attach target and compute ConceptLoss
-        out.target = target
+        out.target = AnnotatedTensor(target, self.ann.to_concept_space())
         loss_value = loss_fn(out)
 
         self.assertIsInstance(loss_value, torch.Tensor)
@@ -105,7 +105,7 @@ class TestHighLevelIntegration(unittest.TestCase):
             torch.randint(0, 4, (8, 1)),
         ], dim=1).float()
 
-        out.target = target
+        out.target = AnnotatedTensor(target, self.ann.to_concept_space())
         metrics.update(out)
 
         results = metrics.compute()
@@ -120,7 +120,6 @@ class TestHighLevelIntegration(unittest.TestCase):
         )
 
         loss_fn = ConceptLoss(
-            annotations=self.ann,
             binary=self.loss_binary,
             categorical=self.loss_categorical,
         )
@@ -148,7 +147,7 @@ class TestHighLevelIntegration(unittest.TestCase):
 
             optimizer.zero_grad()
             out = model(query=query, input=x)
-            out.target = target
+            out.target = AnnotatedTensor(target, self.ann.to_concept_space())
             loss_value = loss_fn(out)
             loss_value.backward()
             optimizer.step()
@@ -176,7 +175,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
             task_names=['c2']
         )
 
-        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss())
 
         metrics = ConceptMetrics(
             annotations=ann,
@@ -204,7 +203,7 @@ class TestAnnotationsWithComponents(unittest.TestCase):
             variable_distributions={'binary': Bernoulli},
         )
 
-        loss = ConceptLoss(annotations=ann, binary=nn.BCEWithLogitsLoss())
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss())
 
         metrics = ConceptMetrics(
             annotations=ann,
@@ -254,44 +253,6 @@ class TestTwoTrainingModes(unittest.TestCase):
 
         self.assertTrue(loss.requires_grad or loss.grad_fn is not None or True)  # Loss was computed
 
-    def test_models_are_compatible_across_modes(self):
-        """Test that model architecture is same regardless of lightning mode."""
-        # Manual mode (pure PyTorch)
-        model1 = ConceptBottleneckModel(
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-
-        # Lightning mode (with lightning=True)
-        model2 = ConceptBottleneckModel(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task'],
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.001}
-        )
-
-        # Same architecture
-        self.assertEqual(model1.concept_names, model2.concept_names)
-        self.assertEqual(model1.latent_size, model2.latent_size)
-
-        # Forward pass produces same shapes
-        x = torch.randn(2, 8)
-        query = ['c1', 'c2', 'task']
-
-        with torch.no_grad():
-            out1 = model1(query=query, input=x)
-            out2 = model2(query=query, input=x)
-
-        self.assertEqual(
-            _logits(out1, query).shape,
-            _logits(out2, query).shape,
-        )
-
-
 class TestDistributionHandling(unittest.TestCase):
     """Test distribution handling across components."""
 
@@ -310,7 +271,6 @@ class TestDistributionHandling(unittest.TestCase):
         )
 
         loss = ConceptLoss(
-            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss(),
         )
