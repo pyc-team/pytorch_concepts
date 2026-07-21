@@ -32,6 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .....annotations import Annotations
+from .....tensor import AnnotatedTensor
 from .....distributions import Delta
 from ...utils import with_training_mode
 from ...outputs import ModelOutput
@@ -672,19 +673,23 @@ class BaseModel(nn.Module, ABC):
         return query
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
-        """Prepare ground truth labels for loss/metrics.
+        """Prepare ground-truth labels for loss/metrics.
 
-        Override in subclasses that need to transform the target
-        (e.g. slice to task-only columns).
+        Returns the target as a concept-space :class:`AnnotatedTensor` (one column
+        per concept), so losses and metrics can align it to the predictions by
+        name. A target that already carries an annotation is returned unchanged.
+        Override in subclasses that predict a subset of concepts (e.g. task-only).
 
         Parameters
         ----------
         target : torch.Tensor
-            Raw ground truth labels from the batch.
+            Raw ground-truth labels from the batch.
 
         Returns
         -------
-        torch.Tensor
-            Transformed target tensor.
+        AnnotatedTensor or None
+            Concept-space annotated target.
         """
-        return target
+        if target is None or hasattr(target, 'annotation'):
+            return target
+        return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)

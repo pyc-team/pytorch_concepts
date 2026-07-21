@@ -21,7 +21,7 @@ from pytorch_lightning import Trainer
 
 from torch_concepts import ImageBackbone, seed_everything
 from torch_concepts.data import CelebADataModule
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
 
 
 def n_trainable(model):
@@ -36,7 +36,7 @@ def fit(backbone, dm):
         task_names=['Attractive'],
         backbone=backbone,  # latent_size inferred from backbone.out_features
         lightning=True,
-        loss=torch.nn.BCEWithLogitsLoss(),
+        loss=ConceptLoss(binary=torch.nn.BCEWithLogitsLoss()),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.01},
     )

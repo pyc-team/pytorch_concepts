@@ -5,7 +5,6 @@ from typing import List, Optional, Union
 from .....utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
-from ...loss import ConceptLoss
 from ...outputs import ModelOutput
 from .....tensor import AnnotatedTensor
 
@@ -142,7 +141,7 @@ class BlackBoxTaskOnly(BaseModel):
 
     Attributes:
         task_annotations (Annotations): Sub-annotation restricted to task
-            concepts only.  Use this to build ``ConceptLoss`` / ``ConceptMetrics``.
+            concepts only; used to size the linear head.
         task_concept_idx (List[int]): Concept-level column indices used to
             slice the ground-truth target tensor to match the task-only output.
 
@@ -161,9 +160,9 @@ class BlackBoxTaskOnly(BaseModel):
         **kwargs
     ) -> None:
         self.task_names = ensure_list(task_names)
-        
-        # Pre-compute task annotations before super().__init__ so that
-        # setup_metrics (called by BaseLearner.__init__) can use them.
+
+        # Task sub-annotation sizes the linear head; the concept-level indices
+        # slice the ground-truth target to match the task-only output.
         self.task_annotations = annotations.subset(self.task_names)
         self.task_concept_idx = [
             annotations.get_index(name)
@@ -176,20 +175,6 @@ class BlackBoxTaskOnly(BaseModel):
             lightning=lightning,
             **kwargs
         )
-
-        # Rebuild loss with task-only annotations so index slicing matches
-        # the task-only tensors produced by prepare_target.
-        if isinstance(getattr(self, 'loss', None), ConceptLoss):
-            task_ann = self.task_annotations
-            self.loss = ConceptLoss(
-                annotations=task_ann,
-                binary=self.loss.fn_collection.get('binary'),
-                categorical=self.loss.fn_collection.get('categorical'),
-                continuous=self.loss.fn_collection.get('continuous'),
-                binary_weights=self.loss._type_weights.get('binary'),
-                categorical_weights=self.loss._type_weights.get('categorical'),
-                continuous_weights=self.loss._type_weights.get('continuous'),
-            )
 
         # Logit-level output size from the task sub-annotation
         output_size = sum(self.task_annotations.cardinalities)
@@ -259,33 +244,33 @@ class BlackBoxTaskOnly(BaseModel):
         return out
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
-        """Slice target to task-only columns.
+        """Slice the target to task-only columns and annotate it in task
+        concept-space, matching the task-only output.
 
         Parameters
         ----------
         target : torch.Tensor
-            Full concept-level ground truth labels.
+            Full concept-level ground-truth labels.
 
         Returns
         -------
-        torch.Tensor
-            Target sliced to task columns only.
+        AnnotatedTensor
+            Task-only concept-space annotated target.
         """
-        return target[:, self.task_concept_idx]
+        sliced = target[:, self.task_concept_idx].as_subclass(torch.Tensor)
+        return AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.
 
-        The base ``setup_metrics`` clones the original ``ConceptMetrics``
-        which was constructed with the *full* concept annotations.  Because
-        ``BlackBoxTaskOnly`` outputs only task logits, the internal index
-        mappings would be misaligned.  This override reconstructs the
-        metrics using ``task_annotations`` so that indices match the
-        task-only output.
+        The base ``setup_metrics`` clones the original ``ConceptMetrics``, which
+        was constructed against the *full* concept annotations and so has a
+        metric submodule for every concept. Because ``BlackBoxTaskOnly`` only
+        ever produces task logits, this override reconstructs the metrics
+        scoped to ``task_annotations`` so only task concepts are tracked.
         """
-        task_ann = self.task_annotations
         task_metrics = ConceptMetrics(
-            annotations=task_ann,
+            annotations=self.task_annotations,
             binary=metrics.fn_collection.get('binary'),
             categorical=metrics.fn_collection.get('categorical'),
             continuous=metrics.fn_collection.get('continuous'),

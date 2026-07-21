@@ -65,7 +65,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=nn.BCEWithLogitsLoss(),
         categorical=nn.CrossEntropyLoss(),
     )
@@ -80,7 +79,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
         binary_weights=[1.0, 0.5],
         categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
@@ -97,7 +95,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.05)],
         binary_weights=[1.0, 0.5],
         categorical=nn.CrossEntropyLoss(),   # single module, no extra weight

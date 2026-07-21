@@ -24,7 +24,7 @@ from pytorch_lightning import Trainer
 
 from torch_concepts import ImageBackbone, seed_everything
 from torch_concepts.data import CelebADataModule
-from torch_concepts.nn import ConceptBottleneckModel, MLP
+from torch_concepts.nn import ConceptBottleneckModel, MLP, ConceptLoss
 
 
 def main():
@@ -68,7 +68,7 @@ def main():
         backbone=MLP(backbone.out_features, 128), # embeddings are precomputed, backbone reduces to a simple latent encoder
         latent_size=128,  
         lightning=True,
-        loss=torch.nn.BCEWithLogitsLoss(),
+        loss=ConceptLoss(binary=torch.nn.BCEWithLogitsLoss()),
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.01},
     )

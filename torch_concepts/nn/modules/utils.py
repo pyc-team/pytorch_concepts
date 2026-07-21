@@ -173,11 +173,7 @@ def check_collection(annotations: Annotations,
     has_binary = len(groups['binary']['labels']) > 0
     has_categorical = len(groups['categorical']['labels']) > 0
     has_continuous = len(groups['continuous']['labels']) > 0
-    
-    # Raise error if continuous concepts are present
-    if has_continuous:
-        raise NotImplementedError("Continuous concepts not yet implemented.")
-    
+
     # Extract items from collection
     binary = collection.get('binary')
     categorical = collection.get('categorical')

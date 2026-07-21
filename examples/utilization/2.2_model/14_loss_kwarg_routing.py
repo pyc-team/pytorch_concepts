@@ -27,6 +27,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
 
@@ -129,7 +130,6 @@ def main():
     # Binary:      PlainBCE + EmbeddingReg + KitchenSinkReg
     # Categorical: CrossEntropyLoss + LatentReg
     loss_fn = ConceptLoss(
-        annotations=ann,
         binary=[
             PlainBCE(), 
             EmbeddingReg(scale=0.01), 
@@ -159,9 +159,9 @@ def main():
     # ── Manual forward + loss (no Lightning, just to inspect routing) ─
     model.train()
     out = model(input=x, query=['b1', 'b2', 'cat1', 'cat2'])
-    out.target = c
+    target = AnnotatedTensor(c, ann.to_concept_space(), axis=-1)
 
-    print(f"ModelOutput fields: logits={out.logits.shape}, target={out.target.shape}")
+    print(f"ModelOutput fields: logits={out.logits.shape}, target={target.shape}")
     print(f"  extra keys: {sorted(out.extra.keys())}")
     print(f"  embeddings shape: {out.extra['embeddings'].shape}")
     print(f"  latent shape: {out.extra['latent'].shape}")
@@ -169,7 +169,7 @@ def main():
 
     print("Computing loss (watch which keys each term receives):")
     print("-" * 60)
-    loss = loss_fn(out)
+    loss = loss_fn(out, target)
     print("-" * 60)
     print(f"\nTotal loss: {loss.item():.4f}")
 
