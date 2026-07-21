@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential
 from torch_concepts.nn.modules.mid.inference.utils import (
@@ -13,6 +13,9 @@ from torch_concepts.nn.modules.mid.inference.utils import (
     enumerable_cardinality,
 )
 from torch_concepts.nn.modules.low.priors import LearnablePrior
+from torch_concepts.nn.modules.low.lazy import LazyConstructor
+from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+from torch_concepts.nn.modules.low.encoders.linear import LinearEmbeddingToConcept
 
 
 def _bin(name):
@@ -131,6 +134,90 @@ class TestParametricPotential:
 
         interaction = E(1, 1) - E(1, 0) - E(0, 1) + E(0, 0)
         assert interaction.abs() > 1e-4
+
+
+class TestLazyConstructorPotential:
+    """LazyConstructor support in ParametricPotential (mirrors
+    TestLazyConstructorCPD in test_initialization.py)."""
+
+    def test_lazy_built_at_potential_construction(self):
+        a, b = _bin("a"), _bin("b")
+        lazy = LazyConstructor(LinearConceptToConcept)
+        pot = ParametricPotential(scope=[a, b], parametrization=lazy, name="phi")
+        module = pot.parametrization["energy"]
+        assert not (isinstance(module, LazyConstructor) and module.module is None), \
+            "LazyConstructor should be resolved after Potential construction"
+        assert isinstance(module, LinearConceptToConcept)
+
+    def test_lazy_sizes_from_scope(self):
+        """in_concepts is the summed size of the concept-typed scope variables;
+        out_concepts is always 1, regardless of the variables' own sizes."""
+        a = ConceptVariable("a", distribution=dist.Bernoulli, size=3)
+        b = ConceptVariable("b", distribution=dist.Bernoulli, size=5)
+        lazy = LazyConstructor(LinearConceptToConcept)
+        pot = ParametricPotential(scope=[a, b], parametrization=lazy, name="phi")
+        module = pot.parametrization["energy"]
+        assert module.predictor.in_features == 8  # 3 + 5
+        assert module.predictor.out_features == 1
+
+    def test_lazy_sizes_from_embedding_scope(self):
+        """in_embeddings is the summed size of the embedding-typed scope
+        variables, wired through LazyConstructor.build's PyTorch-standard
+        `in_features` alias."""
+        e1 = EmbeddingVariable("e1", distribution=dist.Normal, size=4)
+        e2 = EmbeddingVariable("e2", distribution=dist.Normal, size=6)
+        lazy = LazyConstructor(LinearEmbeddingToConcept)
+        pot = ParametricPotential(scope=[e1, e2], parametrization=lazy, name="phi")
+        module = pot.parametrization["energy"]
+        assert module.encoder.in_features == 10  # 4 + 6
+        assert module.encoder.out_features == 1
+
+    def test_lazy_potential_forward_works(self):
+        a, b = _bin("a"), _bin("b")
+        lazy = LazyConstructor(LinearConceptToConcept)
+        pot = ParametricPotential(scope=[a, b], parametrization=lazy, name="phi")
+        B = 5
+        out = pot(inputs={"a": torch.rand(B, 1), "b": torch.rand(B, 1)})
+        assert out.shape == (B,)
+
+    def test_lazy_potential_energy_and_log_potential_work(self):
+        a, b = _bin("a"), _bin("b")
+        lazy = LazyConstructor(LinearConceptToConcept)
+        pot = ParametricPotential(scope=[a, b], parametrization=lazy, name="phi")
+        av = torch.tensor([[1.0], [0.0]])
+        bv = torch.tensor([[0.0], [1.0]])
+        e = pot.energy({a: av, b: bv})
+        lp = pot.log_potential({a: av, b: bv})
+        assert e.shape == (2,)
+        assert torch.allclose(lp, -e)
+
+    def test_already_built_lazy_is_unwrapped(self):
+        a, b = _bin("a"), _bin("b")
+        lazy = LazyConstructor(LinearConceptToConcept)
+        lazy.build(out_concepts=1, in_concepts=2)
+        built_module = lazy.module
+        pot = ParametricPotential(scope=[a, b], parametrization=lazy, name="phi")
+        module = pot.parametrization["energy"]
+        assert not isinstance(module, LazyConstructor)
+        assert module is built_module
+
+    def test_lazy_dict_form_parametrization(self):
+        a, b = _bin("a"), _bin("b")
+        lazy = LazyConstructor(LinearConceptToConcept)
+        pot = ParametricPotential(
+            scope=[a, b], parametrization={"energy": lazy}, name="phi"
+        )
+        module = pot.parametrization["energy"]
+        assert isinstance(module, LinearConceptToConcept)
+        assert module.predictor.in_features == 2
+
+    def test_no_lazy_entries_is_a_fast_path_noop(self):
+        """_instantiate_lazy returns the very same dict object when nothing
+        needs building, skipping the sizing/build work entirely."""
+        params = {"energy": nn.Linear(2, 1)}
+        a, b = _bin("a"), _bin("b")
+        result = ParametricPotential._instantiate_lazy(params, [a, b])
+        assert result is params
 
 
 class TestCPDFactorInterface:

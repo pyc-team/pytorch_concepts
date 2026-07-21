@@ -1,16 +1,4 @@
-"""
-MarkovNetwork: an undirected probabilistic graphical model (Markov random field).
-
-The undirected special case of :class:`ProbabilisticModel`: a list of
-:class:`Variable`s wired to a list of undirected :class:`ParametricPotential`
-factors. The joint is ``p(x) ∝ exp(-Σ_f E_f(scope_f ; conditioning_f))``. There
-is no topological order and no per-variable "one factor" constraint — a variable
-may appear in any number of potentials.
-
-Use :class:`BayesianNetwork` for directed models and a plain
-:class:`ProbabilisticModel` for mixed (partially-directed / chain) graphs.
-Inference is via :class:`BeliefPropagation`.
-"""
+"""MarkovNetwork: an undirected probabilistic graphical model (Markov random field)."""
 
 from __future__ import annotations
 
@@ -23,6 +11,16 @@ from ..variable import Variable
 
 class MarkovNetwork(ProbabilisticModel):
     """Undirected graphical model (Markov random field) over energy-based potentials.
+
+    The undirected special case of :class:`ProbabilisticModel`: a list of
+    :class:`Variable`s wired to a list of undirected :class:`ParametricPotential`
+    factors. The joint is ``p(x) ∝ exp(-Σ_f E_f(scope_f ; conditioning_f))``. There
+    is no topological order and no per-variable "one factor" constraint — a variable
+    may appear in any number of potentials.
+
+    Use :class:`BayesianNetwork` for directed models and a plain
+    :class:`ProbabilisticModel` for mixed (partially-directed / chain) graphs.
+    Inference is via :class:`BeliefPropagation`.
 
     Parameters
     ----------

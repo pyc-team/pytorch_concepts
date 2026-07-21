@@ -201,10 +201,9 @@ class ProbabilisticModel(nn.Module, ABC):
     def _index_members(self) -> None:
         """Map every queryable name to its owning variable.
 
-        ``_addressable[name]`` -> the variable that produces ``name``. A plate
-        contributes its own name plus one entry per member (all pointing to the
-        plate); an ordinary variable contributes just itself. Column selection
-        lives on the variable (``Variable.select``).
+        A plate contributes its own name plus one entry per member 
+        (all pointing to the plate); an ordinary variable contributes just itself. 
+        Column selection lives on the variable (``Variable.select``).
         """
         self._addressable: Dict[str, Variable] = {}
         for var in self.variables.values():

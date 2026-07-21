@@ -1,5 +1,5 @@
 """
-BayesianNetwork: a directed factor graph wiring a list of ``Variable``s to a list of ``ParametricCPD``s.
+BayesianNetwork: a directed, acyclic graph wiring a list of ``Variable``s to a list of ``ParametricCPD``s.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from .probabilistic_model import ProbabilisticModel
 from ..variable import Variable
 
 class BayesianNetwork(ProbabilisticModel):
-    """Directed factor graph wiring a list of ``Variable``s to a list of
+    """Directed, acyclic graph wiring a list of ``Variable``s to a list of
     ``ParametricCPD``s.
 
     A :class:`ProbabilisticModel`: whose underlying graph is a directed acyclic graph (DAG). 
