@@ -298,24 +298,14 @@ class ParametricCPD(ParametricFactor):
         parent_values: Optional[Mapping[str, torch.Tensor]] = None,
         **layer_kwargs,
     ):
-        """Compute the distribution parameters by processing the parent values through the
-        nn.Module(s).
+        """Compute the conditional distribution parameters by processing 
+        the parent values through the nn.Module(s).
 
         Root CPDs are called with no parent values: the parametrization module
         is called with no arguments and its output is returned under the named
-        parameter dict for ``self.variable.distribution`` (typically a
-        :class:`~torch_concepts.nn.LearnablePrior`).
+        parameter dict. Non-root CPDs receive a ``parent_values`` dict. 
 
-        Non-root CPDs receive a ``parent_values`` dict. Each parent is resolved
-        by :meth:`~ParametricFactor.resolve_value`: keyed either by its exact name
-        or by its owning variable's name (a member column is sliced out), so callers
-        may pass a superset (e.g. an engine's whole value cache) and unknown keys are
-        ignored. The resolved tensors (shape ``(*batch, *parent.shape)``) are
-        passed to ``self.aggregate`` (default: flatten event dims and concatenate
-        along the last axis) to produce a single input tensor, which is then
-        forwarded to each parameter module independently.
-
-        No activation is applied: each module's output is used as the distribution
+        NOTE: no activation is applied. Each module's output is used as the distribution
         parameter verbatim, so the module must already emit a value in the
         parameter's natural domain.
 

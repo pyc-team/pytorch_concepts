@@ -1,6 +1,6 @@
 """
-This script defines the abstract base class ``Variable``
-and its concrete subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
+Abstract base class ``Variable`` and its concrete 
+subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
 which represent random variables in a Probabilistic Graphical Model.
 """
 
@@ -255,7 +255,7 @@ class Variable(ABC):
         """The plate this variable belongs to.
 
         For a member handle (from :meth:`member`) this is the owning plate; for an
-        ordinary variable or a plate itself it is the variable. 
+        ordinary variable or a plate itself it is None. 
         """
         return self._plate if self._plate is not None else self
 
@@ -266,22 +266,22 @@ class Variable(ABC):
     def member(self, name: str) -> "Variable":
         """A handle to a single member.
 
-        A child can then depend on just this member of the plate; the engine
-        slices the member's column out of the plate's output. The handle carries
-        the member's name, per-member size and the plate's distribution, plus a
-        back-reference to the owning plate so the graph routes the edge from it.
+        The handle carries the member's name, per-member size and the plate's distribution, 
+        plus a back-reference to the owning plate so the graph routes the edge from it.
         """
         if name not in self._column:
             raise KeyError(
                 f"{type(self).__name__}({self.name!r}) has no member {name!r}; "
                 f"members are {self.members}."
             )
+        # Create the new member-only variable.
         view = type(self)(
             name,
             distribution=self.distribution,
             size=self.member_size,
             dist_kwargs=copy.deepcopy(self.dist_kwargs),
         )
+        # Set the back-reference to the owning plate.
         view._plate = self
         return view
 
@@ -299,8 +299,9 @@ class Variable(ABC):
     def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
         """Flattened indices for member(s) in this variable's event dimension.
 
-        Parameter-agnostic: the indices address event columns, which are the
-        same for every distribution parameter (probs/logits, loc, scale, ...).
+        The indices address event columns corresponding to the named member(s). 
+        If a single string is passed, a single slice is returned; 
+        if a list of strings is passed, a list of indices is returned.
         """
         if isinstance(labels, str):
             labels = [labels]
@@ -317,8 +318,13 @@ class Variable(ABC):
     def select(
         self, params: Dict[str, torch.Tensor], name: str
     ) -> Dict[str, torch.Tensor]:
-        """Distribution params for ``name``: the whole tensor for this variable's own
-        name, or a member's column slice (a view, no copy)."""
+        """Return a dictionary containing the distribution parameters for a specific member
+        of the variable. 
+        
+        If the name matches the variable's own name, return the
+        whole dictionary. Otherwise, return a dictionary with the same keys but with
+        values sliced to the columns corresponding to the member's slice.
+        """
         if name == self.name:
             return params
         columns = self.column_of(name)
@@ -330,19 +336,24 @@ class Variable(ABC):
             return value
         return value[..., self.column_of(name)]
 
+    # FIXME: another for loop spotted here. Maybe the same can be done without looping.
     def clamp_members(
         self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Clamp individually-observed members to their observed values.
+        """Overwrite observed members' columns with their observed values.
 
-        Used for *partial observation* of a plate: given the whole stacked
-        ``value``, overwrite the columns of the observed members with their
-        observed tensors, leaving the unobserved members untouched. ``observed``
-        maps member name -> observed tensor. Returns a new tensor (the input is
-        not mutated); a no-op when ``observed`` is empty.
+        A plate's CPD/sampler produces one tensor stacking every member along
+        the last axis, but evidence may cover only some members. E.g. for a
+        plate ``"person"`` with members ``"person_1", "person_2", "person_3"``,
+        observing only ``person_2`` means ``value`` holds the model's output
+        for all three members while ``observed = {"person_2": obs}`` holds
+        just that one. This returns a copy of ``value`` with the
+        ``person_2`` column replaced by ``obs``, and the ``person_1`` /
+        ``person_3`` columns left exactly as the model produced them.
+        No-op (returns ``value`` itself) when ``observed`` is empty.
 
-        The clone is required: the caller caches this value and reuses it as a
-        parent input for downstream factors, so writing the observed columns
+        NOTE: the clone is required since the caller caches this value and reuses 
+        it as a parent input for downstream factors, so writing the observed columns
         in place would corrupt that cache and break autograd on the tensor the
         CPD produced.
         """

@@ -27,7 +27,8 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
     No flattening or reshaping is performed: every parent value keeps its full
     event shape and the tensors are concatenated along ``dim=-1``. 
-    This deliberately raises when the values have mismatched non-concatenation
+
+    NOTE: this deliberately raises when the values have mismatched non-concatenation
     dimensions (e.g. a matrix-valued parent alongside a vector-valued one).
     """
     vals = [
@@ -38,11 +39,8 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
 
 def _module_input_names(mod: nn.Module) -> Set[str]:
-    """Return the explicit keyword/positional parameter names of ``mod.forward``.
+    """Return the explicit keyword/positional parameter names of ``mod.forward``."""
 
-    A PyC :class:`~torch_concepts.nn.Sequential` forwards its inputs straight to
-    its first layer, so its input signature *is* that first layer's.
-    """
     from ...low.sequential import Sequential
 
     while isinstance(mod, Sequential) and len(mod) > 0:
@@ -175,7 +173,7 @@ class ParametricFactor(nn.Module, ABC):
         self,
         parametrization: Dict[str, nn.Module],
     ) -> nn.ModuleDict:
-        """Normalise ``parametrization`` into an ``nn.ModuleDict``.
+        """Create a ``nn.ModuleDict`` from the parametrization.
 
         Accepts a plain dict (or an existing ``nn.ModuleDict``) mapping each
         parameter name to a ready ``nn.Module``. Concrete subclasses resolve any
@@ -193,7 +191,7 @@ class ParametricFactor(nn.Module, ABC):
             modules[pname] = module
         return nn.ModuleDict(modules)
 
-    # ----------- Signature-based aggregation selection -----------
+    # ------------------------- Aggregation -------------------------
 
     def _is_pyc(self, pname: str) -> bool:
         """Whether the parameter module follows the PyC ``concepts``/``embeddings``
@@ -203,7 +201,10 @@ class ParametricFactor(nn.Module, ABC):
     # For entries not covered by the user, pick _pyc_aggregate or
     # _standard_aggregate based on the cached module signature.
     def _select_default(self, pname: str) -> Callable:
-        """Select the default aggregation for a parameter module."""
+        """Select the default aggregation for a parameter module.
+        
+        If pyc module return _pyc_aggregate, else return _standard_aggregate.
+        """
         return self._pyc_aggregate if self._is_pyc(pname) else self._standard_aggregate
 
     def _resolve_aggregator(
@@ -295,7 +296,7 @@ class ParametricFactor(nn.Module, ABC):
             out["embeddings"] = _cat_parents(embeddings)
         return out
 
-    # ----------- Abstract methods -----------
+    # ------------------------- Abstract methods -------------------------
 
     @abstractmethod
     def forward(

@@ -22,7 +22,10 @@ class ParametricPotential(ParametricFactor):
         The energy module. It receives the aggregated scope values, concatenated
         along the last dim in ``scope`` order, and must return **one scalar per
         leading (batch-like) element** (shape ``(*leading,)`` or
-        ``(*leading, 1)``).
+        ``(*leading, 1)``). Any unbuilt :class:`~torch_concepts.nn.modules.low.lazy.LazyConstructor`
+        entry is instantiated here, sized from ``scope`` with ``out_concepts=1``
+        (the energy module always emits a single scalar, not a per-variable
+        parameter).
     name : str, optional
         Factor-graph key. Defaults to ``"phi(<scope names>)"``.
     aggregate : callable or dict, optional
@@ -60,13 +63,58 @@ class ParametricPotential(ParametricFactor):
         self.inputs: List[Variable] = list(self._scope)
         self._name: str = name if name is not None else self._default_name()
 
+        parametrization = self._instantiate_lazy(
+            self._normalize_parametrization(parametrization), self._scope
+        )
         super().__init__(
-            parametrization=self._normalize_parametrization(parametrization),
+            parametrization=parametrization,
             aggregate=aggregate,
         )
 
     def _default_name(self) -> str:
         return f"phi({','.join(v.name for v in self._scope)})"
+
+    @staticmethod
+    def _instantiate_lazy(
+        parametrization: Dict[str, nn.Module],
+        scope: List[Variable],
+    ) -> Dict[str, nn.Module]:
+        """Build any unbuilt :class:`LazyConstructor` entries into concrete modules.
+
+        Returns ``parametrization`` unchanged when there is nothing to build —
+        the common, eagerly-constructed case skips all the work below.
+
+        A :class:`LazyConstructor` defers module creation until the input/output
+        sizes are known; those sizes come from this potential's ``scope``:
+
+        * ``in_concepts``   — summed size of the ``"concept"`` scope variables;
+        * ``in_embeddings`` — summed size of the ``"embedding"`` scope variables;
+        * ``out_concepts``  — always ``1``: unlike a CPD's per-parameter output,
+          the energy module produces a single scalar per leading element, not a
+          value sized to any particular variable.
+        """
+        from ...low.lazy import LazyConstructor
+
+        # Fast path: every module is already a concrete layer — nothing to build.
+        if not any(
+            isinstance(m, LazyConstructor) and m.module is None
+            for m in parametrization.values()
+        ):
+            return parametrization
+
+        in_concepts = sum(v.size for v in scope if v.variable_type == "concept")
+        in_embeddings = sum(v.size for v in scope if v.variable_type == "embedding")
+
+        resolved: Dict[str, nn.Module] = {}
+        for pname, module in parametrization.items():
+            if isinstance(module, LazyConstructor) and module.module is None:
+                module = module.build(
+                    out_concepts=1,
+                    in_concepts=in_concepts or None,
+                    in_embeddings=in_embeddings or None,
+                )
+            resolved[pname] = module
+        return resolved
 
     def _normalize_parametrization(
         self, parametrization: Union[nn.Module, Dict[str, nn.Module]]
@@ -127,18 +175,10 @@ class ParametricPotential(ParametricFactor):
         """``-E(scope)`` at the given assignment (shape ``(*leading,)``).
 
         ``assignment`` must cover the whole scope: free variables at the value
-        being scored, observed ones (an embedding, say) at their evidence.
+        being scored, observed ones (an embedding, say) at their evidence. A
+        superset of keys is fine — :meth:`energy` reads only the scope entries.
         """
-        scope_values: Dict[Variable, torch.Tensor] = {}
-        for v in self._scope:
-            if v not in assignment:
-                raise KeyError(
-                    f"ParametricPotential({self.name!r}).log_potential: no value for "
-                    f"scope variable {v.name!r}. The assignment must cover every "
-                    "scope variable, observed ones included."
-                )
-            scope_values[v] = assignment[v]
-        return -self.energy(scope_values)
+        return -self.energy(assignment)
 
     def forward(
         self,
