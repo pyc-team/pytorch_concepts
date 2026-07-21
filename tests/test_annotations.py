@@ -992,6 +992,28 @@ class TestAnnotationsCachedUtilities(unittest.TestCase):
         )
 
     # =========================================================================
+    # size tests (cached, so it must not leak between instances)
+    # =========================================================================
+
+    def test_size_is_sum_of_cardinalities(self):
+        """size sums the cardinalities, and repeats agree (it is cached)."""
+        self.assertEqual(self.mixed_axis.size, 7)
+        self.assertEqual(self.mixed_axis.size, 7)
+        self.assertEqual(self.binary_axis.size, 3)
+        self.assertEqual(self.categorical_axis.size, 7)
+
+    def test_size_cache_is_per_instance(self):
+        """A derived annotation computes its own size, not the parent's."""
+        parent_size = self.mixed_axis.size  # populate the parent's cache first
+        sub = self.mixed_axis.subset(['color', 'temperature'])
+        self.assertEqual(sub.size, 4)  # 3 + 1
+        self.assertEqual(self.mixed_axis.size, parent_size)
+
+        concept_space = self.mixed_axis.to_concept_space()
+        self.assertEqual(concept_space.size, 4)  # one column per concept
+        self.assertEqual(self.mixed_axis.size, parent_size)
+
+    # =========================================================================
     # cumulative_cardinalities tests
     # =========================================================================
 

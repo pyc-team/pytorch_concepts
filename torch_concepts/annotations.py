@@ -255,12 +255,16 @@ class Annotations:
                     if label not in self.metadata:
                         raise ValueError(f"Metadata missing for label {label!r}")
 
-    @property
+    @cached_property
     def size(self) -> int:
         """Flattened concept dimension: ``sum(cardinalities)``.
 
         Equals ``len(labels)`` when non-nested (all cardinalities are 1). This is the
         size of axis 1 of the annotated (logit-space) tensor.
+
+        Cached: ``cardinalities`` is write-once, and every ``AnnotatedTensor``
+        construction reads this for its shape check, so an uncached sum would be
+        O(labels) per wrapped tensor.
         """
         return sum(self.cardinalities)
 

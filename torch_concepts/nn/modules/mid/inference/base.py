@@ -1,4 +1,4 @@
-"""Backend-agnostic scaffolding for inference engines."""
+"""Backend-agnostic abstract class for inference engines."""
 
 from __future__ import annotations
 
@@ -54,7 +54,11 @@ class BaseInference(nn.Module):
         # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
 
-        # (labels, widths) -> Annotations, reused across queries; see _annotate.
+        # Both keyed by a query signature and reused across queries: the label
+        # chunks a query expands to (see _output_labels) and the Annotations
+        # built from them (see _annotate). Only the tensor *values* change from
+        # one query to the next, so all of this Python work is done once.
+        self._label_cache: Dict[tuple, List[Tuple[List[str], Variable]]] = {}
         self._annotation_cache: Dict[tuple, Annotations] = {}
 
         # Factor-based (not variable-keyed): a ProbabilisticModel keys factors by
@@ -125,10 +129,9 @@ class BaseInference(nn.Module):
     # ``shape[0]`` as "the batch".
 
     def _event_of(self, name: str) -> Tuple[Tuple[int, ...], int]:
-        """The ``(event shape, flat size)`` a tensor for ``name`` carries.
-
-        A plate *member* carries only its own block, not the whole plate's, so
-        this is name-level rather than variable-level.
+        """It returns the shape and size of a variable given its name.
+        If member of a plate then returns the member shape and size; 
+        otherwise returns the variable shape and size.
         """
         var = self.pgm.resolve(name)
         if name == var.name:
@@ -136,7 +139,9 @@ class BaseInference(nn.Module):
         return (var.member_size,), var.member_size
 
     def _leading_shape(self, name: str, value: torch.Tensor) -> torch.Size:
-        """Leading dimensions of a tensor supplied for ``name``."""
+        """Given value's shape, it identifies the 'operating' (event) dimensions
+        of the variable and return the leading dimensions
+        """
         event, size = self._event_of(name)
         return leading_shape(event, size, value, f"{self.name}: {name!r}")
 
@@ -145,11 +150,13 @@ class BaseInference(nn.Module):
         query: Dict[str, Optional[torch.Tensor]],
         evidence: Dict[str, torch.Tensor],
     ) -> torch.Size:
-        """The leading shape shared by every supplied tensor.
+        """It determines the single leading (batch-like) shape that applies to an entire query call, 
+        by picking one representative tensor.
 
-        Falls back to ``(1,)`` when a query names only variables to compute and
-        provides no tensor to read a batch shape from — the same convention the
-        single-batch-dimension implementation used.
+        If there's any evidence, just take the first (name, value) pair from the dict 
+        and return its leading shape immediately. If there was no evidence, 
+        fall through to the query dict and look for the first entry with a non-None tensor value.
+        If neither evidence nor query contains any actual tensor, default to torch.Size([1]).
         """
         for name, value in evidence.items():
             return self._leading_shape(name, value)
@@ -307,29 +314,28 @@ class BaseInference(nn.Module):
     # is recovered by label slicing, which is a view rather than a copy.
 
     def _output_labels(self, query_names) -> List[Tuple[List[str], Variable]]:
-        """``(labels, owning variable)`` chunks for the queried names, in order.
+        """It returns ``(labels, owning variable)`` chunks for the queried names,
+        in order.
 
-        A queried plate expands into one label per member, all in one chunk.
-        That keeps the labels a strict *partition* of the assembled tensor's
-        columns — asking for a plate and one of its members in the same query
-        cannot emit those columns twice — and it gives every label an
-        unambiguous concept type, since a plate of binary members is a run of
-        binary columns rather than one wide categorical one.
+        Plate memebers expand to (member labels, plate variable) and
+        non-plate variables expand to (variable labels, variable).
 
-        Nothing is lost by expanding: each label records its owning variable in
-        the annotation's metadata, so the plate name still addresses the whole
-        block (``out.probs['g']`` returns all of ``g``'s member columns as a
-        view). Duplicates collapse to their first occurrence.
-
-        The chunking is what lets assembly stay O(1) in member count for the
-        common case: a chunk equal to ``variable.members`` (every whole-variable
-        query — a non-plate, or a plate queried by its own name with no member
-        already emitted) marks the factor's stacked output as usable as-is,
-        with no per-member slicing and re-concatenation.
+        A pure function of the query names and the (fixed) model structure, so
+        the chunks are cached per query signature — expanding a large plate is
+        O(members) Python that must not be repeated on every query. Callers
+        only read the chunks (never mutate them), so sharing them is safe.
         """
+        key = tuple(query_names)
+
+        # If the chunk has already been computed, return it from the cache.
+        chunks = self._label_cache.get(key)
+        if chunks is not None:
+            return chunks
+        
+        # If the chunk has not been computed, compute it and store it in the cache.
         resolve = self.pgm.resolve
         seen: set = set()
-        chunks: List[Tuple[List[str], Variable]] = []
+        chunks = []
         for name in query_names:
             var = resolve(name)
             labels = [
@@ -340,17 +346,12 @@ class BaseInference(nn.Module):
             if labels:
                 seen.update(labels)
                 chunks.append((labels, var))
+        self._label_cache[key] = chunks
         return chunks
 
     @staticmethod
     def _label_type(variable: Variable, width: int) -> str:
-        """Concept type of one label, from its family and its column width.
-
-        A continuous family is continuous whatever its width. A discrete one is
-        ``'binary'`` when it occupies a single column and ``'categorical'``
-        otherwise — the same convention the high level's concept annotations
-        already use for these variables.
-        """
+        """Concept type of one label, inferred from its owning variable and the label's width."""
         if not spec_for(variable.distribution).is_discrete:
             return "continuous"
         return "binary" if width == 1 else "categorical"
@@ -360,6 +361,7 @@ class BaseInference(nn.Module):
         pieces: List[torch.Tensor],
         labels: List[str],
         widths: List[int],
+        key: tuple,
     ) -> AnnotatedTensor:
         """Concatenate ``pieces`` on the last axis under a label annotation.
 
@@ -367,14 +369,17 @@ class BaseInference(nn.Module):
         labels (a whole plate's stacked output), as long as the label widths sum
         to the concatenated width.
 
-        The ``Annotations`` object is cached on the engine, keyed by the
-        ``(labels, widths)`` signature: for a fixed query only the tensor
-        *values* change batch to batch, while building the annotation is
-        O(total labels) Python — the dominant per-query cost for large plates.
-        The cached instance is shared by every output with the same signature
-        (its structural fields are write-once, so this is safe).
+        The ``Annotations`` object is cached on the engine: for a fixed query
+        only the tensor *values* change batch to batch, while building the
+        annotation is O(total labels). 
+        The cached instance is shared by every output with the
+        same signature (its structural fields are write-once, so this is safe).
+
+        ``key`` is that signature, built by the caller with one record per
+        emitted chunk so it stays O(#queried names): deriving it from ``labels``
+        here would put an O(total labels) tuple build and hash back on every
+        query, cache hit included.
         """
-        key = (tuple(labels), tuple(widths))
         annotation = self._annotation_cache.get(key)
         if annotation is None:
             resolve = self.pgm.resolve
@@ -415,9 +420,11 @@ class BaseInference(nn.Module):
         variational inference) have no query to filter by.
         """
         query_names = list(query_names) or list(per_variable)
+        query_key = tuple(query_names)
         pieces: Dict[str, List[torch.Tensor]] = {}
         labels: Dict[str, List[str]] = {}
         widths: Dict[str, List[int]] = {}
+        sigs: Dict[str, List[tuple]] = {}
 
         def emit(quantity: str, tensor: torch.Tensor, chunk: List[str]) -> None:
             if tensor.dim() == 0:
@@ -428,14 +435,17 @@ class BaseInference(nn.Module):
                     "Scalar knobs (a relaxation temperature, say) belong on "
                     "the engine, not in its output."
                 )
-            pieces.setdefault(quantity, []).append(tensor)
-            labels.setdefault(quantity, []).extend(chunk)
             # A one-piece chunk keeps its full width; a whole plate's stacked
             # tensor splits evenly over its members (plate families are
             # one-scalar-per-element, so the division is exact).
-            widths.setdefault(quantity, []).extend(
-                [int(tensor.shape[-1]) // len(chunk)] * len(chunk)
-            )
+            width = int(tensor.shape[-1]) // len(chunk)
+            pieces.setdefault(quantity, []).append(tensor)
+            labels.setdefault(quantity, []).extend(chunk)
+            widths.setdefault(quantity, []).extend([width] * len(chunk))
+            # One record per chunk, not per label: with ``query_key`` fixing the
+            # chunks (see _output_labels), this pins down which of them actually
+            # contributed and at what width — the whole annotation signature.
+            sigs.setdefault(quantity, []).append((chunk[0], len(chunk), width))
 
         for chunk, var in self._output_labels(query_names):
             params = per_variable.get(var.name)
@@ -447,12 +457,22 @@ class BaseInference(nn.Module):
                 # slicing and re-concatenation.
                 for quantity, tensor in params.items():
                     emit(quantity, tensor, chunk)
+            elif len(chunk) == 1:
+                # A single member: a plain column slice, cheaper than a
+                # one-column fancy-index gather.
+                for quantity, tensor in var.select(params, chunk[0]).items():
+                    emit(quantity, tensor, chunk)
             else:
-                for label in chunk:
-                    for quantity, tensor in var.select(params, label).items():
-                        emit(quantity, tensor, [label])
+                # A member subset: gather every column in one indexing op
+                # rather than slicing and re-concatenating one member at a time.
+                idx = var.get_slice(chunk)
+                for quantity, tensor in params.items():
+                    emit(quantity, tensor[..., idx], chunk)
         return {
-            quantity: self._annotate(tensors, labels[quantity], widths[quantity])
+            quantity: self._annotate(
+                tensors, labels[quantity], widths[quantity],
+                (query_key, quantity, tuple(sigs[quantity])),
+            )
             for quantity, tensors in pieces.items()
         }
 
@@ -470,24 +490,33 @@ class BaseInference(nn.Module):
         pieces: List[torch.Tensor] = []
         labels: List[str] = []
         widths: List[int] = []
+        sig: List[tuple] = []  # see :meth:`_assemble_params` for the signature
         for chunk, var in self._output_labels(query_names):
             value = per_variable.get(var.name)
             if value is None:
                 continue
             flat = flatten_event(var, value)
             if chunk == var.members:
-                # Whole variable: the stacked value is used as-is (see
-                # :meth:`_assemble_params` for the width bookkeeping).
-                pieces.append(flat)
-                labels.extend(chunk)
-                widths.extend([int(flat.shape[-1]) // len(chunk)] * len(chunk))
+                # Whole variable: the stacked value is used as-is.
+                piece = flat
+            elif len(chunk) == 1:
+                # A single member: a plain column slice.
+                piece = var.select_value(flat, chunk[0])
             else:
-                for label in chunk:
-                    piece = var.select_value(flat, label)
-                    pieces.append(piece)
-                    labels.append(label)
-                    widths.append(int(piece.shape[-1]))
-        return self._annotate(pieces, labels, widths) if pieces else None
+                # A member subset: one gather over all its columns.
+                piece = flat[..., var.get_slice(chunk)]
+            # One piece per chunk; members share member_size so the per-label
+            # width is uniform (see :meth:`_assemble_params`).
+            width = int(piece.shape[-1]) // len(chunk)
+            pieces.append(piece)
+            labels.extend(chunk)
+            widths.extend([width] * len(chunk))
+            sig.append((chunk[0], len(chunk), width))
+        if not pieces:
+            return None
+        return self._annotate(
+            pieces, labels, widths, (tuple(query_names), None, tuple(sig))
+        )
 
     def __call__(
         self,
