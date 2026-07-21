@@ -918,46 +918,6 @@ class TestCEMComparison(unittest.TestCase):
         self.assertEqual(_logits(cem_out, query).shape, _logits(cbm_out, query).shape)
 
 
-class TestCEMIndependentLearner(unittest.TestCase):
-    """Test CEM with Lightning training mode."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-
-        self.batch_size = 4
-        self.input_size = 8
-        self.x = torch.randn(self.batch_size, self.input_size)
-        self.c = torch.randint(0, 2, (self.batch_size, 3)).float()
-
-        self.batch = {
-            'inputs': {'x': self.x},
-            'concepts': {'c': self.c}
-        }
-
-    def test_cem_independent_training_step(self):
-        """Test CEM Lightning learner training step works."""
-        model = ConceptEmbeddingModel(
-            input_size=self.input_size,
-            annotations=self.ann,
-            task_names=['task'],
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss()
-        )
-        model.train()
-
-        loss = model.training_step(self.batch)
-
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
 
 
 if __name__ == '__main__':

@@ -50,12 +50,11 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations = annotations,
         binary = torch.nn.BCEWithLogitsLoss()
     )
 
     metrics = ConceptMetrics(
-        annotations = annotations,
+        annotations=annotations,
         summary=True,
         per_concept=True,
         binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()}

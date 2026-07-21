@@ -94,7 +94,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
         self.embedding_size = embedding_size
         self.hypernet_hidden_size = hypernet_hidden_size
         self.hypernet_use_bias = hypernet_use_bias
-        self.pgm = self._build_individual_model()
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(

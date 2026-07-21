@@ -18,6 +18,7 @@ from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, 
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn import MLP
+from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.annotations import Annotations
 
 
@@ -478,7 +479,7 @@ class TestLearnerIntegration(unittest.TestCase):
 
     def _make_model(self, lightning=True, with_loss=True, train_inference=None):
         """Helper to create model with optional loss."""
-        loss = nn.BCEWithLogitsLoss() if with_loss else None
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss()) if with_loss else None
         kwargs = {
             'lightning': lightning,
             'input_size': 8,
@@ -613,22 +614,24 @@ class TestDirectedGraphModelBase:
             # Pass no graph → should fail in _resolve_graph or validation
             GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=None)
 
-    def test_build_plate_model_raises_not_implemented(self):
-        """Calling _build_plate_model on a model that doesn't implement it raises."""
+    def test_graph_model_rejects_plate_true(self):
+        """Graph models are individual-only; plate=True is rejected."""
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
-        model = GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=graph)
-        with pytest.raises(NotImplementedError):
-            model._build_plate_model()
+        with pytest.raises(ValueError):
+            GraphConceptBottleneckModel(
+                input_size=4, annotations=ann, graph=graph, plate=True
+            )
 
-    def test_build_individual_model_raises_on_base_class(self):
-        """Base DirectedGraphModel raises NotImplementedError on _build_individual_model."""
-        # We just verify GraphCBM's implementation is callable (already tested elsewhere)
+    def test_graph_model_plate_false_default(self):
+        """Graph models build one (individual) variable per concept node."""
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
         model = GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=graph)
-        # model._build_individual_model() should work (overridden by GraphCBM)
-        assert model.pgm is not None
+        concept_vars = [v for v in model.pgm.variables.values()
+                        if v.variable_type == "concept"]
+        assert {v.name for v in concept_vars} == set(ann.labels)
+        assert all(not v.is_plate for v in concept_vars)
 
     def test_flexible_parametrization_continuous_raises(self):
         """_flexible_parametrization raises NotImplementedError for continuous vars."""

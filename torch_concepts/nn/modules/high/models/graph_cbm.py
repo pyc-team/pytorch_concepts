@@ -60,7 +60,7 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
             lightning=lightning,
             **kwargs,
         )
-        self.pgm = self._build_individual_model()
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(

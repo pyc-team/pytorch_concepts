@@ -114,16 +114,12 @@ class DirectedGraphModel(GraphModel, ABC):
     :class:`~torch_concepts.nn.BayesianNetwork`. This is the only branch of the
     hierarchy that is implemented today.
 
-    Concrete models build ``self.model`` (or ``self.pgm``) in their own
-    ``__init__``, then call :meth:`_assemble` to wire inference. Two optional
-    building hooks are provided for subclasses that want a plate vs individual
-    split:
-
-    * :meth:`_build_plate_model` — plate variables, one per homogeneous level.
-    * :meth:`_build_individual_model` — one variable per concept.
-
-    Whether to use them, and how to choose between them, is left entirely to
-    the concrete model.
+    Concrete models build ``self.pgm`` in their own ``__init__`` (via a
+    ``_build_model`` method) and then call :meth:`setup_inference` to wire
+    inference. How the graph becomes variables and CPDs is left to the concrete
+    model: the bipartite models group each level into the minimum number of plates,
+    while the homogeneous graph assembler walks the DAG node-by-node (one variable
+    per node).
     """
 
     def __init__(self, *args, graph: Optional[ConceptGraph] = None, **kwargs):
@@ -135,33 +131,6 @@ class DirectedGraphModel(GraphModel, ABC):
         super()._validate_graph(graph)
         assert graph.is_directed_acyclic(), (
             "DirectedGraphModel requires a directed acyclic graph (DAG)."
-        )
-
-    # ------------------------------------------------------------------
-    # Model-building hooks (implement one or both in concrete subclasses)
-    # ------------------------------------------------------------------
-
-    def _build_plate_model(self):
-        """Build using plate variables (one per homogeneous concept level).
-
-        Override this when the model represents homogeneous levels as a single
-        plate :class:`~torch_concepts.nn.ConceptVariable`. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_plate_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_plate_model`."
-        )
-
-    def _build_individual_model(self):
-        """Build using one variable per concept.
-
-        Override this as the flat (non-plate) building path. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_individual_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_individual_model`."
         )
     
     #: Distribution parameter used for discrete variables — ``"logits"`` or
