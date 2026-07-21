@@ -267,7 +267,10 @@ class BaseInference(nn.Module):
     def _normalize_query(
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
     ) -> Dict[str, Optional[torch.Tensor]]:
-        """Normalize query input to a dict mapping variable names to optional tensors."""
+        """Normalize query input to a dict mapping variable names to optional tensors.
+
+        This operation is always performed since we can accept also list of varibles.
+        """
         if isinstance(query, list):
             return {name: None for name in query}
         return query
