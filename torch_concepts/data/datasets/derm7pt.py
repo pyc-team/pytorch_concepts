@@ -4,7 +4,7 @@ import pandas as pd
 import logging
 from typing import List, Optional
 from torchvision.datasets.utils import extract_archive
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from PIL import Image
 
@@ -338,13 +338,11 @@ class Derm7ptDataset(ConceptDataset):
     
         # Create annotations
         cardinalities = tuple([concepts_df[concept].nunique() for concept in CONCEPT_NAMES + [TARGET]])
-        annotations = Annotations({
-            1: AxisAnnotation(
+        annotations = Annotations(
                 labels=CONCEPT_NAMES + [TARGET],
                 cardinalities=cardinalities,
                 metadata={name: {'type': 'discrete'} for name in CONCEPT_NAMES + [TARGET]}
             )
-        })
 
         # --- Save processed data ---
         logger.info(f"Saving filenames, concepts, annotations and split mapping to {self.root_dir}")

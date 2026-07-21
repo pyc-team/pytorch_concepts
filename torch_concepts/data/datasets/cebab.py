@@ -6,7 +6,7 @@ import torch
 import pandas as pd
 import numpy as np
 import logging
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 
 logger = logging.getLogger(__name__)
@@ -266,13 +266,10 @@ class CEBaBDataset(ConceptDataset):
                 }
 
 
-        annotations = Annotations({
-            1: AxisAnnotation(
-                labels=concepts_df.columns.tolist(),
-                cardinalities=concept_cardinalities,
-                metadata=metadata,
-            )
-        })     
+        annotations = Annotations(
+            labels=concepts_df.columns.tolist(),
+            cardinalities=concept_cardinalities,
+            metadata=metadata)     
 
         # ---- save all ----
         # save text inputs
