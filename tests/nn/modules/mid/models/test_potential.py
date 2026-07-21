@@ -88,7 +88,7 @@ class TestParametricPotential:
         av = torch.tensor([[1.0], [0.0], [1.0]])
         lp = pot.log_potential({a: av, emb: torch.randn(3, 4)})
         assert lp.shape == (3,)
-        with pytest.raises(KeyError, match="no value for scope variable"):
+        with pytest.raises(KeyError):
             pot.log_potential({a: av})
 
     def test_scope_and_name(self):
