@@ -276,9 +276,11 @@ class ConceptMetrics(nn.Module):
         """Prediction columns for one concept, taken from the quantity its type
         reports: ``loc`` for continuous, otherwise the discrete param (logits/probs)."""
         params = out.params[name]
-        if concept_type == 'continuous':
-            return params['loc']
-        return params['logits'] if 'logits' in params else params['probs']
+        pred = params['loc'] if concept_type == 'continuous' else (
+            params['logits'] if 'logits' in params else params['probs'])
+        # Hand torchmetrics a plain tensor; the annotation is no longer needed and
+        # would make each internal torch.* op pay the __torch_function__ cost.
+        return pred.tensor
 
     def _prepare_categorical(self, cat_logits, cat_target):
         """Pad and stack categorical logits/targets for the summary metric.
@@ -288,7 +290,11 @@ class ConceptMetrics(nn.Module):
         the same concept order; per-concept widths come from ``cat_logits``'s own
         annotation.
         """
-        split_tuple = torch.split(cat_logits, list(cat_logits.annotation.cardinalities), dim=1)
+        # Unwrap to plain tensors up front: past this point the annotation has
+        # served its purpose (concept ordering), and every torch.* op below on an
+        # AnnotatedTensor would otherwise re-enter its __torch_function__ hook.
+        cards = list(cat_logits.annotation.cardinalities)
+        split_tuple = torch.split(cat_logits.tensor, cards, dim=1)
         padded_logits = [
             nn.functional.pad(
                 logits,
@@ -297,7 +303,7 @@ class ConceptMetrics(nn.Module):
             ) for logits in split_tuple
         ]
         cat_pred = torch.cat(padded_logits, dim=0)
-        cat_target = cat_target.T.reshape(-1).long()
+        cat_target = cat_target.tensor.T.reshape(-1).long()
         return cat_pred, cat_target
 
     def update(self, preds, target: torch.Tensor = None):
@@ -333,21 +339,27 @@ class ConceptMetrics(nn.Module):
         # Summary metrics — one MetricCollection.update() per type, each scored on
         # the quantity it reports and aligned to the target by concept name.
         if self.summary:
+            # Predictions/targets are unwrapped to plain tensors before every
+            # torchmetrics update: the annotation is only used to align preds to
+            # the target by concept name, and passing an AnnotatedTensor into
+            # torchmetrics makes each internal torch.* op re-enter the
+            # __torch_function__ unwrap hook (the dominant per-update cost).
             if 'binary' in disc_by_type and len(self.binary):
                 p = disc_by_type['binary']
-                self.binary.update(p, target[p.annotation.labels].float())
+                self.binary.update(p.tensor, target[p.annotation.labels].tensor.float())
             if 'categorical' in disc_by_type and len(self.categorical):
                 p = disc_by_type['categorical']
                 cat_pred, cat_target = self._prepare_categorical(p, target[p.annotation.labels])
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
-                self.continuous.update(continuous, target[continuous.annotation.labels])
+                self.continuous.update(
+                    continuous.tensor, target[continuous.annotation.labels].tensor)
 
         # Per-concept metrics — read each concept from its type's quantity.
         for concept_name, collection in self._per_concept.items():
             c_type = self.types[self.concept_names.index(concept_name)]
             c_pred = self._concept_prediction(out, concept_name, c_type)
-            c_target = target[concept_name]
+            c_target = target[concept_name].tensor
             if c_type == 'binary':
                 collection.update(c_pred, c_target.float())
             elif c_type == 'categorical':
