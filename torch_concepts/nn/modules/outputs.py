@@ -149,7 +149,7 @@ class InferenceOutput:
     >>> out = engine.query(query=['c1', 'c2'], evidence={'x': x})
     >>> out.logits.shape                  # (*leading, width of c1 + c2)
     >>> out.logits['c1']                  # just c1's columns (a view)
-    >>> out.logits.split_by_type()        # {'binary': ..., 'categorical': ...}
+    >>> out.logits.binary()               # binary concepts' columns (or None)
     """
 
     params: Dict[str, AnnotatedTensor] = field(default_factory=dict)

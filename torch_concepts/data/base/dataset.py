@@ -472,20 +472,12 @@ class ConceptDataset(Dataset):
             # Reduce types
             reduced_types = tuple(axis_annotation.types[i] for i in indices)
 
-            # Reduce metadata if present
-            if axis_annotation.metadata is not None:
-                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
-                                   for i in range(len(indices))}
-            else:
-                reduced_metadata = None
-
             # Create reduced annotations
             self._annotations = Annotations(
                 labels=reduced_labels,
                 cardinalities=reduced_cardinalities,
                 states=reduced_states,
                 types=reduced_types,
-                metadata=reduced_metadata
             )
 
     def set_graph(self, graph: pd.DataFrame):
