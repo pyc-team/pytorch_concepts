@@ -186,5 +186,61 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.assertEqual(dataset.graph.data.shape, (2, 2))
 
 
+class TestReorderByType(unittest.TestCase):
+    """Test that mixed-type concepts are grouped contiguously by type."""
+
+    def setUp(self):
+        self.n_samples = 20
+        self.X = torch.randn(self.n_samples, 10)
+        # Interleaved types: categorical(card 2), binary, binary, categorical(card 3).
+        self.labels = ['cat_a', 'bin_a', 'bin_b', 'cat_b']
+        self.annotations = Annotations(labels=self.labels, cardinalities=(2, 1, 1, 3))
+        self.C = torch.stack([
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 3, (self.n_samples,)),
+        ], dim=1)
+
+    def test_default_groups_by_type(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+
+        self.assertEqual(list(dataset.concept_names), ['bin_a', 'bin_b', 'cat_a', 'cat_b'])
+        # Values follow their label, not their original column position.
+        bin_a_col = self.labels.index('bin_a')
+        torch.testing.assert_close(
+            dataset.concepts.tensor[:, dataset.concept_names.index('bin_a')],
+            self.C[:, bin_a_col].to(dataset.concepts.tensor.dtype),
+        )
+
+    def test_disabled_keeps_original_order(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations, reorder_by_type=False)
+
+        self.assertEqual(list(dataset.concept_names), self.labels)
+
+
+class TestReorderByCardinality(unittest.TestCase):
+    """Within categorical concepts, group further by ascending cardinality."""
+
+    def test_categoricals_sorted_by_cardinality(self):
+        n_samples = 20
+        X = torch.randn(n_samples, 10)
+        # cat_5 and cat_3 out of order, plus a binary concept thrown in.
+        labels = ['cat_5', 'bin_a', 'cat_3', 'cat_3b']
+        annotations = Annotations(labels=labels, cardinalities=(5, 1, 3, 3))
+        C = torch.stack([
+            torch.randint(0, 5, (n_samples,)),
+            torch.randint(0, 2, (n_samples,)),
+            torch.randint(0, 3, (n_samples,)),
+            torch.randint(0, 3, (n_samples,)),
+        ], dim=1)
+
+        dataset = ConceptDataset(X, C, annotations=annotations)
+
+        # binary first, then categoricals ascending by cardinality;
+        # cat_3 before cat_3b since it was first in the original order (stable tie-break).
+        self.assertEqual(list(dataset.concept_names), ['bin_a', 'cat_3', 'cat_3b', 'cat_5'])
+
+
 if __name__ == '__main__':
     unittest.main()
