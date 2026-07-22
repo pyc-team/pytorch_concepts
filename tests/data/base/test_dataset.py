@@ -19,7 +19,6 @@ class TestConceptSubset(unittest.TestCase):
         self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
-                metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
 
     def test_subset_selection(self):
@@ -78,21 +77,6 @@ class TestConceptSubset(unittest.TestCase):
         self.assertEqual(dataset.n_concepts, 1)
         self.assertEqual(dataset.concepts.shape[1], 1)
 
-    def test_subset_metadata_preserved(self):
-        """Test that metadata is correctly preserved for subset."""
-        subset = ['concept_1', 'concept_3']
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-            concept_names_subset=subset
-        )
-
-        metadata = dataset.annotations.metadata
-        self.assertEqual(set(metadata.keys()), set(subset))
-        for name in subset:
-            self.assertEqual(metadata[name]['type'], 'discrete')
-
     def test_subset_none_uses_all_concepts(self):
         """Test that None subset uses all concepts."""
         dataset = ConceptDataset(
@@ -118,7 +102,6 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
-                metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
         # Graph: c0 -> c1 -> c2 -> c3 -> c4
         self.graph = pd.DataFrame(0, index=self.all_concept_names, columns=self.all_concept_names)

@@ -178,7 +178,7 @@ def test_samples_assembly_is_cached_consistently():
         assert subset.shape == (3, 1)
 
 
-def test_label_metadata_and_types_survive_the_cache():
+def test_types_and_groups_survive_the_cache():
     eng = _engine()
     x = torch.randn(2, 4)
     for _ in range(2):
@@ -186,6 +186,4 @@ def test_label_metadata_and_types_survive_the_cache():
         probs, loc = out.params["probs"].annotation, out.params["loc"].annotation
         assert probs.types == ["binary", "binary", "binary"]
         assert loc.types == ["continuous"]
-        assert probs.metadata["c1"]["variable"] == "concepts"
-        assert probs.metadata["c1"]["distribution"] == "Bernoulli"
-        assert loc.metadata["y"]["distribution"] == "Normal"
+        assert probs.label_groups["concepts"] == ["c1", "c2", "c3"]
