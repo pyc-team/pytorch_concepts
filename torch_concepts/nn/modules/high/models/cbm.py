@@ -19,6 +19,7 @@ References
 ----------
 Koh et al. "Concept Bottleneck Models", ICML 2020. https://proceedings.mlr.press/v119/koh20a.html
 """
+from functools import partial
 from typing import List, Optional, Union
 
 import torch
@@ -158,6 +159,12 @@ class ConceptBottleneckModel(BipartiteModel):
         concepts = self.build_concept_variables(self.intermediate_concept_names, plate_name="concepts")
         tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
 
+        # A continuous variable also needs a scale head, and `first` is deferred
+        # here (a LazyConstructor sized by the CPD), so it cannot be copied: name
+        # the layer explicitly, leaving only its output size for the model to fill.
+        # Both heads read the same inputs as their `first` counterpart.
+        n_concept_features = sum(c.size for c in concepts)
+
         # latent → concepts: one encoder per concept variable (per group).
         encoders = ParametricCPD(
             variable=concepts,
@@ -166,7 +173,7 @@ class ConceptBottleneckModel(BipartiteModel):
                 self._flexible_parametrization(
                     variable=c,
                     first=LazyConstructor(LinearEmbeddingToConcept),
-                    second=None # will be partial(...)
+                    second=partial(LinearEmbeddingToConcept, self.latent_size),
                 )
                 for c in concepts
             ],
@@ -179,7 +186,7 @@ class ConceptBottleneckModel(BipartiteModel):
                 self._flexible_parametrization(
                     variable=t,
                     first=LazyConstructor(LinearConceptToConcept),
-                    second=None # will be partial(...)
+                    second=partial(LinearConceptToConcept, n_concept_features),
                 )
                 for t in tasks
             ],

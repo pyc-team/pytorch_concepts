@@ -21,6 +21,14 @@ ParamDict = Dict[str, torch.Tensor]
 #: (``out.probs``, ``out.logits``, ...) reading ``params[<name>]``.
 QUANTITIES = ("probs", "logits", "loc", "scale", "scale_tril", "value")
 
+#: Quantities a *continuous* concept may be reported under. A continuous concept
+#: is scored on its family's primary parameter, and which family models the type
+#: is the model's choice: ``loc`` for a ``Normal``, ``value`` for a ``Delta`` (a
+#: deterministic point estimate). Consumers with no per-instance quantity config
+#: (e.g. :class:`~torch_concepts.nn.ConceptMetrics`) try both, mirroring the
+#: ``logits``/``probs`` fallback already used for discrete concepts.
+CONTINUOUS_QUANTITIES = ("loc", "value")
+
 
 class _Unset:
     """Default for the quantity constructor arguments.

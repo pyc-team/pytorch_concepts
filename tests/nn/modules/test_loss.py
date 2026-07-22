@@ -6,6 +6,7 @@ Tests loss functions for concept-based learning:
 - WeightedConceptLoss: Weighted combination of concept and task losses
 - DepthWeightedConceptLoss: Graph-depth-weighted concept losses
 """
+import pytest
 import unittest
 import torch
 from torch import nn
@@ -1385,3 +1386,41 @@ class TestPrepareCategorical(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestContinuousQuantityResolution:
+    """`continuous_param` names a single output quantity, exactly like
+    `binary_param` / `categorical_param` — no automatic fallback across
+    quantities. A concept modelled as a `Delta` reports `value`, not the
+    default `loc`, so scoring it requires `continuous_param='value'`."""
+
+    @staticmethod
+    def _output(quantity):
+        ann = Annotations(labels=['c1', 'c2'], cardinalities=[1, 1],
+                          types=['continuous', 'continuous'])
+        out = ModelOutput()
+        out.params[quantity] = AnnotatedTensor(torch.zeros(4, 2), ann, axis=-1)
+        out.target = AnnotatedTensor(torch.ones(4, 2), ann, axis=-1)
+        return out
+
+    def test_default_param_scores_loc(self):
+        loss = ConceptLoss(continuous=torch.nn.MSELoss())(self._output("loc"))
+        assert float(loss) == pytest.approx(1.0)
+
+    def test_mismatched_param_silently_contributes_nothing(self):
+        """Matches binary_param/categorical_param: a quantity name that isn't
+        present is skipped, not an error — the loss is 0, not scored."""
+        loss = ConceptLoss(continuous=torch.nn.MSELoss())(self._output("value"))
+        assert float(loss) == 0.0
+
+    def test_continuous_param_must_be_set_for_a_delta_modelled_concept(self):
+        loss = ConceptLoss(continuous=torch.nn.MSELoss(),
+                           continuous_param="value")(self._output("value"))
+        assert float(loss) == pytest.approx(1.0)
+
+    def test_configured_quantity_is_read_even_when_another_is_also_present(self):
+        out = self._output("loc")
+        out.params["value"] = out.params["loc"] + 5.0
+        assert float(ConceptLoss(continuous=torch.nn.MSELoss())(out)) == pytest.approx(1.0)
+        assert float(ConceptLoss(continuous=torch.nn.MSELoss(),
+                                 continuous_param="value")(out)) == pytest.approx(16.0)

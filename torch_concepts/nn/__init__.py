@@ -23,6 +23,9 @@ from .modules.low.sequential import Sequential
 # Priors (root-CPD parametrizations)
 from .modules.low.priors import LearnablePrior, FixedPrior
 
+# Scale activation (continuous-CPD parametrizations)
+from .modules.low.scales import TrilActivation
+
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
@@ -121,6 +124,9 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+
+    # Scale activation
+    "TrilActivation",
 
     # Encoder classes
     "LinearEmbeddingToConcept",

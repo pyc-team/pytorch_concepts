@@ -22,8 +22,10 @@ class DSpritesRegressionDataset(ConceptDataset):
     """DSprites regression dataset with sympy formula-based targets.
 
     Each sample is a 64x64 grayscale image of a simple shape with known
-    generative factors (concepts). A per-shape sympy formula over the concept
-    values produces the regression target.
+    generative factors (concepts), served as ``(3, 64, 64)`` (the single
+    channel is replicated so pretrained RGB backbones can consume it). A
+    per-shape sympy formula over the concept values produces the regression
+    target.
 
     Parameters
     ----------
@@ -222,7 +224,8 @@ class DSpritesRegressionDataset(ConceptDataset):
             x = self.input_data[item]
         else:
             image = torch.tensor(self.input_data[item], dtype=torch.float32)
-            x = image.unsqueeze(0)  # (1, 64, 64)
+            # replicated to 3 channels: pretrained image backbones expect RGB
+            x = image.unsqueeze(0).expand(3, -1, -1)  # (3, 64, 64)
 
         c = self.concepts[item]
 

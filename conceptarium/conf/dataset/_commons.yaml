@@ -9,4 +9,13 @@ datamodule:
   max_samples: null # if null, use all samples
   concept_subset: null # if null, use all concepts
 
+  # Scalers fitted on the train split only. 'concepts' scales the *continuous*
+  # concepts (binary/categorical are class labels and are never scaled);
+  # 'input' needs precomputed embeddings or flat tabular features.
+  # Metrics are always reported in the original scale.
+  #   scalers:
+  #     concepts:
+  #       _target_: torch_concepts.data.scalers.StandardScaler
+  scalers: null
+
 backbone: null

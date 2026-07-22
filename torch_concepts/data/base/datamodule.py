@@ -22,11 +22,14 @@ Example
 """
 
 import logging
+import warnings
 from typing import Literal, Mapping, Optional
 from pytorch_lightning import LightningDataModule
+from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
+from ..scalers.module import ScalerModule
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +67,13 @@ class ConceptDataModule(LightningDataModule):
         splitting, loaders) sees only the subset. Useful for quick runs and
         examples. Default is None (use all samples).
     scalers : Mapping or None, optional
-        Dictionary of custom scalers for data normalization. Keys should
-        match target keys in the batch (e.g., 'input', 'concepts').
-        If None, no scaling is applied. Default is None.
+        Unfitted scaler prototypes for data normalization, keyed by
+        ``'input'`` and/or ``'concepts'``. :meth:`setup` fits them on the
+        **training split only** and exposes the result as
+        :attr:`fitted_scalers`; the dataset itself is never modified. A
+        ``'concepts'`` scaler applies to the *continuous* concepts only —
+        binary and categorical concepts are class labels and are never
+        scaled. If None, no scaling is applied. Default is None.
     splitter : object or None, optional
         Custom splitter for train/val/test splits. Must implement a
         ``split(dataset)`` method that sets ``train_idxs``, ``val_idxs``,
@@ -93,7 +100,12 @@ class ConceptDataModule(LightningDataModule):
     testset : Subset or None
         Test subset after setup().
     scalers : dict
-        Dictionary of scalers for data normalization.
+        The unfitted scaler prototypes given at construction.
+    fitted_scalers : ScalerModule or None
+        Scalers fitted on the training split by :meth:`setup`, or None when no
+        scaler was configured. Pass it to the model (``scalers=...``) so the
+        learner can scale what the model consumes and report metrics back in the
+        original scale.
     splitter : object
         The splitter used for data splitting.
 
@@ -162,12 +174,15 @@ class ConceptDataModule(LightningDataModule):
         self.workers = workers
         self.pin_memory = pin_memory
 
-        # init scalers
+        # init scalers: `scalers` holds the *unfitted* prototypes from the config,
+        # `fitted_scalers` the ScalerModule that setup('fit') builds from them.
         if scalers is not None:
             self.scalers = scalers
         else:
             self.scalers = {}
-            
+        self.fitted_scalers = None
+
+
         # split seed: controls the train/val/test partition
         self.seed = seed
 
@@ -398,8 +413,10 @@ class ConceptDataModule(LightningDataModule):
         """Prepare the data splits for training, validation, or testing.
 
         Called by PyTorch Lightning with 'fit', 'validate', 'test', or
-        'predict' stages. Handles splitting (and, in the future,
-        scaler fitting)
+        'predict' stages. Handles splitting and, on the 'fit' stage, fitting
+        any configured scalers on the training split (see
+        :attr:`fitted_scalers`). Scalers are fitted once: a later call — Lightning
+        calls ``setup`` again per stage — reuses them rather than refitting.
 
         Parameters
         ----------
@@ -417,23 +434,81 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Fit scalers on training data only
         # ----------------------------------
-        # TODO: enable scalers and transforms
-        
-        # if stage in ['fit', None]:
-        #     for key, scaler in self.scalers.items():
-        #         if not hasattr(self.dataset, key):
-        #             raise RuntimeError(f"setup(): Cannot find attribute '{key}' in dataset")
-            
-        #     train_data = getattr(self.dataset, key)
-        #     if isinstance(self.trainset, Subset):
-        #         train_data = train_data[self.trainset.indices]
-            
-        #     scaler.fit(train_data, dim=0)
-        #     self.dataset.add_scaler(key, scaler)
+        if stage in ['fit', None] and self.scalers and self.fitted_scalers is None:
+            self.fitted_scalers = self._fit_scalers()
+            logger.info(f"Fitted scalers: {self.fitted_scalers!r}")
 
+    def _fit_scalers(self) -> ScalerModule:
+        """Fit the configured scaler prototypes on the **training split only**.
 
+        Recognised keys of ``scalers`` are ``'concepts'`` (applied to the
+        continuous concepts, one fitted scaler per concept) and ``'input'``.
+        The dataset is left untouched: the fitted statistics travel to the model
+        as a :class:`~torch_concepts.data.scalers.ScalerModule`, which the learner
+        applies around its forward pass.
+        """
+        unknown = set(self.scalers) - {'input', 'concepts'}
+        if unknown:
+            raise KeyError(
+                f"setup(): unknown scaler key(s) {sorted(unknown)}. "
+                f"Valid keys: 'input', 'concepts'."
+            )
 
-    def get_dataloader(self, 
+        train_idx = self.trainset.indices if isinstance(self.trainset, Subset) else None
+
+        concept_scaler = self.scalers.get('concepts')
+        concepts = None
+        if concept_scaler is not None:
+            if not self.dataset.annotations.type_groups['continuous']['labels']:
+                warnings.warn(
+                    "A 'concepts' scaler was configured but the dataset has no "
+                    "continuous concepts; concept scaling is skipped (binary and "
+                    "categorical concepts are class labels and are never scaled)."
+                )
+                concept_scaler = None
+            else:
+                concepts = self.dataset.concepts
+                if train_idx is not None:
+                    concepts = concepts[train_idx]
+
+        input_scaler = self.scalers.get('input')
+        input_data = None
+        if input_scaler is not None:
+            input_data = self._trainable_input_data(train_idx)
+
+        return ScalerModule.fit(
+            annotations=self.dataset.annotations,
+            concepts=concepts,
+            input_data=input_data,
+            concept_scaler=concept_scaler,
+            input_scaler=input_scaler,
+        )
+
+    def _trainable_input_data(self, train_idx):
+        """The training inputs to fit an ``'input'`` scaler on.
+
+        Only meaningful when ``dataset.input_data`` is already laid out the way the
+        model consumes it — precomputed embeddings or flat tabular features. A
+        dataset whose ``__getitem__`` reshapes the stored array (dSprites keeps a
+        ``(N, 64, 64)`` uint8 array and serves a ``(3, 64, 64)`` float) would have
+        its statistics computed on the wrong layout, so refuse instead.
+        """
+        input_data = self.dataset.input_data
+        served = self.dataset[0]['inputs']['x']
+        if (not isinstance(input_data, Tensor)
+                or not input_data.is_floating_point()
+                or tuple(input_data.shape[1:]) != tuple(served.shape)):
+            raise ValueError(
+                f"setup(): cannot fit an 'input' scaler on {self.dataset.name}. Its "
+                f"stored input_data is {type(input_data).__name__} with per-sample "
+                f"shape {tuple(input_data.shape[1:])}, but __getitem__ serves "
+                f"{tuple(served.shape)}. Input scaling supports precomputed "
+                f"embeddings and flat tabular features; for raw images, normalise "
+                f"in the backbone's own transform instead."
+            )
+        return input_data[train_idx] if train_idx is not None else input_data
+
+    def get_dataloader(self,
                        split: Literal['train', 'val', 'test'] = None,
                        shuffle: bool = False,
                        batch_size: Optional[int] = None) -> Optional[DataLoader]:

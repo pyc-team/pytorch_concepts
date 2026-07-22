@@ -67,6 +67,7 @@ def main(cfg: DictConfig) -> None:
         backbone=attach_latent_encoder(cfg, backbone),
         loss=loss,
         metrics=metrics,
+        scalers=datamodule.fitted_scalers,
     )
     logger.info(f"Model: {model}")
     
