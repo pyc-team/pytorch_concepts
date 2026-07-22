@@ -1757,3 +1757,109 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         self.assertEqual(moved.annotation.labels, ['a', 'b', 'c'])
         self.assertEqual(tuple(moved.tensor.shape), (5, 2, 3))
         self.assertTrue(torch.equal(moved.tensor, t.tensor.transpose(0, 1)))
+
+
+class TestDerivedCaches(unittest.TestCase):
+    """groupby_metadata / subset / label-slicing are memoised on the annotation.
+
+    The structural fields they read are write-once, but ``metadata`` is not, so
+    every cache derived from it must be dropped when it is reassigned.
+    """
+
+    def _annotation(self):
+        return Annotations(
+            labels=['a', 'b', 'c'],
+            cardinalities=[1, 1, 1],
+            types=['binary'] * 3,
+            metadata={
+                'a': {'variable': 'plate'},
+                'b': {'variable': 'plate'},
+                'c': {'variable': 'c'},
+            },
+        )
+
+    # ------------------------------------------------------------ groupby --
+
+    def test_groupby_metadata_is_memoised_and_correct(self):
+        ann = self._annotation()
+        first = ann.groupby_metadata('variable')
+        self.assertEqual(first, {'plate': ['a', 'b'], 'c': ['c']})
+        self.assertIs(ann.groupby_metadata('variable'), first)
+
+    def test_groupby_metadata_keys_on_layout(self):
+        ann = self._annotation()
+        self.assertEqual(ann.groupby_metadata('variable', layout='labels'),
+                         {'plate': ['a', 'b'], 'c': ['c']})
+        self.assertEqual(ann.groupby_metadata('variable', layout='indices'),
+                         {'plate': [0, 1], 'c': [2]})
+
+    def test_groupby_metadata_invalidated_on_metadata_reassignment(self):
+        ann = self._annotation()
+        self.assertEqual(ann.groupby_metadata('variable'),
+                         {'plate': ['a', 'b'], 'c': ['c']})
+        ann.metadata = {'a': {'variable': 'x'},
+                        'b': {'variable': 'y'},
+                        'c': {'variable': 'y'}}
+        self.assertEqual(ann.groupby_metadata('variable'),
+                         {'x': ['a'], 'y': ['b', 'c']})
+
+    # ------------------------------------------------------------- subset --
+
+    def test_subset_is_memoised_and_correct(self):
+        ann = self._annotation()
+        first = ann.subset(['b', 'a'])
+        self.assertEqual(first.labels, ['b', 'a'])
+        self.assertIs(ann.subset(['b', 'a']), first)
+        # a different request is a different entry, not the cached one
+        self.assertEqual(ann.subset(['a', 'b']).labels, ['a', 'b'])
+        self.assertEqual(ann.subset(['c']).labels, ['c'])
+
+    def test_subset_still_rejects_unknown_labels(self):
+        ann = self._annotation()
+        with self.assertRaises(ValueError):
+            ann.subset(['nope'])
+
+    def test_subset_invalidated_on_metadata_reassignment(self):
+        ann = self._annotation()
+        self.assertEqual(ann.subset(['a']).metadata, {'a': {'variable': 'plate'}})
+        ann.metadata = {'a': {'variable': 'x'}, 'b': {}, 'c': {}}
+        self.assertEqual(ann.subset(['a']).metadata, {'a': {'variable': 'x'}})
+
+    # ------------------------------------------- AnnotatedTensor slicing --
+
+    def test_label_and_group_slicing_are_cached_but_track_the_data(self):
+        ann = self._annotation()
+        data = torch.arange(3).float().expand(4, 3)
+        t = AnnotatedTensor(data, ann, axis=-1)
+
+        # repeated access resolves to the same columns every time
+        for _ in range(3):
+            self.assertEqual(t['a'].annotation.labels, ['a'])
+            self.assertTrue(torch.equal(t['a'].tensor, data[:, 0:1]))
+            self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+            self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
+            self.assertEqual(t['c', 'a'].annotation.labels, ['c', 'a'])
+
+        # a second tensor sharing the annotation reuses the resolution but
+        # must slice *its own* data
+        other = AnnotatedTensor(torch.ones(4, 3), ann, axis=-1)
+        self.assertTrue(torch.equal(other['plate'].tensor, torch.ones(4, 2)))
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
+
+    def test_group_slicing_invalidated_on_metadata_reassignment(self):
+        ann = self._annotation()
+        data = torch.arange(3).float().expand(4, 3)
+        t = AnnotatedTensor(data, ann, axis=-1)
+        self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+
+        # 'plate' now covers all three labels
+        ann.metadata = {l: {'variable': 'plate'} for l in ('a', 'b', 'c')}
+        self.assertEqual(t['plate'].annotation.labels, ['a', 'b', 'c'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data))
+
+    def test_unknown_key_still_raises_after_caching(self):
+        ann = self._annotation()
+        t = AnnotatedTensor(torch.randn(4, 3), ann, axis=-1)
+        t['a']  # populate the cache first
+        with self.assertRaises(ValueError):
+            t['not_a_label']

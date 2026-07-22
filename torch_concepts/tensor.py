@@ -201,9 +201,23 @@ class AnnotatedTensor:
             key = tuple(key)
 
         if isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
-            labels = self._resolve_labels(key)
-            indices = _as_contiguous_slice(self._annotation.get_slice(labels))
-            new_ann = self._annotation.subset(labels)
+            # Resolving a key to (columns, sub-annotation) depends only on the
+            # annotation, which is shared across every tensor carrying it (an
+            # engine reuses one per query signature), while the tensor itself is
+            # rebuilt each batch. So the memo lives on the annotation: a loop
+            # slicing the same names every step resolves them exactly once,
+            # instead of paying O(labels) to re-expand a group and rebuild a
+            # sub-annotation. Invalidated when ``metadata`` is reassigned.
+            cache = self._annotation.__dict__.setdefault('_slice_cache', {})
+            resolved = cache.get(key)
+            if resolved is None:
+                labels = self._resolve_labels(key)
+                resolved = (
+                    _as_contiguous_slice(self._annotation.get_slice(labels)),
+                    self._annotation.subset(labels),
+                )
+                cache[key] = resolved
+            indices, new_ann = resolved
             return AnnotatedTensor(
                 self._data[self._index(indices)], new_ann, self._axis
             )

@@ -148,12 +148,20 @@ class Annotations:
     # (logit-space) annotation via :meth:`to_concept_space`.
     concept_space: bool = field(default=False)
 
+    #: Caches derived from ``metadata``, dropped whenever it is reassigned.
+    #: Everything else derives from the write-once structural fields, so only
+    #: these need invalidating.
+    _METADATA_DERIVED_CACHES = ('_groupby_cache', '_subset_cache', '_slice_cache')
+
     def __setattr__(self, key, value):
         # `metadata` may change after construction, so it is
         # freely reassignable. The structural fields (labels, states,
         # cardinalities, types) remain write-once.
         if key == 'metadata':
             super().__setattr__(key, value)
+            # Anything computed from the old metadata is now stale.
+            for cache in self._METADATA_DERIVED_CACHES:
+                self.__dict__.pop(cache, None)
             return
         if key in self.__dict__ and self.__dict__[key] is not None:
             raise AttributeError(f"'{key}' is write-once and already set")
@@ -284,9 +292,21 @@ class Annotations:
         return all(key in self.metadata.get(label, {}) for label in self.labels)
 
     def groupby_metadata(self, key, layout: str='labels') -> dict:
-        """Check if metadata contains a specific key for all labels."""
+        """Group labels by the value they carry under a metadata ``key``.
+
+        Memoised per ``(key, layout)``: label-based slicing consults this on
+        every lookup of a name that is not itself a label (see
+        ``AnnotatedTensor.GROUP_KEY``), so recomputing it would make each such
+        slice O(labels). The cache is dropped when ``metadata`` is reassigned.
+
+        The returned dict is the cached instance — treat it as read-only.
+        """
         if self.metadata is None:
             return {}
+        cache = self.__dict__.setdefault('_groupby_cache', {})
+        cached = cache.get((key, layout))
+        if cached is not None:
+            return cached
         result = {}
         for label in self.labels:
             meta = self.metadata.get(label, {})
@@ -300,6 +320,7 @@ class Annotations:
                     result[group].append(self.get_index(label))
                 else:
                     raise ValueError(f"Unknown layout {layout}")
+        cache[(key, layout)] = result
         return result
 
     def __len__(self) -> int:
@@ -648,10 +669,25 @@ class Annotations:
         Return a new Annotations restricted to `keep_labels`
         (order follows the order in `keep_labels`).
 
+        Memoised by the requested label sequence: every label-based slice of an
+        :class:`~torch_concepts.tensor.AnnotatedTensor` builds one of these, so
+        a training loop slicing the same names each step would otherwise pay a
+        full ``Annotations`` construction (with its validation passes) per
+        access. The cache is dropped when ``metadata`` is reassigned; the
+        structural fields it also reads are write-once.
+
+        The result is shared, not copied — callers must not mutate it.
+
         Raises
         ------
         ValueError if any requested label is missing.
         """
+        cache = self.__dict__.setdefault('_subset_cache', {})
+        cache_key = tuple(keep_labels)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # 1) validate + map to indices, preserving requested order
         label_set = set(self.labels)
         missing = [lab for lab in keep_labels if lab not in label_set]
@@ -678,7 +714,7 @@ class Annotations:
             new_metadata = {lab: self.metadata[lab] for lab in keep_labels}
 
         # 4) build a fresh object
-        return Annotations(
+        result = Annotations(
             labels=new_labels,
             states=new_states,
             cardinalities=new_cards,
@@ -686,6 +722,8 @@ class Annotations:
             metadata=new_metadata,
             concept_space=self.concept_space,
         )
+        cache[cache_key] = result
+        return result
 
     def to_concept_space(self) -> "Annotations":
         """Return a concept-space view: one integer-coded column per concept.
