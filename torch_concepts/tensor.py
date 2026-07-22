@@ -179,13 +179,18 @@ class AnnotatedTensor:
         Any other key is forwarded to the underlying tensor; the annotation is
         preserved when the result's annotated-axis size equals the original.
         """
-        # Normalise to tuple-of-strings when possible
+        # Normalise to tuple-of-strings when possible, in a single all-string scan.
+        is_name_key = False
         if isinstance(key, str):
             key = (key,)
+            is_name_key = True
         elif isinstance(key, list) and key and all(isinstance(k, str) for k in key):
             key = tuple(key)
+            is_name_key = True
+        elif isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
+            is_name_key = True
 
-        if isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
+        if is_name_key:
             # Resolving a key to (columns, sub-annotation) is memoised on the
             # annotation (which is shared across every tensor carrying it, while
             # the tensor itself is rebuilt each batch), so a loop slicing the same
