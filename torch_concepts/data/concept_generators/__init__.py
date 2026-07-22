@@ -1,4 +1,4 @@
-from .llm_backends import LiteLLMBackend
+from ...llm_backends import LiteLLMBackend
 from .llm_concept_gen import (
     LLMConceptGenerator,
     concept_specs_to_annotation,

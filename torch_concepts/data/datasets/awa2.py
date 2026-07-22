@@ -450,17 +450,16 @@ class AWA2Dataset(ConceptDataset):
         return self.load_raw()
 
     def __getitem__(self, item: int) -> dict:
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            img_path = self.input_data[item]
-            tv = _import_torchvision()
-            x = Image.open(img_path)
-            x = x.convert('RGB')  # Ensure 3 channels
-            x = tv.transforms.Resize((self.image_size, self.image_size))(x)  # Resize to 224x224
-            x = tv.transforms.ToTensor()(x)  # Convert to tensor and scale to [0, 1]
-        c = self.concepts[item]
-        return {'inputs': {'x': x}, 'concepts': {'c': c}}
+            return sample
+        img_path = self.input_data[item]
+        tv = _import_torchvision()
+        x = Image.open(img_path)
+        x = x.convert('RGB')  # Ensure 3 channels
+        x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+        sample['inputs']['x'] = tv.transforms.ToTensor()(x)
+        return sample
 
     @property
     def n_samples(self) -> int:

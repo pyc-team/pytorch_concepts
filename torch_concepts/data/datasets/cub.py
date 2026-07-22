@@ -23,7 +23,7 @@ import zipfile
 import shutil
 
 from torch_concepts import AnnotatedTensor, Annotations
-from torch_concepts.data.base import ConceptDataset, ConceptSupervisionPipeline
+from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 from torch_concepts.data.utils import parse_tensor
 
@@ -733,17 +733,6 @@ class CUBDataset(ConceptDataset):
     split : {'train', 'val', 'test'}, optional
         Native CUB partition to keep. ``None`` keeps all partitions and
         preserves datamodule/native-splitter behavior.
-    concept_pipeline : ConceptSupervisionPipeline, optional
-        Pipeline used to generate additional label-free concept supervision for
-        this CUB subset.
-    use_as_gt : bool, default=False
-        Whether generated concepts should become the default ground-truth
-        supervision when ``concept_pipeline`` is provided.
-    generated_gt_name : str, optional
-        Generated concept source to use when ``use_as_gt=True``. If omitted,
-        the first pipeline output is used.
-    concept_pipeline_kwargs : mapping, optional
-        Extra keyword arguments forwarded when running ``concept_pipeline``.
     """
 
     def __init__(
@@ -753,10 +742,6 @@ class CUBDataset(ConceptDataset):
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[Mapping] = None,
         split: Optional[str] = None,
-        concept_pipeline: Optional[ConceptSupervisionPipeline] = None,
-        use_as_gt: bool = False,
-        generated_gt_name: Optional[str] = None,
-        concept_pipeline_kwargs: Optional[Mapping] = None,
     ):
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'CUB200')
@@ -780,10 +765,6 @@ class CUBDataset(ConceptDataset):
             annotations=annotations,
             graph=graph,
             concept_names_subset=concept_subset,
-            concept_pipeline=concept_pipeline,
-            concept_pipeline_kwargs=concept_pipeline_kwargs,
-            use_as_gt=use_as_gt,
-            generated_gt_name=generated_gt_name,
             name='CUBDataset',
         )
         self.data = self._make_data()
@@ -1003,31 +984,15 @@ class CUBDataset(ConceptDataset):
         self._resolve_ground_truth()
 
     def __getitem__(self, item: int) -> dict:
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            img_path = self.input_data[item]
-            tv = _import_torchvision()
-            x = Image.open(img_path).convert('RGB')
-            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
-            x = tv.transforms.ToTensor()(x)
-        native = self.concepts[item]
-        ground_truth = (
-            self.ground_truth[item]
-            if self.ground_truth is not None else None
-        )
-        return {
-            'inputs': {'x': x},
-            'concepts': {
-                'c': ground_truth if ground_truth is not None else native,
-                'native': native,
-                'ground_truth': ground_truth,
-                'generated': {
-                    name: values[item]
-                    for name, values in self.generated_annotations.items()
-                },
-            },
-        }
+            return sample
+        img_path = self.input_data[item]
+        tv = _import_torchvision()
+        x = Image.open(img_path).convert('RGB')
+        x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+        sample['inputs']['x'] = tv.transforms.ToTensor()(x)
+        return sample
 
     # ------------------------------------------------------------------
     # Properties — override base class which assumes input_data is a Tensor

@@ -16,6 +16,17 @@ BinaryPromptFormatter = Callable[[str], str]
 StatePromptFormatter = Callable[[str, str], str]
 
 
+def resolve_device(device: str | torch.device | None = None) -> torch.device:
+    """Resolve an explicit device or prefer CUDA, then MPS, then CPU."""
+    if device is not None:
+        return torch.device(device)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def default_input_getter(sample: Any) -> Any:
     """Extract the image/input from common dataset sample formats."""
     if isinstance(sample, dict):
@@ -46,17 +57,15 @@ class CLIPAnnotator(Annotator):
     Parameters
     ----------
     model_name : str, optional
-        The name of the CLIP model to use. Default is ``"ViT-B-32"``.
-    pretrained : str, optional
-        The pretrained weights to use. Default is ``"openai"``.
+        Hugging Face model identifier. Defaults to
+        ``"openai/clip-vit-base-patch32"``.
     batch_size : int, optional
         Batch size used while annotating the dataset. Default is 64.
     device : str or torch.device, optional
-        Device on which CLIP inference runs. Defaults to CUDA when available.
+        Device on which CLIP inference runs. By default CUDA is preferred,
+        followed by MPS and CPU.
     input_getter : callable, optional
         Function used to extract an image from a dataset sample.
-    input_transform : callable, optional
-        Optional transform applied to each extracted image before inference.
     prompt_template : str, sequence of str, or callable, optional
         Template or function applied after concept/state prompt formatting.
     binary_prompt_formatter : callable, optional
@@ -81,12 +90,10 @@ class CLIPAnnotator(Annotator):
 
     def __init__(
         self,
-        model_name: str = "ViT-B-32",
-        pretrained: str = "openai",
+        model_name: str = "openai/clip-vit-base-patch32",
         batch_size: int = 64,
         device: str | torch.device | None = None,
         input_getter: Callable[[Any], Any] = default_input_getter,
-        input_transform: Callable[[Any], Tensor] | None = None,
         prompt_template: PromptTemplate = "{}",
         binary_prompt_formatter: BinaryPromptFormatter = (
             default_binary_prompt_formatter
@@ -108,21 +115,17 @@ class CLIPAnnotator(Annotator):
             )
 
         try:
-            import open_clip
+            from transformers import AutoModel, AutoProcessor
         except ImportError as error:
             raise ImportError(
-                "open_clip is required for CLIPAnnotator. "
-                "Install it with: pip install open-clip-torch"
+                "CLIPAnnotator requires transformers. Install the "
+                "pytorch-concepts data extras or run: pip install transformers"
             ) from error
 
         self.model_name = model_name
-        self.pretrained = pretrained
         self.batch_size = batch_size
-        self.device = torch.device(
-            device or ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = resolve_device(device)
         self.input_getter = input_getter
-        self.input_transform = input_transform
         self.prompt_template = prompt_template
         self.binary_prompt_formatter = binary_prompt_formatter
         self.state_prompt_formatter = state_prompt_formatter
@@ -133,12 +136,8 @@ class CLIPAnnotator(Annotator):
         self.num_workers = num_workers
         self.show_progress = show_progress
 
-        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
-            model_name,
-            pretrained=pretrained,
-            device=self.device,
-        )
-        self.tokenizer = open_clip.get_tokenizer(model_name)
+        self.processor = AutoProcessor.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name).to(self.device)
         self.model.eval()
 
     def annotate(
@@ -172,11 +171,8 @@ class CLIPAnnotator(Annotator):
         )
         for batch in batches:
             images = [self.input_getter(sample) for sample in batch]
-            clip_images = self._prepare_clip_images(images)
-
             with torch.no_grad():
-                image_features = self.model.encode_image(clip_images)
-                image_features = F.normalize(image_features, dim=-1)
+                image_features = self.encode_images(images)
                 scores = image_features @ concept_features.T
                 scores = self._postprocess_scores(scores)
 
@@ -218,13 +214,29 @@ class CLIPAnnotator(Annotator):
         for concept in concept_iterator:
             prompts = self._make_prompts(concept)
             with torch.no_grad():
-                tokens = self.tokenizer(prompts).to(self.device)
-                text_features = self.model.encode_text(tokens)
-                text_features = F.normalize(text_features, dim=-1)
+                text_features = self.encode_texts(prompts)
                 text_feature = text_features.mean(dim=0)
                 text_feature = F.normalize(text_feature, dim=0)
             all_features.append(text_feature)
         return torch.stack(all_features, dim=0)
+
+    def encode_texts(self, texts: Sequence[str]) -> Tensor:
+        """Encode and normalize text with the Hugging Face model."""
+        inputs = self.processor(
+            text=list(texts),
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = {name: value.to(self.device) for name, value in inputs.items()}
+        features = self.model.get_text_features(**inputs)
+        return F.normalize(features, dim=-1)
+
+    def encode_images(self, images: Sequence[Any]) -> Tensor:
+        """Preprocess, encode, and normalize images with Hugging Face."""
+        inputs = self.processor(images=list(images), return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(self.device)
+        features = self.model.get_image_features(pixel_values=pixel_values)
+        return F.normalize(features, dim=-1)
 
     def _progress(self, iterable: Any, desc: str, total: int | None = None) -> Any:
         if not self.show_progress:
@@ -243,17 +255,6 @@ class CLIPAnnotator(Annotator):
         if isinstance(template, str):
             return [template.format(concept)]
         return [item.format(concept) for item in template]
-
-    def _prepare_clip_images(self, images: Sequence[Any]) -> Tensor:
-        processed = []
-        for image in images:
-            if self.input_transform is not None:
-                image = self.input_transform(image)
-            if isinstance(image, Tensor):
-                processed.append(image)
-            else:
-                processed.append(self.preprocess(image))
-        return torch.stack(processed).to(self.device)
 
     def _postprocess_scores(self, similarities: Tensor) -> Tensor:
         if self.output == "similarity":

@@ -813,6 +813,28 @@ class TestCacheEmbeddings:
             bb, batch_size=7, workers=3, cache=True, cache_dir=None, force=True
         )
 
+    def test_datamodule_delegates_concept_generation(self, tmp_path):
+        ds, _ = self._make_ds(tmp_path)
+        dm = ConceptDataModule(dataset=ds)
+        pipeline = MagicMock()
+        expected = ({"clip": torch.ones(len(ds), 2)}, {"clip": MagicMock()})
+        ds.generate_concepts = MagicMock(return_value=expected)
+
+        result = dm.generate_concepts(
+            pipeline,
+            class_names=["bird"],
+            use_as_gt=True,
+            generated_gt_name="clip",
+        )
+
+        assert result is expected
+        ds.generate_concepts.assert_called_once_with(
+            pipeline,
+            class_names=["bird"],
+            use_as_gt=True,
+            generated_gt_name="clip",
+        )
+
     def test_cache_dir_overrides_root_dir(self, tmp_path):
         """cache_dir redirects the cache file away from the dataset root."""
         ds, bb = self._make_ds(tmp_path)

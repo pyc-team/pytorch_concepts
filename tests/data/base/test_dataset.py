@@ -203,5 +203,138 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.assertEqual(dataset.graph.data.shape, (2, 2))
 
 
+class TestGeneratedGroundTruthSelection(unittest.TestCase):
+    """Test selecting a generated concept source as ground truth."""
+
+    def setUp(self):
+        self.X = torch.randn(4, 3)
+        self.C = torch.zeros(4, 2)
+        self.annotations = Annotations(labels=["native_0", "native_1"])
+        self.generated_annotations = {
+            "first": Annotations(labels=["first_0"]),
+            "second": Annotations(labels=["second_0", "second_1"]),
+        }
+        self.generated_values = {
+            "first": torch.ones(4, 1),
+            "second": torch.full((4, 2), 2.0),
+        }
+
+    def test_selects_named_generated_source_when_used_as_ground_truth(self):
+        dataset = ConceptDataset(
+            self.X,
+            self.C,
+            annotations=self.annotations,
+        )
+
+        dataset.set_generated_concepts(
+            self.generated_annotations,
+            self.generated_values,
+            use_as_gt=True,
+            generated_gt_name="second",
+        )
+
+        self.assertTrue(torch.equal(dataset.ground_truth, self.generated_values["second"]))
+        self.assertEqual(dataset.concept_names, ["second_0", "second_1"])
+        sample = dataset[0]
+        self.assertNotIn("ground_truth", sample["concepts"])
+        self.assertIs(sample["concepts"]["c"], sample["concepts"]["generated"]["second"])
+
+    def test_missing_generated_ground_truth_source_raises(self):
+        dataset = ConceptDataset(
+            self.X,
+            self.C,
+            annotations=self.annotations,
+        )
+
+        with self.assertRaisesRegex(ValueError, "generated_gt_name='missing'"):
+            dataset.set_generated_concepts(
+                self.generated_annotations,
+                self.generated_values,
+                use_as_gt=True,
+                generated_gt_name="missing",
+            )
+
+    def test_generate_concepts_runs_pipeline_with_kwargs(self):
+        calls = []
+
+        class Pipeline:
+            def __call__(self, dataset, **kwargs):
+                calls.append((dataset, kwargs))
+                return self_values, self_annotations
+
+        self_values = self.generated_values
+        self_annotations = self.generated_annotations
+
+        dataset = ConceptDataset(
+            self.X,
+            self.C,
+            annotations=self.annotations,
+        )
+        dataset.generate_concepts(
+            Pipeline(),
+            num_concepts=2,
+            use_as_gt=True,
+            generated_gt_name="second",
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], dataset)
+        self.assertEqual(calls[0][1], {"class_names": None, "num_concepts": 2})
+        self.assertTrue(torch.equal(dataset.ground_truth, self.generated_values["second"]))
+
+    def test_generate_concepts_can_name_self_and_annotate_extra_datasets(self):
+        calls = []
+        val_dataset = ConceptDataset(
+            torch.randn(2, 3),
+            torch.zeros(2, 2),
+            annotations=self.annotations,
+        )
+
+        class Pipeline:
+            def __call__(self, dataset, **kwargs):
+                calls.append((dataset, kwargs))
+                return (
+                    {
+                        "train": torch.ones(len(dataset), 1),
+                        "val": torch.zeros(len(val_dataset), 1),
+                    },
+                    {
+                        "train": Annotations(labels=["generated"]),
+                        "val": Annotations(labels=["generated"]),
+                    },
+                )
+
+        dataset = ConceptDataset(
+            self.X,
+            self.C,
+            annotations=self.annotations,
+        )
+        dataset.generate_concepts(
+            Pipeline(),
+            self_annotation_name="train",
+            datasets_to_annotate={"val": val_dataset},
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], dataset)
+        self.assertEqual(calls[0][1]["class_names"], None)
+        self.assertEqual(
+            calls[0][1]["annotation_datasets"],
+            {"train": dataset, "val": val_dataset},
+        )
+        self.assertEqual(set(dataset.generated_annotations), {"train", "val"})
+
+    def test_native_c_reuses_native_sample_object(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+
+        sample = dataset[0]
+
+        self.assertIs(sample["concepts"]["c"], sample["concepts"]["native"])
+        self.assertEqual(
+            set(sample["concepts"]),
+            {"c", "native", "generated"},
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,17 +1,17 @@
-import numpy as np
-import random
 import torch
-from typing import Any, Mapping, Optional, Tuple
+from typing import Tuple
 
 from torchvision.datasets import MNIST
 from torchvision.transforms import transforms
 
+from torch_concepts import Annotations
 from torch_concepts.data.base.dataset import ConceptDataset
 
 
 def _colorize(image: torch.Tensor, color: str) -> torch.Tensor:
     # Create an image with 3 channels (RGB)
     colored_image = torch.zeros(3, 28, 28)
+    image = image.float() / 255.0
     if color == 'red':
         colored_image[0] = image  # Red channel
     elif color == 'green':
@@ -36,14 +36,6 @@ class ColorMNISTDataset(ConceptDataset, MNIST):
             is False.
         random: Whether to colorize the digits randomly. Default is True.
         indices: Optional subset of indices to keep.
-        concept_pipeline: Optional pipeline used to generate label-free concept
-            supervision.
-        concept_pipeline_kwargs: Optional keyword arguments forwarded when
-            running ``concept_pipeline``.
-        use_as_gt: Whether generated concepts should be selected as
-            ``ground_truth``.
-        generated_gt_name: Optional generated concept source to use as
-            ``ground_truth``.
     """
     def __init__(
         self,
@@ -54,10 +46,6 @@ class ColorMNISTDataset(ConceptDataset, MNIST):
         download: bool = False,
         random: bool = True,
         indices = None,
-        concept_pipeline = None,
-        concept_pipeline_kwargs: Optional[Mapping[str, Any]] = None,
-        use_as_gt: bool = False,
-        generated_gt_name: Optional[str] = None,
     ):
         MNIST.__init__(
             self,
@@ -72,12 +60,6 @@ class ColorMNISTDataset(ConceptDataset, MNIST):
             self.data = self.data[indices]
             self.targets = self.targets[indices]
         self.random = random
-        self._setup_generated_concepts(
-            concept_pipeline=concept_pipeline,
-            concept_pipeline_kwargs=concept_pipeline_kwargs,
-            use_as_gt=use_as_gt,
-            generated_gt_name=generated_gt_name,
-        )
         self.concept_attr_names = [
             '0',
             '1',
@@ -93,8 +75,27 @@ class ColorMNISTDataset(ConceptDataset, MNIST):
             'green',
         ]
         self.task_attr_names = ['even', 'odd']
-
-        self._maybe_generate_concepts()
+        annotations = Annotations(
+            labels=self.concept_attr_names,
+            cardinalities=[1] * len(self.concept_attr_names),
+            types=["binary"] * len(self.concept_attr_names),
+        )
+        colors = (
+            torch.randint(0, 2, (len(self.data),))
+            if random else (self.targets > 5).long()
+        )
+        concepts = torch.zeros(len(self.data), len(self.concept_attr_names))
+        concepts[torch.arange(len(self.data)), self.targets.long()] = 1
+        concepts[:, 10] = (colors == 0).float()
+        concepts[:, 11] = (colors == 1).float()
+        self._colors = colors
+        ConceptDataset.__init__(
+            self,
+            input_data=self.data,
+            concepts=concepts,
+            annotations=annotations,
+            name=self.__class__.__name__,
+        )
 
     def __len__(self):
         return len(self.data)
@@ -104,31 +105,12 @@ class ColorMNISTDataset(ConceptDataset, MNIST):
         return MNIST.download(self)
 
     def __getitem__(self, index):
-        image, digit = self.data[index], int(self.targets[index])
-
-        # Colorize the image
-        if self.random:
-            color = 'red' if random.random() < 0.5 else 'green'
-        else:
-            color = 'red' if digit <= 5 else 'green'
-        # Remove channel dimension of the grayscale image
-        colored_image = _colorize(image.squeeze(), color)
-
-        # Create the concept label
-        concept_label = np.zeros(12)  # 10 digits + 2 colors
-        concept_label[digit] = 1
-        concept_label[10] = 1 if color == 'red' else 0
-        concept_label[11] = 1 if color == 'green' else 0
-
-        # Create the target label
-        target_label = 1 if digit % 2 == 0 else 0
-        target_label = [target_label, 1 - target_label]
-
-        return (
-            colored_image,
-            torch.tensor(concept_label, dtype=torch.float32),
-            torch.tensor(target_label, dtype=torch.float32),
-        )
+        sample = super().__getitem__(index)
+        if self.embs_precomputed:
+            return sample
+        color = "red" if self._colors[index].item() == 0 else "green"
+        sample['inputs']['x'] = _colorize(self.data[index].squeeze(), color)
+        return sample
 
 
 class MNISTAddition(MNIST):

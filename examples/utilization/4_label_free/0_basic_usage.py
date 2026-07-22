@@ -20,10 +20,12 @@ For another LiteLLM provider, set the API key expected by that provider, e.g.
 """
 
 import argparse
+import base64
+from io import BytesIO
 
 import torch
 from torch import nn
-import torchvision.transforms.functional as TF
+from PIL import Image
 from tqdm import tqdm
 
 from torch_concepts.data.annotators import CLIPAnnotator
@@ -32,14 +34,56 @@ from torch_concepts.data.concept_generators import LiteLLMBackend, LLMConceptGen
 from torch_concepts.data.datasets.mnist import ColorMNISTDataset
 
 
-def prepare_clip_image(image):
-    image = image.float() / 255
-    image = TF.resize(image, [224, 224], antialias=True)
-    return TF.normalize(
-        image,
-        mean=(0.48145466, 0.4578275, 0.40821073),
-        std=(0.26862954, 0.26130258, 0.27577711),
+def _image_data_url(image: torch.Tensor) -> str:
+    """Encode a CHW tensor for a multimodal LiteLLM prompt."""
+    array = (
+        image.detach()
+        .cpu()
+        .clamp(0, 1)
+        .mul(255)
+        .byte()
+        .permute(1, 2, 0)
+        .numpy()
     )
+    buffer = BytesIO()
+    Image.fromarray(array).save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def dataset_aware_prompt(dataset, class_names=None, num_examples=4, **kwargs):
+    """Build an in-context prompt using images from the generation dataset."""
+    del kwargs
+    example_indices = torch.linspace(
+        0,
+        len(dataset) - 1,
+        steps=min(num_examples, len(dataset)),
+    ).long()
+    content = [{
+        "type": "text",
+        "text": (
+            "Generate 12 short visual concepts useful for classifying "
+            f"ColorMNIST images as {class_names}. Use the labeled images below "
+            "as in-context examples. Include digit identity, color, and simple "
+            "shape concepts. Return one concept per line and no explanations."
+        ),
+    }]
+    for index in example_indices.tolist():
+        sample = dataset[index]
+        native = sample["concepts"]["native"]
+        digit = int(native[:10].argmax())
+        color = "red" if native[10].item() else "green"
+        content.extend([
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_data_url(sample["inputs"]["x"])},
+            },
+            {
+                "type": "text",
+                "text": f"Example label: {color} digit {digit}.",
+            },
+        ])
+    return [{"role": "user", "content": content}]
 
 
 def main():
@@ -47,6 +91,11 @@ def main():
     parser.add_argument("--llm-model", default="gemini/gemini-3.5-flash")
     parser.add_argument("--llm-temperature", type=float, default=1.0)
     parser.add_argument("--llm-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--clip-device",
+        default=None,
+        help="Explicit device; by default prefers CUDA, then MPS, then CPU.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -60,23 +109,16 @@ def main():
     # concept vocabulary for the downstream annotator.
     generator = LLMConceptGenerator(
         llm=llm,
-        prompt=(
-            "Generate 12 short visual concepts useful for classifying "
-            "ColorMNIST images as even or odd. Include digit identity, color, "
-            "and simple shape concepts. The classes are: {class_names}. "
-            "Return one concept per line and no explanations."
-        ),
+        prompt=dataset_aware_prompt,
     )
     # The annotator scores each image against the generated concept vocabulary.
     # In this example we ask it to annotate both train and validation splits.
     annotator = CLIPAnnotator(
-        model_name="ViT-B-32",
-        pretrained="openai",
+        model_name="openai/clip-vit-base-patch32",
         output="similarity",
         prompt_template="a photo of a {}",
-        input_transform=prepare_clip_image,
         batch_size=128,
-        device="mps",
+        device=args.clip_device,
         show_progress=True,
     )
     # The pipeline wires concept generation and annotation together. With
@@ -100,35 +142,27 @@ def main():
         random=False,
         indices=range(10000),
     )
-    # Passing concept_pipeline makes ColorMNIST run concept generation inside
-    # the dataset constructor. Concepts are generated from this training split;
-    # datasets_to_annotate adds the validation split to the annotation pass.
     train_dataset = ColorMNISTDataset(
         root="./data",
         train=True,
         download=True,
         random=False,
         indices=range(10000),
-        concept_pipeline=pipeline,
-        # Select the generated train annotations as dataset.ground_truth. This
-        # keeps the code related to the learning independent of the pipeline output dict.
+    )
+
+    # Concept generation is an explicit preprocessing step, just like backbone
+    # embedding precomputation. It is never run from a dataset constructor.
+    train_dataset.generate_concepts(
+        pipeline,
+        class_names=["even", "odd"],
+        self_annotation_name="train",
+        datasets_to_annotate={"val": val_dataset},
         use_as_gt=True,
         generated_gt_name=train_name,
-        concept_pipeline_kwargs={
-            "class_names": ["red digit", "green digit"],
-            # Name this dataset "train" in the annotation outputs. This makes
-            # the train annotations available as "train_CLIPAnnotator".
-            "self_annotation_name": "train",
-            "datasets_to_annotate": {
-                "val": val_dataset,
-            },
-        },
     )
 
     concept_axis = train_dataset.generated_concepts[train_name]
-    # Because use_as_gt=True selected train_name above, the training concept
-    # matrix is available through the standard dataset.ground_truth field.
-    train_concepts = train_dataset.ground_truth.float()
+    train_concepts = train_dataset.generated_annotations[train_name].float()
     # Validation was annotated in the same pipeline call, but it is not this
     # dataset's ground truth, so read it from the generated annotation outputs.
     val_concepts = train_dataset.generated_annotations[val_name].float()
@@ -138,14 +172,8 @@ def main():
     train_concepts = (train_concepts - mean) / std
     val_concepts = (val_concepts - mean) / std
 
-    # ColorMNIST returns one-hot task labels at index 2; CrossEntropyLoss
-    # expects integer class indices, so convert them with argmax.
-    train_labels = torch.stack(
-        [train_dataset[index][2] for index in range(len(train_dataset))]
-    ).argmax(1)
-    val_labels = torch.stack(
-        [val_dataset[index][2] for index in range(len(val_dataset))]
-    ).argmax(1)
+    train_labels = (train_dataset.targets % 2 == 0).long()
+    val_labels = (val_dataset.targets % 2 == 0).long()
 
     model = nn.Linear(train_concepts.shape[1], 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.05, weight_decay=1e-3)

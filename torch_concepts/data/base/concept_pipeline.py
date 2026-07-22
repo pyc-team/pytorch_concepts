@@ -82,6 +82,9 @@ class DeduplicateConcepts:
         )
 
 
+DEFAULT_CONCEPT_FILTER = DeduplicateConcepts()
+
+
 class ConceptSupervisionPipeline:
     """Compose concept generation, annotation, filtering, and aggregation.
 
@@ -105,7 +108,9 @@ class ConceptSupervisionPipeline:
         applied to each routed generator axis.
     aggregator : callable, optional
         Function to aggregate the generated concept values into a single tensor.
-        If None, no aggregation is performed.
+        Aggregation is only supported with ``routing='merged'``, where all
+        annotators receive the same merged concept axis. If None, no
+        aggregation is performed.
     routing : {'merged', 'cartesian', 'zip'}, default='merged'
         Routing mode for combining generators and annotators:
         - 'merged': merges all generated concepts, then sends them to all annotators.
@@ -119,7 +124,7 @@ class ConceptSupervisionPipeline:
         self,
         generators: ConceptGenerator | Sequence[ConceptGenerator],
         annotators: Annotator | Sequence[Annotator],
-        concept_filter: Callable[[Annotations], Annotations] | None = DeduplicateConcepts(),
+        concept_filter: Callable[[Annotations], Annotations] | None = DEFAULT_CONCEPT_FILTER,
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
@@ -138,6 +143,10 @@ class ConceptSupervisionPipeline:
         if routing == "zip" and len(self.generators) != len(self.annotators):
             raise ValueError(
                 "routing='zip' requires the same number of generators and annotators."
+            )
+        if aggregator is not None and routing != "merged":
+            raise ValueError(
+                "aggregator is only supported with routing='merged'."
             )
 
         self.concept_filter = concept_filter
