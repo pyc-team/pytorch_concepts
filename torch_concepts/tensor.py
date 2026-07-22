@@ -225,11 +225,34 @@ class AnnotatedTensor:
         # Regular tensor indexing; re-wrap if the annotated axis is unchanged
         return self._wrap(self._data[key])
 
-    #: Metadata key naming the group a label belongs to. A key that is not
-    #: itself a label is looked up here, so a producer that splits one source
-    #: into several labels (the mid level expanding a plate into its members)
-    #: keeps the source's name addressable.
+    #: Legacy metadata key naming the group a label belongs to. Producers used
+    #: to record ownership per label under this key; ``Annotations.label_groups``
+    #: still honours it, but new code should register the group explicitly (see
+    #: :meth:`register_plate_label`) and leave the labels' metadata alone.
     GROUP_KEY = 'variable'
+
+    def register_plate_label(self, owner: str, members) -> 'AnnotatedTensor':
+        """Make ``owner`` select ``members``' columns as one block.
+
+        ``owner`` adds no column of its own — it is an alias expanded at slice
+        time, so ``t[owner]`` returns those members (in the order registered)
+        while each member stays individually addressable::
+
+            t.register_plate_label('concepts', ['A', 'B', 'C'])
+            t['concepts']   # -> A|B|C
+            t['B']          # -> just B
+
+        The registration is stored on the **annotation**, not on this tensor:
+        every derived tensor (``t * 2``, ``t[:2]``, ``t.to(...)``, and each new
+        inference output built from the same annotation) is a fresh
+        ``AnnotatedTensor`` carrying that same annotation, so keeping it here
+        would lose it on the first operation. Registering through any one tensor
+        therefore registers it for all of them.
+
+        Returns ``self`` so registrations can be chained.
+        """
+        self._annotation.register_group(owner, members)
+        return self
 
     def _resolve_labels(self, keys) -> list:
         """Expand each key to labels: itself, or the group of labels it names.
@@ -247,7 +270,7 @@ class AnnotatedTensor:
                 labels.append(key)
                 continue
             if groups is None:
-                groups = self._annotation.groupby_metadata(self.GROUP_KEY)
+                groups = self._annotation.label_groups
             labels.extend(groups.get(key, [key]))
         return labels
 
@@ -555,6 +578,6 @@ class AnnotatedTensor:
         if isinstance(key, str):
             return (
                 key in self._annotation.label_to_index
-                or key in self._annotation.groupby_metadata(self.GROUP_KEY)
+                or key in self._annotation.label_groups
             )
         return key in self._data

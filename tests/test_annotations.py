@@ -1863,3 +1863,154 @@ class TestDerivedCaches(unittest.TestCase):
         t['a']  # populate the cache first
         with self.assertRaises(ValueError):
             t['not_a_label']
+
+
+class TestRegisterPlateLabel(unittest.TestCase):
+    """A group owner is an *alias* over labels, registered explicitly instead of
+    reconstructed from per-label metadata."""
+
+    def _tensor(self):
+        ann = Annotations(
+            labels=['A', 'B', 'C', 'D'],
+            cardinalities=[1, 1, 1, 1],
+            types=['binary'] * 4,
+        )
+        data = torch.arange(4).float().expand(5, 4)
+        return AnnotatedTensor(data, ann, axis=-1), data
+
+    def test_owner_expands_to_its_members(self):
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['A', 'B', 'C'])
+        self.assertEqual(t['plate'].annotation.labels, ['A', 'B', 'C'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:3]))
+        # members stay individually addressable
+        self.assertTrue(torch.equal(t['B'].tensor, data[:, 1:2]))
+
+    def test_owner_adds_no_column(self):
+        t, _ = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertEqual(t.annotation.labels, ['A', 'B', 'C', 'D'])
+        self.assertEqual(t.annotation.size, 4)
+        self.assertNotIn('plate', t.annotation.label_to_index)
+
+    def test_registration_order_is_the_slice_order(self):
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['C', 'A'])
+        self.assertEqual(t['plate'].annotation.labels, ['C', 'A'])
+        self.assertTrue(torch.equal(t['plate'].tensor,
+                                    torch.cat([data[:, 2:3], data[:, 0:1]], dim=-1)))
+
+    def test_owner_is_addressable_and_mixes_with_labels(self):
+        t, _ = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertIn('plate', t)
+        self.assertEqual(t['D', 'plate'].annotation.labels, ['D', 'A', 'B'])
+
+    def test_registration_survives_derived_tensors(self):
+        """It lives on the shared annotation, so operations that build a new
+        AnnotatedTensor keep it."""
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        for derived in (t * 2, t[:3], t.unsqueeze(0), t.to(torch.float64)):
+            self.assertEqual(derived['plate'].annotation.labels, ['A', 'B'])
+        # even one built separately from the same annotation
+        other = AnnotatedTensor(torch.ones(2, 4), t.annotation, axis=-1)
+        self.assertTrue(torch.equal(other['plate'].tensor, torch.ones(2, 2)))
+
+    def test_registering_after_slicing_invalidates_the_cache(self):
+        t, data = self._tensor()
+        t['A']  # populate the slice cache first
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertEqual(t['plate'].annotation.labels, ['A', 'B'])
+        # re-registering the same owner over different members takes effect
+        t.register_plate_label('plate', ['C', 'D'])
+        self.assertEqual(t['plate'].annotation.labels, ['C', 'D'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 2:4]))
+
+    def test_rejects_unknown_members(self):
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('plate', ['A', 'nope'])
+
+    def test_rejects_empty_members(self):
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('plate', [])
+
+    def test_rejects_an_owner_that_is_already_a_label(self):
+        """A label always wins the lookup, so such a registration is dead code
+        and is refused rather than silently ignored."""
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('A', ['B', 'C'])
+
+    def test_explicit_group_wins_over_metadata(self):
+        ann = Annotations(
+            labels=['A', 'B'], cardinalities=[1, 1], types=['binary'] * 2,
+            metadata={'A': {'variable': 'old'}, 'B': {'variable': 'old'}},
+        )
+        t = AnnotatedTensor(torch.arange(2).float().expand(3, 2), ann, axis=-1)
+        self.assertEqual(t['old'].annotation.labels, ['A', 'B'])  # legacy path
+        t.register_plate_label('old', ['B'])
+        self.assertEqual(t['old'].annotation.labels, ['B'])
+
+
+class TestGroupPropagation(unittest.TestCase):
+    """Groups survive every operation that derives a new annotation, so an
+    owner stays addressable after slicing, merging or a round trip."""
+
+    def _annotation(self):
+        ann = Annotations(labels=['A', 'B', 'C', 'D'], cardinalities=[1] * 4,
+                          types=['binary'] * 4)
+        ann.register_group('plate', ['A', 'B', 'C'])
+        return ann
+
+    def test_subset_keeps_the_owner_addressable(self):
+        ann = self._annotation()
+        t = AnnotatedTensor(torch.arange(4).float().expand(3, 4), ann, axis=-1)
+        sub = t['plate']
+        self.assertEqual(sub.annotation.groups, {'plate': ['A', 'B', 'C']})
+        # the owner still resolves on the slice, so chained access works
+        self.assertEqual(sub['plate'].annotation.labels, ['A', 'B', 'C'])
+
+    def test_subset_keeps_only_surviving_members(self):
+        ann = self._annotation()
+        self.assertEqual(ann.subset(['A', 'D']).groups, {'plate': ['A']})
+
+    def test_group_dropped_when_no_member_survives(self):
+        ann = self._annotation()
+        self.assertIsNone(ann.subset(['D']).groups)
+
+    def test_subset_preserves_registration_order(self):
+        ann = Annotations(labels=['A', 'B', 'C'], cardinalities=[1] * 3,
+                          types=['binary'] * 3)
+        ann.register_group('plate', ['C', 'A', 'B'])
+        self.assertEqual(ann.subset(['A', 'B', 'C']).groups, {'plate': ['C', 'A', 'B']})
+
+    def test_round_trips_through_to_dict(self):
+        ann = self._annotation()
+        self.assertEqual(ann.to_dict()['groups'], {'plate': ['A', 'B', 'C']})
+        self.assertEqual(Annotations.from_dict(ann.to_dict()).groups,
+                         {'plate': ['A', 'B', 'C']})
+
+    def test_to_concept_space_keeps_groups(self):
+        ann = self._annotation()
+        self.assertEqual(ann.to_concept_space().groups, {'plate': ['A', 'B', 'C']})
+
+    def test_union_keeps_groups_from_both_sides(self):
+        left = self._annotation()
+        right = Annotations(labels=['E', 'F'], cardinalities=[1, 1],
+                            types=['binary'] * 2)
+        right.register_group('other', ['E', 'F'])
+        merged = left.union_with(right)
+        self.assertEqual(merged.groups,
+                         {'other': ['E', 'F'], 'plate': ['A', 'B', 'C']})
+
+    def test_union_drops_a_group_whose_owner_becomes_a_label(self):
+        """A label always wins the lookup, so an alias that would be shadowed is
+        dropped rather than kept as dead state."""
+        left = self._annotation()
+        right = Annotations(labels=['plate'], cardinalities=[1], types=['binary'])
+        merged = left.union_with(right)
+        self.assertIsNone(merged.groups)
+        self.assertIn('plate', merged.label_to_index)

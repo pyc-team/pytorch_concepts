@@ -147,19 +147,27 @@ class Annotations:
     # concept's column holds an integer class index). Build one from a normal
     # (logit-space) annotation via :meth:`to_concept_space`.
     concept_space: bool = field(default=False)
+    #: ``owner name -> the labels it owns``, for a name that addresses several
+    #: labels at once without being a label itself (a plate and its members).
+    #: Explicit and first-class: the owner needs no per-label bookkeeping, and
+    #: the labels carry nothing about it. Register one with
+    #: :meth:`register_group` (or ``AnnotatedTensor.register_plate_label``).
+    groups: Optional[Dict[str, List[str]]] = field(default=None)
 
-    #: Caches derived from ``metadata``, dropped whenever it is reassigned.
-    #: Everything else derives from the write-once structural fields, so only
-    #: these need invalidating.
-    _METADATA_DERIVED_CACHES = ('_groupby_cache', '_subset_cache', '_slice_cache')
+    #: Caches derived from the two *mutable* fields (``metadata``, ``groups``),
+    #: dropped whenever either is reassigned. Everything else derives from the
+    #: write-once structural fields, so only these need invalidating.
+    _METADATA_DERIVED_CACHES = (
+        '_groupby_cache', '_subset_cache', '_slice_cache', '_label_groups',
+    )
 
     def __setattr__(self, key, value):
-        # `metadata` may change after construction, so it is
+        # `metadata` and `groups` may change after construction, so they are
         # freely reassignable. The structural fields (labels, states,
         # cardinalities, types) remain write-once.
-        if key == 'metadata':
+        if key in ('metadata', 'groups'):
             super().__setattr__(key, value)
-            # Anything computed from the old metadata is now stale.
+            # Anything computed from the old value is now stale.
             for cache in self._METADATA_DERIVED_CACHES:
                 self.__dict__.pop(cache, None)
             return
@@ -290,6 +298,77 @@ class Annotations:
         if self.metadata is None:
             return False
         return all(key in self.metadata.get(label, {}) for label in self.labels)
+
+    def register_group(self, owner: str, members: Sequence[str]) -> None:
+        """Make ``owner`` address ``members`` as one block.
+
+        ``owner`` is *not* a label — it adds no column. It becomes an alias that
+        label-based slicing expands to ``members``, in the order given, so a
+        plate name selects its members' columns while each member stays
+        addressable on its own.
+
+        Raises
+        ------
+        ValueError
+            If ``members`` is empty, names something that is not a label, or if
+            ``owner`` is itself a label (a label always wins the lookup, so the
+            registration could never take effect).
+        """
+        members = list(members)
+        if not members:
+            raise ValueError(f"register_group({owner!r}): `members` must be non-empty.")
+        if owner in self.label_to_index:
+            raise ValueError(
+                f"register_group({owner!r}): {owner!r} is already a label, so it "
+                "addresses its own column and cannot alias a group."
+            )
+        unknown = [m for m in members if m not in self.label_to_index]
+        if unknown:
+            raise ValueError(
+                f"register_group({owner!r}): unknown labels {unknown}; "
+                f"labels are {self.labels}."
+            )
+        groups = dict(self.groups) if self.groups else {}
+        groups[owner] = members
+        self.groups = groups  # via __setattr__, which drops the derived caches
+
+    def _carry_groups(self, source: Optional[Dict[str, List[str]]]) -> None:
+        """Re-register ``source``'s groups on ``self``, keeping what still applies.
+
+        Used by every operation that derives a new annotation
+        (:meth:`subset`, :meth:`union_with`, :meth:`to_concept_space`,
+        :meth:`from_dict`). A group is carried with its surviving members, in
+        registration order; one whose members are all gone is dropped, as is one
+        whose owner is a label here (a label wins the lookup, so the alias could
+        never fire — the same precedence a metadata-derived group had).
+        """
+        if not source:
+            return
+        known = self.label_to_index
+        for owner, members in source.items():
+            if owner in known:
+                continue
+            kept = [m for m in members if m in known]
+            if kept:
+                self.register_group(owner, kept)
+
+    @property
+    def label_groups(self) -> Dict[str, List[str]]:
+        """Every name that expands to several labels, ``owner -> labels``.
+
+        The single place group resolution reads. Merges the explicit
+        :attr:`groups` with the groups implied by a ``'variable'`` metadata key,
+        which is how producers used to record ownership; explicit registrations
+        win on a clash. Cached, and dropped whenever either source is reassigned.
+        """
+        cached = self.__dict__.get('_label_groups')
+        if cached is not None:
+            return cached
+        merged = dict(self.groupby_metadata('variable')) if self.metadata else {}
+        if self.groups:
+            merged.update(self.groups)
+        self.__dict__['_label_groups'] = merged
+        return merged
 
     def groupby_metadata(self, key, layout: str='labels') -> dict:
         """Group labels by the value they carry under a metadata ``key``.
@@ -633,6 +712,7 @@ class Annotations:
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
             'types': list(self.types) if self.types else None,
             'metadata': self.metadata,
+            'groups': {k: list(v) for k, v in self.groups.items()} if self.groups else None,
         }
         return result
 
@@ -656,13 +736,15 @@ class Annotations:
         states = [list(s) for s in data['states']] if data.get('states') else None
         cardinalities = data['cardinalities']
 
-        return cls(
+        result = cls(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
             types=data.get('types'),
             metadata=data.get('metadata'),
         )
+        result._carry_groups(data.get('groups'))
+        return result
 
     def subset(self, keep_labels: Sequence[str]) -> "Annotations":
         """
@@ -713,7 +795,7 @@ class Annotations:
         if self.metadata is not None:
             new_metadata = {lab: self.metadata[lab] for lab in keep_labels}
 
-        # 4) build a fresh object
+        # 4) build a fresh object, carrying over the groups that still apply
         result = Annotations(
             labels=new_labels,
             states=new_states,
@@ -722,6 +804,7 @@ class Annotations:
             metadata=new_metadata,
             concept_space=self.concept_space,
         )
+        result._carry_groups(self.groups)
         cache[cache_key] = result
         return result
 
@@ -739,13 +822,16 @@ class Annotations:
         """
         if self.concept_space:
             return self
-        return Annotations(
+        result = Annotations(
             labels=list(self.labels),
             cardinalities=[1] * len(self.labels),
             types=list(self.types),
             metadata=self.metadata,
             concept_space=True,
         )
+        # Same labels, only narrower columns -- every group carries over intact.
+        result._carry_groups(self.groups)
+        return result
 
     def union_with(self, other: "Annotations") -> "Annotations":
         left = list(self.labels)
@@ -773,7 +859,11 @@ class Annotations:
                 for k, v in other.metadata.items():
                     if k not in meta:
                         meta[k] = v
-        return Annotations(
+        result = Annotations(
             labels=labels, states=new_states, cardinalities=None,
             types=new_types, metadata=meta,
         )
+        # Left wins on a clash, matching the metadata merge above.
+        result._carry_groups(other.groups)
+        result._carry_groups(self.groups)
+        return result

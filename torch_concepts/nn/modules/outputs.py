@@ -82,7 +82,7 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
             annotation = tensor.annotation
             if (
                 key in annotation.label_to_index
-                or key in annotation.groupby_metadata(AnnotatedTensor.GROUP_KEY)
+                or key in annotation.label_groups
             ):
                 views[quantity] = tensor[key]
         if not views:
@@ -197,7 +197,7 @@ class InferenceOutput:
         for tensor in params.values():
             annotation = tensor.annotation
             names.update(
-                dict.fromkeys(annotation.groupby_metadata(AnnotatedTensor.GROUP_KEY))
+                dict.fromkeys(annotation.label_groups)
             )
             names.update(dict.fromkeys(annotation.labels))
         return tuple(names)
