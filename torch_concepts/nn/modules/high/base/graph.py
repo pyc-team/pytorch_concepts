@@ -230,12 +230,7 @@ class DirectedGraphModel(GraphModel, ABC):
         def type_and_size(name: str):
             idx = axis_annotation.get_index(name)
             size = int(axis_annotation.cardinalities[idx])
-            # Prefer the first-class ``types`` field, fall back to metadata['type'].
-            if axis_annotation.types is not None:
-                concept_type = axis_annotation.types[idx]
-            else:
-                concept_type = (axis_annotation.metadata.get(name, {}) or {}).get("type")
-            return (concept_type, size)
+            return (axis_annotation.types[idx], size)
 
         return [
             len({type_and_size(name) for name in level}) == 1

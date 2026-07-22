@@ -286,7 +286,7 @@ class ConceptMetrics(nn.Module):
         """Pad and stack categorical logits/targets for the summary metric.
 
         ``cat_logits`` (logit-space) and ``cat_target`` (concept-space) are the
-        categorical slices from :meth:`AnnotatedTensor.split_by_type`, already in
+        categorical slices from :meth:`AnnotatedTensor.categorical`, already in
         the same concept order; per-concept widths come from ``cat_logits``'s own
         annotation.
         """
@@ -334,7 +334,8 @@ class ConceptMetrics(nn.Module):
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return
-        disc_by_type = discrete.split_by_type() if discrete is not None else {}
+        binary = discrete.binary() if discrete is not None else None
+        categorical = discrete.categorical() if discrete is not None else None
 
         # Summary metrics — one MetricCollection.update() per type, each scored on
         # the quantity it reports and aligned to the target by concept name.
@@ -344,12 +345,11 @@ class ConceptMetrics(nn.Module):
             # the target by concept name, and passing an AnnotatedTensor into
             # torchmetrics makes each internal torch.* op re-enter the
             # __torch_function__ unwrap hook (the dominant per-update cost).
-            if 'binary' in disc_by_type and len(self.binary):
-                p = disc_by_type['binary']
-                self.binary.update(p.tensor, target[p.annotation.labels].tensor.float())
-            if 'categorical' in disc_by_type and len(self.categorical):
-                p = disc_by_type['categorical']
-                cat_pred, cat_target = self._prepare_categorical(p, target[p.annotation.labels])
+            if binary is not None and len(self.binary):
+                self.binary.update(binary.tensor, target[binary.annotation.labels].tensor.float())
+            if categorical is not None and len(self.categorical):
+                cat_pred, cat_target = self._prepare_categorical(
+                    categorical, target[categorical.annotation.labels])
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
                 self.continuous.update(

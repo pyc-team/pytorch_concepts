@@ -3,7 +3,6 @@
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributions import RelaxedBernoulli, RelaxedOneHotCategorical
 
 pytest.importorskip("steerling")
 
@@ -84,12 +83,6 @@ def test_build_annotations_labels_and_cardinalities(pgm_model):
     assert len(ann.labels) == N_KNOWN + N_UNKNOWN + 1
     assert ann.cardinalities[-1] == VOCAB
     assert ann.cardinalities[0] == 1
-
-
-def test_build_annotations_distributions(pgm_model):
-    ann = pgm_model.concept_annotations
-    assert ann.metadata[KNOWN_NAMES[0]]["distribution"] is RelaxedBernoulli
-    assert ann.metadata["new_token"]["distribution"] is RelaxedOneHotCategorical
 
 
 # --------------------------------------------------------------------------

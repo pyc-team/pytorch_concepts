@@ -82,7 +82,7 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
             annotation = tensor.annotation
             if (
                 key in annotation.label_to_index
-                or key in annotation.groupby_metadata(AnnotatedTensor.GROUP_KEY)
+                or key in annotation.label_groups
             ):
                 views[quantity] = tensor[key]
         if not views:
@@ -149,7 +149,7 @@ class InferenceOutput:
     >>> out = engine.query(query=['c1', 'c2'], evidence={'x': x})
     >>> out.logits.shape                  # (*leading, width of c1 + c2)
     >>> out.logits['c1']                  # just c1's columns (a view)
-    >>> out.logits.split_by_type()        # {'binary': ..., 'categorical': ...}
+    >>> out.logits.binary()               # binary concepts' columns (or None)
     """
 
     params: Dict[str, AnnotatedTensor] = field(default_factory=dict)
@@ -197,7 +197,7 @@ class InferenceOutput:
         for tensor in params.values():
             annotation = tensor.annotation
             names.update(
-                dict.fromkeys(annotation.groupby_metadata(AnnotatedTensor.GROUP_KEY))
+                dict.fromkeys(annotation.label_groups)
             )
             names.update(dict.fromkeys(annotation.labels))
         return tuple(names)

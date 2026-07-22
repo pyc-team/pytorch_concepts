@@ -59,13 +59,9 @@ class DummyLatentEncoder(nn.Module):
 
 def make_annotations(labels, cardinalities, distributions=None):
     """Helper to create annotations (defaults will fill in distributions)."""
-    metadata = {}
-    for label, card in zip(labels, cardinalities):
-        metadata[label] = {'type': 'discrete'}
     return Annotations(
             labels=labels,
             cardinalities=cardinalities,
-            metadata=metadata
         )
 
 
@@ -130,10 +126,6 @@ class TestBlackBoxInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
             )
         
         model = BlackBox(
@@ -551,10 +543,6 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         
         model = BlackBoxTaskOnly(

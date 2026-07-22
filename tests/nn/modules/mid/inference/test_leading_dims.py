@@ -253,8 +253,8 @@ class TestAnnotatedOutput:
     def test_split_by_type(self, net):
         eng = _engine(DeterministicInference, net, p_int=0.0)
         out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(5, 4)})
-        assert out.logits.split_by_type()["binary"].annotation.labels == ["m1", "m2", "y"]
-        assert out.loc.split_by_type()["continuous"].annotation.labels == ["n"]
+        assert out.logits.binary().annotation.labels == ["m1", "m2", "y"]
+        assert out.loc.continuous().annotation.labels == ["n"]
 
 
 class TestAnnotationSurvivesAcrossEngines:

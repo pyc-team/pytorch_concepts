@@ -140,11 +140,6 @@ class TestComputeCace(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
         self.model = ConceptBottleneckModel(
             input_size=4, annotations=ann, task_names=['task']
@@ -235,12 +230,6 @@ class TestConceptMetrics(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
         
@@ -248,11 +237,6 @@ class TestConceptMetrics(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
         
@@ -260,10 +244,6 @@ class TestConceptMetrics(unittest.TestCase):
         axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_categorical = axis_categorical
 
@@ -553,10 +533,6 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations_binary = axis_binary
     
@@ -682,10 +658,6 @@ class TestConceptMetricsAccuracy(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations_binary = axis_binary
     
@@ -769,7 +741,6 @@ class TestConceptMetricsMultipleBatches(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
-            metadata={'b1': {'type': 'discrete'}}
         )
         self.annotations = axis_binary
     
@@ -849,10 +820,6 @@ class TestConceptMetricsRepr(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations = axis_binary
     
@@ -902,7 +869,6 @@ class TestConceptMetricsClone(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
-            metadata={'b1': {'type': 'discrete'}}
         )
         self.annotations = axis_binary
     
@@ -985,11 +951,6 @@ class TestConceptMetricsIntegration(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1'),
             cardinalities=[1, 1, 3],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'}
-            }
         )
         self.annotations = axis_mixed
     
