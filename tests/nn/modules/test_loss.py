@@ -10,7 +10,7 @@ Tests loss functions for concept-based learning:
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer, CMRLoss
+from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer, CMRLoss, MaskedLoss
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.annotations import AxisAnnotation, Annotations
 
@@ -1409,6 +1409,80 @@ class TestCMRLoss(unittest.TestCase):
             loss_task_only.item(),
             places=5,
         )
+
+
+class TestMaskedLoss(unittest.TestCase):
+    """Test MaskedLoss positive-target masking behavior."""
+
+    def test_mean_masks_zero_targets(self):
+        loss_fn = MaskedLoss(reduction='mean', targets_to_mask='negative')
+
+        preds = torch.tensor([[0.8, 0.1, 0.4], [0.9, 0.2, 0.7]], dtype=torch.float32)
+        target = torch.tensor([[1.0, 0.0, 1.0], [0.0, 0.0, 1.0]], dtype=torch.float32)
+
+        loss = loss_fn(preds, target)
+
+        # Only entries with target==1 contribute: 0.8, 0.4, 0.7
+        expected = -torch.log(torch.tensor([0.8, 0.4, 0.7])).mean()
+        self.assertTrue(torch.allclose(loss, expected, atol=1e-7))
+
+    def test_sum_masks_zero_targets(self):
+        loss_fn = MaskedLoss(reduction='sum', targets_to_mask='negative')
+
+        preds = torch.tensor([[0.8, 0.1, 0.4], [0.9, 0.2, 0.7]], dtype=torch.float32)
+        target = torch.tensor([[1.0, 0.0, 1.0], [0.0, 0.0, 1.0]], dtype=torch.float32)
+
+        loss = loss_fn(preds, target)
+        expected = -torch.log(torch.tensor([0.8, 0.4, 0.7])).sum()
+        self.assertTrue(torch.allclose(loss, expected, atol=1e-7))
+
+    def test_no_positive_targets_returns_zero(self):
+        loss_fn = MaskedLoss(reduction='mean', targets_to_mask='negative')
+
+        preds = torch.tensor([[0.3, 0.2], [0.8, 0.6]], dtype=torch.float32, requires_grad=True)
+        target = torch.zeros_like(preds)
+
+        loss = loss_fn(preds, target)
+        self.assertEqual(loss.item(), 0.0)
+
+        loss.backward()
+        self.assertIsNotNone(preds.grad)
+        self.assertTrue(torch.all(preds.grad == 0))
+
+    def test_invalid_reduction_raises(self):
+        with self.assertRaises(ValueError):
+            MaskedLoss(reduction='none')
+
+    def test_custom_bce_with_logits_loss(self):
+        loss_fn = MaskedLoss(
+            loss_fn=nn.BCEWithLogitsLoss(reduction='none'),
+            reduction='mean',
+            targets_to_mask='negative',
+        )
+
+        logits = torch.tensor([[2.0, -3.0, 0.0], [1.0, -1.0, 0.5]], dtype=torch.float32)
+        target = torch.tensor([[1.0, 0.0, 1.0], [0.0, 0.0, 1.0]], dtype=torch.float32)
+
+        loss = loss_fn(logits, target)
+        # Keep only positive targets: (0,0), (0,2), (1,2)
+        expected = nn.BCEWithLogitsLoss(reduction='none')(logits, target)
+        expected = expected[target == 1.0].mean()
+        self.assertTrue(torch.allclose(loss, expected, atol=1e-7))
+
+    def test_loss_fn_with_reduction_raises(self):
+        with self.assertRaises(ValueError):
+            MaskedLoss(loss_fn=nn.BCELoss(reduction='mean'))
+
+    def test_mask_is_applied_before_loss(self):
+        loss_fn = MaskedLoss(reduction='mean', targets_to_mask='negative')
+
+        # Entries with target==0 are masked out and include invalid BCE inputs.
+        preds = torch.tensor([[0.8, 2.0], [0.7, -1.0]], dtype=torch.float32)
+        target = torch.tensor([[1.0, 0.0], [1.0, 0.0]], dtype=torch.float32)
+
+        loss = loss_fn(preds, target)
+        expected = -torch.log(torch.tensor([0.8, 0.7])).mean()
+        self.assertTrue(torch.allclose(loss, expected, atol=1e-7))
 
 
 if __name__ == '__main__':

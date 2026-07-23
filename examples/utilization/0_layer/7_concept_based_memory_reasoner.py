@@ -80,8 +80,8 @@ def main():
         emb = latent_encoder(x_train)
         exog = exog_encoder(latent=emb)
         c_pred = c_encoder(latent=emb)
-        y_pred = y_predictor(concepts=c_pred, exogenous=exog)
-        y_pred_with_rec = y_predictor(concepts=c_pred, exogenous=exog, include_rec=True, rec_weight=rec_weight)
+        y_pred = y_predictor(concepts=c_pred.sigmoid(), exogenous=exog)
+        y_pred_with_rec = y_predictor(concepts=c_pred.sigmoid(), exogenous=exog, include_rec=True, rec_weight=rec_weight)
 
         # Compute loss
         concept_loss = loss_fn_c(c_pred, c_train)

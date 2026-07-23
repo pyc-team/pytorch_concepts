@@ -239,6 +239,25 @@ class TestCMRForward(unittest.TestCase):
         self.assertEqual(out.shape[0], 2)
         self.assertEqual(out.shape[1], 2)
 
+    def test_forward_returns_dual_outputs_in_learner_mode(self):
+        """When learner kwargs are present, forward returns no-rec/with-rec dict."""
+        x = torch.randn(2, 8)
+        query = ['c1', 'c2', 'task1']
+        ground_truth = torch.randint(0, 2, (2, 3)).float()
+
+        out = self.model(
+            query=query,
+            x=x,
+            ground_truth=ground_truth,
+            concept_names=self.model.concept_names,
+        )
+
+        self.assertIsInstance(out, dict)
+        self.assertIn('no_rec', out)
+        self.assertIn('with_rec', out)
+        self.assertEqual(out['no_rec'].shape, (2, 3))
+        self.assertEqual(out['with_rec'].shape, (2, 3))
+
 
 class TestCMRFilterMethods(unittest.TestCase):
     """Test CMR filter methods."""
@@ -313,6 +332,23 @@ class TestCMRFilterMethods(unittest.TestCase):
         self.assertIn('preds', filtered)
         self.assertIn('target', filtered)
         self.assertTrue(torch.allclose(filtered['preds'], out))
+        self.assertTrue(torch.allclose(filtered['target'], target))
+
+    def test_filter_output_for_metrics_with_dual_outputs(self):
+        """Test metrics filtering uses no-rec branch when forward_out is dict."""
+        preds_no_rec = torch.rand(2, 3)
+        preds_with_rec = torch.rand(2, 3)
+        target = torch.randint(0, 2, (2, 3)).float()
+
+        filtered = self.model.filter_output_for_metrics(
+            {'no_rec': preds_no_rec, 'with_rec': preds_with_rec},
+            target,
+        )
+
+        self.assertIsInstance(filtered, dict)
+        self.assertIn('preds', filtered)
+        self.assertIn('target', filtered)
+        self.assertTrue(torch.allclose(filtered['preds'], preds_no_rec))
         self.assertTrue(torch.allclose(filtered['target'], target))
 
 

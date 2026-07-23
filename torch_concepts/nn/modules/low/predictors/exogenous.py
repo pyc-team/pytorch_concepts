@@ -205,6 +205,10 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
 
         self.memory_network_shape = (in_exogenous, in_concepts, 3)  # nb_rules, nb_concepts, 3 (for 3 memory slots per concept)
         self.memory_network_latent = self.memory_network_shape[0] * self.memory_network_shape[1] * self.memory_network_shape[2]
+        # Runtime controls used by CMR to select reconstruction branch even
+        # when inference-level kwargs are filtered upstream.
+        self._cmr_include_rec = False
+        self._cmr_rec_weight = 1.0
         
         self.memory = torch.nn.Embedding(out_concepts, memory_latent_size)
 
@@ -227,7 +231,7 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
         Forward pass through the predictor.
 
         Args:
-            concepts: Concept logits of shape (batch_size, in_concepts) representing Bernoulli random variables.
+            concepts: Concept probabilities of shape (batch_size, in_concepts) representing Bernoulli random variables.
             exogenous: Concept exogenous of shape (batch_size, out_concepts, exogenous_dim) representing rule selection probabilities.
             **kwargs: Optional controls:
                 - include_rec (bool): If True, include a rule reconstruction-quality term.
@@ -241,11 +245,15 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
             Concept probabilities are detached from the graph in this method,
             so gradients do not flow from the task loss back into ``concepts``, avoiding task leakage.
         """
-        include_rec = kwargs.get("include_rec", False)
-        rec_weight = kwargs.get("rec_weight", 1.0)
+        assert torch.all((exogenous >= 0) & (exogenous <= 1)), "Exogenous inputs should be probabilities in [0, 1]"
+        assert torch.all((concepts >= 0) & (concepts <= 1)), "Concept inputs should be probabilities in [0, 1]"
+
+        include_rec = kwargs.get("include_rec", self._cmr_include_rec)
+        rec_weight = kwargs.get("rec_weight", self._cmr_rec_weight)
         hard_roles = kwargs.get("hard_roles", False)
 
-        c_probs = torch.sigmoid(concepts).detach()
+        # c_probs = torch.sigmoid(concepts).detach()
+        c_probs = concepts.detach()
         c_probs_expanded = c_probs.unsqueeze(1).unsqueeze(1).expand(-1, exogenous.shape[1], exogenous.shape[2], -1)  # (batch_size, out_concepts, in_exogenous, in_concepts)
 
         # Decode the memory
@@ -266,5 +274,7 @@ class MixMemoryConceptExogenousToConcept(BasePredictor):
             y_rec_per_rule = torch.ones_like(y_per_rule)  # dummy
 
         y_pred = (y_per_rule * y_rec_per_rule * exogenous).sum(dim=2)  # (batch_size, out_concepts)
+
+        assert torch.all((y_pred >= 0) & (y_pred <= 1)), "Output probabilities should be in [0, 1]"
 
         return y_pred

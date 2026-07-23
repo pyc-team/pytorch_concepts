@@ -1,0 +1,71 @@
+defaults:
+  - _commons
+  - _commons_bnlearn
+  - _self_
+
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+
+name: hailfinder
+
+default_task_names: [R5Fcst]
+
+autoencoder_kwargs:
+  latent_dim: 128
+
+label_descriptions:
+  N07muVerMo: "10.7mu vertical motion: A four-level factor with levels StrongUp, WeakUp, Neutral, and Down. This variable indicates vertical motion at the 10.7 micrometer level in the atmosphere, typically used in weather and atmospheric studies."
+  SubjVertMo: "Subjective judgment of vertical motion: A four-level factor with levels StrongUp, WeakUp, Neutral, and Down. This variable represents subjective assessments of vertical motion, often based on meteorological analysis or models."
+  QGVertMotion: "Quasigeostrophic vertical motion: A four-level factor with levels StrongUp, WeakUp, Neutral, and Down. This factor represents vertical motion in the atmosphere calculated using quasigeostrophic balance, relevant for understanding large-scale weather patterns."
+  CombVerMo: "Combined vertical motion: A four-level factor with levels StrongUp, WeakUp, Neutral, and Down. It combines different methods of calculating vertical motion to provide a unified measure of vertical air movement."
+  AreaMesoALS: "Area of meso-alpha: A four-level factor with levels StrongUp, WeakUp, Neutral, and Down. Refers to the region affected by meso-alpha scale weather phenomena, typically associated with large-scale storm systems."
+  SatContMoist: "Satellite contribution to moisture: A four-level factor with levels VeryWet, Wet, Neutral, and Dry. This variable assesses moisture content in the atmosphere based on satellite data, influencing weather forecasting and analysis."
+  RaoContMoist: "Reading at the forecast center for moisture: A four-level factor with levels VeryWet, Wet, Neutral, and Dry. Indicates moisture levels based on data received from a meteorological forecast center."
+  CombMoisture: "Combined moisture: A four-level factor with levels VeryWet, Wet, Neutral, and Dry. Represents a combination of moisture measurements from different sources, providing a holistic view of atmospheric moisture."
+  AreaMoDryAir: "Area of moisture and dry air: A four-level factor with levels VeryWet, Wet, Neutral, and Dry. This variable looks at regions in the atmosphere where moisture and dry air interact, influencing weather patterns."
+  VISCloudCov: "Visible cloud cover: A three-level factor with levels Cloudy, PC, and Clear. Indicates the amount of cloud cover visible in the atmosphere, which is a key factor in weather prediction and atmospheric studies."
+  IRCloudCover: "Infrared cloud cover: A three-level factor with levels Cloudy, PC, and Clear. Similar to visible cloud cover but using infrared data to assess cloud cover, often used for nighttime weather forecasting."
+  CombClouds: "Combined cloud cover: A three-level factor with levels Cloudy, PC, and Clear. A combination of visible and infrared cloud cover data used to assess overall cloud conditions."
+  CldShadeOth: "Cloud shading, other: A three-level factor with levels Cloudy, PC, and Clear. Represents cloud shading effects not directly related to conventional cloud cover, potentially impacting temperature and weather conditions."
+  AMInstabMt: "AM instability in the mountains: A three-level factor with levels None, Weak, and Strong. Refers to atmospheric instability measured in the morning hours, specifically over mountainous regions, impacting weather systems like thunderstorms."
+  InsInMt: "Instability in the mountains: A three-level factor with levels None, Weak, and Strong. Describes the level of atmospheric instability in mountain regions, which is crucial for storm development and weather prediction."
+  WndHodograph: "Wind hodograph: A four-level factor with levels DCVZFavor, StrongWest, Westerly, and Other. Indicates the directional and velocity changes of the wind at various altitudes, which is important for understanding storm dynamics."
+  OutflowFrMt: "Outflow from mountains: A three-level factor with levels None, Weak, and Strong. Measures the outflow of air from mountainous regions, which can influence weather patterns like thunderstorms."
+  MorningBound: "Morning boundaries: A three-level factor with levels None, Weak, and Strong. Refers to the atmospheric boundaries formed in the morning, such as those caused by temperature differences, which can affect weather events."
+  Boundaries: "Boundaries: A three-level factor with levels None, Weak, and Strong. General atmospheric boundaries, such as fronts or temperature gradients, that influence weather systems."
+  CldShadeConv: "Cloud shading, convection: A three-level factor with levels None, Some, and Marked. Describes the effect of cloud cover on convective processes, which is relevant for forecasting thunderstorms and severe weather."
+  CompPlFcst: "Composite plains forecast: A three-level factor with levels IncCapDecIns, LittleChange, and DecCapIncIns. Represents the composite weather forecast for the plains region, focusing on changes in capping and instability."
+  CapChange: "Capping change: A three-level factor with levels Decreasing, LittleChange, and Increasing. Indicates changes in atmospheric capping, which influences the likelihood of convection and storm development."
+  LoLevMoistAd: "Low-level moisture advection: A four-level factor with levels StrongPos, WeakPos, Neutral, and Negative. Measures the advection of moisture at low altitudes, influencing weather conditions like precipitation."
+  InsChange: "Instability change: A three-level factor with levels Decreasing, LittleChange, and Increasing. Tracks changes in atmospheric instability, which is a key factor in predicting severe weather."
+  MountainFcst: "Mountains (region 1) forecast: A three-level factor with levels XNIL, SIG, and SVR. A forecast for mountainous regions, indicating no significant conditions (XNIL), significant conditions (SIG), or severe conditions (SVR)."
+  Date: "Date: A six-level factor with levels May15_Jun14, Jun15_Jul1, Jul2_Jul15, Jul16_Aug10, Aug11_Aug20, and Aug20_Sep15. Represents different periods of time, likely to be used for seasonal or temporal analysis of weather data."
+  Scenario: "Scenario: An eleven-level factor with levels A, B, C, D, E, F, G, H, I, J, and K. Refers to different meteorological scenarios used in forecasting or modeling to represent various atmospheric conditions."
+  ScenRelAMCIN: "Scenario relevant to AM convective inhibition: A two-level factor with levels AB and CThruK. Indicates scenarios where AM convective inhibition is relevant, affecting the development of convective storms."
+  MorningCIN: "Morning convective inhibition: A four-level factor with levels None, PartInhibit, Stifling, and TotalInhibit. Measures the extent of convective inhibition in the morning, influencing the potential for storm development."
+  AMCINInScen: "AM convective inhibition in scenario: A three-level factor with levels LessThanAve, Average, and MoreThanAve. Represents the level of AM convective inhibition within different meteorological scenarios."
+  CapInScen: "Capping within scenario: A three-level factor with levels LessThanAve, Average, and MoreThanAve. Indicates the degree of capping within a specific scenario, which can limit or promote convective activity."
+  ScenRelAMIns: "Scenario relevant to AM instability: A six-level factor with levels ABI, CDEJ, F, G, H, and K. Describes scenarios in which AM instability is an important factor in forecasting weather events."
+  LIfr12ZDENSd: "LI from 12Z DEN sounding: A four-level factor with levels LIGt0, N1GtLIGt_4, N5GtLIGt_8, and LILt_8. Represents the Lifted Index (LI) derived from a 12Z Denver sounding, used to assess atmospheric instability."
+  AMDewptCalPl: "AM dewpoint calculations, plains: A three-level factor with levels Instability, Neutral, and Stability. Refers to the dewpoint conditions in the plains region in the morning, which is important for forecasting thunderstorms."
+  AMInsWliScen: "AM instability within scenario: A three-level factor with levels LessUnstable, Average, and MoreUnstable. Describes the level of AM instability within different weather scenarios, which affects storm development."
+  InsSclInScen: "Instability scaling within scenario: A three-level factor with levels LessUnstable, Average, and MoreUnstable. Tracks how instability scales in various weather scenarios, impacting the likelihood of severe weather."
+  ScenRel34: "Scenario relevant to regions 2/3/4: A five-level factor with levels ACEFK, B, D, GJ, and HI. Represents scenarios that are relevant to specific regions, used for regional weather forecasting."
+  LatestCIN: "Latest convective inhibition: A four-level factor with levels None, PartInhibit, Stifling, and TotalInhibit. Measures the most recent convective inhibition, impacting the potential for convection and storm activity."
+  LLIW: "LLIW severe weather index: A four-level factor with levels Unfavorable, Weak, Moderate, and Strong. A weather index that assesses the likelihood of severe weather based on low-level instability."
+  CurPropConv: "Current propensity to convection: A four-level factor with levels None, Slight, Moderate, and Strong. Describes the current likelihood of convection occurring, a key factor in storm prediction."
+  ScnRelPlFcst: "Scenario relevant to plains forecast: An eleven-level factor with levels A, B, C, D, E, F, G, H, I, J, and K. A set of forecast scenarios that apply specifically to the plains region."
+  PlainsFcst: "Plains forecast: A three-level factor with levels XNIL, SIG, and SVR. Provides a forecast for the plains, indicating no significant, significant, or severe conditions."
+  N34StarFcst: "Regions 2/3/4 forecast: A three-level factor with levels XNIL, SIG, and SVR. A forecast for regions 2, 3, and 4, indicating no significant, significant, or severe conditions."
+  R5Fcst: "Region 5 forecast: A three-level factor with levels XNIL, SIG, and SVR. Forecast for region 5, categorizing the conditions as none, significant, or severe."
+  Dewpoints: "Dewpoints: A seven-level factor with levels LowEverywhere, LowAtStation, LowSHighN, LowNHighS, LowMtsHighPl, HighEverywhere, and Other. Represents different dewpoint conditions observed across various locations."
+  LowLLapse: "Low-level lapse rate: A four-level factor with levels CloseToDryAd, Steep, ModerateOrLe, and Stable. Describes the change in temperature with altitude at low levels in the atmosphere."
+  MeanRH: "Mean relative humidity: A three-level factor with levels VeryMoist, Average, and Dry. Indicates the mean relative humidity at a given location, influencing weather patterns like precipitation."
+  MidLLapse: "Mid-level lapse rate: A three-level factor with levels CloseToDryAd, Steep, and ModerateOrLe. Describes temperature changes with altitude at mid-levels in the atmosphere, affecting storm development."
+  MvmtFeatures: "Movement of features: A four-level factor with levels StrongFront, MarkedUpper, OtherRapid, and NoMajor. Represents the movement characteristics of weather features such as fronts or upper-air systems."
+  RHRatio: "Relative humidity ratio: A three-level factor with levels MoistMDryL, DryMMoistL, and Other. Tracks the ratio of moisture to dry air at different levels in the atmosphere."
+  SfcWndShfDis: "Surface wind shifts and discontinuities: A seven-level factor with levels DenvCyclone, E_W_N, E_W_S, MovigFtorOt, DryLine, None, and Other. Describes wind shifts at the surface, indicating weather features like cyclones and fronts."
+  SynForcng: "Synoptic forcing: A five-level factor with levels SigNegative, NegToPos, SigPositive, PosToNeg, and LittleChange. Describes the synoptic-scale forcing, which affects larger-scale weather patterns like pressure systems."
+  TempDis: "Temperature discontinuities: A four-level factor with levels QStationary, Moving, None, and Other. Represents temperature gradients or discontinuities in the atmosphere, relevant for weather systems."
+  WindAloft: "Wind aloft: A four-level factor with levels LV, SWQuad, NWQuad, and AllElse. Describes the wind conditions aloft, critical for storm development and understanding upper-air dynamics."
+  WindFieldMt: "Wind fields, mountains: A two-level factor with levels Westerly and LVorOther. Indicates wind direction in mountainous regions, important for forecasting weather like storm movement."
+  WindFieldPln: "Wind fields, plains: A six-level factor with levels LV, DenvCyclone, LongAnticyc, E_NE, SEquad, and WidespdDnsl. Describes various wind patterns over the plains region, influencing storm dynamics and weather forecasting."

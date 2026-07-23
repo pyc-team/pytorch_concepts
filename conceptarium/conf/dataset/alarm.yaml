@@ -1,0 +1,51 @@
+defaults:
+  - _commons
+  - _commons_bnlearn
+  - _self_
+
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+
+name: alarm
+
+default_task_names: [BP]
+
+autoencoder_kwargs:
+  latent_dim: 64
+
+label_descriptions:
+  ANAPHYLAXIS: "(severe allergic reaction) Indicates a critical allergic response that impacts blood pressure and breathing. A two-level factor with levels TRUE and FALSE."
+  ARTCO2: "(arterial carbon dioxide) Represents the concentration of CO2 in arterial blood. A three-level factor with levels LOW, NORMAL, and HIGH."
+  CATECHOL: "(catecholamine level) Indicates the level of catecholamines, hormones that influence cardiovascular activity. A three-level factor with levels LOW, NORMAL, and HIGH."
+  CO: "(cardiac output) Represents the volume of blood pumped by the heart per minute. A three-level factor with levels LOW, NORMAL, and HIGH."
+  CVP: "(central venous pressure) Represents the pressure in the central veins, indicating fluid status and heart function. A three-level factor with levels LOW, NORMAL, and HIGH."
+  DISCONNECT: "(ventilator disconnection) Indicates whether the ventilator or monitoring equipment is disconnected. A two-level factor with levels TRUE and FALSE."
+  ERRCAUTER: "(cauterization error) Indicates an error occurring during a cauterization procedure. A two-level factor with levels TRUE and FALSE."
+  ERRLOWOUTPUT: "(low cardiac output error) Represents an error flag for low cardiac output conditions. A two-level factor with levels TRUE and FALSE."
+  EXPCO2: "(expired carbon dioxide) Measures the level of CO2 in exhaled air. A three-level factor with levels LOW, NORMAL, and HIGH."
+  FIO2: "(fraction of inspired oxygen) Indicates the concentration of oxygen in the air being inhaled. A three-level factor with levels LOW, NORMAL, and HIGH."
+  HISTORY: "(medical history) Indicates whether the patient has a relevant medical history. A two-level factor with levels TRUE and FALSE."
+  HR: "(heart rate) Represents the number of heartbeats per minute. A three-level factor with levels LOW, NORMAL, and HIGH."
+  HRBP: "(heart rate by blood pressure) Measures heart rate using blood pressure sensors. A three-level factor with levels LOW, NORMAL, and HIGH."
+  HREKG: "(heart rate by ECG) Measures heart rate via an electrocardiogram. A three-level factor with levels LOW, NORMAL, and HIGH."
+  HRSAT: "(heart rate by oxygen saturation) Measures heart rate based on oxygen saturation. A three-level factor with levels LOW, NORMAL, and HIGH."
+  HYPOVOLEMIA: "(low blood volume) Represents a condition of decreased blood volume, leading to reduced circulation. A two-level factor with levels TRUE and FALSE."
+  INSUFFANESTH: "(insufficient anesthesia) Indicates that anesthesia levels are inadequate. A two-level factor with levels TRUE and FALSE."
+  INTUBATION: "(airway intubation) Represents whether an airway tube is correctly placed for ventilation. A two-level factor with levels TRUE and FALSE."
+  KINKEDTUBE: "(kinked tube) Indicates whether a medical or ventilator tube is obstructed or kinked. A two-level factor with levels TRUE and FALSE."
+  LVEDVOLUME: "(left ventricular end-diastolic volume) Represents the blood volume in the left ventricle before contraction. A three-level factor with levels LOW, NORMAL, and HIGH."
+  LVFAILURE: "(left ventricular failure) Indicates the heart's inability to pump blood effectively. A two-level factor with levels TRUE and FALSE."
+  MINVOL: "(minute ventilation) Represents the volume of air moved in and out of the lungs per minute. A three-level factor with levels LOW, NORMAL, and HIGH."
+  MINVOLSET: "(minute volume setting) Indicates the target minute ventilation set on a ventilator. A three-level factor with levels LOW, NORMAL, and HIGH."
+  PAP: "(pulmonary arterial pressure) Measures pressure in the pulmonary artery. A three-level factor with levels LOW, NORMAL, and HIGH."
+  PCWP: "(pulmonary capillary wedge pressure) Measures left atrial pressure, used to diagnose left ventricular function. A three-level factor with levels LOW, NORMAL, and HIGH."
+  PRESS: "(blood pressure) Indicates overall blood pressure levels. A three-level factor with levels LOW, NORMAL, and HIGH."
+  PULMEMBOLUS: "(pulmonary embolism) Indicates blockage of a lung artery. A two-level factor with levels TRUE and FALSE."
+  PVSAT: "(venous oxygen saturation) Represents oxygen saturation in venous blood. A three-level factor with levels LOW, NORMAL, and HIGH."
+  SAO2: "(arterial oxygen saturation) Measures oxygen saturation in arterial blood. A three-level factor with levels LOW, NORMAL, and HIGH."
+  SHUNT: "(lung shunt) Represents blood bypassing the lungs, reducing oxygenation. A two-level factor with levels TRUE and FALSE."
+  STROKEVOLUME: "(stroke volume) Indicates the amount of blood ejected by the heart in one contraction. A three-level factor with levels LOW, NORMAL, and HIGH."
+  TPR: "(total peripheral resistance) Represents resistance to blood flow in the circulatory system. A three-level factor with levels LOW, NORMAL, and HIGH."
+  VENTALV: "(alveolar ventilation) Indicates air exchange efficiency in the lungs. A three-level factor with levels LOW, NORMAL, and HIGH."
+  VENTLUNG: "(lung ventilation) Represents ventilation distribution within the lungs. A three-level factor with levels LOW, NORMAL, and HIGH."
+  VENTMACH: "(ventilator machine function) Indicates the proper functioning of the mechanical ventilator. A two-level factor with levels TRUE and FALSE."
+  VENTTUBE: "(ventilator tubing condition) Represents the status of the ventilator tubing. A two-level factor with levels TRUE and FALSE."

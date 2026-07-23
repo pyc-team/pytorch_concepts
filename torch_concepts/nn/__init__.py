@@ -44,7 +44,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer, CMRLoss
+    L1LogitRegularizer, CMRLoss, MaskedLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics
@@ -129,6 +129,7 @@ __all__ = [
 
     # Loss functions
     "CMRLoss",
+    "MaskedLoss",
     "ConceptLoss",
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",

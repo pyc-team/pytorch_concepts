@@ -169,6 +169,59 @@ class ConceptMemoryReasoner(BaseBipartiteModel):
             **(train_inference_kwargs or {})
         )
 
+    def forward(self, query, x=None, evidence=None, *inference_args, **inference_kwargs):
+        """Forward pass for CMR.
+
+        Returns standard predictions by default. When invoked by the generic
+        learner path (which provides ``ground_truth``), returns both no-rec and
+        with-rec predictions so ``filter_output_for_loss`` can build explicit
+        CMR loss kwargs`.
+        """
+        include_rec = inference_kwargs.pop('include_rec', False)
+        rec_weight = inference_kwargs.pop('rec_weight', self.rec_weight)
+        # CMR predictor already produces task probabilities. Requesting raw CPD outputs avoids an extra sigmoid in inference for Bernoulli variables.
+        inference_kwargs['return_logits'] = True
+
+        # BaseLearner passes ground_truth in inference kwargs. Use that signal to produce both branches for CMRLoss.
+        # TODO: this is a bit ad-hoc - consider a more explicit, stable way to signal this mode (e.g. a flag).
+        learner_mode = 'ground_truth' in inference_kwargs
+
+        if learner_mode:
+            no_rec = super().forward(
+                query=query,
+                x=x,
+                include_rec=False,
+                evidence=evidence,
+                *inference_args,
+                rec_weight=rec_weight,
+                **inference_kwargs,
+            )
+
+            with_rec = super().forward(
+                query=query,
+                x=x,
+                include_rec=True,
+                evidence=evidence,
+                *inference_args,
+                rec_weight=rec_weight,
+                **inference_kwargs,
+            )
+            assert not torch.equal(no_rec, with_rec), (
+                "Expected 'no_rec' and 'with_rec' predictions to be different tensors, "
+                "but they are identical. Check that 'include_rec' is properly handled in forward pass."
+            )
+            return {'no_rec': no_rec, 'with_rec': with_rec}
+
+        return super().forward(
+            query=query,
+            x=x,
+            evidence=evidence,
+            *inference_args,
+            include_rec=include_rec,
+            rec_weight=rec_weight,
+            **inference_kwargs,
+        )
+
     def filter_output_for_loss(self, forward_out, target):
         """Build explicit CMR loss kwargs for :class:`CMRLoss`.
 
@@ -200,6 +253,12 @@ class ConceptMemoryReasoner(BaseBipartiteModel):
         no_rec = forward_out['no_rec']
         with_rec = forward_out['with_rec']
 
+        # assert that no_rec and with_rec are different tensors (eps)
+        assert not torch.equal(no_rec, with_rec), (
+            "Expected 'no_rec' and 'with_rec' predictions to be different tensors, "
+            "but they are identical. Check that 'include_rec' is properly handled in forward pass."
+        )
+
         task_indices = [
             i for i, name in enumerate(self.concept_names)
             if name in self.task_names
@@ -209,47 +268,21 @@ class ConceptMemoryReasoner(BaseBipartiteModel):
             if name not in self.task_names
         ]
 
+        # return {
+        #     'concept_input': no_rec[:, concept_indices],
+        #     'concept_target': target[:, concept_indices],
+        #     'task_input': no_rec[:, task_indices],
+        #     'task_input_with_rec': with_rec[:, task_indices],
+        #     'task_target': target[:, task_indices],
+        # }
         return {
-            'concept_input': no_rec[:, concept_indices],
-            'concept_target': target[:, concept_indices],
-            'task_input': no_rec[:, task_indices],
-            'task_input_with_rec': with_rec[:, task_indices],
-            'task_target': target[:, task_indices],
+            'input': no_rec,
+            'target': target,
+            'input_with_rec': with_rec,
         }
 
-    def shared_step(self, batch, step):
-        """CMR-specific Lightning step using explicit no-rec/with-rec losses."""
-        inputs, concepts, _ = self.unpack_batch(batch)
-        batch_size = batch['inputs']['x'].size(0)
-        c = c_loss = concepts['c']
-
-        inference_kwargs = self._get_inference_kwargs(batch)
-
-        out_no_rec = self.forward(
-            x=inputs['x'],
-            query=self.concept_names,
-            evidence=None,
-            include_rec=False,
-            rec_weight=self.rec_weight,
-            **inference_kwargs,
-        )
-        out_with_rec = self.forward(
-            x=inputs['x'],
-            query=self.concept_names,
-            evidence=None,
-            include_rec=True,
-            rec_weight=self.rec_weight,
-            **inference_kwargs,
-        )
-
-        if self.loss is not None:
-            loss_args = self.filter_output_for_loss(
-                {'no_rec': out_no_rec, 'with_rec': out_with_rec},
-                c_loss,
-            )
-            loss = self.loss(**loss_args)
-            self.log_loss(step, loss, batch_size=batch_size)
-
-        metrics_args = self.filter_output_for_metrics(out_no_rec, c)
-        self.update_and_log_metrics(metrics_args, step, batch_size)
-        return loss
+    def filter_output_for_metrics(self, forward_out, target):
+        """Use no-rec predictions for metric computation in learner mode."""
+        if isinstance(forward_out, dict):
+            return {'preds': forward_out['no_rec'], 'target': target}
+        return {'preds': forward_out, 'target': target}

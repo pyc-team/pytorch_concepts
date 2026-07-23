@@ -1,0 +1,42 @@
+defaults:
+  - _commons
+  - _commons_bnlearn
+  - _self_
+
+_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
+
+name: insurance
+
+default_task_names: [PropCost]
+
+autoencoder_kwargs:
+  latent_dim: 32
+
+label_descriptions:
+  GoodStudent: "Good student: A two-level factor with levels False and True. This variable indicates whether the insured person is considered a good student, which can be a factor in determining insurance premiums due to the statistical association between good academic performance and lower risk of accidents."
+  Age: "Age: A three-level factor with levels Adolescent, Adult, and Senior. This factor represents the age group of the insured individual, which plays a significant role in determining the likelihood of insurance claims, as younger and older individuals may have higher risks of accidents."
+  SocioEcon: "Socio-economic status: A four-level factor with levels Prole, Middle, UpperMiddle, and Wealthy. This variable categorizes individuals based on their socio-economic standing, which is often used in risk assessment models as higher socio-economic status may be correlated with safer driving behaviors and fewer claims."
+  RiskAversion: "Risk aversion: A four-level factor with levels Psychopath, Adventurous, Normal, and Cautious. This factor measures the individual’s tendency to avoid risky situations, which influences their likelihood of engaging in unsafe driving behaviors and thus impacts their risk profile for insurance purposes."
+  VehicleYear: "Vehicle age: A two-level factor with levels Current and Older. This variable refers to whether the car is relatively new (current) or older, which affects its likelihood of being involved in accidents and its repair or replacement costs, influencing the insurance premium."
+  ThisCarDam: "Damage to this car: A four-level factor with levels None, Mild, Moderate, and Severe. Indicates the extent of damage to the insured car after an accident, with higher levels of damage likely resulting in higher insurance claims."
+  RuggedAuto: "Ruggedness of the car: A three-level factor with levels EggShell, Football, and Tank. Describes the durability or toughness of the vehicle, with more rugged vehicles (e.g., Tank) generally having a lower probability of sustaining severe damage in accidents."
+  Accident: "Severity of the accident: A four-level factor with levels None, Mild, Moderate, and Severe. This variable categorizes the severity of the accident, which is crucial for determining the extent of insurance coverage and the associated payout."
+  MakeModel: "Car's model: A five-level factor with levels SportsCar, Economy, FamilySedan, Luxury, and SuperLuxury. This variable indicates the make and model of the insured vehicle, influencing risk assessment based on the type of vehicle, its typical usage, and the likelihood of damage in an accident."
+  DrivQuality: "Driving quality: A three-level factor with levels Poor, Normal, and Excellent. This factor reflects the assessed quality of the driver’s driving habits, with better driving quality typically correlating with a lower risk of accidents and, therefore, lower insurance costs."
+  Mileage: "Mileage: A four-level factor with levels FiveThou, TwentyThou, FiftyThou, and Domino. Represents the total number of miles driven by the insured vehicle, which is a critical determinant of the risk of an accident. Higher mileage can increase the likelihood of wear and tear or accidents."
+  Antilock: "ABS (Anti-lock Braking System): A two-level factor with levels False and True. Indicates whether the car is equipped with an anti-lock braking system, which can reduce the likelihood of accidents, particularly in slippery conditions, influencing the insurance premium."
+  DrivingSkill: "Driving skill: A three-level factor with levels SubStandard, Normal, and Expert. Reflects the driver’s perceived skill level, with expert drivers generally seen as less risky and therefore subject to lower insurance premiums."
+  SeniorTrain: "Senior training: A two-level factor with levels False and True. Indicates whether the insured person has undergone training specific to senior drivers, which can reduce the risk of accidents for older individuals and influence their insurance costs."
+  ThisCarCost: "Costs for the insured car: A four-level factor with levels Thousand, TenThou, HundredThou, and Million. Represents the cost of the insured vehicle, which is used to assess the value of the vehicle and determine the potential payout in the case of an accident."
+  Theft: "Theft: A two-level factor with levels False and True. Indicates whether the car has been involved in a theft, which is an important variable for determining the likelihood of claims related to stolen vehicles."
+  CarValue: "Value of the car: A five-level factor with levels FiveThou, TenThou, TwentyThou, FiftyThou, and Million. Represents the value of the car at the time of the insurance policy, influencing the premiums and coverage options for the vehicle."
+  HomeBase: "Neighbourhood type: A four-level factor with levels Secure, City, Suburb, and Rural. Represents the type of neighborhood where the insured individual lives, with certain areas having higher risks of theft, vandalism, or accidents, impacting insurance rates."
+  AntiTheft: "Anti-theft system: A two-level factor with levels False and True. Indicates whether the vehicle has an anti-theft system installed, which reduces the likelihood of theft and may lead to a lower insurance premium."
+  PropCost: "Ratio of the cost for the two cars: A four-level factor with levels Thousand, TenThou, HundredThou, and Million. Refers to the cost comparison between the insured car and another vehicle involved in the accident, affecting the settlement or payout in the event of a claim."
+  OtherCarCost: "Costs for the other car: A four-level factor with levels Thousand, TenThou, HundredThou, and Million. Represents the cost of another vehicle involved in the accident, which is used to calculate potential liability and payout for insurance claims."
+  OtherCar: "Other cars involved in the accident: A two-level factor with levels False and True. Indicates whether another vehicle was involved in the accident, which affects the distribution of fault and the size of the insurance payout."
+  MedCost: "Cost of the medical treatment: A four-level factor with levels Thousand, TenThou, HundredThou, and Million. Represents the cost of medical expenses resulting from the accident, which may affect the total claim amount for the insured individual."
+  Cushioning: "Cushioning: A four-level factor with levels Poor, Fair, Good, and Excellent. Describes the quality of the cushioning or safety features in the car, which can reduce injury severity in accidents and impact insurance premiums based on the car's safety features."
+  Airbag: "Airbag: A two-level factor with levels False and True. Indicates whether the vehicle is equipped with airbags, which significantly reduces injury severity in accidents and is often reflected in lower insurance premiums."
+  ILiCost: "Inspection cost: A four-level factor with levels Thousand, TenThou, HundredThou, and Million. Represents the cost of inspecting the car as part of the insurance process, which may affect the overall cost of maintaining the insurance policy."
+  DrivHist: "Driving history: A three-level factor with levels Zero, One, and Many. Reflects the insured’s history of driving violations or accidents, which is an important factor in risk assessment and determining the insurance premium. A history with fewer violations generally leads to a lower premium."

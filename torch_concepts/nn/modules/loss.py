@@ -592,6 +592,124 @@ class L1LogitRegularizer(nn.Module):
         return torch.tensor(0.0, device=input.device)
 
 
+class MaskedLoss(nn.Module):
+    """Masked wrapper around an element-wise loss.
+
+    Args:
+        loss_fn: Base loss module used to compute element-wise losses.
+            Must return per-element losses with the same shape as ``target``
+            (typically by configuring ``reduction='none'``).
+            Defaults to ``nn.BCELoss(reduction='none')``.
+        reduction: Reduction mode for masked losses. Supported values are ``'mean'`` and ``'sum'``.
+        targets_to_mask: Which targets to mask. Supported values are ``'negative'``, ``'positive'``, and ``'none'``.
+         - ``'negative'``: Mask targets where the label is 0 (keep only positive labels).
+         - ``'positive'``: Mask targets where the label is 1 (keep only negative labels).
+         - ``'none'``: No masking, compute loss on all targets.
+         concepts_to_keep: Optional tensor of shape (nb_concepts,) indicating which concepts to apply the loss to. If None, applies to all concepts.
+    """
+
+    def __init__(
+        self,
+        loss_fn: Optional[nn.Module] = None,
+        reduction: str = 'mean',
+        targets_to_mask: str = 'none',
+        concepts_to_keep: torch.Tensor = None,
+    ):
+        super().__init__()
+        if reduction not in {'mean', 'sum'}:
+            raise ValueError("Reduction must be 'mean' or 'sum'.")
+        if targets_to_mask not in {'negative', 'positive', 'none'}:
+            raise ValueError("targets_to_mask must be 'negative' or 'positive' or 'none'.")
+        if concepts_to_keep is not None and not isinstance(concepts_to_keep, torch.Tensor):
+            raise TypeError("concepts_to_keep must be a torch.Tensor or None.")
+        if concepts_to_keep is not None and concepts_to_keep.dim() != 1:
+            raise ValueError("concepts_to_keep must be a 1D tensor.")
+
+        self.loss_fn = loss_fn if loss_fn is not None else nn.BCELoss(reduction='none')
+        if hasattr(self.loss_fn, 'reduction') and getattr(self.loss_fn, 'reduction') != 'none':
+            raise ValueError(
+                "loss_fn must use reduction='none' so masking can be applied element-wise."
+            )
+
+        self.reduction = reduction
+        self.targets_to_mask = targets_to_mask
+        self.register_buffer('concepts_to_keep', concepts_to_keep)
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute masked loss.
+
+        Args:
+            input: Model predictions.
+            target: Targets consumed by ``loss_fn``.
+
+        Returns:
+            Masked scalar loss.
+        """
+        if input.shape != target.shape:
+            raise ValueError("input and target must have the same shape.")
+
+        if self.targets_to_mask == 'none':
+            target_mask = torch.ones_like(target, dtype=torch.bool)
+        else:
+            allowed_value = 1 if self.targets_to_mask == 'negative' else 0
+            target_mask = (target == allowed_value)
+
+        concept_mask = None
+        if self.concepts_to_keep is not None:
+            if self.concepts_to_keep.numel() != target.shape[-1]:
+                raise ValueError(
+                    "concepts_to_keep length must match target.shape[-1]."
+                )
+            concept_mask = self.concepts_to_keep.to(device=input.device).bool().view(
+                *([1] * (target.dim() - 1)), -1
+            )
+
+        effective_mask = target_mask if concept_mask is None else (target_mask & concept_mask)
+
+        selected_input = input[effective_mask]
+        selected_target = target[effective_mask]
+        if selected_target.numel() == 0:
+            return input.sum() * 0.0
+
+        selected_loss = self.loss_fn(selected_input, selected_target)
+        if selected_loss.shape != selected_target.shape:
+            raise ValueError(
+                "loss_fn must return element-wise losses with the same shape as target "
+                "(use reduction='none')."
+            )
+
+        if self.reduction == 'sum':
+            return selected_loss.sum()
+        return selected_loss.mean()
+
+
+class CMRReconstructionLoss(MaskedLoss):
+    """Reconstruction loss term for CMR.
+
+    This loss will perform signature matching on task_input_with_rec.
+    """
+
+    def __init__(
+        self,
+        reduction: str = 'mean',
+        targets_to_mask: str = 'none',
+        concepts_to_keep: torch.Tensor = None,
+    ):
+        super().__init__(torch.nn.BCELoss(reduction='none'), reduction, targets_to_mask, concepts_to_keep)
+
+    def forward(self, input_with_rec: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute masked BCE.
+
+        Args:
+            input_with_rec: Task probabilities with reconstruction term.
+            target: Binary targets with entries in ``{0, 1}``.
+
+        Returns:
+            Masked BCE scalar (for ``'mean'``/``'sum'`` reductions).
+        """
+        return super().forward(input=input_with_rec, target=target)
+
+
 class CMRLoss(nn.Module):
     """
     Loss for Concept-based Memory Reasoner (CMR).
