@@ -305,19 +305,19 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         self.assertEqual(concepts, {'c': c})
         self.assertEqual(transforms, {})
 
-    def test_unpack_batch_with_transforms(self):
-        """Test unpack_batch extracts transforms when present."""
+    def test_unpack_batch_with_scalers(self):
+        """Test unpack_batch extracts the batch's fitted scalers when present."""
         learner = MockLearner(n_concepts=2)
-        mock_transform = {'c': 'some_transform'}
+        mock_scalers = {'c': 'some_scaler'}
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
             'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
-            'transforms': mock_transform
+            'scalers': mock_scalers
         }
-        
+
         inputs, concepts, transforms = learner.unpack_batch(batch)
-        
-        self.assertEqual(transforms, mock_transform)
+
+        self.assertEqual(transforms, mock_scalers)
 
 
 class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
