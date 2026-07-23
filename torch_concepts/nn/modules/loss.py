@@ -559,7 +559,8 @@ class DepthWeightedConceptLoss(TypeAwareLoss):
         Returns:
             torch.Tensor: Total depth-weighted loss (scalar).
         """
-        total_loss = torch.tensor(0.0, device=output.target.device)
+        contributions = []
+        
         # Concepts in the output but absent from the graph are scored at depth 0.
         missing = [n for n in output.target.annotation.labels if n not in self._graph_names]
         for i, d in enumerate(self._depth_levels):
@@ -568,8 +569,9 @@ class DepthWeightedConceptLoss(TypeAwareLoss):
             if not sub.params:
                 continue
             sub_loss = getattr(self, f"loss_depth_{d}")
-            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(sub)
-        return total_loss
+            contributions.append(self._depth_weights_list[i] * sub_loss(sub))
+        
+        return sum(contributions) if contributions else torch.zeros(())
 
 
 class L1LogitRegularizer(nn.Module):
