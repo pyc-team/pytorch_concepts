@@ -51,8 +51,10 @@ class CLIPAnnotator(Annotator):
     """General CLIP-based annotator for label-free concept supervision.
 
     The annotator maps an image dataset and an :class:`Annotations` to a
-    tensor of sample-level concept values. Binary concepts are represented by
-    their labels; categorical concepts use one text prompt per state.
+    tensor of raw sample-level cosine similarities. Binary concepts are
+    represented by their labels; categorical concepts use one text prompt per
+    state. Calibration and filtering are handled by the concept-supervision
+    pipeline.
 
     Parameters
     ----------
@@ -72,15 +74,6 @@ class CLIPAnnotator(Annotator):
         Converts a binary concept name into prompt text.
     state_prompt_formatter : callable, optional
         Converts a categorical concept name and state into prompt text.
-    output : str, optional
-        Output representation: ``"similarity"``, ``"logit"``,
-        ``"probability"``, or ``"binary"``.
-    temperature : float, optional
-        Multiplicative logit scale. Default is 1.0.
-    bias : float, optional
-        Additive logit bias. Default is 0.0.
-    threshold : float, optional
-        Probability threshold used for binary output. Default is 0.5.
     num_workers : int, optional
         Number of data-loading workers. Default is 0.
     show_progress : bool, optional
@@ -101,19 +94,9 @@ class CLIPAnnotator(Annotator):
         state_prompt_formatter: StatePromptFormatter = (
             default_state_prompt_formatter
         ),
-        output: str = "similarity",
-        temperature: float = 1.0,
-        bias: float = 0.0,
-        threshold: float = 0.5,
         num_workers: int = 0,
         show_progress: bool = False,
     ):
-        if output not in {"similarity", "logit", "probability", "binary"}:
-            raise ValueError(
-                "output must be one of: "
-                "'similarity', 'logit', 'probability', 'binary'."
-            )
-
         try:
             from transformers import AutoModel, AutoProcessor
         except ImportError as error:
@@ -129,10 +112,6 @@ class CLIPAnnotator(Annotator):
         self.prompt_template = prompt_template
         self.binary_prompt_formatter = binary_prompt_formatter
         self.state_prompt_formatter = state_prompt_formatter
-        self.output = output
-        self.temperature = temperature
-        self.bias = bias
-        self.threshold = threshold
         self.num_workers = num_workers
         self.show_progress = show_progress
 
@@ -174,7 +153,6 @@ class CLIPAnnotator(Annotator):
             with torch.no_grad():
                 image_features = self.encode_images(images)
                 scores = image_features @ concept_features.T
-                scores = self._postprocess_scores(scores)
 
             concept_batches.append(scores.detach().cpu())
 
@@ -255,16 +233,3 @@ class CLIPAnnotator(Annotator):
         if isinstance(template, str):
             return [template.format(concept)]
         return [item.format(concept) for item in template]
-
-    def _postprocess_scores(self, similarities: Tensor) -> Tensor:
-        if self.output == "similarity":
-            return similarities
-
-        logits = similarities * self.temperature + self.bias
-        if self.output == "logit":
-            return logits
-
-        probabilities = torch.sigmoid(logits)
-        if self.output == "probability":
-            return probabilities
-        return (probabilities >= self.threshold).float()

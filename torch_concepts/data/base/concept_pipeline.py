@@ -7,8 +7,12 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
+from torch_concepts.data.base.annotation_filter import AnnotationFilter
 from torch_concepts.data.base.annotator import Annotator
+from torch_concepts.data.base.calibrator import Calibrator
 from torch_concepts.data.base.concept_generator import ConceptGenerator
+from torch_concepts.data.base.generator_filter import GeneratorFilter
+from torch_concepts.data.lf_postprocessing import DeduplicateConcepts
 
 
 # merged: merge all generated concepts, then send them to all annotators.
@@ -19,103 +23,61 @@ from torch_concepts.data.base.concept_generator import ConceptGenerator
 RoutingMode = Literal["merged", "cartesian", "zip"]
 
 
-class DeduplicateConcepts:
-    """Remove duplicate concept labels from one concept axis.
-
-    The first occurrence is kept. Later occurrences must have the same states,
-    cardinality, and type so that filtering cannot silently collapse
-    incompatible concept definitions.
-    """
-
-    def __call__(self, concepts: Annotations) -> Annotations:
-        labels: list[str] = []
-        states: list[list[str]] = []
-        cardinalities: list[int] = []
-        types: list[str] = []
-        metadata: dict[str, dict[str, Any]] | None = None
-        definitions: dict[str, tuple[list[str], int, str]] = {}
-
-        if concepts.metadata is not None:
-            metadata = {}
-
-        for index, label in enumerate(concepts.labels):
-            state_names = list(concepts.states[index])
-            cardinality = concepts.cardinalities[index]
-            concept_type = concepts.types[index]
-            definition = (state_names, cardinality, concept_type)
-
-            if label in definitions:
-                if definitions[label] != definition:
-                    previous_states, previous_cardinality, previous_type = (
-                        definitions[label]
-                    )
-                    raise ValueError(
-                        f"Concept {label!r} has incompatible definitions: "
-                        f"states/cardinality/type "
-                        f"{state_names}/{cardinality}/{concept_type} do not "
-                        f"match {previous_states}/{previous_cardinality}/"
-                        f"{previous_type}."
-                    )
-                if metadata is not None and concepts.metadata is not None:
-                    existing = metadata.setdefault(label, {})
-                    for key, value in concepts.metadata.get(label, {}).items():
-                        existing.setdefault(key, value)
-                continue
-
-            definitions[label] = definition
-            labels.append(label)
-            states.append(state_names)
-            cardinalities.append(cardinality)
-            types.append(concept_type)
-            if metadata is not None:
-                metadata[label] = dict(
-                    concepts.metadata.get(label, {}) if concepts.metadata else {}
-                )
-
-        return Annotations(
-            labels=labels,
-            states=states,
-            cardinalities=cardinalities,
-            types=types,
-            metadata=metadata,
-            concept_space=concepts.concept_space,
-        )
-
-
-DEFAULT_CONCEPT_FILTER = DeduplicateConcepts()
+DEFAULT_GENERATOR_FILTER = DeduplicateConcepts()
 
 
 class ConceptSupervisionPipeline:
-    """Compose concept generation, annotation, filtering, and aggregation.
+    """Compose concept generation, annotation, calibration, and filtering.
 
     Calling the pipeline uses ``dataset`` as the concept-generation dataset.
     By default, that same dataset is annotated. Pass ``annotation_datasets`` to
     annotate one or more named datasets with the generated concept axis while
     still generating concepts from ``dataset``.
 
+    Routing controls which generated concept axes are sent to each annotator:
+
+    - ``"merged"`` concatenates all generator outputs, applies the generator
+      filter once to the merged axis, and sends that shared axis to every
+      annotator. One result is produced per annotator.
+    - ``"cartesian"`` applies the generator filter independently to every
+      generator output and sends every filtered axis to every annotator. One
+      result is produced for each generator-annotator pair.
+    - ``"zip"`` applies the generator filter independently to every generator
+      output and pairs generators and annotators by their configuration order.
+      It requires equal numbers of generators and annotators.
+
+    Every routed annotation tensor then passes through the same optional
+    processing stages in this order: ``raw_annotation_filter``, ``calibrator``,
+    and ``calibrated_annotation_filter``. Aggregation, when configured, runs
+    after those stages.
+
     Parameters
     ----------
     generators : ConceptGenerator or sequence of ConceptGenerator
         Concept generators to produce concept annotations from the dataset.
     annotators : Annotator or sequence of Annotator
-        Annotators to produce concept values from the dataset and concept annotations.
-    concept_filter : callable, optional
-        Transformation applied to each concept axis before annotation. Defaults
-        to :class:`DeduplicateConcepts`, so duplicate labels are removed even
-        when they come from a single generator. For ``routing='merged'``,
-        generator axes are first merged by routing and then the filter is
-        applied to the merged axis. For ``cartesian`` and ``zip``, the filter is
-        applied to each routed generator axis.
+        Annotators that produce raw concept scores.
+    generator_filter : GeneratorFilter, optional
+        Filter applied to generated concept names before annotation. Defaults
+        to :class:`DeduplicateConcepts`. For merged routing it is applied after
+        merging; for cartesian and zip routing it is applied independently to
+        each generator output. Pass ``None`` to disable generator filtering.
+    raw_annotation_filter : AnnotationFilter, optional
+        Sample-level filter applied to each raw annotation tensor. Filtered
+        entries are represented by ``NaN``.
+    calibrator : Calibrator, optional
+        Transformation applied after raw annotation filtering.
+    calibrated_annotation_filter : AnnotationFilter, optional
+        Sample-level filter applied after optional calibration. If no
+        calibrator is configured, it receives the raw-filtered scores.
     aggregator : callable, optional
-        Function to aggregate the generated concept values into a single tensor.
-        Aggregation is only supported with ``routing='merged'``, where all
-        annotators receive the same merged concept axis. If None, no
-        aggregation is performed.
+        Function that aggregates the final generated concept tensors.
+        Aggregation is supported only with merged routing. Aggregators are
+        responsible for deciding how to handle any ``NaN`` entries introduced
+        by annotation filters.
     routing : {'merged', 'cartesian', 'zip'}, default='merged'
-        Routing mode for combining generators and annotators:
-        - 'merged': merges all generated concepts, then sends them to all annotators.
-        - 'cartesian': sends each generated concept to all annotators.
-        - 'zip': sends each generated concept to the corresponding annotator, producing a one-to-one mapping of results. The mapping is determined by the order of generators and annotators in the pipeline configuration.
+        Routing mode used to combine generators and annotators, as described
+        above.
     name : str, optional
         Name of the pipeline. If None, the class name is used.
     """
@@ -124,7 +86,10 @@ class ConceptSupervisionPipeline:
         self,
         generators: ConceptGenerator | Sequence[ConceptGenerator],
         annotators: Annotator | Sequence[Annotator],
-        concept_filter: Callable[[Annotations], Annotations] | None = DEFAULT_CONCEPT_FILTER,
+        generator_filter: GeneratorFilter | None = DEFAULT_GENERATOR_FILTER,
+        raw_annotation_filter: AnnotationFilter | None = None,
+        calibrator: Calibrator | None = None,
+        calibrated_annotation_filter: AnnotationFilter | None = None,
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
@@ -148,8 +113,35 @@ class ConceptSupervisionPipeline:
             raise ValueError(
                 "aggregator is only supported with routing='merged'."
             )
+        if generator_filter is not None and not isinstance(
+            generator_filter,
+            GeneratorFilter,
+        ):
+            raise TypeError(
+                "generator_filter must be a GeneratorFilter or None."
+            )
+        if raw_annotation_filter is not None and not isinstance(
+            raw_annotation_filter,
+            AnnotationFilter,
+        ):
+            raise TypeError(
+                "raw_annotation_filter must be an AnnotationFilter or None."
+            )
+        if calibrator is not None and not isinstance(calibrator, Calibrator):
+            raise TypeError("calibrator must be a Calibrator or None.")
+        if calibrated_annotation_filter is not None and not isinstance(
+            calibrated_annotation_filter,
+            AnnotationFilter,
+        ):
+            raise TypeError(
+                "calibrated_annotation_filter must be an AnnotationFilter "
+                "or None."
+            )
 
-        self.concept_filter = concept_filter
+        self.generator_filter = generator_filter
+        self.raw_annotation_filter = raw_annotation_filter
+        self.calibrator = calibrator
+        self.calibrated_annotation_filter = calibrated_annotation_filter
         self.aggregator = aggregator
         self.routing = routing
         self.name = name or self.__class__.__name__
@@ -238,6 +230,12 @@ class ConceptSupervisionPipeline:
             merged = self._filter_concepts(merged)
             for annotator_name, annotator in zip(annotator_names, self.annotators):
                 concept_values = annotator.annotate(dataset, merged, **kwargs)
+                concept_values = self._process_annotation_values(
+                    concept_values,
+                    merged,
+                    dataset,
+                    annotator_name,
+                )
                 self._insert_result(
                     values,
                     annotations,
@@ -255,6 +253,12 @@ class ConceptSupervisionPipeline:
                     route_name = f"{generator_name}_{annotator_name}"
                     concept_values = annotator.annotate(
                         dataset, annotation, **kwargs
+                    )
+                    concept_values = self._process_annotation_values(
+                        concept_values,
+                        annotation,
+                        dataset,
+                        route_name,
                     )
                     self._insert_result(
                         values,
@@ -275,6 +279,12 @@ class ConceptSupervisionPipeline:
                 route_name = f"{generator_name}_{annotator_name}"
                 concept_values = annotator.annotate(
                     dataset, annotation, **kwargs
+                )
+                concept_values = self._process_annotation_values(
+                    concept_values,
+                    annotation,
+                    dataset,
+                    route_name,
                 )
                 self._insert_result(
                     values,
@@ -334,9 +344,48 @@ class ConceptSupervisionPipeline:
         )
 
     def _filter_concepts(self, concepts: Annotations) -> Annotations:
-        if self.concept_filter is None:
+        if self.generator_filter is None:
             return concepts
-        return self.concept_filter(concepts)
+        return self.generator_filter.filter_annotations(concepts)
+
+    def _process_annotation_values(
+        self,
+        values: Tensor,
+        concepts: Annotations,
+        dataset: Dataset,
+        route_name: str,
+    ) -> Tensor:
+        self._validate_value(route_name, values, concepts, dataset)
+        stages = (
+            (
+                "raw_annotation_filter",
+                self.raw_annotation_filter,
+                "filter",
+            ),
+            ("calibrator", self.calibrator, "calibrate"),
+            (
+                "calibrated_annotation_filter",
+                self.calibrated_annotation_filter,
+                "filter",
+            ),
+        )
+        for stage_name, stage, method_name in stages:
+            if stage is None:
+                continue
+            processed = getattr(stage, method_name)(values, concepts)
+            if not isinstance(processed, Tensor):
+                raise TypeError(
+                    f"{stage_name} must return a Tensor; "
+                    f"got {type(processed).__name__}."
+                )
+            if processed.shape != values.shape:
+                raise ValueError(
+                    f"{stage_name} must preserve annotation tensor shape; "
+                    f"got {tuple(processed.shape)} instead of "
+                    f"{tuple(values.shape)}."
+                )
+            values = processed
+        return values
 
     @staticmethod
     def _annotation_dataset_map(

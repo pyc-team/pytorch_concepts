@@ -2,7 +2,9 @@
 
 This example uses:
 - LLMConceptGenerator with LiteLLMBackend to produce a concept vocabulary.
-- CLIPAnnotator to score each image against the generated concepts.
+- CLIPAnnotator to produce raw image-concept similarity scores.
+- Calibrator and AnnotationFilter stages to turn similarities into
+  probabilities and filter uncertain sample-level annotations.
 - ConceptSupervisionPipeline to generate concepts from train and annotate
   both train and validation partitions.
 - A tiny concept bottleneck classifier trained on the generated concepts.
@@ -30,6 +32,10 @@ from tqdm import tqdm
 
 from torch_concepts.data.annotators import CLIPAnnotator
 from torch_concepts.data.base import ConceptSupervisionPipeline
+from torch_concepts.data.lf_postprocessing import (
+    SigmoidCalibrator,
+    ThresholdAnnotationFilter,
+)
 from torch_concepts.data.concept_generators import LiteLLMBackend, LLMConceptGenerator
 from torch_concepts.data.datasets.mnist import ColorMNISTDataset
 
@@ -115,7 +121,6 @@ def main():
     # In this example we ask it to annotate both train and validation splits.
     annotator = CLIPAnnotator(
         model_name="openai/clip-vit-base-patch32",
-        output="similarity",
         prompt_template="a photo of a {}",
         batch_size=128,
         device=args.clip_device,
@@ -127,6 +132,8 @@ def main():
     pipeline = ConceptSupervisionPipeline(
         generators=generator,
         annotators=annotator,
+        calibrator=SigmoidCalibrator(scale=10.0),
+        calibrated_annotation_filter=ThresholdAnnotationFilter(0.5),
         routing="merged",
     )
 
@@ -167,8 +174,16 @@ def main():
     # dataset's ground truth, so read it from the generated annotation outputs.
     val_concepts = train_dataset.generated_annotations[val_name].float()
 
+    # These calibrated values are probabilities, so a filtered annotation
+    # means that the concept is absent from that sample.
+    train_concepts = torch.nan_to_num(train_concepts, nan=0.0)
+    val_concepts = torch.nan_to_num(val_concepts, nan=0.0)
     mean = train_concepts.mean(dim=0, keepdim=True)
-    std = train_concepts.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
+    std = train_concepts.std(
+        dim=0,
+        keepdim=True,
+        unbiased=False,
+    ).clamp_min(1e-6)
     train_concepts = (train_concepts - mean) / std
     val_concepts = (val_concepts - mean) / std
 
