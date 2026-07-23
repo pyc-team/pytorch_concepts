@@ -10,22 +10,7 @@ from typing import Optional, Union, Dict
 
 import torch
 
-from torch_concepts.annotations import Annotations
-
-
-def _as_contiguous_slice(indices):
-    """Turn an ascending run of consecutive indices into an equivalent ``slice``.
-
-    Advanced (list) indexing always copies, while a ``slice`` returns a view. The
-    labels a caller selects are usually one concept, or several adjacent ones, so
-    this makes the common label lookup free — which matters when the annotated
-    tensor is the single storage for a whole inference result and per-variable
-    access is expected to be a view into it.
-    """
-    if not isinstance(indices, list) or not indices:
-        return indices
-    start, stop = indices[0], indices[0] + len(indices)
-    return slice(start, stop) if indices == list(range(start, stop)) else indices
+from torch_concepts.annotations import Annotations, _as_contiguous_slice
 
 
 class AnnotatedTensor:
@@ -194,42 +179,31 @@ class AnnotatedTensor:
         Any other key is forwarded to the underlying tensor; the annotation is
         preserved when the result's annotated-axis size equals the original.
         """
-        # Normalise to tuple-of-strings when possible
+        # Normalise to tuple-of-strings when possible, in a single all-string scan.
+        is_name_key = False
         if isinstance(key, str):
             key = (key,)
+            is_name_key = True
         elif isinstance(key, list) and key and all(isinstance(k, str) for k in key):
             key = tuple(key)
+            is_name_key = True
+        elif isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
+            is_name_key = True
 
-        if isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
-            # Resolving a key to (columns, sub-annotation) depends only on the
-            # annotation, which is shared across every tensor carrying it (an
-            # engine reuses one per query signature), while the tensor itself is
-            # rebuilt each batch. So the memo lives on the annotation: a loop
-            # slicing the same names every step resolves them exactly once,
-            # instead of paying O(labels) to re-expand a group and rebuild a
-            # sub-annotation. Invalidated when ``metadata`` is reassigned.
-            cache = self._annotation.__dict__.setdefault('_slice_cache', {})
-            resolved = cache.get(key)
-            if resolved is None:
-                labels = self._resolve_labels(key)
-                resolved = (
-                    _as_contiguous_slice(self._annotation.get_slice(labels)),
-                    self._annotation.subset(labels),
-                )
-                cache[key] = resolved
-            indices, new_ann = resolved
-            return AnnotatedTensor(
-                self._data[self._index(indices)], new_ann, self._axis
-            )
+        if is_name_key:
+            # Resolving a key to (columns, sub-annotation) is memoised on the
+            # annotation (which is shared across every tensor carrying it, while
+            # the tensor itself is rebuilt each batch), so a loop slicing the same
+            # names every step resolves them exactly once. See Annotations.resolve.
+            return self._wrap_resolved(self._annotation.resolve(key))
 
         # Regular tensor indexing; re-wrap if the annotated axis is unchanged
         return self._wrap(self._data[key])
 
-    #: Legacy metadata key naming the group a label belongs to. Producers used
-    #: to record ownership per label under this key; ``Annotations.label_groups``
-    #: still honours it, but new code should register the group explicitly (see
-    #: :meth:`register_plate_label`) and leave the labels' metadata alone.
-    GROUP_KEY = 'variable'
+    def _wrap_resolved(self, resolved) -> 'AnnotatedTensor':
+        """Build the sub-tensor for a ``(selector, sub_annotation)`` from ``resolve``."""
+        selector, sub_ann = resolved
+        return AnnotatedTensor(self._data[self._index(selector)], sub_ann, self._axis)
 
     def register_plate_label(self, owner: str, members) -> 'AnnotatedTensor':
         """Make ``owner`` select ``members``' columns as one block.
@@ -254,26 +228,6 @@ class AnnotatedTensor:
         self._annotation.register_group(owner, members)
         return self
 
-    def _resolve_labels(self, keys) -> list:
-        """Expand each key to labels: itself, or the group of labels it names.
-
-        Keys are resolved left to right and concatenated, so
-        ``t['g', 'other']`` returns ``g``'s whole group followed by ``other``.
-        A key that is neither a label nor a group is passed through unchanged so
-        the annotation raises its own "label not found" error.
-        """
-        labels: list = []
-        groups = None
-        known = self._annotation.label_to_index
-        for key in keys:
-            if key in known:
-                labels.append(key)
-                continue
-            if groups is None:
-                groups = self._annotation.label_groups
-            labels.extend(groups.get(key, [key]))
-        return labels
-
     # ------------------------------------------------------------------ #
     # Merging                                                              #
     # ------------------------------------------------------------------ #
@@ -286,7 +240,7 @@ class AnnotatedTensor:
         All tensors must share the same shape on every **other** axis, and must
         annotate the same axis. The merged annotation is built by chaining
         :meth:`~torch_concepts.Annotations.union_with`: labels that already
-        appear on the left are not duplicated; metadata is merged with
+        appear on the left are not duplicated; groups are merged with
         left-wins semantics.
 
         Args:
@@ -357,38 +311,41 @@ class AnnotatedTensor:
         return AnnotatedTensor(torch.cat(pieces, dim=ax), merged_ann, ax)
 
     # ------------------------------------------------------------------ #
-    # Type-based splitting                                                 #
+    # Type-based accessors                                                 #
     # ------------------------------------------------------------------ #
 
-    def split_by_type(
-        self, 
-        concept_type: Optional[str] = None
-    ) -> Union['AnnotatedTensor', Dict[str, 'AnnotatedTensor']]:
-        """
-        If ``concept_type`` is given, return the sub-tensor of concepts of ``concept_type``.
-        
-        If ``concept_type`` is ``None``, split this tensor into a 
-        dictionary of :class:`AnnotatedTensor` instances, one per concept type present.
-        The keys are the type strings ``'binary'`` / ``'categorical'`` /
-        ``'continuous'`` (only the non-empty ones); each value is an
-        :class:`AnnotatedTensor` containing only the columns of that type, with a
-        correspondingly subsetted :class:`Annotations`.
+    def _by_type(self, concept_type: str) -> Optional['AnnotatedTensor']:
+        """Sub-tensor of the concepts of ``concept_type``, or ``None`` if there are none.
+
+        Resolution is memoised on the annotation under the (short) type string, so
+        repeated calls each forward are O(1) and never hash the full label tuple.
 
         Example:
             >>> ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
             >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
-            >>> d = t.split_by_type()
-            >>> d['binary'].annotation.labels
+            >>> t.binary().annotation.labels
             ['a', 'c']
-            >>> d['categorical'].annotation.labels
+            >>> t.categorical().annotation.labels
             ['b']
+            >>> t.continuous() is None
+            True
         """
-        if concept_type is None:
-            return {
-                t: self[labels]
-                for t, labels in self._annotation.labels_by_type.items()
-            }
-        return self[self._annotation.labels_by_type.get(concept_type, [])]
+        labels = self._annotation.labels_by_type.get(concept_type)
+        if not labels:
+            return None
+        return self._wrap_resolved(self._annotation.resolve(labels, cache_key=concept_type))
+
+    def binary(self) -> Optional['AnnotatedTensor']:
+        """Sub-tensor of binary concepts, or ``None`` if there are none."""
+        return self._by_type('binary')
+
+    def categorical(self) -> Optional['AnnotatedTensor']:
+        """Sub-tensor of categorical concepts, or ``None`` if there are none."""
+        return self._by_type('categorical')
+
+    def continuous(self) -> Optional['AnnotatedTensor']:
+        """Sub-tensor of continuous concepts, or ``None`` if there are none."""
+        return self._by_type('continuous')
 
     # ------------------------------------------------------------------ #
     # torch.* function protocol                                            #

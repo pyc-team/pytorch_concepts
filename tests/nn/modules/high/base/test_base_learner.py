@@ -147,10 +147,6 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         """Set up annotations for ConceptMetrics testing."""
         self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli}
-                }
             )
 
     def test_metrics_none(self):
@@ -224,10 +220,6 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         """Set up annotations for testing."""
         self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli}
-                }
             )
 
     def test_update_and_log_metrics(self):
@@ -425,10 +417,6 @@ class TestGetInferenceKwargs(unittest.TestCase):
     def setUp(self):
         self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
 
     def test_no_inference_returns_empty(self):
@@ -461,10 +449,6 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
     def setUp(self):
         self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
         self.loss_fn = ConceptLoss(
             binary=nn.BCEWithLogitsLoss(),
@@ -576,10 +560,6 @@ class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
     def setUp(self):
         self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
 
     def test_log_metrics_non_concept_metrics(self):

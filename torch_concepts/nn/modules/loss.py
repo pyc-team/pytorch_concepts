@@ -240,7 +240,7 @@ class ConceptLoss(TypeAwareLoss):
         """Pad and stack categorical logits/targets for CrossEntropy-style terms.
 
         ``cat_logits`` (logit-space) and ``cat_target`` (concept-space) are the
-        categorical slices from :meth:`AnnotatedTensor.split_by_type`, already in
+        categorical slices from :meth:`AnnotatedTensor.categorical`, already in
         the same concept order; per-concept widths come from ``cat_logits``'s
         annotation.
 
@@ -300,18 +300,13 @@ class ConceptLoss(TypeAwareLoss):
 
         # Each type reads its predictions from a configurable quantity: binary and
         # categorical are sliced by type out of their (discrete) quantity; continuous
-        # is taken directly from its quantity. split_by_type() is memoised per
-        # quantity so a shared discrete quantity (the default, logits for both) is
-        # split only once.
-        splits = {}
-        def split_for(param):
-            if param not in splits:
-                q = output.params.get(param)
-                splits[param] = q.split_by_type() if q is not None else {}
-            return splits[param]
-
-        binary = split_for(self.binary_param).get('binary')
-        categorical = split_for(self.categorical_param).get('categorical')
+        # is taken directly from its quantity. The per-type accessors are memoised on
+        # the (shared, stable) annotation, so a shared discrete quantity resolves each
+        # type at most once and stays warm across forwards.
+        bq = output.params.get(self.binary_param)
+        binary = bq.binary() if bq is not None else None
+        cq = output.params.get(self.categorical_param)
+        categorical = cq.categorical() if cq is not None else None
         continuous = output.params.get(self.continuous_param)
 
         contributions = []

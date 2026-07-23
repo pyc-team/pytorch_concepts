@@ -63,12 +63,6 @@ class TestCEMInitialization(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
 
     def test_init_basic(self):
@@ -101,11 +95,6 @@ class TestCEMInitialization(unittest.TestCase):
         ann_no_dist = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -199,12 +188,6 @@ class TestCEMForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
 
         self.model = ConceptEmbeddingModel(
@@ -324,12 +307,6 @@ class TestCEMExogenousVariables(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[2, 3, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_different_exogenous_sizes(self):
@@ -371,11 +348,6 @@ class TestCEMPrepareTarget(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         self.model = ConceptEmbeddingModel(
@@ -400,11 +372,6 @@ class TestCEMTraining(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_manual_training_mode(self):
@@ -516,13 +483,6 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 2],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'},
-                    'task2': {'type': 'discrete'}
-                }
             )
 
     def test_multiple_tasks_init(self):
@@ -576,12 +536,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary (cardinality 1)
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -599,12 +553,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -629,12 +577,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical (cardinality > 1)
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -652,12 +594,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -680,13 +616,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],
-                metadata={
-                    'is_red': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'has_texture': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -704,13 +633,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],  # Mixed
-                metadata={
-                    'is_red': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'has_texture': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -737,11 +659,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_single_concept(self):
@@ -749,10 +666,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -772,12 +685,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -797,11 +704,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[3, 4, 5],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -857,13 +759,6 @@ class TestCEMCardinalities(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 4],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'},
-                    'task2': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -884,11 +779,6 @@ class TestCEMComparison(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_cem_has_exogenous(self):

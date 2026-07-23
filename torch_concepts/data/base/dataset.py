@@ -51,6 +51,10 @@ class ConceptDataset(Dataset):
         annotations: Optional Annotations object with concept metadata.
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
+        reorder_by_type: Group same-type concepts contiguously -- binary, then
+            categorical (ascending cardinality), then continuous (default:
+            True), so type-based slicing on the resulting AnnotatedTensor is a
+            view instead of a copy. Ties keep their relative order.
         precision: Numerical precision (16, 32, or 64, default: 32).
         name: Optional dataset name.
         exogenous: Optional exogenous variables (not yet implemented).
@@ -74,6 +78,7 @@ class ConceptDataset(Dataset):
         annotations: Optional[Annotations] = None,
         graph: Optional[pd.DataFrame] = None,
         concept_names_subset: Optional[List[str]] = None,
+        reorder_by_type: bool = True,
         precision: Union[int, str] = 32,
         name: Optional[str] = None,
         # TODO: implement handling of exogenous inputs
@@ -110,6 +115,11 @@ class ConceptDataset(Dataset):
         # maybe reduce annotations based on subset of concept names
         self._maybe_reduce_annotations(annotations,
                                        concept_names_subset)
+        # group same-type concepts contiguously (stable within each type) so
+        # AnnotatedTensor.binary()/.categorical()/.continuous() resolve to a
+        # view instead of a per-batch advanced-index copy
+        if reorder_by_type:
+            self._annotations = self._maybe_reorder_by_type(self._annotations)
 
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
@@ -475,21 +485,28 @@ class ConceptDataset(Dataset):
             # Reduce types
             reduced_types = tuple(axis_annotation.types[i] for i in indices)
 
-            # Reduce metadata if present
-            if axis_annotation.metadata is not None:
-                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
-                                   for i in range(len(indices))}
-            else:
-                reduced_metadata = None
-
             # Create reduced annotations
             self._annotations = Annotations(
                 labels=reduced_labels,
                 cardinalities=reduced_cardinalities,
                 states=reduced_states,
                 types=reduced_types,
-                metadata=reduced_metadata
             )
+
+    def _maybe_reorder_by_type(self, annotations: Annotations) -> Annotations:
+        """Reorder ``annotations`` so same-type concepts sit contiguously
+        (binary, then categorical, then continuous), categorical concepts
+        further sorted by ascending cardinality. Ties keep their relative
+        order. A no-op if already in this order.
+        """
+        sorted_labels = [
+            label
+            for labels in annotations.labels_by_type.values()
+            for label in sorted(labels, key=lambda l: annotations.concept(l).cardinality)
+        ]
+        if sorted_labels == list(annotations.labels):
+            return annotations
+        return annotations.subset(sorted_labels)
 
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 

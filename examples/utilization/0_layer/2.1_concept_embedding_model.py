@@ -72,7 +72,6 @@ def main():
     model.train()
 
     c_train = pyc.AnnotatedTensor(c_train, annotation=concept_annotations)
-    c_train_dict = c_train.split_by_type()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 
@@ -83,9 +82,9 @@ def main():
         y_pred = y_predictor(concepts=c_pred, embeddings=exog)
 
         # Compute loss
-        c_pred_dict = c_encoder.annotate(c_pred, concept_annotations).split_by_type()
-        concept_loss = (loss_fn_discrete(c_pred_dict['binary'], c_train_dict['binary']) +
-                        loss_fn_continuous(c_pred_dict['continuous'], c_train_dict['continuous']))
+        c_pred_ann = pyc.AnnotatedTensor(c_pred, concept_annotations)
+        concept_loss = (loss_fn_discrete(c_pred_ann.binary(), c_train.binary()) +
+                        loss_fn_continuous(c_pred_ann.continuous(), c_train.continuous()))
         task_loss = loss_fn_discrete(y_pred, y_train)
         loss = concept_loss + concept_reg * task_loss
 
@@ -94,8 +93,8 @@ def main():
 
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
-            concept_accuracy = accuracy_score(c_train_dict['binary'], c_pred_dict['binary'].detach() > 0.)
-            concept_mse = mean_squared_error(c_train_dict['continuous'], c_pred_dict['continuous'].detach())
+            concept_accuracy = accuracy_score(c_train.binary(), c_pred_ann.binary().detach() > 0.)
+            concept_mse = mean_squared_error(c_train.continuous(), c_pred_ann.continuous().detach())
             print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | "
                   f"Concept Acc: {concept_accuracy:.2f} | Concept MSE: {concept_mse:.2f}")
 

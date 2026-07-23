@@ -384,20 +384,20 @@ class BaseInference(nn.Module):
         if annotation is None:
             resolve = self.pgm.resolve
             owners = [resolve(label) for label in labels]
+            # A variable spanning several labels (a plate) is registered as a
+            # group so the whole plate is addressable by the variable name.
+            grouped: Dict[str, List[str]] = {}
+            for label, var in zip(labels, owners):
+                grouped.setdefault(var.name, []).append(label)
+            label_set = set(labels)
+            groups = {o: m for o, m in grouped.items() if o not in label_set}
             annotation = Annotations(
                 labels=list(labels),
                 cardinalities=list(widths),
                 types=[
                     self._label_type(var, w) for var, w in zip(owners, widths)
                 ],
-                metadata={
-                    label: {
-                        "variable": var.name,
-                        "variable_type": var.variable_type,
-                        "distribution": var.distribution.__name__,
-                    }
-                    for label, var in zip(labels, owners)
-                },
+                groups=groups or None,
             )
             self._annotation_cache[key] = annotation
         data = pieces[0] if len(pieces) == 1 else torch.cat(pieces, dim=-1)

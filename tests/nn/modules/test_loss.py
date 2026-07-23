@@ -25,12 +25,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
         
@@ -38,11 +32,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
         
@@ -50,10 +39,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_categorical = axis_categorical
         
@@ -197,13 +182,6 @@ class TestWeightedConceptLoss(unittest.TestCase):
         self.annotations = Annotations(
             labels=('concept1', 'concept2', 'concept3', 'task1', 'task2'),
             cardinalities=(1, 1, 1, 1, 1),
-            metadata={
-                'concept1': {'type': 'discrete'},
-                'concept2': {'type': 'discrete'},
-                'concept3': {'type': 'discrete'},
-                'task1': {'type': 'discrete'},
-                'task2': {'type': 'discrete'},
-            }
         )
         self.annotations = self.annotations
         
@@ -213,13 +191,6 @@ class TestWeightedConceptLoss(unittest.TestCase):
         self.annotations_mixed = Annotations(
             labels=('c1', 'c2', 'c3', 't1', 't2'),
             cardinalities=(1, 3, 1, 1, 4),
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                'c3': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-                't2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = self.annotations_mixed
         
@@ -421,11 +392,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         self.axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         self.annotations = self.axis
 
@@ -572,11 +538,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': OneHotCategorical},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
         adj = torch.tensor([
@@ -619,11 +580,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
         adj = torch.tensor([
@@ -719,10 +675,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
 
@@ -795,23 +747,12 @@ class TestConceptLossComposite(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
 
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
 
@@ -1057,7 +998,6 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={'b1': {'type': 'discrete'}, 'b2': {'type': 'discrete'}},
         )
         self.ann = axis
 
@@ -1121,11 +1061,6 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-            },
         )
         self.ann = axis
 
@@ -1155,10 +1090,6 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-            },
         )
         self.ann = axis
         adj = torch.tensor([[0., 1.], [0., 0.]])
@@ -1191,7 +1122,6 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
         axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
         self.ann = axis
 
@@ -1236,7 +1166,6 @@ class TestMixedCompositeBothTypes(unittest.TestCase):
         axis = Annotations(
             labels=('b1', 'cat1'),
             cardinalities=[1, 4],
-            metadata={'b1': {'type': 'discrete'}, 'cat1': {'type': 'discrete'}},
         )
         ann = axis
 
@@ -1270,11 +1199,6 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
         axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-            },
         )
         ann = axis
 
@@ -1304,11 +1228,6 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            },
         )
         ann = axis
         adj = torch.tensor([[0., 1., 0.], [0., 0., 1.], [0., 0., 0.]])
@@ -1341,7 +1260,6 @@ class TestPrepareCategorical(unittest.TestCase):
         axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
         ann = axis
         loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
@@ -1368,7 +1286,6 @@ class TestPrepareCategorical(unittest.TestCase):
         axis = Annotations(
             labels=('cat1',),
             cardinalities=(4,),
-            metadata={'cat1': {'type': 'discrete'}},
         )
         ann = axis
         loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())

@@ -67,7 +67,6 @@ def _binary_annotations(names):
     return Annotations(
             labels=list(names),
             cardinalities=[1] * len(names),
-            metadata={n: {'type': 'discrete'} for n in names},
         )
 
 
@@ -76,11 +75,6 @@ def _mixed_annotations():
     return Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
-            metadata={
-                'A': {'type': 'discrete'},
-                'B': {'type': 'discrete'},
-                'C': {'type': 'discrete'},
-            },
         )
 
 
@@ -189,11 +183,6 @@ class TestC2BMInitialization:
         ann_no_dist = Annotations(
                 labels=['A', 'B', 'C'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'A': {'type': 'discrete'},
-                    'B': {'type': 'discrete'},
-                    'C': {'type': 'discrete'},
-                },
             )
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,

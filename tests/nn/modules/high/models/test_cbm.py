@@ -46,12 +46,6 @@ class TestCBMInitialization(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
     
     def test_init_defaults(self):
@@ -115,12 +109,6 @@ class TestCBMForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
         
         self.model = ConceptBottleneckModel(
@@ -188,11 +176,6 @@ class TestCBMPrepareTarget(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         
         self.model = ConceptBottleneckModel(
@@ -217,11 +200,6 @@ class TestCBMTraining(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
     
     def test_manual_training_mode(self):
@@ -274,10 +252,6 @@ class TestCBMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
             )
         
         model = ConceptBottleneckModel(
@@ -295,10 +269,6 @@ class TestCBMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'},
-                }
             )
 
         model = ConceptBottleneckModel(
@@ -323,11 +293,6 @@ class TestCBMFactory(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_factory_joint_mode(self):
@@ -373,11 +338,6 @@ class TestCBMUnifiedForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.x = torch.randn(4, 8)
     
@@ -430,11 +390,6 @@ class TestTrainingModes(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.kwargs = {
             'input_size': 8,
@@ -466,11 +421,6 @@ class TestLearnerIntegration(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.batch = {
             'inputs': {'x': torch.randn(4, 8)},
@@ -757,21 +707,6 @@ class TestDirectedGraphModelBase:
         axis_ann = ann
         result = DirectedGraphModel.plate_compatible_levels(axis_ann, graph)
         assert all(result)
-
-    def test_plate_compatible_levels_metadata_fallback(self):
-        """plate_compatible_levels uses metadata type when types is None."""
-        # Build annotation without explicit types (uses metadata)
-        ann_axis = Annotations(
-            labels=['a', 'b'],
-            cardinalities=[1, 1],
-            metadata={'a': {'type': 'binary'}, 'b': {'type': 'binary'}},
-        )
-        # types is None initially, but gets resolved after __init__
-        # Test via the graph model static method directly with an axis that has metadata
-        graph = ConceptGraph(torch.tensor([[0., 0.], [0., 0.]]), node_names=['a', 'b'])
-        result = DirectedGraphModel.plate_compatible_levels(ann_axis, graph)
-        assert isinstance(result, list)
-        assert len(result) >= 1
 
     def test_dag_validation_rejects_cycle(self):
         """DirectedGraphModel validates that the graph is a DAG."""
