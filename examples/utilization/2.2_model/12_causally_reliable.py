@@ -3,6 +3,7 @@ Example: Using CausallyReliableConceptBottleneckModel
 """
 
 import torch
+from pathlib import Path
 from pytorch_lightning import Trainer
 import torchmetrics
 
@@ -18,6 +19,10 @@ from torch_concepts.nn.modules.mid.inference.torch.deterministic import Determin
 def main():
 
     seed_everything(42)
+
+    PLOTS_DIR = Path(__file__).resolve().parents[3] / "outputs" / "causally_reliable" / "plots"
+    LLM_MODEL = "groq/openai/gpt-oss-20b"
+    api_key = ""  # Paste your Groq API key here.
     
     # Generate toy data
     print("=" * 60)
@@ -31,6 +36,24 @@ def main():
                                    batch_size=batch_size,
                                    val_size=0.1,
                                    test_size=0.2)
+    
+
+    datamodule.precompute_graph(
+        name="ges",
+        source="Causallearn",
+        refinement={
+            "name": LLM_MODEL,
+            "source": "LLM",
+            "api_key": api_key,
+            "domain": "medical diagnosis",
+            "use_rag": False,
+        },
+        use_as_gt=True,
+    )
+    graph = datamodule.graph
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    graph.plot(PLOTS_DIR / "ges_llm", title="GES + LLM")
+
     annotations = datamodule.annotations
     concept_names = annotations.labels
 
@@ -65,7 +88,7 @@ def main():
     model = CausallyReliableConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
-        graph=datamodule.graph,
+        graph=graph,
         embedding_size=8,
         hypernet_hidden_size=8,
         backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),

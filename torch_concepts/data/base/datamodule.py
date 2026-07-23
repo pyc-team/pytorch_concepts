@@ -3,7 +3,7 @@ Base LightningDataModule for concept-based datasets.
 
 This module provides the :class:`ConceptDataModule` class, which handles
 the complete data pipeline for concept-based learning tasks, including
-data splitting, embedding precomputation, and DataLoader creation.
+data splitting, embedding and graph precomputation, and DataLoader creation.
 
 Example
 -------
@@ -44,9 +44,9 @@ class ConceptDataModule(LightningDataModule):
     2. **Data scaling**: Optional normalization through configurable scalers
     3. **DataLoader creation**: Efficient data loading with proper configurations
 
-    Backbone embedding precomputation is a separate, explicit step: call
-    :meth:`precompute_embeddings` with a :class:`~torch_concepts.Backbone` before
-    ``setup()``. Embeddings are cached to disk and reloaded on subsequent runs.
+    Embedding and graph precomputation are separate, explicit steps. Before
+    ``setup()`` call :meth:`precompute_embeddings` with a backbone and/or
+    :meth:`precompute_graph` with a graph generator.
 
     Parameters
     ----------
@@ -60,7 +60,7 @@ class ConceptDataModule(LightningDataModule):
         Mini-batch size for DataLoaders. Default is 64.
     max_samples : int or None, optional
         If set, truncate the dataset to its first ``max_samples`` rows at
-        construction — everything downstream (embedding precomputation,
+        generation — everything downstream (embedding precomputation,
         splitting, loaders) sees only the subset. Useful for quick runs and
         examples. Default is None (use all samples).
     scalers : Mapping or None, optional
@@ -118,13 +118,23 @@ class ConceptDataModule(LightningDataModule):
     >>> from torch_concepts.data import ToyDataset
     >>> dataset = ToyDataset(dataset='xor', n_gen=1000)
     >>> from torch_concepts import ImageBackbone
-    >>> dm = ConceptDataModule(dataset=image_dataset, batch_size=64)
+    >>> dm = ConceptDataModule(dataset=dataset, batch_size=64)
     >>> dm.precompute_embeddings(ImageBackbone('resnet50'))  # computes or loads cache
+    >>> dm.setup('fit')  # splitting only
+
+    Optional precomputation of graph (before setup):
+
+    >>> from torch_concepts.data import BnLearnDataset
+    >>> dataset = BnLearnDataset(name='asia')
+    >>> dm = ConceptDataModule(dataset=dataset, batch_size=64)
+    >>> dm.precompute_graph(name='ges', source='Causallearn', use_as_gt=True)
     >>> dm.setup('fit')  # splitting only
 
     See Also
     --------
     torch_concepts.ImageBackbone : Feature extraction wrapper class.
+    torch_concepts.GraphGeneratorFixed : Fixed graph generator for precomputed graphs.
+    torch_concepts.GraphGeneratorLearnable : Learnable graph generator for trainable graphs.
     ConceptDataset : Base dataset class for concept data.
     RandomSplitter : Default splitter for train/val/test splits.
     NativeSplitter : Splitter using dataset's native splits.
@@ -392,6 +402,40 @@ class ConceptDataModule(LightningDataModule):
             cache=cache,
             cache_dir=cache_dir,
             force=force,
+        )
+
+    def precompute_graph(
+        self,
+        name: str,
+        source: str,
+        use_as_gt: bool = True,
+        **kwargs,
+    ) -> None:
+        """Precompute the graph from a generator configuration.
+
+        Call this explicit preprocessing step before :meth:`setup`. Delegates
+        generator selection, creation, retention, and graph computation to
+        :meth:`ConceptDataset.precompute_graph`.
+
+        Parameters
+        ----------
+        name : str
+            Method or model name understood by the selected source.
+        source : str
+            Registered fixed or learnable graph-generator source. The
+            dataset infers the generator family from this value.
+        use_as_gt : bool, default True
+            Generate and store the graph as ``dataset.graph``. If false, keep
+            ``dataset.graph`` unchanged and retain the unmaterialized generator
+            for end-to-end training.
+        **kwargs
+            Additional arguments forwarded to the graph generator.
+        """
+        self.dataset.precompute_graph(
+            name=name,
+            source=source,
+            use_as_gt=use_as_gt,
+            **kwargs,
         )
 
     def setup(self, stage: StageOptions = None) -> None:

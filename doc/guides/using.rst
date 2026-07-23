@@ -25,6 +25,32 @@ User Guide
 Welcome to the |pyc_logo| PyC User Guide! This guide walks you through building
 interpretable and causally transparent deep learning models with PyTorch Concepts.
 
+Concept-Based Models
+--------------------
+
+|pyc_logo| PyC primarily focuses on **concept-based models**: models that ground their predictions in human-understandable concepts. 
+Instead of mapping inputs directly to outputs, these models learn intermediate human-understandable variables, called *concepts*, that mediate the relationship between inputs and outputs.
+
+For example, a bird classifier may first identify concepts such as *wing colour*,
+*beak shape*, or *tail pattern* and then use them to predict the bird species. This
+makes the model's reasoning easier to understand and allows users to intervene
+on the concepts underlying a prediction.
+
+
+Data
+----
+
+Unlike conventional datasets, datasets for concept-based models include concept
+labels in addition to model inputs and task labels for each sample. 
+
+PyC datasets provide model inputs, concepts and task labels, annotations
+describing each concept (its name, cardinality and types), and optionally a graph representing relationships between concepts and task. 
+
+PyC data modules
+build on these datasets by preparing splits, and dataloaders in a consistent interface for training and evaluation. 
+
+For further information about these components, refer to :doc:`data`.
+
 
 Three Levels of Control and Abstraction
 ----------------

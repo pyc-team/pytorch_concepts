@@ -233,6 +233,90 @@ class ConceptGraph:
         adj[self.edge_index[0], self.edge_index[1]] = self.edge_weight
         return adj
 
+    def is_fully_directed(self) -> bool:
+        """Return whether no edge pair has two non-zero endpoints."""
+        adjacency = self.data
+        ambiguous = (adjacency != 0) & (adjacency.T != 0)
+        return not bool(ambiguous.any())
+
+    def plot(
+        self,
+        plot_name,
+        rankdir: str = "TB",
+        title: Optional[str] = None,
+    ):
+        """Save the graph as a Graphviz-ordered PNG image."""
+        if rankdir not in {"TB", "BT", "LR", "RL"}:
+            raise ValueError("rankdir must be one of: TB, BT, LR, RL.")
+
+        try:
+            import io
+            from pathlib import Path
+
+            import matplotlib.image as mpimg
+            import matplotlib.pyplot as plt
+            import pydot
+        except ImportError as exc:
+            raise ImportError(
+                "Plotting a ConceptGraph requires `pydot` and `matplotlib`. "
+                "Install them with: pip install pydot matplotlib"
+            ) from exc
+
+        pydot_graph = pydot.Dot(
+            graph_type="digraph",
+            rankdir=rankdir,
+            label=title or "",
+            labelloc="t",
+        )
+        for name in self.node_names:
+            pydot_graph.add_node(pydot.Node(name))
+
+        adjacency = self.data.detach().cpu()
+
+        def arrow(value: float) -> str:
+            if value == 2:
+                return "odot"
+            return "normal" if value > 0 else "none"
+
+        for i, source in enumerate(self.node_names):
+            for j in range(i + 1, len(self.node_names)):
+                target = self.node_names[j]
+                forward = float(adjacency[i, j])
+                backward = float(adjacency[j, i])
+                if forward == 0 and backward == 0:
+                    continue
+                if forward != 0 and backward == 0:
+                    edge = pydot.Edge(source, target)
+                elif forward == 0 and backward != 0:
+                    edge = pydot.Edge(target, source)
+                elif forward < 0 and backward < 0:
+                    edge = pydot.Edge(source, target, dir="none")
+                else:
+                    edge = pydot.Edge(
+                        source,
+                        target,
+                        dir="both",
+                        arrowtail=arrow(forward),
+                        arrowhead=arrow(backward),
+                    )
+                pydot_graph.add_edge(edge)
+
+        try:
+            png_bytes = pydot_graph.create_png(f="png")
+        except OSError as exc:
+            raise RuntimeError(
+                "Graphviz could not render the graph. Install Graphviz and "
+                "ensure `dot` is available."
+            ) from exc
+
+        output_path = Path(plot_name)
+        if output_path.suffix.lower() != ".png":
+            output_path = Path(f"{output_path}.png")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        image = mpimg.imread(io.BytesIO(png_bytes), format="png")
+        plt.imsave(output_path, image)
+        return output_path
+
     def _node_to_index(self, node: Union[str, int]) -> int:
         """Convert node name or index to index."""
         if isinstance(node, int):
