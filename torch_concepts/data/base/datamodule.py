@@ -69,11 +69,11 @@ class ConceptDataModule(LightningDataModule):
     scalers : Mapping or None, optional
         Unfitted scaler prototypes for data normalization, keyed by
         ``'input'`` and/or ``'concepts'``. :meth:`setup` fits them on the
-        **training split only** and exposes the result as
-        :attr:`fitted_scalers`; the dataset itself is never modified. A
-        ``'concepts'`` scaler applies to the *continuous* concepts only —
-        binary and categorical concepts are class labels and are never
-        scaled. If None, no scaling is applied. Default is None.
+        **training split only** and stores the fitted scalers on
+        ``dataset.scalers``; the underlying data (``input_data``/``concepts``)
+        is never modified. A ``'concepts'`` scaler applies to the *continuous*
+        concepts only — binary and categorical concepts are class labels and
+        are never scaled. If None, no scaling is applied. Default is None.
     splitter : object or None, optional
         Custom splitter for train/val/test splits. Must implement a
         ``split(dataset)`` method that sets ``train_idxs``, ``val_idxs``,
@@ -101,12 +101,11 @@ class ConceptDataModule(LightningDataModule):
     testset : Subset or None
         Test subset after setup().
     scalers : dict
-        The unfitted scaler prototypes given at construction.
-    fitted_scalers : ScalerModule or None
-        Scalers fitted on the training split by :meth:`setup`, or None when no
-        scaler was configured. Pass it to the model (``scalers=...``) so the
-        learner can scale what the model consumes and report metrics back in the
-        original scale.
+        The scaler prototypes given at construction; :meth:`setup` fits them
+        in place on the training split and stores them on ``dataset.scalers``,
+        keyed the same way. Every batch then ships them under the
+        ``'scalers'`` key (see ``ConceptDataset.collate``) so the learner can
+        scale what it consumes and report metrics back in the original scale.
     splitter : object
         The splitter used for data splitting.
 
@@ -440,12 +439,14 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         if stage in ['fit', None] and self.scalers is not None:
             for key, scaler in self.scalers.items():
-                if not hasattr(self.dataset, key):
+                # 'input' names the scaler slot, but the dataset stores it as `input_data`.
+                attr_name = 'input_data' if key == 'input' else key
+                if not hasattr(self.dataset, attr_name):
                     raise RuntimeError(f"setup(): Scaler {scaler} cannot find "
-                                       f"attribute '{key}' in dataset")
+                                       f"attribute '{attr_name}' in dataset")
 
                 # Get the training data for the specified key (e.g., 'concepts' or 'input')
-                train_data = getattr(self.dataset, key)
+                train_data = getattr(self.dataset, attr_name)
                 if isinstance(self.trainset, Subset):
                     train_data = train_data[self.trainset.indices]
 
