@@ -36,7 +36,7 @@ def zeros_to_one_(scale: Union[float, Tensor]) -> Union[float, Tensor]:
     
     eps = 10 * torch.finfo(scale.dtype).eps
     zeros = torch.isclose(scale, torch.tensor(0.0, device=scale.device, dtype=scale.dtype), atol=eps, rtol=eps)
-    scale[zeros] = 1.0
+    scale.masked_fill_(zeros, 1.0)
     return scale
 
 

@@ -98,7 +98,7 @@ class BlackBox(BaseModel):
         output_size = sum(self.concept_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def build_query(self, ground_truth) -> dict:
+    def fully_observed_query(self, ground_truth) -> dict:
         """Build query dict mapping each concept name to its ground-truth column.
 
         Parameters
@@ -140,7 +140,7 @@ class BlackBox(BaseModel):
             ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
         query : list of str or dict, optional
             Concept names to return. Defaults to all concepts.  When a dict
-            is supplied (from ``build_query``), the keys are used as names.
+            is supplied (from ``fully_observed_query``), the keys are used as names.
         evidence : dict or torch.Tensor, optional
             Evidence dict (``{'input': x}`` from shared_step) or raw tensor
             (ignored for BlackBox).
@@ -160,7 +160,7 @@ class BlackBox(BaseModel):
         output = self.linear(self.backbone(x))
 
         axis = self.concept_annotations
-        # query may be a list of strings, a dict (from build_query), or None
+        # query may be a list of strings, a dict (from fully_observed_query), or None
         if isinstance(query, dict):
             names = list(query.keys()) if query else axis.labels
         else:
@@ -232,7 +232,7 @@ class BlackBoxTaskOnly(BaseModel):
         output_size = sum(self.task_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def build_query(self, ground_truth) -> dict:
+    def fully_observed_query(self, ground_truth) -> dict:
         """Build query dict mapping each *task* name to its ground-truth column.
 
         Parameters
@@ -312,6 +312,26 @@ class BlackBoxTaskOnly(BaseModel):
         """
         sliced = target[:, self.task_concept_idx].as_subclass(torch.Tensor)
         return AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
+
+    def unscale_output(self, out, transforms):
+        """Not supported: :meth:`BaseLearner.unscale_output` assumes a
+        prediction covers exactly the concepts the scaler was fit on, but this
+        model's ``task_names`` is a strict subset of them.
+
+        Raises
+        ------
+        NotImplementedError
+            If concept scaling is active (:attr:`scale_concepts` and a
+            'concepts' scaler were both supplied).
+        """
+        if self.scale_concepts and transforms.get('concepts') is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support concept scaling: its "
+                "task-only prediction is a strict subset of the fitted concepts. "
+                "Pass a datamodule without a 'concepts' scaler, or construct "
+                "this model with scale_concepts=False."
+            )
+        return super().unscale_output(out, transforms)
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.

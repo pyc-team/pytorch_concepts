@@ -640,7 +640,7 @@ class BaseModel(nn.Module, ABC):
         Returns a list ``[(variable_name, [(gt_col_index, cardinality), ...]), ...]``
         over the concept variables only — a plate contributes one entry whose member
         list has all its members, an individual concept contributes a single-member
-        entry. :meth:`build_query` applies this without re-deriving structure or
+        entry. :meth:`fully_observed_query` applies this without re-deriving structure or
         touching non-concept variables, keeping per-query cost at ``O(n_query)``.
         """
         axis = self.concept_annotations
@@ -650,7 +650,7 @@ class BaseModel(nn.Module, ABC):
             if var.variable_type == "concept"
         ]
 
-    def build_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def fully_observed_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Build the full-observation query that fills every concept's tensor.
 
         Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
