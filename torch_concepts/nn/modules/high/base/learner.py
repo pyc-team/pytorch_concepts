@@ -42,12 +42,6 @@ class BaseLearner(pl.LightningModule):
         optim_kwargs (dict, optional): Optimizer arguments.
         scheduler_class (LRScheduler, optional): Scheduler class.
         scheduler_kwargs (dict, optional): Scheduler arguments.
-        scalers (ScalerModule, optional): Scalers fitted on the training split
-            (see :attr:`ConceptDataModule.fitted_scalers
-            <torch_concepts.data.base.datamodule.ConceptDataModule.fitted_scalers>`).
-            When given, everything the model touches lives in **scaled** space
-            while metrics are reported in the **original** scale — see
-            :meth:`shared_step`. When None, no scaling happens anywhere.
 
     Example:
         >>> from torch_concepts.nn.modules.high.base.learner import BaseLearner
@@ -61,14 +55,10 @@ class BaseLearner(pl.LightningModule):
                 optim_kwargs: Optional[Mapping] = None,
                 scheduler_class: Optional[LRScheduler] = None,
                 scheduler_kwargs: Optional[Mapping] = None,
-                scalers: Optional[nn.Module] = None,
+                scale_concepts: bool = True,
                 **kwargs
     ):
         super(BaseLearner, self).__init__(**kwargs)
-
-        # Fitted data scalers (a ScalerModule). Assigned as a submodule so its
-        # statistics follow the model across devices and into checkpoints.
-        self.scalers = scalers
 
         # loss function. Only a TypeAwareLoss (e.g. ConceptLoss), which consumes
         # the whole ModelOutput, is supported.
@@ -80,6 +70,9 @@ class BaseLearner(pl.LightningModule):
         self.optim_kwargs = optim_kwargs
         self.scheduler_class = scheduler_class
         self.scheduler_kwargs = scheduler_kwargs
+
+        # whether to compute the loss in the scaled space for the continuous concepts
+        self.scale_concepts = scale_concepts
 
         # Create pointers to train, val and test collections
         if isinstance(metrics, ConceptMetrics) and metrics.collection:
@@ -209,115 +202,76 @@ class BaseLearner(pl.LightningModule):
         self._check_batch(batch)
         inputs = batch['inputs']
         concepts = batch['concepts']
-        transforms = batch.get('transforms', {})
+        transforms = batch.get('scalers', {})
         return inputs, concepts, transforms
 
-    # --------------------------- Scaling ---------------------------
+    def maybe_scale_inputs(self, inputs, transforms):
+        """Scale precomputed/tabular inputs with the batch's 'input' scaler, if
+        one was shipped. A no-op otherwise (e.g. raw images).
 
-    @cached_property
-    def _continuous_concepts(self):
-        """``(labels, column_indices, is_every_concept)`` for the continuous
-        concepts, computed once.
-
-        The concept axis is fixed after construction, so the lookup that
-        :meth:`scale_concepts` needs on every batch is derived a single time. 
-        Labels and indices are in concept-space: one column per concept. 
-        ``is_every_concept`` says the continuous columns are *all* the columns, 
-        which lets :meth:`scale_concepts` transform the tensor whole instead of paying 
-        a clone plus a gather/scatter — the common case for a regression dataset.
+        Args:
+            inputs: Input dict (``{'x': ...}`` plus any extra keys).
+            transforms: The batch's fitted scalers, keyed by 'input'/'concepts'.
+        Returns:
+            The input dict, with 'x' scaled when an 'input' scaler is present.
         """
-        axis = self.concept_annotations
-        labels = [name for name in axis.labels if axis.concept(name).type == 'continuous']
-        indices = [axis.get_index(name) for name in labels]
-        return labels, indices, len(labels) == len(axis.labels)
+        scaler = transforms.get('input')
+        return {**inputs, 'x': scaler.transform(inputs['x'])} if scaler is not None else inputs
 
-    def scale_inputs(self, inputs: Mapping) -> Mapping:
-        """Scale the raw input the model consumes.
+    def maybe_scale_concepts(self, concepts, transforms):
+        """Scale ground-truth continuous concepts into the model's scaled space
+        (used for both the teacher-forced query and the loss target); binary and
+        categorical concepts pass through unchanged.
 
-        Returns *inputs* unchanged when no input scaler was fitted.
+        A no-op when :attr:`scale_concepts` is off, no 'concepts' scaler was
+        shipped, or the dataset has no continuous concepts.
+
+        Args:
+            concepts: Concept dict (``{'c': AnnotatedTensor}``).
+            transforms: The batch's fitted scalers.
+        Returns:
+            dict: ``{'c': ...}``, with continuous columns standardized, or the
+            concept tensor unchanged.
         """
-        if self.scalers is None or not self.scalers.has_input:
-            return inputs
-        return {**inputs, 'x': self.scalers.transform_input(inputs['x'])}
+        # raise error if multiple keys in 'concepts'
+        if isinstance(concepts, dict) and len(concepts) > 1:
+            raise NotImplementedError(
+                f"Expected a single concept AnnotatedTensor, but got multiple keys: {list(concepts.keys())}. "
+                f"review this current implementation when using multiple annotators. "
+            )
+        c = concepts.get('c')
+        scaler = transforms.get('concepts') if self.scale_concepts else None
+        if scaler is not None and c is not None:
+            labels = c.annotation.labels_by_type.get('continuous')
+            if labels:
+                scaled = AnnotatedTensor(c.tensor.clone(), c.annotation, c.axis)
+                scaled[labels] = scaler.transform(c[labels].tensor)
+                c = scaled
+        return {'c': c}
 
-    def scale_concepts(self, c):
-        """Scale the continuous columns of a ``(batch, n_concepts)`` ground truth.
+    def unscale_output(self, out, transforms):
+        """Inverse-transform continuous predictions ('loc'/'value') back to
+        natural units, so metrics are always reported on the original data scale.
+        A no-op when :attr:`scale_concepts` is off or no 'concepts'
+        scaler was shipped.
 
-        Binary and categorical columns are class labels and pass through
-        untouched. The result keeps the concept-space annotation, so it can be
-        fed to :meth:`build_query` and :meth:`prepare_target` exactly like the
-        raw batch tensor. Returns *c* unchanged when no concept scaler was fitted.
+        Args:
+            out: Model output whose continuous quantities are in scaled space.
+            transforms: The batch's fitted scalers.
+        Returns:
+            The output with continuous quantities restored to the original scale.
         """
-        if c is None or self.scalers is None or not self.scalers.has_concepts:
-            return c
-        labels, indices, is_every_concept = self._continuous_concepts
-        if not labels:
-            return c
-        annotation = getattr(c, 'annotation', None)
-        if annotation is None:
-            annotation = self.concept_annotations.to_concept_space()
-        data = c.tensor if isinstance(c, AnnotatedTensor) else c
-        if is_every_concept:
-            scaled = self.scalers.transform_concepts(data, labels).to(data.dtype)
-        else:
-            scaled = data.clone()
-            scaled[..., indices] = self.scalers.transform_concepts(
-                data[..., indices], labels
-            ).to(scaled.dtype)
-        return AnnotatedTensor(scaled, annotation, getattr(c, 'axis', -1))
-
-    def unscale_output(self, out: ModelOutput) -> ModelOutput:
-        """Map a model output's continuous point estimates back to the original scale.
-
-        Only ``loc`` and ``value`` are inverted — the quantities a continuous
-        concept is *scored* on (see ``CONTINUOUS_QUANTITIES``), and the only ones
-        :class:`~torch_concepts.nn.ConceptMetrics` reads. ``scale`` /
-        ``scale_tril`` / ``samples`` stay in scaled space: they are dispersion and
-        draws, whose inverse is not the point estimate's, and the loss that
-        consumes them runs in scaled space anyway.
-
-        Columns without a fitted scaler pass through untouched, so a query that
-        also asks for a non-concept variable — ``latent`` is a ``Delta`` and
-        reports under ``value``, like a continuous concept would — is inverted on
-        its concept columns only rather than rejected.
-
-        The returned :class:`ModelOutput` is a shallow copy — every other field is
-        carried over by reference, and *out* itself is left untouched.
-        """
-        if self.scalers is None or not self.scalers.has_concepts:
+        scaler = transforms.get('concepts') if self.scale_concepts else None
+        if scaler is None:
             return out
-        scaled_names = set(self.scalers.concept_names)
-        params = ParamsDict(out.params)
-        for quantity in CONTINUOUS_QUANTITIES:
-            tensor = out.params.get(quantity)
-            if tensor is None:
+        for quantity in CONTINUOUS_QUANTITIES:  # ('loc', 'value')
+            pred = out.params.get(quantity)
+            if pred is None:
                 continue
-            annotation = tensor.annotation
-            labels = [name for name in annotation.labels if name in scaled_names]
-            if not labels:
-                continue
-            # Quantity tensors are (*leading, width) with the annotated axis last
-            # (the InferenceOutput contract), so the columns index with `...`.
-            data = tensor.tensor
-            if len(labels) == data.shape[-1]:
-                # Every column is a scaled concept: invert the tensor whole and
-                # skip the clone plus gather/scatter.
-                restored = self.scalers.inverse_concepts(data, labels).to(data.dtype)
-            else:
-                indices = annotation.get_slice(labels)
-                restored = data.clone()
-                restored[..., indices] = self.scalers.inverse_concepts(
-                    data[..., indices], labels
-                ).to(restored.dtype)
-            params[quantity] = AnnotatedTensor(restored, annotation, tensor.axis)
-        return ModelOutput(
-            params=params,
-            guide_params=out.guide_params,
-            samples=out.samples,
-            probabilities=out.probabilities,
-            target=out.target,
-            extra=out.extra,
-        )
+            setattr(out, quantity, AnnotatedTensor(
+                scaler.inverse_transform(pred.tensor), pred.annotation, pred.axis
+            ))
+        return out
 
     @cached_property
     def concept_variables(self):
@@ -326,13 +280,13 @@ class BaseLearner(pl.LightningModule):
 
     def default_query(self, c):
         """Default query for a training/eval step: observe **every** concept,
-        teacher-forced to its ground-truth value (via :meth:`build_query`).
+        teacher-forced to its ground-truth value (via :meth:`fully_observed_query`).
 
         This is the full-observation query the standard step uses. Override in a
         learner that should observe only a subset of concepts (or leave them
         latent) — e.g. a task-only learner.
         """
-        return self.build_query(c)
+        return self.fully_observed_query(c)
 
     def default_evidence(self, inputs):
         """Default evidence for a training/eval step: the raw input only
@@ -364,30 +318,21 @@ class BaseLearner(pl.LightningModule):
         torch.Tensor
             Scalar loss value.
         """
-        inputs, concepts, _ = self.unpack_batch(batch)
+        inputs, concepts, transforms = self.unpack_batch(batch)
 
         # TODO: needs to extend to arbitrary leading dims (e.g., for text)
         batch_size = batch['inputs']['x'].size(0)
-        c = concepts.get('c', None)
 
-        # The query is built from the *full* concept tensor even for models that
-        # predict a subset: BlackBoxTaskOnly.build_query indexes it with offsets
-        # into the whole concept axis.
-        c_scaled = self.scale_concepts(c)
+        inputs = self.maybe_scale_inputs(inputs, transforms)
+        c_loss = self.maybe_scale_concepts(concepts, transforms).get('c', None)
 
-        # --- Model forward ---
+        # --- Model forward (scaled space) ---
         # Defaults: observe all concepts, pass the input as evidence.
-        query = self.default_query(c_scaled)
-        out = self.forward(
-            query=query,
-            evidence=self.default_evidence(self.scale_inputs(inputs)),
-        )
+        query = self.default_query(c_loss)
+        evidence = self.default_evidence(inputs)
+        out = self.forward(query=query, evidence=evidence)
 
-        # prepare_target returns a concept-space annotated target (and slices it
-        # for models like BlackBoxTaskOnly that predict a subset of concepts).
-        # It is applied to each scaling of the ground truth separately, since that
-        # slicing has to happen on both.
-        target = self.prepare_target(c_scaled)
+        target = self.prepare_target(c_loss)
 
         # --- Compute loss (scaled space) ---
         loss = None
@@ -401,9 +346,9 @@ class BaseLearner(pl.LightningModule):
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics (original scale) ---
-        self.update_and_log_metrics(
-            self.unscale_output(out), self.prepare_target(c), step, batch_size
-        )
+        out = self.unscale_output(out, transforms)
+        target = self.prepare_target(concepts.get('c', None))
+        self.update_and_log_metrics(out, target, step, batch_size)
         return loss
 
     def training_step(self, batch):
