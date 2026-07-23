@@ -641,3 +641,48 @@ class TestC2BMRepr:
         )
         r = repr(model)
         assert 'DummyBackbone' in r
+
+
+class TestC2BMContinuousConcepts:
+    """C2BM models continuous concepts as Normal, so each gets a scale head
+    copied from its (hypernet) predictor."""
+
+    @staticmethod
+    def _continuous_ann(names):
+        return Annotations(
+            labels=names,
+            cardinalities=[1] * len(names),
+            types=['continuous'] * len(names),
+        )
+
+    def test_forward_reports_loc_and_positive_scale(self, chain_graph):
+        ann = self._continuous_ann(['A', 'B', 'C'])
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8, annotations=ann, graph=chain_graph,
+        )
+        out = model(query=['A', 'B', 'C'], input=torch.randn(5, 8))
+        assert out.loc.shape == (5, 3)
+        assert out.scale.shape == (5, 3)
+        assert bool((out.scale > 0).all())
+
+    def test_mixed_types_split_across_quantities(self, chain_graph):
+        ann = Annotations(
+            labels=['A', 'B', 'C'],
+            cardinalities=[1, 1, 1],
+            types=['binary', 'continuous', 'continuous'],
+        )
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8, annotations=ann, graph=chain_graph,
+        )
+        out = model(query=['A', 'B', 'C'], input=torch.randn(5, 8))
+        assert list(out.logits.annotation.labels) == ['A']
+        assert list(out.loc.annotation.labels) == ['B', 'C']
+
+    def test_gradients_reach_the_predictor(self, chain_graph):
+        ann = self._continuous_ann(['A', 'B', 'C'])
+        model = CausallyReliableConceptBottleneckModel(
+            input_size=8, annotations=ann, graph=chain_graph,
+        )
+        out = model(query=['A', 'B', 'C'], input=torch.randn(5, 8))
+        out.loc.sum().backward()
+        assert any(p.grad is not None for p in model.parameters())

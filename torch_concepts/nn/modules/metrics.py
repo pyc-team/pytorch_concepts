@@ -6,7 +6,7 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import ModelOutput
+from .outputs import CONTINUOUS_QUANTITIES, ModelOutput
 from .utils import GroupConfig, check_collection
 
 
@@ -274,13 +274,27 @@ class ConceptMetrics(nn.Module):
     @staticmethod
     def _concept_prediction(out, name, concept_type):
         """Prediction columns for one concept, taken from the quantity its type
-        reports: ``loc`` for continuous, otherwise the discrete param (logits/probs)."""
-        params = out.params[name]
-        pred = params['loc'] if concept_type == 'continuous' else (
-            params['logits'] if 'logits' in params else params['probs'])
-        # Hand torchmetrics a plain tensor; the annotation is no longer needed and
-        # would make each internal torch.* op pay the __torch_function__ cost.
-        return pred.tensor
+        reports: ``loc`` or ``value`` for continuous, otherwise the discrete param (logits/probs).
+
+        Addressed quantity-first (``params[quantity][name]``) rather than
+        variable-first: a concept may legitimately be *named* like a distribution
+        parameter — dSprites has one called ``scale`` — and ``params[name]`` would
+        then resolve to the quantity, not to that concept's columns.
+        """
+        quantities = (
+            CONTINUOUS_QUANTITIES if concept_type == 'continuous' else ('logits', 'probs')
+        )
+        for quantity in quantities:
+            tensor = out.params.get(quantity)
+            if tensor is not None and name in tensor.annotation.label_to_index:
+                # Hand torchmetrics a plain tensor; the annotation is no longer
+                # needed and would make each internal torch.* op pay the
+                # __torch_function__ cost.
+                return tensor[name].tensor
+        raise KeyError(
+            f"ConceptMetrics: no {' or '.join(quantities)} reported for {concept_type} "
+            f"concept {name!r}; the output carries {tuple(out.params)}."
+        )
 
     def _prepare_categorical(self, cat_logits, cat_target):
         """Pad and stack categorical logits/targets for the summary metric.
@@ -330,7 +344,10 @@ class ConceptMetrics(nn.Module):
             out.logits = preds
 
         discrete = out.logits if out.logits is not None else out.probs
-        continuous = out.loc
+        # `loc` for a Normal, `value` for a Delta (a deterministic point estimate) —
+        # mirrors the discrete fallback above; unlike *_param on ConceptLoss, there
+        # is no per-instance config here, so both quantities are always tried.
+        continuous = out.loc if out.loc is not None else out.value
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return

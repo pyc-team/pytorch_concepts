@@ -199,8 +199,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                                 out_concepts=1
                             ),
                             nn.Flatten(start_dim=1),
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                 )
             elif is_root:
@@ -212,8 +212,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                         first=self.build_encoder(
                             in_embeddings=self.latent_size,
                             out_concepts=concept.cardinality
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                 )
             else:
@@ -228,8 +228,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                             in_concepts=in_concepts,
                             in_embeddings=self.embedding_size if embedding is not None else None,
                             out_concepts=concept.cardinality
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                     aggregate=mix_parents if embedding is not None else None,
                 )

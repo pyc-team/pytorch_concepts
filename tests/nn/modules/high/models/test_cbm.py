@@ -583,19 +583,115 @@ class TestDirectedGraphModelBase:
         assert {v.name for v in concept_vars} == set(ann.labels)
         assert all(not v.is_plate for v in concept_vars)
 
-    def test_flexible_parametrization_continuous_raises(self):
-        """_flexible_parametrization raises NotImplementedError for continuous vars."""
+    def _graph_model(self):
+        from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
+        return GraphConceptBottleneckModel(
+            input_size=4, annotations=_make_simple_ann(), graph=_make_two_node_dag()
+        )
+
+    def test_flexible_parametrization_normal_auto(self):
+        """`second='auto'` gives a positive scale head copied from `first`."""
         import torch.distributions as dist
         from torch_concepts.nn.modules.mid.variable import ConceptVariable
-        from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
-        ann = _make_simple_ann()
-        graph = _make_two_node_dag()
-        model = GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=graph)
-        # Create a fake Normal variable
-        norm_var = ConceptVariable("v", distribution=dist.Normal, size=1)
-        dummy_layer = torch.nn.Linear(4, 1)
-        with pytest.raises(NotImplementedError):
-            model._flexible_parametrization(norm_var, dummy_layer)
+        model = self._graph_model()
+        norm_var = ConceptVariable("v", distribution=dist.Normal, size=3)
+        first = torch.nn.Linear(4, 3)
+
+        param = model._flexible_parametrization(norm_var, first, second='auto')
+
+        assert set(param) == {"loc", "scale"}
+        assert param["loc"] is first
+        # The scale head is a raw copy of `first` followed by softplus, and the
+        # copy is independent — not the same module.
+        assert param["scale"][0] is not first
+        assert isinstance(param["scale"][1], torch.nn.Softplus)
+        scale = param["scale"](torch.randn(6, 4))
+        assert scale.shape == (6, 3)
+        assert bool((scale > 0).all())
+
+    def test_flexible_parametrization_requires_an_explicit_second(self):
+        """`second` is not optional for a continuous variable: the copy must be
+        asked for with 'auto' rather than happening implicitly."""
+        import torch.distributions as dist
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        norm_var = ConceptVariable("v", distribution=dist.Normal, size=3)
+        with pytest.raises(ValueError, match="'auto'"):
+            model._flexible_parametrization(norm_var, torch.nn.Linear(4, 3))
+
+    def test_flexible_parametrization_auto_is_ignored_for_discrete(self):
+        """A caller can pass 'auto' for every variable: only a continuous one
+        has a second parameter to derive."""
+        import torch.distributions as dist
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        binary = ConceptVariable("v", distribution=dist.Bernoulli, size=1)
+        first = torch.nn.Linear(4, 1)
+        assert model._flexible_parametrization(binary, first, second='auto') == {
+            "logits": first
+        }
+
+    def test_flexible_parametrization_normal_explicit_second(self):
+        """`second` supplies the scale head: a concrete layer, or a deferred
+        LazyConstructor left unbuilt for the CPD to size from the parents."""
+        import torch.distributions as dist
+        from torch_concepts.nn import LazyConstructor, LinearEmbeddingToConcept
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        norm_var = ConceptVariable("v", distribution=dist.Normal, size=3)
+        head = torch.nn.Linear(4, 3)
+
+        as_module = model._flexible_parametrization(norm_var, torch.nn.Linear(4, 3), second=head)
+        as_lazy = model._flexible_parametrization(
+            norm_var, LazyConstructor(LinearEmbeddingToConcept), second=LazyConstructor(LinearEmbeddingToConcept)
+        )
+
+        assert as_module["scale"][0] is head
+        # The lazy scale head is stored unbuilt (the CPD sizes it later) and
+        # already composed with its activation.
+        lazy_head = as_lazy["scale"][0]
+        assert isinstance(lazy_head, LazyConstructor) and lazy_head.module is None
+        assert isinstance(as_lazy["scale"][1], torch.nn.Softplus)
+
+    def test_flexible_parametrization_multivariate_normal(self):
+        """A MultivariateNormal gets a matrix-valued, positive-diagonal scale_tril."""
+        import torch.distributions as dist
+        from torch_concepts.nn import TrilActivation
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        mvn_var = ConceptVariable("v", distribution=dist.MultivariateNormal, size=3)
+        # scale_tril needs 3*(3+1)//2 = 6 outputs, unlike loc's 3.
+        param = model._flexible_parametrization(
+            mvn_var, torch.nn.Linear(4, 3), second=torch.nn.Linear(4, 6)
+        )
+
+        assert set(param) == {"loc", "scale_tril"}
+        assert isinstance(param["scale_tril"][1], TrilActivation)
+        tril = param["scale_tril"](torch.randn(6, 4))
+        assert tril.shape == (6, 3, 3)
+        assert bool((tril.diagonal(dim1=-2, dim2=-1) > 0).all())
+        assert bool((tril.triu(diagonal=1) == 0).all())
+
+    def test_flexible_parametrization_uncopyable_scale_raises(self):
+        """A non-per-element scale cannot be copied: its width differs from loc's."""
+        import torch.distributions as dist
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        mvn_var = ConceptVariable("v", distribution=dist.MultivariateNormal, size=3)
+        with pytest.raises(ValueError, match="scale_tril"):
+            model._flexible_parametrization(mvn_var, torch.nn.Linear(4, 3), second='auto')
+
+    def test_flexible_parametrization_deferred_first_raises(self):
+        """A deferred `first` has no fixed width yet, so it cannot be copied."""
+        import torch.distributions as dist
+        from torch_concepts.nn import LazyConstructor, LinearEmbeddingToConcept
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
+        model = self._graph_model()
+        norm_var = ConceptVariable("v", distribution=dist.Normal, size=3)
+        with pytest.raises(ValueError, match="LazyConstructor"):
+            model._flexible_parametrization(
+                norm_var, LazyConstructor(LinearEmbeddingToConcept), second='auto'
+            )
 
     def test_plate_compatible_levels(self):
         """plate_compatible_levels returns True for homogeneous levels."""
@@ -619,3 +715,42 @@ class TestDirectedGraphModelBase:
         cycle_graph = ConceptGraph(cycle_adj, node_names=['x', 'y'])
         with pytest.raises(AssertionError):
             GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=cycle_graph)
+
+
+class TestGraphCBMContinuousConcepts:
+    """GraphConceptBottleneckModel models continuous concepts as Normal, with a
+    scale head copied from the encoder (root) or predictor (internal node)."""
+
+    @staticmethod
+    def _model(types):
+        from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
+        ann = Annotations(labels=['x', 'y'], cardinalities=[1, 1], types=types)
+        return GraphConceptBottleneckModel(
+            input_size=6, annotations=ann, graph=_make_two_node_dag()
+        )
+
+    def test_forward_reports_loc_and_positive_scale(self):
+        model = self._model(['continuous', 'continuous'])
+        out = model(query=['x', 'y'], input=torch.randn(4, 6))
+        assert out.loc.shape == (4, 2)
+        assert out.scale.shape == (4, 2)
+        assert bool((out.scale > 0).all())
+
+    def test_both_root_and_internal_nodes_get_a_scale_head(self):
+        """The root is encoded from the latent, the internal node predicted from
+        its parents — two different `first` layers, both copied by `second='auto'`."""
+        model = self._model(['continuous', 'continuous'])
+        for name in ('x', 'y'):
+            assert 'scale' in model.pgm.factors[name].parametrization
+
+    def test_mixed_types_split_across_quantities(self):
+        model = self._model(['binary', 'continuous'])
+        out = model(query=['x', 'y'], input=torch.randn(4, 6))
+        assert list(out.logits.annotation.labels) == ['x']
+        assert list(out.loc.annotation.labels) == ['y']
+
+    def test_gradients_flow(self):
+        model = self._model(['continuous', 'continuous'])
+        out = model(query=['x', 'y'], input=torch.randn(4, 6))
+        out.loc.sum().backward()
+        assert any(p.grad is not None for p in model.parameters())

@@ -56,7 +56,7 @@ class FullMockLearner(BaseLearner):
         self.concept_names = self.concept_annotations.labels
         self.dummy_param = nn.Parameter(torch.randn(1))
 
-    def build_query(self, ground_truth):
+    def fully_observed_query(self, ground_truth):
         if ground_truth is None:
             return {}
         return {
@@ -305,19 +305,19 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         self.assertEqual(concepts, {'c': c})
         self.assertEqual(transforms, {})
 
-    def test_unpack_batch_with_transforms(self):
-        """Test unpack_batch extracts transforms when present."""
+    def test_unpack_batch_with_scalers(self):
+        """Test unpack_batch extracts the batch's fitted scalers when present."""
         learner = MockLearner(n_concepts=2)
-        mock_transform = {'c': 'some_transform'}
+        mock_scalers = {'c': 'some_scaler'}
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
             'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
-            'transforms': mock_transform
+            'scalers': mock_scalers
         }
-        
+
         inputs, concepts, transforms = learner.unpack_batch(batch)
-        
-        self.assertEqual(transforms, mock_transform)
+
+        self.assertEqual(transforms, mock_scalers)
 
 
 class TestBaseLearnerConfigureOptimizers(unittest.TestCase):
@@ -412,7 +412,7 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
 # ======================================================================
 
 class TestGetInferenceKwargs(unittest.TestCase):
-    """Test shared_step's build_query/forward integration replaces the old _get_inference_kwargs."""
+    """Test shared_step's fully_observed_query/forward integration replaces the old _get_inference_kwargs."""
 
     def setUp(self):
         self.annotations = Annotations(
@@ -420,20 +420,20 @@ class TestGetInferenceKwargs(unittest.TestCase):
             )
 
     def test_no_inference_returns_empty(self):
-        """FullMockLearner.build_query with None ground_truth returns empty dict."""
+        """FullMockLearner.fully_observed_query with None ground_truth returns empty dict."""
         learner = FullMockLearner(self.annotations, n_concepts=2)
-        # build_query(None) returns an empty dict (no teacher-forcing)
-        result = learner.build_query(None)
+        # fully_observed_query(None) returns an empty dict (no teacher-forcing)
+        result = learner.fully_observed_query(None)
         self.assertIsInstance(result, dict)
         self.assertEqual(result, {})
 
     def test_with_inference_returns_kwargs(self):
-        """FullMockLearner.build_query with a real ground_truth returns per-concept tensors."""
+        """FullMockLearner.fully_observed_query with a real ground_truth returns per-concept tensors."""
         learner = FullMockLearner(self.annotations, n_concepts=2)
         c = torch.randint(0, 2, (4, 2)).float()
-        result = learner.build_query(c)
+        result = learner.fully_observed_query(c)
         self.assertIsInstance(result, dict)
-        # build_query maps each concept name to a (batch, 1) tensor
+        # fully_observed_query maps each concept name to a (batch, 1) tensor
         for name in ('C1', 'C2'):
             self.assertIn(name, result)
             self.assertEqual(result[name].shape[0], 4)

@@ -12,6 +12,54 @@ from ...low.dense_layers import MLP
 from ..base.model import BaseModel
 
 
+#: Arguments that only mean something to a model owning a probabilistic
+#: graphical model: its concept ``graph`` and its inference engines. A blackbox
+#: has neither — it maps the latent straight to a linear head — but the shared
+#: model config sets the engines for *every* model and the experiment runner
+#: passes ``graph`` to whatever model it builds, so a blackbox swapped into a
+#: sweep must tolerate rather than reject them.
+_PGM_ONLY_ARGS = (
+    "graph",
+    "inference",
+    "inference_kwargs",
+    "train_inference",
+    "train_inference_kwargs",
+)
+
+
+def _drop_pgm_args(kwargs: dict) -> dict:
+    """Drop the PGM-only arguments (see :data:`_PGM_ONLY_ARGS`) from ``kwargs``.
+
+    Without this they reach ``LightningModule.__init__`` and raise
+    ``TypeError: ... got an unexpected keyword argument 'inference'``.
+    """
+    return {key: value for key, value in kwargs.items() if key not in _PGM_ONLY_ARGS}
+
+
+def _report_by_type(predictions: AnnotatedTensor) -> ModelOutput:
+    """Wrap a head's output in a :class:`ModelOutput`, keyed by concept type.
+
+    A blackbox head is a single flat tensor, but losses and metrics read a
+    discrete concept from ``logits`` and a continuous one from ``loc`` — the
+    quantity the PGM models report for a ``Normal``. Splitting the columns the
+    same way keeps the output contract identical across model families, so one
+    :class:`~torch_concepts.nn.ConceptLoss` / :class:`~torch_concepts.nn.ConceptMetrics`
+    configuration works for both. No ``scale`` is reported: a blackbox head
+    predicts a point estimate, not a distribution.
+    """
+    out = ModelOutput()
+    continuous = set(predictions.annotation.labels_by_type.get("continuous", []))
+    if not continuous:
+        out.logits = predictions  # all-discrete: the common case, sliced by nobody
+        return out
+    labels = list(predictions.annotation.labels)
+    discrete = [name for name in labels if name not in continuous]
+    if discrete:
+        out.logits = predictions[discrete]
+    out.loc = predictions[[name for name in labels if name in continuous]]
+    return out
+
+
 class BlackBox(BaseModel):
     """
     BlackBox model.
@@ -24,7 +72,9 @@ class BlackBox(BaseModel):
         input_size (int): Dimensionality of input features.
         annotations (Annotations): Annotation object for output variables.
         lightning (bool, optional): Enable Lightning training. Default False.
-        **kwargs: Additional arguments for BaseModel.
+        **kwargs: Additional arguments for BaseModel. The PGM-only inference
+            arguments (:data:`_PGM_ONLY_ARGS`) are accepted and ignored, so this
+            model can be swapped into a sweep that configures them.
 
     Example:
         >>> from torch_concepts.annotations import Annotations
@@ -43,12 +93,12 @@ class BlackBox(BaseModel):
             input_size=input_size,
             annotations=annotations,
             lightning=lightning,
-            **kwargs
+            **_drop_pgm_args(kwargs)
         )
         output_size = sum(self.concept_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def build_query(self, ground_truth) -> dict:
+    def fully_observed_query(self, ground_truth) -> dict:
         """Build query dict mapping each concept name to its ground-truth column.
 
         Parameters
@@ -90,7 +140,7 @@ class BlackBox(BaseModel):
             ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
         query : list of str or dict, optional
             Concept names to return. Defaults to all concepts.  When a dict
-            is supplied (from ``build_query``), the keys are used as names.
+            is supplied (from ``fully_observed_query``), the keys are used as names.
         evidence : dict or torch.Tensor, optional
             Evidence dict (``{'input': x}`` from shared_step) or raw tensor
             (ignored for BlackBox).
@@ -100,8 +150,8 @@ class BlackBox(BaseModel):
         Returns
         -------
         ModelOutput
-            ``params[name]['logits']`` per queried concept (uniform with the
-            PGM-based models).
+            ``logits`` for the queried discrete concepts and ``loc`` for the
+            continuous ones — the same quantities the PGM-based models report.
         """
         # Resolve the raw input tensor
         if x is None and isinstance(evidence, dict):
@@ -110,7 +160,7 @@ class BlackBox(BaseModel):
         output = self.linear(self.backbone(x))
 
         axis = self.concept_annotations
-        # query may be a list of strings, a dict (from build_query), or None
+        # query may be a list of strings, a dict (from fully_observed_query), or None
         if isinstance(query, dict):
             names = list(query.keys()) if query else axis.labels
         else:
@@ -118,10 +168,10 @@ class BlackBox(BaseModel):
 
         # The head spans the whole concept annotation; label-slice it down to the
         # queried concepts (a no-op, and no copy, when everything is queried).
-        logits = AnnotatedTensor(output, axis, axis=-1)
-        out = ModelOutput()
-        out.logits = logits if names == axis.labels else logits[names]
-        return out
+        predictions = AnnotatedTensor(output, axis, axis=-1)
+        if names != axis.labels:
+            predictions = predictions[names]
+        return _report_by_type(predictions)
 
 
 class BlackBoxTaskOnly(BaseModel):
@@ -137,7 +187,9 @@ class BlackBoxTaskOnly(BaseModel):
         annotations (Annotations): Annotation object for output variables.
         task_names (Union[List[str], str]): Task names to predict.
         lightning (bool, optional): Enable Lightning training. Default False.
-        **kwargs: Additional arguments for BaseModel.
+        **kwargs: Additional arguments for BaseModel. The PGM-only inference
+            arguments (:data:`_PGM_ONLY_ARGS`) are accepted and ignored, so this
+            model can be swapped into a sweep that configures them.
 
     Attributes:
         task_annotations (Annotations): Sub-annotation restricted to task
@@ -173,14 +225,14 @@ class BlackBoxTaskOnly(BaseModel):
             input_size=input_size,
             annotations=annotations,
             lightning=lightning,
-            **kwargs
+            **_drop_pgm_args(kwargs)
         )
 
         # Logit-level output size from the task sub-annotation
         output_size = sum(self.task_annotations.cardinalities)
         self.linear = nn.Linear(self.latent_size, output_size)
 
-    def build_query(self, ground_truth) -> dict:
+    def fully_observed_query(self, ground_truth) -> dict:
         """Build query dict mapping each *task* name to its ground-truth column.
 
         Parameters
@@ -230,7 +282,8 @@ class BlackBoxTaskOnly(BaseModel):
         Returns
         -------
         ModelOutput
-            ``params[name]['logits']`` per task (uniform with the PGM-based models).
+            ``logits`` for the discrete tasks and ``loc`` for the continuous
+            ones — the same quantities the PGM-based models report.
         """
         # Resolve the raw input tensor
         if x is None and isinstance(evidence, dict):
@@ -239,9 +292,9 @@ class BlackBoxTaskOnly(BaseModel):
         output = self.linear(self.backbone(x))
 
         # The linear head spans exactly the task sub-annotation.
-        out = ModelOutput()
-        out.logits = AnnotatedTensor(output, self.task_annotations, axis=-1)
-        return out
+        return _report_by_type(
+            AnnotatedTensor(output, self.task_annotations, axis=-1)
+        )
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Slice the target to task-only columns and annotate it in task
@@ -259,6 +312,26 @@ class BlackBoxTaskOnly(BaseModel):
         """
         sliced = target[:, self.task_concept_idx].as_subclass(torch.Tensor)
         return AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
+
+    def unscale_output(self, out, transforms):
+        """Not supported: :meth:`BaseLearner.unscale_output` assumes a
+        prediction covers exactly the concepts the scaler was fit on, but this
+        model's ``task_names`` is a strict subset of them.
+
+        Raises
+        ------
+        NotImplementedError
+            If concept scaling is active (:attr:`scale_concepts` and a
+            'concepts' scaler were both supplied).
+        """
+        if self.scale_concepts and transforms.get('concepts') is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support concept scaling: its "
+                "task-only prediction is a strict subset of the fitted concepts. "
+                "Pass a datamodule without a 'concepts' scaler, or construct "
+                "this model with scale_concepts=False."
+            )
+        return super().unscale_output(out, transforms)
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.
