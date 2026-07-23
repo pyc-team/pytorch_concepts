@@ -126,6 +126,8 @@ class ConceptDataset(Dataset):
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
 
+        self.scalers = {}  # dict of fitted scalers for input and concepts
+
     def __repr__(self):
         """
         Return string representation of the dataset.
@@ -164,10 +166,6 @@ class ConceptDataset(Dataset):
         sample = {
             'inputs': {'x': x},    # input data: multiple inputs can be stored in a dict
             'concepts': {'c': c},  # concepts: multiple concepts can be stored in a dict
-            # TODO: add scalers when these are set
-            # also check if batch transforms work correctly inside the model training loop
-            # 'transforms': {'x': self.scalers.get('input', None),
-            #               'c': self.scalers.get('concepts', None)}
         }
 
         return sample
@@ -179,8 +177,11 @@ class ConceptDataset(Dataset):
         ``(batch, n_concepts)`` tensor; this re-wraps that tensor as an
         :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
         concept-space annotation as :attr:`concepts`, so every batch's concepts
-        are label/type aware. Inputs and any other keys are collated unchanged.
-        Used as the DataLoader ``collate_fn`` by :class:`ConceptDataModule`.
+        are label/type aware. Any fitted scalers are attached under ``'scalers'``
+        (a reference to the dataset-level dict, so the learner can transform in
+        scaled space and report metrics in the original scale). Inputs and any
+        other keys are collated unchanged. Used as the DataLoader ``collate_fn``
+        by :class:`ConceptDataModule`.
         """
         batch = default_collate(samples)
         annotation = getattr(self.concepts, 'annotation', None)
@@ -194,6 +195,8 @@ class ConceptDataset(Dataset):
                     # batch it is the same axis as the default -1, but pinning it
                     # keeps the stored and collated representations consistent.
                     concepts['c'] = AnnotatedTensor(c, annotation, axis=1)
+        if isinstance(batch, dict) and self.scalers:
+            batch['scalers'] = self.scalers
         return batch
 
 
