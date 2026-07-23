@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# TODO: could these be implemented as PyC layers?
 
 class TrilActivation(nn.Module):
     """Map a flat raw tensor to a Cholesky factor ``scale_tril``.
