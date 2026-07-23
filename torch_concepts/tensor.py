@@ -205,6 +205,42 @@ class AnnotatedTensor:
         selector, sub_ann = resolved
         return AnnotatedTensor(self._data[self._index(selector)], sub_ann, self._axis)
 
+    def __setitem__(self, key, value) -> None:
+        """
+        Assign into columns by label name, or fall back to regular tensor
+        assignment.
+
+        Mirrors :meth:`__getitem__`'s key handling: a label name (or list/tuple
+        of names) resolves to the annotated axis's positions — the same
+        memoised lookup, so assigning right after reading the same labels is a
+        cache hit. Any other key (a slice, a boolean mask, positional indices,
+        ...) is forwarded to the underlying tensor as-is. ``value`` is unwrapped
+        first if it is itself an ``AnnotatedTensor``.
+
+        Example:
+            >>> t["cat"] = new_cat_column
+            >>> t[:, 0] = 0  # regular tensor assignment still works
+        """
+        if isinstance(value, AnnotatedTensor):
+            value = value._data
+
+        is_name_key = False
+        if isinstance(key, str):
+            key = (key,)
+            is_name_key = True
+        elif isinstance(key, list) and key and all(isinstance(k, str) for k in key):
+            key = tuple(key)
+            is_name_key = True
+        elif isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
+            is_name_key = True
+
+        if is_name_key:
+            selector, _ = self._annotation.resolve(key)
+            self._data[self._index(selector)] = value
+            return
+
+        self._data[key] = value
+
     def register_plate_label(self, owner: str, members) -> 'AnnotatedTensor':
         """Make ``owner`` select ``members``' columns as one block.
 
