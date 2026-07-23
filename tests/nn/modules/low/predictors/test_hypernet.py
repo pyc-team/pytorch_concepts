@@ -1,84 +1,106 @@
 """
-Comprehensive tests for torch_concepts.nn.modules.low.predictors
-
-Tests all predictor modules (linear, embedding, hypernet).
+Comprehensive tests for HyperlinearConceptEmbeddingToConcept.
 """
 import unittest
 import torch
-from torch_concepts.nn import HyperlinearConceptExogenousToConcept
+from torch_concepts.nn import HyperlinearConceptEmbeddingToConcept
 
 
-class TestHyperlinearConceptExogenousToConcept(unittest.TestCase):
-    """Test HyperlinearConceptExogenousToConcept."""
+class TestHyperlinearConceptEmbeddingToConcept(unittest.TestCase):
+    """Test HyperlinearConceptEmbeddingToConcept."""
 
     def test_initialization(self):
         """Test hypernetwork predictor initialization."""
-        predictor = HyperlinearConceptExogenousToConcept(
+        predictor = HyperlinearConceptEmbeddingToConcept(
             in_concepts=10,
-            in_exogenous=128,
-            hidden_size=64
+            in_embeddings=128,
+            hidden_size=64,
         )
         self.assertEqual(predictor.in_concepts, 10)
-        self.assertEqual(predictor.in_exogenous, 128)
+        self.assertEqual(predictor.in_embeddings, 128)
         self.assertEqual(predictor.hidden_size, 64)
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        predictor = HyperlinearConceptExogenousToConcept(
+        predictor = HyperlinearConceptEmbeddingToConcept(
             in_concepts=10,
-            in_exogenous=128,
-            hidden_size=64
+            in_embeddings=128,
+            hidden_size=64,
         )
         concepts = torch.randn(4, 10)
-        exogenous = torch.randn(4, 3, 128)
-        output = predictor(concepts=concepts, exogenous=exogenous)
+        embeddings = torch.randn(4, 3, 128)
+        output = predictor(concepts=concepts, embeddings=embeddings)
         self.assertEqual(output.shape, (4, 3))
 
     def test_without_bias(self):
-        """Test hypernetwork without bias."""
-        predictor = HyperlinearConceptExogenousToConcept(
+        """Test hypernetwork without stochastic bias."""
+        predictor = HyperlinearConceptEmbeddingToConcept(
             in_concepts=10,
-            in_exogenous=128,
+            in_embeddings=128,
             hidden_size=64,
-            use_bias=False
+            use_bias=False,
         )
         concepts = torch.randn(4, 10)
-        exogenous = torch.randn(4, 3, 128)
-        output = predictor(concepts=concepts, exogenous=exogenous)
+        embeddings = torch.randn(4, 3, 128)
+        output = predictor(concepts=concepts, embeddings=embeddings)
+        self.assertEqual(output.shape, (4, 3))
+
+    def test_with_bias(self):
+        """Test hypernetwork with stochastic bias."""
+        predictor = HyperlinearConceptEmbeddingToConcept(
+            in_concepts=10,
+            in_embeddings=128,
+            hidden_size=64,
+            use_bias=True,
+            init_bias_mean=0.0,
+            init_bias_std=0.01,
+        )
+        concepts = torch.randn(4, 10)
+        embeddings = torch.randn(4, 3, 128)
+        output = predictor(concepts=concepts, embeddings=embeddings)
         self.assertEqual(output.shape, (4, 3))
 
     def test_gradient_flow(self):
         """Test gradient flow through hypernetwork."""
-        predictor = HyperlinearConceptExogenousToConcept(
+        predictor = HyperlinearConceptEmbeddingToConcept(
             in_concepts=8,
-            in_exogenous=64,
-            hidden_size=32
+            in_embeddings=64,
+            hidden_size=32,
         )
         concepts = torch.randn(2, 8, requires_grad=True)
-        exogenous = torch.randn(2, 2, 64, requires_grad=True)
-        output = predictor(concepts=concepts, exogenous=exogenous)
-        loss = output.sum()
-        loss.backward()
+        embeddings = torch.randn(2, 2, 64, requires_grad=True)
+        output = predictor(concepts=concepts, embeddings=embeddings)
+        output.sum().backward()
         self.assertIsNotNone(concepts.grad)
-        self.assertIsNotNone(exogenous.grad)
+        self.assertIsNotNone(embeddings.grad)
 
     def test_sample_adaptive_weights(self):
-        """Test that different samples get different weights."""
-        predictor = HyperlinearConceptExogenousToConcept(
+        """Different embedding inputs should produce different outputs."""
+        predictor = HyperlinearConceptEmbeddingToConcept(
             in_concepts=5,
-            in_exogenous=32,
-            hidden_size=16
+            in_embeddings=32,
+            hidden_size=16,
+            use_bias=False,
         )
-        # Different exogenous features should produce different predictions
-        concepts = torch.ones(2, 5)  # Same concepts
-        exogenous1 = torch.randn(1, 1, 32)
-        exogenous2 = torch.randn(1, 1, 32)
+        concepts = torch.ones(1, 5)
+        embeddings1 = torch.randn(1, 1, 32)
+        embeddings2 = torch.randn(1, 1, 32)
+        out1 = predictor(concepts=concepts, embeddings=embeddings1)
+        out2 = predictor(concepts=concepts, embeddings=embeddings2)
+        self.assertFalse(torch.allclose(out1, out2))
 
-        output1 = predictor(concepts=concepts[:1], exogenous=exogenous1)
-        output2 = predictor(concepts=concepts[:1], exogenous=exogenous2)
-
-        # Different exogenous should produce different outputs
-        self.assertFalse(torch.allclose(output1, output2))
+    def test_single_task(self):
+        """Test with a single output task."""
+        predictor = HyperlinearConceptEmbeddingToConcept(
+            in_concepts=6,
+            in_embeddings=32,
+            hidden_size=16,
+            use_bias=False,
+        )
+        concepts = torch.randn(3, 6)
+        embeddings = torch.randn(3, 1, 32)
+        output = predictor(concepts=concepts, embeddings=embeddings)
+        self.assertEqual(output.shape, (3, 1))
 
 
 if __name__ == '__main__':

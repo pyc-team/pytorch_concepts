@@ -20,8 +20,7 @@ from torch_concepts.utils import (
     seed_everything,
 )
 
-from torch_concepts import GroupConfig
-from torch_concepts.annotations import AxisAnnotation, Annotations
+from torch_concepts.annotations import Annotations
 
 
 class TestUtils(unittest.TestCase):
@@ -302,44 +301,6 @@ class TestUtils(unittest.TestCase):
         # Should not raise on same device
         _check_tensors([t1, t2])
 
-    def test_add_distribution_to_annotations_with_dict(self):
-        """Test add_distribution_to_annotations function."""
-        from torch_concepts.utils import add_distribution_to_annotations
-
-        # Create simple annotations with proper metadata
-        metadata = {
-            'color': {'type': 'discrete'},
-            'shape': {'type': 'discrete'}
-        }
-        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
-
-        variable_distributions = {
-            'color': torch.distributions.Bernoulli,
-            'shape': torch.distributions.Categorical
-        }
-
-        result = add_distribution_to_annotations(annotations, variable_distributions)
-        self.assertIsInstance(result, AxisAnnotation)
-
-    def test_add_distribution_to_annotations_with_groups(self):
-        """Test add_distribution_to_annotations function."""
-        from torch_concepts.utils import add_distribution_to_annotations
-
-        # Create simple annotations with proper metadata
-        metadata = {
-            'color': {'type': 'discrete'},
-            'shape': {'type': 'discrete'}
-        }
-        annotations = AxisAnnotation(labels=('color', 'shape'), cardinalities=(3, 2), metadata=metadata)
-
-        variable_distributions = GroupConfig(
-            binary=torch.distributions.Bernoulli,
-            categorical=torch.distributions.Categorical
-        )
-
-        result = add_distribution_to_annotations(annotations, variable_distributions)
-        self.assertIsInstance(result, AxisAnnotation)
-
     def test_compute_temperature_edge_cases(self):
         """Test compute_temperature with edge cases."""
         # Zero epochs
@@ -595,103 +556,6 @@ class TestUtilsCoverage(unittest.TestCase):
             _check_tensors([t1, t2])
         self.assertIn('device', str(ctx.exception))
 
-    # --- add_distribution_to_annotations ---
-
-    def test_add_distribution_annotations_object(self):
-        """Passing an Annotations object (not AxisAnnotation) covers lines 303, 341-342."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {
-            'a': {'type': 'discrete'},
-            'b': {'type': 'discrete'},
-        }
-        axis_ann = AxisAnnotation(labels=('a', 'b'), cardinalities=(1, 3), metadata=metadata)
-        annotations = Annotations({1: axis_ann})
-        dists = GroupConfig(
-            binary=torch.distributions.Bernoulli,
-            categorical=torch.distributions.Categorical,
-        )
-        result = add_distribution_to_annotations(annotations, dists)
-        self.assertIsInstance(result, Annotations)
-        updated = result.get_axis_annotation(1)
-        self.assertEqual(updated.metadata['a']['distribution'], torch.distributions.Bernoulli)
-        self.assertEqual(updated.metadata['b']['distribution'], torch.distributions.Categorical)
-
-    def test_add_distribution_invalid_annotations_type(self):
-        """Non-Annotations / non-AxisAnnotation raises ValueError (line 307)."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        with self.assertRaises(ValueError):
-            add_distribution_to_annotations("not_an_annotation", {})
-
-    def test_add_distribution_invalid_distributions_type(self):
-        """Non-GroupConfig / non-Mapping distributions raise ValueError (line 338)."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {'a': {'type': 'discrete'}}
-        axis_ann = AxisAnnotation(labels=('a',), cardinalities=(1,), metadata=metadata)
-        with self.assertRaises(ValueError):
-            add_distribution_to_annotations(axis_ann, 42)
-
-    def test_add_distribution_groupconfig_binary(self):
-        """GroupConfig with a binary concept (cardinality==1) covers line 314."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {
-            'bin': {'type': 'discrete'},
-            'cat': {'type': 'discrete'},
-        }
-        axis_ann = AxisAnnotation(labels=('bin', 'cat'), cardinalities=(1, 4), metadata=metadata)
-        dists = GroupConfig(
-            binary=torch.distributions.Bernoulli,
-            categorical=torch.distributions.Categorical,
-        )
-        result = add_distribution_to_annotations(axis_ann, dists)
-        self.assertEqual(result.metadata['bin']['distribution'], torch.distributions.Bernoulli)
-        self.assertEqual(result.metadata['cat']['distribution'], torch.distributions.Categorical)
-
-    def test_add_distribution_groupconfig_continuous_raises(self):
-        """Continuous concepts raise NotImplementedError (lines 317-320)."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        # continuous + cardinality == 1
-        metadata = {'c': {'type': 'continuous'}}
-        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
-        dists = GroupConfig(binary=torch.distributions.Bernoulli, categorical=torch.distributions.Categorical)
-        with self.assertRaises(NotImplementedError):
-            add_distribution_to_annotations(axis_ann, dists)
-
-        # continuous + cardinality > 1
-        metadata2 = {'c': {'type': 'continuous'}}
-        axis_ann2 = AxisAnnotation(labels=('c',), cardinalities=(3,), metadata=metadata2)
-        with self.assertRaises(NotImplementedError):
-            add_distribution_to_annotations(axis_ann2, dists)
-
-    def test_add_distribution_groupconfig_unknown_type_raises(self):
-        """Unknown metadata type raises ValueError (line 322)."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {'c': {'type': 'unknown'}}
-        axis_ann = AxisAnnotation(labels=('c',), cardinalities=(1,), metadata=metadata)
-        dists = GroupConfig(binary=torch.distributions.Bernoulli, categorical=torch.distributions.Categorical)
-        with self.assertRaises(ValueError):
-            add_distribution_to_annotations(axis_ann, dists)
-
-    def test_add_distribution_groupconfig_list_entry(self):
-        """Entry as [class, {kwargs}] covers lines 326-328."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {'bin': {'type': 'discrete'}}
-        axis_ann = AxisAnnotation(labels=('bin',), cardinalities=(1,), metadata=metadata)
-        dists = GroupConfig(
-            binary=[torch.distributions.Bernoulli, {'temperature': 0.5}],
-            categorical=torch.distributions.Categorical,
-        )
-        result = add_distribution_to_annotations(axis_ann, dists)
-        self.assertEqual(result.metadata['bin']['distribution'], torch.distributions.Bernoulli)
-        self.assertEqual(result.metadata['bin']['dist_kwargs'], {'temperature': 0.5})
-
-    def test_add_distribution_mapping_missing_concept(self):
-        """Mapping with missing concept raises ValueError (line 335)."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {'a': {'type': 'discrete'}, 'b': {'type': 'discrete'}}
-        axis_ann = AxisAnnotation(labels=('a', 'b'), cardinalities=(1, 1), metadata=metadata)
-        with self.assertRaises(ValueError):
-            add_distribution_to_annotations(axis_ann, {'a': torch.distributions.Bernoulli})
-
     def test_compute_output_size_unknown_value_type(self):
         """Value that is neither int nor list is silently skipped (branch 101->97)."""
         # Tuple is neither int nor list, so neither branch fires
@@ -699,18 +563,69 @@ class TestUtilsCoverage(unittest.TestCase):
         size = compute_output_size(concept_names)
         self.assertEqual(size, 1)  # only the batch dim skipped; tuple dim skipped too
 
-    def test_add_distribution_groupconfig_list_entry_no_kwargs(self):
-        """Entry as [class] with no kwargs dict covers branch 327->312."""
-        from torch_concepts.utils import add_distribution_to_annotations
-        metadata = {'bin': {'type': 'discrete'}}
-        axis_ann = AxisAnnotation(labels=('bin',), cardinalities=(1,), metadata=metadata)
-        dists = GroupConfig(
-            binary=[torch.distributions.Bernoulli],   # list with no kwargs dict
-            categorical=torch.distributions.Categorical,
-        )
-        result = add_distribution_to_annotations(axis_ann, dists)
-        self.assertEqual(result.metadata['bin']['distribution'], torch.distributions.Bernoulli)
-        self.assertNotIn('dist_kwargs', result.metadata['bin'])
+class TestResolveHfToken(unittest.TestCase):
+    """Test suite for resolve_hf_token (env-var precedence + conceptarium fallback)."""
+
+    # Empty strings disable a var (os.environ.get(...) -> "" is falsy).
+    _EMPTY = {"HF_TOKEN": "", "HUGGINGFACE_HUB_TOKEN": "", "HUGGINGFACEHUB_TOKEN": ""}
+
+    def test_hf_token_wins(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HF_TOKEN": "tok1"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok1")
+
+    def test_huggingface_hub_token_second(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACE_HUB_TOKEN": "tok2"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok2")
+
+    def test_huggingfacehub_token_third(self):
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        env = {**self._EMPTY, "HUGGINGFACEHUB_TOKEN": "tok3"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(resolve_hf_token(), "tok3")
+
+    @staticmethod
+    def _fake_conceptarium(token):
+        """Build fake ``conceptarium``/``conceptarium.env`` modules for sys.modules.
+
+        Keeps the test independent of whether the real (non-installed)
+        ``conceptarium`` package is importable — it isn't in CI.
+        """
+        import types
+        pkg = types.ModuleType("conceptarium")
+        pkg.__path__ = []
+        env = types.ModuleType("conceptarium.env")
+        env.HUGGINGFACEHUB_TOKEN = token
+        pkg.env = env
+        return {"conceptarium": pkg, "conceptarium.env": env}
+
+    def test_falls_back_to_conceptarium_env(self):
+        import sys
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        # The three vars must be ABSENT (not empty) so setdefault can seed them.
+        with mock.patch.dict(sys.modules, self._fake_conceptarium("cfg_tok")), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            for key in self._EMPTY:
+                os.environ.pop(key, None)
+            self.assertEqual(resolve_hf_token(), "cfg_tok")
+            # Fallback also seeds the canonical env vars.
+            self.assertEqual(os.environ.get("HF_TOKEN"), "cfg_tok")
+
+    def test_returns_none_when_nothing_available(self):
+        import sys
+        from unittest import mock
+        from torch_concepts.utils import resolve_hf_token
+        # conceptarium.env present but with an empty token -> falls through to None.
+        with mock.patch.dict(sys.modules, self._fake_conceptarium("")), \
+             mock.patch.dict(os.environ, self._EMPTY, clear=False):
+            self.assertIsNone(resolve_hf_token())
 
 
 if __name__ == '__main__':

@@ -15,10 +15,10 @@ from torch.distributions import Bernoulli
 from pytorch_lightning import Trainer
 import torchmetrics
 
-from torch_concepts.nn import ConceptBottleneckModel
+from torch_concepts.nn import ConceptBottleneckModel, MLP
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 
 def main():
@@ -33,12 +33,13 @@ def main():
     n_samples = 10000
     batch_size = 2048
     dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
-    datamodule = ConceptDataModule(dataset=dataset, 
+    datamodule = ConceptDataModule(dataset=dataset,
                                    batch_size=batch_size,
                                    val_size=0.1,
-                                   test_size=0.2)
+                                   test_size=0.2,
+                                   seed=42)
     annotations = dataset.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     n_features = dataset.input_data.shape[1]
     n_concepts = 2
@@ -56,7 +57,6 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations = annotations,
         binary = torch.nn.BCEWithLogitsLoss(),
         categorical = torch.nn.CrossEntropyLoss(),
         continuous = torch.nn.MSELoss()
@@ -66,11 +66,11 @@ def main():
     variable_distributions = {name: Bernoulli for name in concept_names}
     
     metrics = ConceptMetrics(
-        annotations = annotations,
+        annotations=annotations,
         summary=True,
         per_concept=True,
-        binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()},
-        categorical = {'accuracy': torchmetrics.classification.MulticlassAccuracy} # filtered out since we don't 
+        binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+        categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy} # filtered out since we don't
                                                                                    # have categorical concepts in this dataset
     )
 
@@ -80,7 +80,8 @@ def main():
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['xor'],
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
         lightning=True,
         loss=loss_fn,
         metrics=metrics,
@@ -105,10 +106,10 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
-    
+        concepts = model(input=x_batch, query=query)
+
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
+    print(f"Output logits shape: {concepts.logits.shape}")
     print(f"Expected output dim: {n_concepts + n_tasks}")
 
 
@@ -148,11 +149,34 @@ def main():
     c_test = dataset.concepts[test_idxs]
     
     with torch.no_grad():
-        out = model(x=x_test, query=concept_names)
+        out = model(input=x_test, query=concept_names)
 
-    eval_metrics.update(preds=out, target=c_test)
+    eval_metrics.update(out.logits, c_test.int())
     print(f"Evaluation results with custom metrics: {eval_metrics.compute()}")
-    
+
+    # Compute CaCE for every concept on the task
+    # TODO: `compute_cace` needs porting to the refactored intervention API
+    #       (plate-based PGM + mid-level `intervention()` signature). Disabled
+    #       until that is done.
+    # print("\n" + "=" * 60)
+    # print("Step 7: Compute CaCE (concept → task)")
+    # print("=" * 60)
+    #
+    # from torch_concepts.nn.modules.metrics import compute_cace
+    #
+    # task_name = 'xor'
+    # source_names = [n for n in concept_names if n != task_name]
+    # test_loader = datamodule.test_dataloader()
+    #
+    # for src in source_names:
+    #     cace = compute_cace(
+    #         model=model,
+    #         dataloader=test_loader,
+    #         source_concept=src,
+    #         target_concept=task_name,
+    #     )
+    #     print(f"  CaCE({src} → {task_name}) = {cace.item():.4f}")
+
 
 if __name__ == "__main__":
     main()

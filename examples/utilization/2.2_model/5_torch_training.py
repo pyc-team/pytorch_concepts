@@ -13,11 +13,11 @@ The model uses:
 
 import torch
 from torch import nn
-from torch.distributions import Bernoulli
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts.nn import ConceptBottleneckModel, GraphConceptBottleneckModel, \
+    CausallyReliableConceptBottleneckModel, MLP
+from torch_concepts.data import BnLearnDataset
 
 from torchmetrics.classification import BinaryAccuracy
 
@@ -32,46 +32,32 @@ def main():
     print("Step 1: Generate toy XOR dataset")
     print("=" * 60)
     
-    n_samples = 1000
-    dataset = ToyDataset(dataset='xor', seed=42, n_gen=n_samples)
-    x_train = dataset.input_data
-    c_train = dataset.concepts[:, :2]
-    y_train = dataset.concepts[:, 2:]
-    concept_names = dataset.concept_names[:2]
-    task_names = dataset.concept_names[2:]
-    
-    n_features = x_train.shape[1]
-    n_concepts = c_train.shape[1]
-    n_tasks = y_train.shape[1]
-    
-    print(f"Input features: {n_features}")
-    print(f"Concepts: {n_concepts} - {concept_names}")
-    print(f"Tasks: {n_tasks} - {task_names}")
-    print(f"Training samples: {n_samples}")
+    dataset = BnLearnDataset(name="asia", n_gen=2000, seed=42)
+    annotations = dataset.annotations
+    n_features = dataset.n_features[-1]
 
-    concept_annotations = dataset.annotations
-    
-    print(f"Concept axis labels: {concept_annotations[1].labels}")
-    print(f"Concept types: {[concept_annotations[1].metadata[name]['type'] for name in concept_names]}")
-    print(f"Concept cardinalities: {concept_annotations[1].cardinalities}")
+    task_names = ["dysp"]
+    concept_names = [n for n in dataset.concept_names if n not in task_names]
+    query = concept_names + task_names
+
+    x_train = dataset.input_data
+    c_train = dataset.concepts[concept_names]
+    y_train = dataset.concepts[task_names]
 
     # Init model
     print("\n" + "=" * 60)
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    # Define variable distributions as Bernoulli
-    variable_distributions = {name: Bernoulli for name in concept_names + task_names}
-
-    # Initialize the CBM
+    # Initialize the CBM (defaults for distributions and activations are handled internally)
     model = ConceptBottleneckModel(
         input_size=n_features,
-        annotations=concept_annotations,
-        variable_distributions=variable_distributions,
+        annotations=annotations,
         task_names=task_names,
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1}
+        backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
+        latent_size=128,  # Output size of the backbone
     )
-    
+
     print(f"Model created successfully!")
     print(f"Model type: {type(model).__name__}")
     print(f"Encoder output features: {model.latent_size}")
@@ -89,12 +75,12 @@ def main():
     print(f"Query variables: {query}")
     
     with torch.no_grad():
-        endogenous = model(x=x_batch, query=query)
+        out = model(query=query, input=x_batch)
     
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output endogenous shape: {endogenous.shape}")
-    print(f"Expected output dim: {n_concepts + n_tasks}")
-
+    print(f"Output {concept_names[0]} shape: {out.logits[concept_names[0]].shape}")
+    print(f"Output {concept_names[1]} shape: {out.logits[concept_names[1]].shape}")
+    print(f"Output {task_names[0]} shape: {out.logits[task_names[0]].shape}")
 
     # Test forward pass
     print("\n" + "=" * 60)
@@ -102,7 +88,7 @@ def main():
     print("=" * 60)
 
     n_epochs = 500
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.02)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     loss_fn = nn.BCEWithLogitsLoss()
 
     model.train()
@@ -110,16 +96,14 @@ def main():
         optimizer.zero_grad()
         
         # Concatenate concepts and tasks as target
-        target = torch.cat([c_train, y_train], dim=1)
-
+        target = c_train.union_with(y_train).float()
+        
         # Forward pass - query all variables (concepts + tasks)
-        endogenous = model(
-            x=x_train, 
-            query=query, 
-        )
+        out = model(query=query, input=x_train)
         
         # Compute loss on all outputs
-        loss = loss_fn(endogenous, target)
+        logits = out.logits[list(query)]
+        loss = loss_fn(logits, target)
         
         loss.backward()
         optimizer.step()
@@ -136,9 +120,9 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        endogenous = model(x=x_train, query=query)
-        c_pred = endogenous[:, :n_concepts]
-        y_pred = endogenous[:, n_concepts:]
+        out = model(query=query, input=x_train)
+        c_pred = out.logits[list(concept_names)]
+        y_pred = out.logits[list(task_names)]
         
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()

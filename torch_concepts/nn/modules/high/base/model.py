@@ -25,23 +25,25 @@ torch_concepts.nn.modules.high.models.cbm.ConceptBottleneckModel : Concrete impl
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Any, Optional, Mapping, Dict
+from typing import List, Optional, Mapping, Dict, Type, Union
+import functools
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .....annotations import Annotations
-from ...low.dense_layers import MLP
-from .....typing import BackboneType
-from .....utils import add_distribution_to_annotations
+from .....tensor import AnnotatedTensor
+from .....distributions import Delta
 from ...utils import with_training_mode
-
-from ...mid.constructors.concept_graph import ConceptGraph
+from ...outputs import ModelOutput
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.variable import _DEFAULT_DISTRIBUTIONS, ConceptVariable, EmbeddingVariable
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
 
-    Provides common functionality for models that use backbones for feature extraction, 
-    and encoders for latent representations. All concrete model implementations 
+    Provides common functionality for models that use backbones for feature extraction,
+    and encoders for latent representations. All concrete model implementations
     should inherit from this class.
 
     BaseModel supports two usage modes controlled by the `lightning` parameter:
@@ -58,21 +60,29 @@ class BaseModel(nn.Module, ABC):
 
     Parameters
     ----------
-    input_size : int
-        Dimensionality of input features after backbone processing. If no backbone
-        is used (backbone=None), this should match raw input dimensionality.
+    input_size : int or tuple
+        Shape of the raw input: an int for flat features, or a tuple (e.g.
+        ``(C, H, W)``) when a backbone consumes structured data.
     annotations : Annotations
         Concept annotations containing variable names, cardinalities, and optional
         distribution metadata. Distributions specify how the model represents each
-        concept (e.g., Bernoulli for binary, Categorical for multi-class).
+        concept (e.g., Bernoulli for binary, OneHotCategorical for multi-class).
     lightning : bool, default False
         If True, adds Lightning training capabilities (BaseLearner mixin).
         If False, works as a pure PyTorch module.
     variable_distributions : Mapping, optional
-        Dictionary mapping concept names to torch.distributions classes (e.g.,
-        ``{'c1': Bernoulli, 'c2': Categorical}``). Required if annotations lack
-        'distribution' metadata. If provided, distributions are added to annotations
-        internally. Can also be a GroupConfig object. Defaults to None.
+        Per-instance override of the model's per-*type* distribution policy,
+        mapping concept *types* (``'binary'`` / ``'categorical'`` /
+        ``'continuous'``) to ``torch.distributions`` classes
+        (e.g. ``{'binary': RelaxedBernoulli}``). Merged over the class-level
+        :attr:`variable_distributions` default. Distributions are model state —
+        they are NOT stored on the annotation. Defaults to None.
+    variable_dist_kwargs : Mapping, optional
+        Per-instance override of the per-*distribution* keyword arguments,
+        mapping a ``torch.distributions`` class to its kwargs
+        (e.g. ``{RelaxedBernoulli: {'temperature': 0.7}}`` to change the relaxation
+        temperature). Merged over the class-level :attr:`variable_dist_kwargs`
+        default. Defaults to None.
     graph : ConceptGraph, optional
         Directed acyclic graph (DAG) specifying causal or dependency relationships
         between concepts. Nodes correspond to concept names in annotations; edges
@@ -80,21 +90,18 @@ class BaseModel(nn.Module, ABC):
         ``CausallyReliableConceptBottleneckModel``). If None, model assumes no explicit 
         graph structure, and each model enforces its own.
         Defaults to None.
-    backbone : BackboneType, optional
-        Feature extraction module (e.g., ResNet, ViT) applied before latent encoder.
-        Can be nn.Module or callable. If None, assumes inputs are pre-computed features.
+    backbone : nn.Module, optional
+        Module mapping the raw input (``input_size``) to the ``latent``
+        representation (``latent_size``). It runs *inside* the PGM as the
+        ``latent | input`` CPD. Can be any ``nn.Module`` (e.g. ResNet, ViT, MLP).
+        If None, defaults to ``nn.Identity`` (``latent`` equals the raw input).
         Defaults to None.
-    latent_encoder : nn.Module, optional
-        Custom encoder mapping backbone outputs to latent space. If provided,
-        latent_encoder_kwargs are passed to this constructor. If None and
-        latent_encoder_kwargs provided, uses MLP. Defaults to None.
-    latent_encoder_kwargs : Dict, optional
-        Arguments for latent encoder construction. Common keys:
-        - 'hidden_size' (int): Latent dimension
-        - 'n_layers' (int): Number of hidden layers
-        - 'activation' (str): Activation function name
-        If None, uses nn.Identity (no encoding). Defaults to None.
-    
+    latent_size : int, optional
+        Dimensionality of the ``latent`` variable (the backbone's output). 
+        Inferred from ``backbone.out_features`` when the backbone exposes it 
+        (e.g. :class:`~torch_concepts.Backbone`); otherwise required. 
+        Defaults to ``input_size`` when no backbone is used.
+
     Lightning Training Parameters (only used when lightning=True)
     -------------------------------------------------------------
     loss : nn.Module, optional
@@ -117,30 +124,34 @@ class BaseModel(nn.Module, ABC):
 
     Attributes
     ----------
-    concept_annotations : AxisAnnotation
-        Axis-1 annotations with distribution metadata for each concept.
+    supported_concept_types : frozenset
+        Class-level declaration of which concept types this model supports.
+        An empty set means no restriction. Concrete models set this to e.g.
+        ``frozenset({"binary", "categorical"})``. The recognised strings are the
+        keys of :attr:`~torch_concepts.annotations.Annotations.type_groups`:
+        ``"binary"``, ``"categorical"``, ``"continuous"``.
+    concept_annotations : Annotations
+        Concept-axis annotations for each concept.
     concept_names : List[str]
         List of concept variable names from annotations.
-    backbone : BackboneType or None
-        Feature extraction module (None if using pre-computed features).
-    latent_encoder : nn.Module
-        Encoder transforming backbone outputs to latent representations.
+    backbone : nn.Module
+        Module mapping the raw input to the ``latent`` variable (``nn.Identity`` if
+        none was provided). Runs inside the PGM as the ``latent | input`` CPD.
+    input_size : int
+        Dimensionality of the raw input (the PGM's ``input`` node).
     latent_size : int
-        Dimensionality of latent encoder output (input to concept encoders).
+        Dimensionality of the ``latent`` variable (input to the concept encoders).
 
     Notes
     -----
-    - **Concept Distributions**: The model needs to know which distribution to use
-      for each concept (Bernoulli, Categorical, Normal, etc.). This can be provided
-      in two ways:
-      
-      1. In annotations metadata: ``metadata={'c1': {'distribution': Bernoulli}}``
-      2. Via variable_distributions parameter at initialization
-      
-      If distributions are in annotations, variable_distributions is not needed.
-      If not, variable_distributions is required and will be added to annotations.
-    - Subclasses must implement ``forward()``, ``filter_output_for_loss()``,
-      and ``filter_output_for_metrics()`` methods.
+    - **Concept Distributions**: Distributions are model state, not annotation
+      state. Each model has a per-*type* policy (the class attributes
+      :attr:`variable_distributions` / :attr:`variable_dist_kwargs`) mapping a
+      concept's type (binary/categorical/continuous) to a distribution class;
+      a subclass overrides these to change how it models a type, and a caller
+      can override per instance with the ``variable_distributions`` argument.
+      Activations are derived from the distribution at inference time (not stored).
+    - Subclasses must implement ``forward()``.
     - For Lightning training, set lightning=True. The BaseLearner mixin is
       automatically added via ``__new__``.
     - The latent_size attribute is critical for downstream concept encoders
@@ -148,58 +159,44 @@ class BaseModel(nn.Module, ABC):
 
     Examples
     --------
-    Distributions specify how the model represents concepts. Provide them either
-    in annotations metadata OR via variable_distributions parameter:
-    
+    The model picks a distribution for each concept from its type; override a
+    whole type with ``variable_distributions``:
+
     >>> import torch
     >>> import torch.nn as nn
-    >>> from torch.distributions import Bernoulli
+    >>> from torch.distributions import Bernoulli, RelaxedBernoulli
     >>> from torch_concepts.nn import ConceptBottleneckModel
-    >>> from torch_concepts.annotations import AxisAnnotation, Annotations
-    >>> 
-    >>> # Option 1: Distributions in annotations metadata
-    >>> ann = Annotations({
-    ...     1: AxisAnnotation(
-    ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1],
-    ...         metadata={
-    ...             'c1': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'c2': {'type': 'binary', 'distribution': Bernoulli},
-    ...             'task': {'type': 'binary', 'distribution': Bernoulli}
-    ...         }
-    ...     )
-    ... })
-    >>> model = ConceptBottleneckModel(
-    ...     input_size=10,
-    ...     annotations=ann,  # Distributions already in metadata
-    ...     task_names=['task']
+    >>> from torch_concepts.annotations import Annotations
+    >>>
+    >>> ann = Annotations(
+    ...     labels=['c1', 'c2', 'task'],
+    ...     cardinalities=[1, 1, 1],
+    ...     types=['binary', 'binary', 'binary'],
     ... )
-    >>> 
-    >>> # Option 2: Distributions via variable_distributions parameter
-    >>> ann_no_dist = Annotations({
-    ...     1: AxisAnnotation(
-    ...         labels=['c1', 'c2', 'task'],
-    ...         cardinalities=[1, 1, 1]
-    ...     )
-    ... })
-    >>> variable_distributions = {'c1': Bernoulli, 'c2': Bernoulli, 'task': Bernoulli}
+    >>>
+    >>> # Option 1: let the model pick distributions from each concept's type
     >>> model = ConceptBottleneckModel(
-    ...     input_size=10,
-    ...     annotations=ann_no_dist,
-    ...     variable_distributions=variable_distributions,  # Added here
-    ...     task_names=['task']
+    ...     input_size=10, annotations=ann, task_names=['task']
     ... )
-    >>> 
+    >>> model.variable_distributions['binary'] is Bernoulli
+    True
+    >>>
+    >>> # Option 2: override how this model models a whole type
+    >>> model = ConceptBottleneckModel(
+    ...     input_size=10, annotations=ann, task_names=['task'],
+    ...     variable_distributions={'binary': RelaxedBernoulli},
+    ... )
+    >>>
     >>> # Manual training loop
     >>> optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
     >>> loss_fn = nn.BCEWithLogitsLoss()
     >>> x = torch.randn(32, 10)
     >>> y = torch.randint(0, 2, (32, 3)).float()
     >>> 
-    >>> for epoch in range(100):
+    >>> for epoch in range(3):
     ...     optimizer.zero_grad()
-    ...     out = model(x, query=['c1', 'c2', 'task'])
-    ...     loss = loss_fn(out, y)
+    ...     out = model(query=['c1', 'c2', 'task'], input=x)
+    ...     loss = loss_fn(out.logits, y)
     ...     loss.backward()
     ...     optimizer.step()
 
@@ -209,6 +206,17 @@ class BaseModel(nn.Module, ABC):
     torch_concepts.nn.modules.high.base.learner.BaseLearner : Lightning training logic
     torch_concepts.annotations.Annotations : Concept annotation container
     """
+
+    supported_concept_types: frozenset = frozenset()
+
+    #: Per-*type* distribution policy: which distribution this model uses for each
+    #: concept type (``'binary'`` / ``'categorical'`` / ``'continuous'``).
+    #: Distributions are a model concern; a subclass
+    #: overrides this to change how it models a type, and a caller can override it
+    #: per instance with the ``variable_distributions`` constructor arg.
+    variable_distributions: Dict[str, Type] = dict(_DEFAULT_DISTRIBUTIONS)
+    #: Default keyword arguments per distribution class (e.g. relaxation temperature).
+    variable_dist_kwargs: Dict[Type, dict] = dict(DEFAULT_DIST_KWARGS)
 
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
@@ -237,50 +245,216 @@ class BaseModel(nn.Module, ABC):
         input_size: int,
         annotations: Annotations,
         variable_distributions: Optional[Mapping] = None,
-        graph: ConceptGraph = None,
-        backbone: Optional[BackboneType] = None,
-        latent_encoder: Optional[nn.Module] = None,
-        latent_encoder_kwargs: Optional[Dict] = None,
+        variable_dist_kwargs: Optional[Mapping] = None,
+        backbone: Optional[nn.Module] = None,
+        latent_size: Optional[int] = None,
         lightning: bool = False,  # Consumed by __new__, included for signature
+        plate: Optional[bool] = None,
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
 
-        self.graph = graph
+        # Per-instance overrides of the model's distribution policy: the per-type
+        # distribution and the per-distribution kwargs (e.g. relaxation temperature).
+        if variable_distributions is not None:
+            self.variable_distributions = {**self.variable_distributions, **variable_distributions}
+        if variable_dist_kwargs is not None:
+            self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
 
-        if annotations is not None:
-            annotations = annotations.get_axis_annotation(1)
+        # Plate preference used by the level factories: None = auto-detect per
+        # level, True = force a plate (raise on a heterogeneous level), False =
+        # force one variable per concept.
+        self._plate_pref = plate
 
-            # Add distribution information to annotations metadata
-            if annotations.has_metadata('distribution'):
-                self.concept_annotations = annotations
+        self._setup_annotations(annotations)
+        self._setup_backbone(backbone, input_size, latent_size)
+
+    def _setup_annotations(self, annotations: Optional[Annotations]) -> None:
+        """Resolve concept annotations and store :attr:`concept_annotations`/:attr:`concept_names`.
+
+        The annotation carries only structural information (labels, types,
+        cardinalities); the distribution per concept is a model concern, resolved
+        from the per-type policy :attr:`variable_distributions`. Rejects concept
+        types this model cannot handle.
+        """
+        if annotations is None:
+            return
+
+        self.concept_annotations = annotations
+        self.concept_names = self.concept_annotations.labels
+
+        # Reject annotations that contain concept types this model cannot handle.
+        self._validate_concept_types()
+
+    def distribution_of(self, name: str) -> Type:
+        """Distribution class this model uses for concept ``name`` (by its type)."""
+        return self.variable_distributions[self.concept_annotations.concept(name).type]
+
+    def dist_kwargs_of(self, name: str) -> dict:
+        """Distribution keyword arguments this model uses for concept ``name``."""
+        return dict(self.variable_dist_kwargs.get(self.distribution_of(name), {}))
+
+    # ------------------------------------------------------------------
+    # Level factories (plate grouping) — shared by all concept models
+    # ------------------------------------------------------------------
+    def _plate_groups(self, names: List[str]) -> list:
+        """Partition ``names`` into homogeneous ``(type, cardinality)`` groups.
+
+        Returns ``[((type, cardinality), [names]), ...]`` in first-appearance
+        order — one entry per distinct ``(type, cardinality)``. A plate must be
+        homogeneous, so this is the **minimum** number of plates that can cover the
+        level: fully homogeneous → 1 group, two homogeneous families (e.g. 10
+        Bernoulli + 10 identical categorical) → 2 groups, all distinct → N groups.
+        Reads only annotation scalars — it builds no ``Variable`` objects — so it
+        stays cheap even for very large levels.
+        """
+        axis = self.concept_annotations
+        groups: Dict[tuple, List[str]] = {}
+        for n in names:
+            c = axis.concept(n)
+            groups.setdefault((c.type, c.cardinality), []).append(n)
+        return list(groups.items())
+
+    def _plate_layout(self, names: List[str], plate_name: str) -> list:
+        """Resolve how a level is laid out, shared by the variable factories.
+
+        Returns a list of ``(kind, name, members)`` where ``kind`` is ``"plate"``
+        or ``"individual"``. Honours the ``plate`` preference (:attr:`_plate_pref`):
+
+        * ``None`` (default) / ``True`` — group homogeneous concepts into the
+          minimum number of plates; even a lone concept becomes a single-member
+          plate, so the level is always a list of plates and ``plate_name`` is
+          always used.
+        * ``False`` — no plates: one individual variable per concept, named after
+          the concept.
+
+        A single plate keeps the bare ``plate_name``; multiple plates are suffixed
+        with their ``type`` and ``cardinality`` (e.g. ``concepts_binary_1``) so the
+        names are unique.
+        """
+        if self._plate_pref is False:
+            return [("individual", n, [n]) for n in names]
+        # None / True: always plates (a lone concept is a single-member plate).
+        groups = self._plate_groups(names)
+        single = len(groups) == 1
+        return [
+            ("plate", plate_name if single else f"{plate_name}_{ctype}_{card}", members)
+            for (ctype, card), members in groups
+        ]
+
+    def _make_concept_plate(self, members: List[str], name: str) -> ConceptVariable:
+        """A single plate :class:`ConceptVariable` over homogeneous ``members``."""
+        c0 = self.concept_annotations.concept(members[0])
+        return ConceptVariable(
+            names=name,
+            members=list(members),
+            distribution=self.distribution_of(c0.name),
+            dist_kwargs=self.dist_kwargs_of(c0.name),
+            size=c0.cardinality,
+        )
+
+    def _make_concept_variable(self, name: str) -> ConceptVariable:
+        """A single (non-plate) :class:`ConceptVariable` for concept ``name``."""
+        c = self.concept_annotations.concept(name)
+        return ConceptVariable(
+            names=c.name,
+            distribution=self.distribution_of(c.name),
+            dist_kwargs=self.dist_kwargs_of(c.name),
+            size=c.cardinality,
+        )
+
+    def build_concept_variables(self, names: List[str], plate_name: str) -> List[ConceptVariable]:
+        """Build the concept variable(s) for a set of concepts, as a list of ``ConceptVariable``.
+
+        Uses :meth:`_plate_layout`. By default (``plate`` ``None``/``True``)
+        homogeneous concepts are grouped into the minimum number of plates — each a
+        :class:`ConceptVariable` with one member per grouped concept, and even a
+        lone concept a single-member plate. With ``plate=False`` each concept is an
+        individual variable named after itself. Returning a list lets callers wire
+        the CPDs and the Bayesian network identically however the set splits.
+        """
+        out: List[ConceptVariable] = []
+        for kind, name, members in self._plate_layout(names, plate_name):
+            if kind == "plate":
+                out.append(self._make_concept_plate(members, name))
             else:
-                assert variable_distributions is not None, (
-                    "variable_distributions must be provided if annotations "
-                    "lack 'distribution' metadata."
-                )
-                self.concept_annotations = add_distribution_to_annotations(
-                    annotations, variable_distributions
-                )
-            self.concept_names = self.concept_annotations.labels
+                out.append(self._make_concept_variable(name))
+        return out
 
-        self._backbone = backbone
+    def build_concept_embedding_variables(
+        self,
+        names: List[str],
+        embedding_size: int,
+        plate_name: str,
+        name_fmt: str = "{}_embedding",
+    ) -> List[EmbeddingVariable]:
+        """Build the per-concept state-embedding variable(s), aligned with the concepts.
 
-        if latent_encoder is not None:
-            self._latent_encoder = latent_encoder(
-                input_size,
-                **(latent_encoder_kwargs or {})
-            )
-        elif latent_encoder_kwargs is not None:
-            # assume an MLP encoder if latent_encoder_kwargs provided but no latent_encoder
-            self._latent_encoder = MLP(
-                input_size=input_size,
-                **latent_encoder_kwargs
-            )
+        Each concept contributes ``cardinality`` state embeddings of width
+        ``embedding_size``. This uses the **same** :meth:`_plate_layout` as
+        :meth:`build_concept_variables`, so — called with the same ``names`` — the
+        returned list aligns element-by-element with the concept variables: group
+        ``i``'s embeddings feed group ``i``'s concepts. Per group it returns:
+
+        * a plate of ``k`` homogeneous concepts → one :class:`EmbeddingVariable` of
+          shape ``(k * cardinality, embedding_size)`` (the members' state embeddings
+          stacked into one matrix); a lone concept is a single-member plate of shape
+          ``(cardinality, embedding_size)``;
+        * with ``plate=False``, one ``EmbeddingVariable`` per concept of shape
+          ``(cardinality, embedding_size)``, named via ``name_fmt``.
+
+        Only *concept* embeddings belong here. Global/shared embeddings (``input``,
+        ``latent``, model-wide latents) are not per-concept and carry no grouping —
+        build those directly with :class:`EmbeddingVariable`. ``plate_name`` must
+        differ from the concepts' ``plate_name`` so the plate nodes do not collide.
+        """
+        out: List[EmbeddingVariable] = []
+        for kind, name, members in self._plate_layout(names, plate_name):
+            if kind == "plate":
+                card0 = self.concept_annotations.concept(members[0]).cardinality
+                shape = (len(members) * card0, embedding_size)
+            else:
+                name = name_fmt.format(name)
+                card = self.concept_annotations.concept(members[0]).cardinality
+                shape = (card, embedding_size)
+            out.append(EmbeddingVariable(name, distribution=Delta, shape=shape))
+        return out
+
+    def _setup_backbone(
+        self,
+        backbone: Optional[nn.Module],
+        input_size: int,
+        latent_size: Optional[int],
+    ) -> None:
+        """Store the backbone (raw input → latent) and resolve the sizes.
+
+        The backbone maps whatever the dataloader provides (``input_size``) to the
+        ``latent`` representation (``latent_size``); it runs *inside* the PGM as the
+        ``latent | input`` CPD. When no backbone is given it defaults to
+        ``nn.Identity`` (so :attr:`backbone` is always callable) and ``latent_size``
+        falls back to ``input_size``. With a custom backbone, ``latent_size``
+        is taken from the backbone's ``out_features`` when it exposes one
+        (e.g. :class:`~torch_concepts.Backbone`, ``nn.Linear``); otherwise it
+        must be passed explicitly.
+        """
+        self.input_size = input_size
+        if backbone is not None:
+            self._backbone = backbone
+            self.latent_size = latent_size or getattr(backbone, 'out_features', None)
+            if self.latent_size is None:
+                raise ValueError(
+                    "Pass `latent_size` when the `backbone` does not expose "
+                    "`out_features`."
+                )
         else:
-            self._latent_encoder = nn.Identity()
-
-        self.latent_size = latent_encoder_kwargs.get('hidden_size') if latent_encoder_kwargs else input_size
+            self._backbone = nn.Identity()
+            self.latent_size = latent_size or input_size
+            if not isinstance(self.latent_size, int):
+                raise ValueError(
+                    "Without a `backbone` the latent equals the raw input, so "
+                    f"`input_size` must be an int; got {self.latent_size!r}. Add a "
+                    "`backbone` to map multi-dimensional inputs to a vector latent."
+                )
 
     @property
     def inference(self):
@@ -301,53 +475,103 @@ class BaseModel(nn.Module, ABC):
             return self.train_inference
         return self.eval_inference
 
-    def _finalize(self):
-        if not hasattr(self, 'model') or self.model is None:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.model in __init__"
+    def _validate_concept_types(self) -> None:
+        """Raise if the annotations contain concept types this model does not support.
+
+        Does nothing when :attr:`supported_concept_types` is empty (no restriction).
+        Uses :attr:`pyc.Annotations.type_groups` to
+        determine each concept's type (``"binary"``, ``"categorical"``,
+        ``"continuous"``).
+        """
+        if not self.supported_concept_types:
+            return
+        groups = self.concept_annotations.type_groups
+        unsupported = [
+            (type_name, group["labels"])
+            for type_name, group in groups.items()
+            if group["labels"] and type_name not in self.supported_concept_types
+        ]
+        if unsupported:
+            details = "; ".join(
+                f"{t}: {names}" for t, names in unsupported
             )
-        if not hasattr(self, 'eval_inference') or self.eval_inference is None:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.eval_inference in __init__"
+            raise ValueError(
+                f"{type(self).__name__} only supports "
+                f"{sorted(self.supported_concept_types)} concept types, but the "
+                f"annotations contain: {details}."
             )
-        if self._lightning_enabled and not hasattr(self, 'train_inference'):
-            raise NotImplementedError(
-                f"{self.__class__.__name__} must set self.train_inference in __init__ when lightning=True"
+
+    def setup_inference(
+        self,
+        inference=None,
+        inference_kwargs=None,
+        train_inference=None,
+        train_inference_kwargs=None,
+    ):
+        """Set up — or later swap — the eval/train inference engines.
+
+        Called once at construction to wire the engines around the model's
+        ``pgm``, and callable again on an already-instantiated model to change
+        inference. Only the engines whose class is passed are (re)built; any
+        engine left as ``None`` keeps its current instance, so you can replace
+        just the eval or just the train engine. On the very first setup the
+        training engine falls back to the ``inference`` class (so passing only
+        ``inference`` wires both). Because the :attr:`inference` property reads
+        ``eval_inference``/``train_inference``, a replacement is used on the
+        next :meth:`forward`.
+
+        Parameters
+        ----------
+        inference : type, optional
+            Evaluation inference engine class. Engine left unchanged if None.
+        inference_kwargs : dict, optional
+            Keyword arguments forwarded to the evaluation engine.
+        train_inference : type, optional
+            Training inference engine class. On first setup defaults to
+            ``inference``; on later swaps the engine is left unchanged if None.
+        train_inference_kwargs : dict, optional
+            Keyword arguments forwarded to the training engine.
+        """
+        if inference is not None:
+            self.eval_inference = inference(self.pgm, **(inference_kwargs or {}))
+        # First setup: train falls back to the eval class. Later swaps: replace
+        # the train engine only when a class is passed explicitly.
+        first_setup = not hasattr(self, "train_inference")
+        train_inference_cls = train_inference or (inference if first_setup else None)
+        if train_inference_cls is not None:
+            self.train_inference = train_inference_cls(
+                self.pgm,
+                **(train_inference_kwargs or {}),
             )
 
     def __repr__(self):
-        backbone_name = self.backbone.__class__.__name__ if self.backbone is not None else "None"
-        latent_encoder_name = self._latent_encoder.__class__.__name__ if self._latent_encoder is not None else "None"
-        return f"{self.__class__.__name__}(backbone={backbone_name}, latent_encoder={latent_encoder_name})"
+        backbone_name = self.backbone.__class__.__name__
+        fields = f"backbone={backbone_name}"
+        if getattr(self, "input_size", None) is not None:
+            fields += f", input_size={self.input_size}"
+        if getattr(self, "latent_size", None) is not None:
+            fields += f", latent_size={self.latent_size}"
+        if getattr(self, "concept_annotations", None) is not None:
+            fields += f", n_concepts={len(self.concept_annotations.labels)}"
+        if getattr(self, "plate", None) is not None:
+            fields += f", plate={self.plate}"
+        return f"{self.__class__.__name__}({fields})"
 
     @property
-    def backbone(self) -> BackboneType:
-        """The backbone feature extractor.
+    def backbone(self) -> nn.Module:
+        """The backbone mapping raw input to the latent representation.
 
-        Returns the backbone module used for feature extraction from raw inputs.
-        If None, the model expects pre-computed features as inputs.
-
-        Returns
-        -------
-        BackboneType or None
-            Backbone module (e.g., ResNet, ViT) or None if using pre-computed features.
-        """
-        return self._backbone
-
-    @property
-    def latent_encoder(self) -> nn.Module:
-        """The encoder mapping backbone output to latent space.
-
-        Returns the latent encoder module that transforms backbone features
-        (or raw inputs if no backbone) into latent representations used by
-        concept encoders.
+        Maps whatever the dataloader provides (``input_size``) to the ``latent``
+        variable (``latent_size``); inside the PGM it is the ``latent | input`` CPD.
+        Defaults to ``nn.Identity`` when no backbone was provided, so it is always
+        callable.
 
         Returns
         -------
         nn.Module
-            Latent encoder network (MLP, custom module, or nn.Identity if no encoding).
+            Backbone module (e.g., ResNet, ViT, MLP) or ``nn.Identity``.
         """
-        return self._latent_encoder
+        return self._backbone
 
     # TODO: add decoder?
     # @property
@@ -361,120 +585,111 @@ class BaseModel(nn.Module, ABC):
 
     def forward(
         self,
-        query: List[str],
-        x: torch.Tensor = None,
-        evidence: Dict[str, torch.Tensor] = None,
-        *inference_args,
-        **inference_kwargs
-    ) -> torch.Tensor:
-        """Unified forward pass for all inferences.
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
+        evidence: Optional[Dict[str, torch.Tensor]] = None,
+        input: Optional[torch.Tensor] = None,
+        **inference_kwargs,
+    ) -> ModelOutput:
+        """Unified forward pass for all inference engines.
 
         The active inference engine is selected automatically based on
-        ``self.training`` (toggled by ``.train()`` / ``.eval()``).
-        
+        ``self.training`` (toggled by ``.train()`` / ``.eval()``). The result is
+        keyed by *quantity*: ``out.logits`` (equivalently ``out.params['logits']``)
+        is one annotated tensor spanning every queried concept, sliceable by name
+        — ``out.logits['c1']`` — with the columns of a variable that reports a
+        different quantity living under its own key (``out.loc`` / ``out.scale``).
+
         Parameters
         ----------
         query : List[str]
             Concept names to query.
-        x : torch.Tensor, optional
-            Raw input tensor. Shape: (batch_size, input_size).
-            If provided, backbone and latent encoder are applied.
         evidence : Dict[str, torch.Tensor], optional
-            Evidence dict mapping names to tensors. Defaults to empty dict.
-            Names should match variable names in the PGM.
-        *inference_args
-            Positional arguments passed to the inference engine's query method.
-        **inference_kwargs
-            Keyword arguments passed to the inference engine's query method.
-        
+            Evidence dict mapping variable names to observed tensors.
+        input : torch.Tensor, optional
+            Raw input tensor; placed into ``evidence['input']`` so the backbone
+            CPD inside the PGM can consume it.
+
         Returns
         -------
-        torch.Tensor
-            Concatenated predictions for queried concepts.
+        ModelOutput
+            ``params``/``samples``/``probabilities`` from the engine.
         """
         if evidence is None:
             evidence = {}
-        
-        # If x is provided, process x through backbone and latent encoder
-        # and add the resulting latent representation as the 'input' of the PGM
-        # TODO: handle backbone kwargs when present
-        if x is not None:
-            features = self.maybe_apply_backbone(x)
-            latent = self.latent_encoder(features)
-            evidence['input'] = latent
-        
-        return self.inference.query(
-            query, 
-            evidence=evidence, 
-            *inference_args, 
-            **inference_kwargs
+        if input is not None:
+            evidence['input'] = input
+
+        result = self.inference.query(
+            query=query,
+            evidence=evidence,
+            **inference_kwargs,
         )
-        
-    
-    def filter_output_for_loss(self, forward_out, target):
-        """No filtering needed - return concepts for standard loss computation.
+
+        return ModelOutput(
+            params=result.params,
+            guide_params=result.guide_params,
+            samples=result.samples,
+            probabilities=result.probabilities,
+        )
+
+    @functools.cached_property
+    def _query_plan(self):
+        """Per-concept-variable assembly recipe, computed once (the PGM structure
+        is fixed after construction).
+
+        Returns a list ``[(variable_name, [(gt_col_index, cardinality), ...]), ...]``
+        over the concept variables only — a plate contributes one entry whose member
+        list has all its members, an individual concept contributes a single-member
+        entry. :meth:`build_query` applies this without re-deriving structure or
+        touching non-concept variables, keeping per-query cost at ``O(n_query)``.
+        """
+        axis = self.concept_annotations
+        return [
+            (var.name, [(axis.get_index(m), axis.concept(m).cardinality) for m in var.members])
+            for var in self.pgm.variables.values()
+            if var.variable_type == "concept"
+        ]
+
+    def build_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Build the full-observation query that fills every concept's tensor.
+
+        Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
+        columns in ``concept_annotations.labels`` order) to
+        ``{concept_variable_name: tensor}`` for every concept variable in the PGM.
+        The query is keyed by the *variable* name (so the inference engine teacher-
+        forces it via ``query.get(variable.name)`` — uniformly for plate and
+        individual layouts), and each tensor is assembled from the variable's members:
+        a categorical member (``cardinality > 1``) is one-hot encoded, a binary /
+        scalar member is taken as-is. Evidence (the raw input) is supplied separately.
+        """
+        query = {}
+        for name, members in self._query_plan:
+            cols = [
+                ground_truth[:, i].float().unsqueeze(-1) if card == 1
+                else F.one_hot(ground_truth[:, i].long(), card).float()
+                for i, card in members
+            ]
+            query[name] = torch.cat(cols, dim=-1)
+        return query
+
+    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+        """Prepare ground-truth labels for loss/metrics.
+
+        Returns the target as a concept-space :class:`AnnotatedTensor` (one column
+        per concept), so losses and metrics can align it to the predictions by
+        name. A target that already carries an annotation is returned unchanged.
+        Override in subclasses that predict a subset of concepts (e.g. task-only).
 
         Parameters
         ----------
-        forward_out : torch.Tensor
-            Model output concepts.
         target : torch.Tensor
-            Ground truth labels.
+            Raw ground-truth labels from the batch.
 
         Returns
         -------
-        dict
-            Dict with 'input' and 'target' for loss computation.
+        AnnotatedTensor or None
+            Concept-space annotated target.
         """
-        return {'input': forward_out, 'target': target}
-
-    def filter_output_for_metrics(self, forward_out, target):
-        """No filtering needed - return concepts for metric computation.
-
-        Parameters
-        ----------
-        forward_out : torch.Tensor
-            Model output concepts.
-        target : torch.Tensor
-            Ground truth labels.
-
-        Returns
-        -------
-        dict
-            Dict with 'preds' and 'target' for metric computation.
-        """
-        return {'preds': forward_out, 'target': target}
-
-    # ------------------------------------------------------------------
-    # Features extraction helpers
-    # ------------------------------------------------------------------
-
-    def maybe_apply_backbone(
-        self,
-        x: torch.Tensor,
-        backbone_kwargs: Optional[Mapping[str, Any]] = None,
-    ) -> torch.Tensor:
-        """Apply the backbone to ``x`` unless features are pre-computed.
-
-        Args:
-            x (torch.Tensor): Raw input tensor or already computed embeddings.
-            backbone_kwargs (Any): Extra keyword arguments forwarded to the
-                backbone callable when it is invoked.
-
-        Returns:
-            torch.Tensor: Feature embeddings.
-
-        Raises:
-            TypeError: If backbone is not None and not callable.
-        """
-
-        if self.backbone is None:
-            return x
-
-        if not callable(self.backbone):
-            raise TypeError(
-                "The provided backbone is not callable. Received "
-                f"instance of type {type(self.backbone).__name__}."
-            )
-
-        return self.backbone(x, **backbone_kwargs if backbone_kwargs else {})
+        if target is None or hasattr(target, 'annotation'):
+            return target
+        return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)

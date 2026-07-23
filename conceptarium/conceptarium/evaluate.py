@@ -448,11 +448,7 @@ def evaluate_job(job_dir, metrics_cfg=None):
         Nested evaluation results (see :func:`evaluate_standard`).
     """
     from hydra.utils import instantiate
-    from conceptarium.utils import (
-        setup_run_env,
-        update_config_from_data,
-        instantiate_loss,
-    )
+    from conceptarium.utils import setup_run_env, update_config_from_data
 
     job_dir = Path(job_dir)
     cfg, ckpt_path = load_job(job_dir)
@@ -470,7 +466,7 @@ def evaluate_job(job_dir, metrics_cfg=None):
     cfg = update_config_from_data(cfg, datamodule)
 
     # Reconstruct model and load weights
-    loss = instantiate_loss(cfg, datamodule.annotations)
+    loss = instantiate(cfg.loss, _convert_="all")
     metrics = instantiate(
         cfg.metrics, annotations=datamodule.annotations, _convert_="all"
     )

@@ -8,17 +8,20 @@ hydra:
   sweeper:
     params:
       seed: 42
-      dataset: dag_asia
-      model: blackbox
+      dataset: dag_asia, celeba
+      model: blackbox, blackbox_task
       loss: standard
 
 dataset:
-  batch_size: 2048
+  datamodule:
+    batch_size: 2048
 
 model:
-  optim_kwargs:
-    lr: 0.01
-  latent_encoder_kwargs:
+  model_cls:
+    optim_kwargs:
+      lr: 0.01
+  latent_encoder:
+    _target_: torch_concepts.nn.MLP
     hidden_size: 128
     n_layers: 3
     activation: leaky_relu

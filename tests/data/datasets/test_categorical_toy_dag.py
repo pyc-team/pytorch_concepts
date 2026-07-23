@@ -21,7 +21,7 @@ import pandas as pd
 import torch
 import os
 
-from torch_concepts.data.datasets import ToyDAGDataset
+from torch_concepts.data import ToyDAGDataset
 from torch_concepts.annotations import Annotations
 
 
@@ -105,18 +105,16 @@ class TestToyDAGDataset:
         assert dataset.n_concepts == 3
         assert len(dataset.concept_names) == 3
         # Binary variables (cardinality 2) are stored as dimension 1 in annotations
-        assert dataset.annotations[1].cardinalities == [1, 1, 1]
+        assert dataset.annotations.cardinalities == [1, 1, 1]
 
         # Check annotations
         assert dataset.annotations is not None
-        assert 1 in dataset.annotations
-        axis_annotation = dataset.annotations.get_axis_annotation(1)
+        axis_annotation = dataset.annotations
         assert axis_annotation is not None
         assert axis_annotation.labels == ['engine', 'wheels', 'car_start']
-        # Metadata is a dict with concept names as keys
+        # Each concept is discrete (binary/categorical, not continuous)
         for concept_name in ['engine', 'wheels', 'car_start']:
-            assert concept_name in axis_annotation.metadata
-            assert axis_annotation.metadata[concept_name]['type'] == 'discrete'
+            assert axis_annotation.concept(concept_name).type in ('binary', 'categorical')
 
     def test_sample_structure(self, temp_dir, simple_car_config):
         """Test that sample structure matches expected format."""
@@ -313,7 +311,7 @@ class TestToyDAGDataset:
         assert dataset.n_concepts == 3
         
         # Check cardinalities (all binary variables are stored as dimension 1)
-        assert dataset.annotations[1].cardinalities == [1, 1, 1]
+        assert dataset.annotations.cardinalities == [1, 1, 1]
         
         # Check that values are within valid ranges (all binary: 0 or 1)
         concepts = dataset.concepts.numpy()

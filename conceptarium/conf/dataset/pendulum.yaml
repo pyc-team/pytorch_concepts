@@ -1,0 +1,22 @@
+defaults:
+  - _commons
+  - _self_
+
+name: pendulum
+
+datamodule:
+  _target_: torch_concepts.data.datamodules.pendulum.PendulumDataModule
+  
+  generation_seed: ${dataset.datamodule.seed}    # dataset generation seed
+
+  # generation parameters
+  n_theta: 100
+  n_phi: 1000
+
+  label_descriptions:
+    theta: "Pendulum angle in radians"
+    phi: "Light source angle in radians"
+    pendulum_x: "X-coordinate of the pendulum ball"
+
+# pendulum x-coordinate regression
+default_task_names: ["pendulum_x"]

@@ -126,5 +126,20 @@ class TestWANDAGraphLearner(unittest.TestCase):
             )
 
 
+class TestBaseGraphLearner(unittest.TestCase):
+    """Cover the abstract BaseGraphLearner.weighted_adj NotImplementedError (line 85)."""
+
+    def test_weighted_adj_raises_not_implemented(self):
+        from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
+
+        class _Learner(BaseGraphLearner):
+            def weighted_adj(self):
+                return super().weighted_adj()
+
+        learner = _Learner(['c1', 'c2'], ['c1', 'c2'])
+        with self.assertRaises(NotImplementedError):
+            learner.weighted_adj()
+
+
 if __name__ == '__main__':
     unittest.main()

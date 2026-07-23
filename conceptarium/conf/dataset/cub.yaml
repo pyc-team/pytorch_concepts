@@ -1,0 +1,27 @@
+defaults:
+  - _commons
+  - cub
+  - _self_
+
+name: cub
+
+datamodule:
+  _target_: torch_concepts.data.datamodules.cub.CUBDataModule
+
+  # Image resize size
+  image_size: 224
+
+  # CUB has official train/test
+  splitter:
+    _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+  # Concept descriptions (optional; leave null to use raw attribute names)
+  label_descriptions: null
+
+# Task label - bird species (200 classes)
+default_task_names: [class]
+
+backbone:
+  _target_: torch_concepts.backbone.ImageBackbone
+  name: resnet50
+  freeze: True

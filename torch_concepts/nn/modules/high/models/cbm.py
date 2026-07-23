@@ -1,86 +1,91 @@
-"""Unified Concept Bottleneck Model with multiple training modes.
+"""Concept Bottleneck Model (CBM).
 
-This module provides a single ConceptBottleneckModel class that supports
-joint and independent training through a `training` argument.
+A bipartite model where the input is mapped to a set of concepts and the tasks
+are predicted from those concepts (Koh et al., ICML 2020): a linear encoder maps
+the latent representation to the concepts, and a linear predictor maps the
+concepts to the tasks (no concept embeddings).
+
+The model is assembled by a single builder, :meth:`_build_model`. Each bipartite
+level (concepts, tasks) is built by the shared factory
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`,
+which groups homogeneous concepts into the minimum number of plates: a fully
+homogeneous level collapses to a single plate, a heterogeneous level splits into
+one plate per ``(type, cardinality)`` family, and even a lone concept is a
+single-member plate. Because each level is always a list of variables, the CPD
+wiring and the :class:`BayesianNetwork` assembly are written once and work for
+every layout.
+
+References
+----------
+Koh et al. "Concept Bottleneck Models", ICML 2020. https://proceedings.mlr.press/v119/koh20a.html
 """
-
 from typing import List, Optional, Union
 
+import torch
+
+from torch.distributions import Bernoulli, OneHotCategorical, Normal
+
 from .....annotations import Annotations
-
-from ...low.base.inference import BaseInference
-from ...low.encoders.linear import LinearLatentToConcept
-from ...low.predictors.linear import LinearConceptToConcept
+from .....distributions import Delta
+from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.lazy import LazyConstructor
+from ...low.predictors.linear import LinearConceptToConcept
+from ...low.priors import LearnablePrior
+from ...mid.inference.base import BaseInference
+from ...mid.inference.torch.deterministic import DeterministicInference
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ..base.bipartite import BipartiteModel
 
-from ...mid.inference.deterministic import DeterministicInference
-from ...mid.constructors.bipartite import BipartiteModel
 
-from ..base.bipartite import BaseBipartiteModel
+class ConceptBottleneckModel(BipartiteModel):
+    """Concept Bottleneck Model.
 
+    Linear ``latent → concepts → tasks`` bottleneck with no concept embeddings.
+    Works as a pure PyTorch module by default, or as a Lightning module when
+    ``lightning=True``.
 
-class ConceptBottleneckModel(BaseBipartiteModel):
-    """Concept Bottleneck Model with configurable training mode.
-    
-    A unified CBM class that works as a pure PyTorch module by default,
-    or as a Lightning module when lightning=True.
-    
     Parameters
     ----------
     input_size : int
-        Dimensionality of input features (after backbone if used).
+        Dimensionality of input features (after the backbone, if any).
     annotations : Annotations
-        Concept annotations with labels, cardinalities, and distributions.
+        Concept annotations (labels, cardinalities, types).
     task_names : Union[List[str], str]
-        Names of task variables (subset of annotation labels).
+        Names of the task variables (a subset of the annotation labels).
+    inference : BaseInference, optional
+        Evaluation inference engine class. Defaults to ``DeterministicInference``.
+    inference_kwargs : dict, optional
+        Keyword arguments forwarded to the evaluation inference engine.
+    train_inference : BaseInference, optional
+        Training inference engine class (defaults to ``inference``).
+    train_inference_kwargs : dict, optional
+        Keyword arguments forwarded to the training inference engine.
     lightning : bool, default False
         If True, adds Lightning training capabilities.
-        If False (default), works as pure PyTorch module.
-    inference : BaseInference, optional
-        Inference engine class for evaluation. Defaults to DeterministicInference.
-    train_inference : BaseInference, optional
-        Inference engine class for training.
-        Defaults to DeterministicInference.
-    variable_distributions : Mapping, optional
-        Distribution classes for each concept if not in annotations.
+    plate : bool or None, default None
+        Per-level plate preference (forwarded to :class:`BaseModel` and consumed by
+        the level factories). ``None`` (default) and ``True`` group homogeneous
+        concepts into the minimum number of plates — even a lone concept becomes a
+        single-member plate. ``False`` uses one individual variable per concept.
     **kwargs
-        Additional arguments passed to BaseBipartiteModel, including:
-        
-        - **backbone** : Feature extraction module (e.g., ResNet)
-        - **latent_encoder** : Custom encoder for latent space
-        - **latent_encoder_kwargs** : Arguments for latent encoder
-        
-        Lightning Training (when lightning=True):
-        
-        - **loss** : Loss function (nn.Module)
-        - **metrics** : ConceptMetrics or dict of MetricCollections
-        - **optim_class** : Optimizer class (e.g., torch.optim.Adam)
-        - **optim_kwargs** : Optimizer arguments (e.g., {'lr': 0.001})
-        - **scheduler_class** : LR scheduler class
-        - **scheduler_kwargs** : Scheduler arguments
-    
-    Examples
-    --------
-    >>> # Pure PyTorch module (default)
-    >>> model = ConceptBottleneckModel(
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task']
-    ... )
-    >>> out = model(x, query=['c1', 'task'])  # Direct forward pass
-    
-    >>> # Lightning training enabled
-    >>> model = ConceptBottleneckModel(
-    ...     lightning=True,
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task'],
-    ...     loss=my_loss,
-    ...     optim_class=torch.optim.Adam,
-    ...     optim_kwargs={'lr': 0.001}
-    ... )
+        Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
+        the Lightning training arguments).
     """
-    
+
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
+    param_for_discrete_var = "logits"
+
+    # Per-type distribution policy: how this model models each concept type.
+    variable_distributions = {
+        'binary': Bernoulli,
+        'categorical': OneHotCategorical,
+        'continuous': Normal,
+    }
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
+
     def __init__(
         self,
         input_size: int,
@@ -88,34 +93,99 @@ class ConceptBottleneckModel(BaseBipartiteModel):
         task_names: Union[List[str], str],
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
-        train_inference: Optional[BaseInference] = DeterministicInference,
+        train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
-        lightning: bool = False, # wrap the Torch model with Lightning capabilities
-        **kwargs
+        lightning: bool = False,
+        plate: Optional[bool] = None,
+        **kwargs,
     ):
         super().__init__(
             input_size=input_size,
             annotations=annotations,
             task_names=task_names,
             lightning=lightning,
-            **kwargs
+            plate=plate,
+            **kwargs,
         )
-        
-        # Build bipartite model architecture
-        self.model = BipartiteModel(
-            task_names=task_names,
-            input_size=self.latent_size,
-            annotations=annotations,
-            encoder=LazyConstructor(LinearLatentToConcept),
-            predictor=LazyConstructor(LinearConceptToConcept)
+        # One builder for both layouts (plate / individual, decided per level).
+        self.pgm = self._build_model()
+
+        # once self.pgm is built, we can set up the inference engines (train and eval)
+        self.setup_inference(
+            inference,
+            inference_kwargs,
+            train_inference,
+            train_inference_kwargs,
         )
 
-        self.eval_inference = inference(
-            self.model.probabilistic_model, 
-            **(inference_kwargs or {})
+    def _input_latent_block(self):
+        """Raw input → latent block.
+
+        Returns ``(input_var, latent_var, input_cpd, latent_cpd)``: the raw
+        ``input`` enters the PGM as evidence and the backbone runs *inside* the
+        PGM as the ``latent | input`` CPD.
+        """
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+        input_cpd = ParametricCPD(
+            input_var,
+            parents=[],
+            parametrization=LearnablePrior(input_var.shape),
         )
-        self.train_inference = train_inference(
-            self.model.probabilistic_model, 
-            **(train_inference_kwargs or {})
+        latent_cpd = ParametricCPD(
+            latent_var,
+            parents=[input_var],
+            parametrization=self.backbone,
         )
-        
+        return input_var, latent_var, input_cpd, latent_cpd
+    
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble the CBM Bayesian network: ``input → latent → concepts → tasks``.
+
+        The backbone runs as the ``latent | input`` CPD; a linear encoder maps
+        ``latent`` to the concepts and a linear predictor maps the concepts to the
+        tasks. Each concept-side level is materialised by
+        :meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`
+        as a list of concept variables — homogeneous concepts share a plate, the
+        rest are individual variables. ``ParametricCPD`` broadcasts over each list
+        to build one CPD per variable, with the parametrization built per variable
+        so every distribution family gets its correct parameter (e.g. ``logits``);
+        ``LazyConstructor`` then sizes each layer from the variable's ``param_sizes``
+        and its parents' sizes.
+        """
+        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
+
+        concepts = self.build_concept_variables(self.intermediate_concept_names, plate_name="concepts")
+        tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
+
+        # latent → concepts: one encoder per concept variable (per group).
+        encoders = ParametricCPD(
+            variable=concepts,
+            parents=[latent_var],
+            parametrization=[
+                self._flexible_parametrization(
+                    variable=c,
+                    first=LazyConstructor(LinearEmbeddingToConcept),
+                    second=None # will be partial(...)
+                )
+                for c in concepts
+            ],
+        )
+        # concepts → tasks: every concept group is a parent of every task.
+        predictors = ParametricCPD(
+            variable=tasks,
+            parents=concepts,
+            parametrization=[
+                self._flexible_parametrization(
+                    variable=t,
+                    first=LazyConstructor(LinearConceptToConcept),
+                    second=None # will be partial(...)
+                )
+                for t in tasks
+            ],
+        )
+
+        return BayesianNetwork(
+            variables=[input_var, latent_var, *concepts, *tasks],
+            factors=[input_cpd, latent_cpd, *encoders, *predictors],
+        )

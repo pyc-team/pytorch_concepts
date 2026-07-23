@@ -1,47 +1,44 @@
 """
-CUB-200 Dataset Loader
-** THIS DATASET NEEDS TO BE DOWNLOADED BEFORE BEING ABLE TO USE THE LOADER **
+CUB-200-2011 (Caltech-UCSD Birds) Dataset
 
-################################################################################
-## DOWNLOAD INSTRUCTIONS
-################################################################################
-
-**** OPTION #1 *****
-The simplest way to get the CUB dataset, is to download the pre-processed CUB
-dataset by Koh et al. [CBM Paper]. This can be downloaded from their
-public colab notebook at: https://worksheets.codalab.org/worksheets/0x362911581fcd4e048ddfd84f47203fd2.
-You will need to download the original CUB dataset from that notebook (found
-here: https://worksheets.codalab.org/bundles/0xd013a7ba2e88481bbc07e787f73109f5)
-and the preprocessed "CUB_preprocessed" dataset (which can be directly accessed
-here: https://worksheets.codalab.org/bundles/0x5b9d528d2101418b87212db92fea6683)
-
-**** OPTION #2 *****
-Follow the download the preprocess instructions found in Koh et al.'s original
-repository here: https://github.com/yewsiang/ConceptBottleneck.
-Specifically, here: https://github.com/yewsiang/ConceptBottleneck/blob/master/CUB/
-
-################################################################################
-
-[IMPORTANT] After downloading the files, they need to follow the following
-structure:
-
-
-This loader has been adapted/inspired by that of found in Koh et al.'s
-repository (https://github.com/yewsiang/ConceptBottleneck/blob/master/CUB/cub_loader.py)
-as well as in Espinosa Zarlenga and Barbiero's et al.'s repository
-(https://github.com/mateoespinosa/cem).
+Adapted from:
+    - Koh et al.'s paper Concept Bottleneck Models 
+    - Espinosa Zarlenga and Barbiero et al.'s repository https://github.com/mateoespinosa/cem/blob/main/cem/data/CUB200/cub_loader.py.
 """
 
-
-import numpy as np
 import os
+import logging
+from pathlib import Path
+import tarfile
+from anyio import Path
 import pickle
+import numpy as np
+import pandas as pd
 import torch
-import torchvision.transforms as transforms
 
 from collections import defaultdict
 from PIL import Image
-from torch.utils.data import Dataset
+from typing import List, Mapping, Optional
+import zipfile
+import shutil
+
+from torch_concepts import Annotations
+from torch_concepts.data.base import ConceptDataset
+from torch_concepts.data.io import download_url
+
+logger = logging.getLogger(__name__)
+
+
+def _import_torchvision():
+    """Lazily import torchvision, raising a clear error if it is not installed."""
+    try:
+        import torchvision as tv
+        return tv
+    except ImportError as exc:
+        raise ImportError(
+            "CUBDataset image loading requires `torchvision`. "
+            "Install it with: pip install torchvision"
+        ) from exc
 
 ########################################################
 ## GENERAL DATASET GLOBAL VARIABLES
@@ -49,13 +46,11 @@ from torch.utils.data import Dataset
 
 N_CLASSES = 200
 
-# CAN BE OVERWRITTEN WITH AN ENV VARIABLE CUB_DIR
-CUB_DIR = os.environ.get("CUB_DIR", './CUB200/')
-
-
-#########################################################
-## CONCEPT INFORMATION REGARDING CUB
-#########################################################
+URLS = [
+    # NOTE: we retrieve the .pkl split files from the CEM repository since I cannot find the m in the CBM repo.
+    "https://raw.githubusercontent.com/mateoespinosa/cem/main/cem/data/CUB200/class_attr_data_10",
+    "https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz?download=1",
+]
 
 # CUB Class names
 
@@ -701,188 +696,254 @@ for i, concept_name in enumerate(list(
 )):
     group = concept_name[:concept_name.find("::")]
     CONCEPT_GROUP_MAP[group].append(i)
+CONCEPT_GROUP_MAP = dict(CONCEPT_GROUP_MAP)
+
+# Ordered names for the 112 selected concepts (matches order in pkl files)
+SELECTED_CONCEPT_NAMES: List[str] = [CONCEPT_SEMANTICS[i] for i in SELECTED_CONCEPTS]
 
 
+class CUBDataset(ConceptDataset):
+    """Dataset class for CUB-200-2011 (Caltech-UCSD Birds).
 
-# Definitions from CUB (certainties.txt)
-#    1 not visible
-#    2 guessing
-#    3 probably
-#    4 definitely
-# Unc map represents a mapping from the discrete score to a "mental probability"
-DEFAULT_UNC_MAP = [
-    {0: 0.5, 1: 0.5, 2: 0.5, 3:0.75, 4:1.0},
-    {0: 0.5, 1: 0.5, 2: 0.5, 3:0.75, 4:1.0},
-]
+    CUB-200-2011 contains 11,788 bird images across 200 species classes,
+    annotated with 112 binary semantic attributes selected by Koh et al.
+    [CBM Paper] from the full set of 312 CUB attributes.
 
-##########################################################
-## Helper Functions
-##########################################################
+    Official train / val / test splits from the pre-processed pickle files
+    are preserved; use :class:`~torch_concepts.data.splitters.NativeSplitter`
+    in the corresponding datamodule.
 
+    The concept vector per sample contains:
 
-def discrete_to_continuous_unc(unc_val, attr_label, unc_map):
-    '''
-    Yield a continuous prob representing discrete conf val
-    Inspired by CBM data processing
+    - columns 0-111: 112 binary semantic attributes (cardinality 1 each)
+    - column 112:    bird species index 0-199 (cardinality 200)
 
-    The selected probability should account for whether the concept is on or off
-        E.g., if a human is "probably" sure the concept is off
-            flip the prob in unc_map
-    '''
-    unc_val = unc_val.item()
-    attr_label = attr_label.item()
-    return float(unc_map[int(attr_label)][unc_val])
-
-
-##########################################################
-## Data Loaders
-##########################################################
-
-class CUBDataset(Dataset):
-    """
-    TODO
+    Parameters
+    ----------
+    root : str, optional
+        Root directory that contains ``class_attr_data_10/`` and
+        ``CUB_200_2011/``.  Defaults to ``./data/CUB200``.
+    image_size : int, optional
+        Side length (px) images are resized to.  Defaults to 224.
+    concept_subset : list of str, optional
+        Subset of concept names to retain.  ``None`` keeps all 113.
+    label_descriptions : dict, optional
+        Mapping from concept name to human-readable description.
     """
 
     def __init__(
         self,
-        split='train',
-        uncertain_concept_labels=False,
-        root=CUB_DIR,
-        path_transform=None,
-        sample_transform=None,
-        concept_transform=None,
-        label_transform=None,
-        uncertainty_based_random_labels=False,
-        unc_map=DEFAULT_UNC_MAP,
-        selected_concepts=None,
-        training_augment=True,
+        root: str = None,
+        image_size: int = 224,
+        concept_subset: Optional[list] = None,
+        label_descriptions: Optional[Mapping] = None,
     ):
-        """
-        TODO: Define different arguments
-        """
-        if not (os.path.exists(root) and os.path.isdir(root)):
-            raise ValueError(
-                f'Provided CUB data directory "{root}" is not a valid or '
-                f'an existing directory.'
-            )
-        assert split in ['train', 'val', 'test'], (
-            f"CUB split must be in ['train', 'val', 'test'] but got '{split}'"
-        )
-        self.split = split
-        base_dir = os.path.join(root, 'class_attr_data_10')
-        self.pkl_file_path = os.path.join(base_dir, f'{split}.pkl')
-        self.name = 'CUB'
-
-        self.data = []
-        with open(self.pkl_file_path, 'rb') as f:
-            self.data.extend(pickle.load(f))
-        image_size = 299
-        if (split == 'train') and training_augment:
-            self.sample_transform  = transforms.Compose([
-                transforms.ColorJitter(brightness=32/255, saturation=(0.5, 1.5)),
-                transforms.RandomResizedCrop(image_size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(), #implicitly divides by 255
-                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
-                sample_transform or (lambda x: x),
-            ])
-        else:
-            self.sample_transform = transforms.Compose([
-                transforms.CenterCrop(image_size),
-                transforms.ToTensor(), #implicitly divides by 255
-                transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [2, 2, 2]),
-                sample_transform or (lambda x: x),
-            ])
-        self.concept_transform = concept_transform or (lambda x: x)
-        self.label_transform = label_transform or (lambda x: x)
-        self.uncertain_concept_labels = uncertain_concept_labels
+        if root is None:
+            root = os.path.join(os.getcwd(), 'data', 'CUB200')
         self.root = root
-        self.path_transform = path_transform
-        self.uncertainty_based_random_labels = uncertainty_based_random_labels
-        self.unc_map = unc_map
-        if selected_concepts is None:
-            selected_concepts = list(range(len(SELECTED_CONCEPTS)))
-        self.selected_concepts = selected_concepts
-        self.concept_names = self.concept_attr_names = list(
-            np.array(
-                CONCEPT_SEMANTICS
-            )[CONCEPT_SEMANTICS][selected_concepts]
+        self.image_size = image_size
+        self.label_descriptions = label_descriptions
+
+        filenames, concepts, annotations, graph = self.load()
+
+        super().__init__(
+            input_data=filenames,
+            concepts=concepts,
+            annotations=annotations,
+            graph=graph,
+            concept_names_subset=concept_subset,
+            name='CUBDataset',
         )
-        self.task_names = self.task_attr_names = CLASS_NAMES
 
-    def __len__(self):
-        return len(self.data)
+    # ------------------------------------------------------------------
+    # ConceptDataset interface
+    # ------------------------------------------------------------------
 
-    def __getitem__(self, idx):
-        img_data = self.data[idx]
-        img_path = img_data['img_path']
-        if self.path_transform is None:
-            # This is needed if the dataset is downloaded from the original
-            # CBM paper's repository/experiment code
-            img_path = img_path.replace(
-                '/juice/scr/scr102/scr/thaonguyen/CUB_supervision/datasets/',
-                self.root
+    @property
+    def raw_filenames(self) -> List[str]:
+        return [
+            "attributes",
+            "images",
+            "parts",
+            "attributes.txt",
+            "bounding_boxes.txt",
+            "classes.txt",
+            "image_class_labels.txt",
+            "images.txt",
+            "train_test_split.txt", # split with left out classes (not used in our setting)
+            "class_attr_data_10/train.pkl", # splits with all classes, from Koh et al.'s pre-processing
+            "class_attr_data_10/val.pkl",
+            "class_attr_data_10/test.pkl",
+        ]
+
+    @property
+    def processed_filenames(self) -> List[str]:
+        return [
+            'filenames.txt',
+            'concepts.pt',
+            'annotations.pt',
+            'split_mapping.h5',
+        ]
+
+    def download(self) -> None:
+        """Downloads the CUB dataset if it is not already present."""
+        if not os.path.exists(self.root):
+            os.makedirs(self.root)
+            
+        # store the Koh et al. pre-processed pickle files in a subfolder "class_attr_data_10"
+        class_attr_dir = os.path.join(self.root, "class_attr_data_10")
+        if not os.path.exists(class_attr_dir):
+            os.makedirs(class_attr_dir)
+            for split_name in ('train', 'val', 'test'):
+                url = f"{URLS[0]}/{split_name}.pkl"
+                download_url(url, class_attr_dir)
+
+        tgz_path = download_url(URLS[1], self.root)
+        
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            tar.extractall(path=self.root)
+        os.unlink(tgz_path)
+
+        # Move all the files outside of the nested "CUB_200_2011" folder to the root
+        extracted_folder = os.path.join(self.root, "CUB_200_2011")
+        for item in os.listdir(extracted_folder):
+            src = os.path.join(extracted_folder, item)
+            dst = os.path.join(self.root, item)
+            if os.path.exists(dst):
+                if os.path.isdir(dst):
+                    shutil.rmtree(dst)
+                else:
+                    os.remove(dst)
+            shutil.move(src, dst)
+        os.rmdir(extracted_folder)
+
+    def _remap_image_path(self, img_path: str) -> str:
+        """Remap the absolute path stored in a pkl entry to the local root.
+
+        The Koh et al. pkl files embed absolute paths from their cluster
+        (``/juice/scr/.../datasets/``).  We extract the ``CUB_200_2011/``
+        subtree and join it with the local root.
+        """
+        marker = 'CUB_200_2011'
+        idx = img_path.find(marker)
+        if idx >= 0:
+            relative = img_path[idx:]  # e.g. "CUB_200_2011/images/.../file.jpg"
+            # Eliminate CUB_200_2011 from path
+            relative = relative[len(marker) + 1:]  # e.g. "images/.../file.jpg"
+            return os.path.abspath(os.path.join(self.root, relative))
+        # Fallback: replace the known cluster prefix
+        return img_path.replace(
+            '/juice/scr/scr102/scr/thaonguyen/CUB_supervision/datasets/',
+            self.root + os.sep,
+        )
+
+    def build(self):
+        """Process raw CUB pickle files and save cached dataset artefacts."""
+        self.maybe_download()
+
+        logger.info(f"Building CUB dataset from {self.root} ...")
+
+        all_paths: List[str] = []
+        all_attrs: List[List[int]] = []
+        all_classes: List[int] = []
+        split_labels: List[str] = []
+
+        for split_name in ('train', 'val', 'test'):
+            pkl_path = os.path.join(
+                self.root, 'class_attr_data_10', f'{split_name}.pkl'
             )
-            try:
-                img = Image.open(img_path).convert('RGB')
-            except:
-                img_path_split = img_path.split('/')
-                img_path = '/'.join(
-                    img_path_split[:2] + [self.split] + img_path_split[2:]
-                )
-                img = Image.open(img_path).convert('RGB')
-        else:
-            img = Image.open(self.path_transform(img_path)).convert('RGB')
+            with open(pkl_path, 'rb') as fh:
+                entries = pickle.load(fh)
 
-        class_label = self.label_transform(img_data['class_label'])
-        img = self.sample_transform(img)
+            for entry in entries:
+                img_path = self._remap_image_path(entry['img_path'])
+                all_paths.append(img_path)
+                all_attrs.append(entry['attribute_label'])   # 112-dim list
+                all_classes.append(int(entry['class_label']))
+                split_labels.append(split_name)
 
-        if self.uncertain_concept_labels:
-            attr_label = img_data['uncertain_attribute_label']
-        else:
-            attr_label = img_data['attribute_label']
-        attr_label = self.concept_transform(
-            np.array(attr_label)[self.selected_concepts]
+        n = len(all_paths)
+        logger.info(f"Loaded {n} samples (train/val/test)")
+
+        # Build concept tensor: 112 binary attrs + class index
+        attr_array = np.array(all_attrs, dtype=np.float32)               # (n, 112)
+        class_array = np.array(all_classes, dtype=np.float32).reshape(-1, 1)  # (n, 1)
+        all_concepts_np = np.concatenate([attr_array, class_array], axis=1)   # (n, 113)
+        concepts_tensor = torch.tensor(all_concepts_np, dtype=torch.float32)
+
+        # Build Annotations
+        concept_names = SELECTED_CONCEPT_NAMES + ['class']
+        binary_states = [['0'] for _ in SELECTED_CONCEPT_NAMES]
+        states = binary_states + [CLASS_NAMES]
+        cardinalities = [1] * len(SELECTED_CONCEPT_NAMES) + [N_CLASSES]
+        types = ['binary'] * len(SELECTED_CONCEPT_NAMES) + ['categorical']
+
+        annotations = Annotations(
+            labels=concept_names,
+            states=states,
+            cardinalities=cardinalities,
+            types=types,
         )
 
-        # We may want to randomly sample concept labels based on their provided
-        # annotator uncertainty
-        if self.uncertainty_based_random_labels:
-            discrete_unc_label = np.array(
-                img_data['attribute_certainty']
-            )[self.selected_concepts]
-            instance_attr_label = np.array(img_data['attribute_label'])
-            competencies = []
-            for (discrete_unc_val, hard_concept_val) in zip(
-                discrete_unc_label,
-                instance_attr_label,
-            ):
-                competencies.append(
-                    discrete_to_continuous_unc(
-                        discrete_unc_val,
-                        hard_concept_val,
-                        self.unc_map,
-                    )
-                )
-            attr_label = np.random.binomial(1, competencies)
+        # Build split mapping (native train/val/test)
+        split_series = pd.Series(split_labels, name='split')
 
-        return img, torch.FloatTensor(attr_label), class_label
+        # Save artefacts
+        os.makedirs(self.root, exist_ok=True)
+        logger.info(f"Saving CUB dataset artefacts to {self.root}")
 
-    def concept_weights(self):
-        """
-        Calculate class imbalance ratio for binary attribute labels
-        """
-        imbalance_ratio = []
-        with open(self.pkl_file_path, 'rb') as f:
-            data = pickle.load(f)
-        n = len(data)
-        n_attr = len(data[0]['attribute_label'])
-        n_ones = [0] * n_attr
-        total = [n] * n_attr
-        for d in data:
-            labels = d['attribute_label']
-            for i in range(n_attr):
-                n_ones[i] += labels[i]
-        for j in range(len(n_ones)):
-            imbalance_ratio.append(total[j]/n_ones[j] - 1)
-        return np.array(imbalance_ratio)[self.selected_concepts]
+        with open(self.processed_paths[0], 'w') as fh:
+            fh.write('\n'.join(all_paths))
+
+        torch.save(concepts_tensor, self.processed_paths[1])
+        torch.save(annotations, self.processed_paths[2])
+        split_series.to_hdf(self.processed_paths[3], key='split_mapping')
+
+        logger.info(f"CUB dataset saved ({n} samples)")
+
+    def load_raw(self):
+        """Load processed artefacts from disk."""
+        self.maybe_build()
+
+        logger.info(f"Loading CUB dataset from {self.root}")
+
+        with open(self.processed_paths[0], 'r') as fh:
+            filenames = fh.read().strip().split('\n')
+
+        concepts = torch.load(self.processed_paths[1], weights_only=False)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
+        graph = None
+
+        return filenames, concepts, annotations, graph
+
+    def load(self):
+        return self.load_raw()
+
+    def __getitem__(self, item: int) -> dict:
+        if self.embs_precomputed:
+            x = self.input_data[item]
+        else:
+            img_path = self.input_data[item]
+            tv = _import_torchvision()
+            x = Image.open(img_path).convert('RGB')
+            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+            x = tv.transforms.ToTensor()(x)
+        c = self.concepts[item]
+        return {'inputs': {'x': x}, 'concepts': {'c': c}}
+
+    # ------------------------------------------------------------------
+    # Properties — override base class which assumes input_data is a Tensor
+    # ------------------------------------------------------------------
+
+    @property
+    def n_samples(self) -> int:
+        return len(self.input_data)
+
+    @property
+    def n_features(self) -> tuple:
+        return tuple(self[0]['inputs']['x'].shape)
+
+    @property
+    def shape(self) -> tuple:
+        return (self.n_samples, *self.n_features)
+

@@ -14,15 +14,17 @@ Note: Annotations and concept management are now handled by BaseModel,
 not BaseLearner. These tests focus on the core orchestration functionality.
 """
 import unittest
+import pytest
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch.distributions import Bernoulli
-from torch_concepts.annotations import Annotations, AxisAnnotation
+from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.utils import GroupConfig
+from torch_concepts.nn.modules.outputs import ModelOutput
 
 
 class MockLearner(BaseLearner):
@@ -43,25 +45,44 @@ class FullMockLearner(BaseLearner):
     """Mock that satisfies all shared_step requirements.
 
     Mimics the interface that BaseModel normally provides:
-    concept_names, concept_annotations, filter_output_for_loss,
-    filter_output_for_metrics, and a full forward(x, query, evidence, **kw).
+    concept_names, concept_annotations, prepare_target,
+    and a full forward(x, query, evidence, **kw).
     """
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)
         self.n_concepts = n_concepts
-        self.concept_annotations = annotations.get_axis_annotation(1)
+        self.concept_annotations = annotations
         self.concept_names = self.concept_annotations.labels
         self.dummy_param = nn.Parameter(torch.randn(1))
 
-    def forward(self, x, query=None, evidence=None, **kwargs):
-        return torch.randn(x.shape[0], self.n_concepts, requires_grad=True)
+    def build_query(self, ground_truth):
+        if ground_truth is None:
+            return {}
+        return {
+            name: ground_truth[:, i].float().unsqueeze(-1)
+            for i, name in enumerate(self.concept_names)
+        }
 
-    def filter_output_for_loss(self, forward_out, target):
-        return {'input': forward_out, 'target': target}
+    def forward(self, x=None, query=None, evidence=None, **kwargs):
+        if evidence is not None:
+            batch_size = evidence['input'].shape[0]
+        elif x is not None:
+            batch_size = x.shape[0]
+        else:
+            batch_size = 2
+        logits = torch.randn(batch_size, self.n_concepts, requires_grad=True)
+        logits = AnnotatedTensor(logits, self.concept_annotations)
+        params = {}
+        if query:
+            for i, name in enumerate(query.keys()):
+                params[name] = {'logits': logits[:, i:i+1]}
+        return ModelOutput(logits=logits, params=params)
 
-    def filter_output_for_metrics(self, forward_out, target):
-        return {'preds': forward_out, 'target': target}
+    def prepare_target(self, target):
+        if target is None:
+            return None
+        return AnnotatedTensor(target, self.concept_annotations.to_concept_space())
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -74,12 +95,6 @@ class TestBaseLearnerInitialization(unittest.TestCase):
         self.assertIsNone(learner.loss)
         self.assertIsNone(learner.train_metrics)
         self.assertIsNone(learner.optim_class)
-
-    def test_initialization_with_loss(self):
-        """Test initialization with loss function."""
-        loss_fn = nn.MSELoss()
-        learner = MockLearner(n_concepts=2, loss=loss_fn)
-        self.assertEqual(learner.loss, loss_fn)
 
     def test_initialization_with_optimizer(self):
         """Test initialization with optimizer configuration."""
@@ -130,15 +145,9 @@ class TestBaseLearnerMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for ConceptMetrics testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli}
-                }
             )
-        })
 
     def test_metrics_none(self):
         """Test initialization with no metrics."""
@@ -179,22 +188,29 @@ class TestBaseLearnerMetrics(unittest.TestCase):
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
-        
-        # Create dummy predictions and targets (2 samples, 2 concepts)
-        preds = torch.tensor([[0.8, 0.7], [0.2, 0.3]])
-        targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        
+
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=AnnotatedTensor(torch.tensor([[0.8, 0.7], [0.2, 0.3]]), self.annotations),
+            target=AnnotatedTensor(
+                torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
+                self.annotations.to_concept_space(),
+            ),
+        )
+
         # Update metrics - should not raise error
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, out.target, step='train')
 
     def test_update_metrics_with_none(self):
         """Test update_metrics when metrics is None."""
         learner = MockLearner(metrics=None)
         
         # Should not raise error even with None metrics
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
-        learner.update_metrics(preds, targets, step='train')
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
+        learner.update_metrics(out, out.target, step='train')
 
 
 class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
@@ -202,15 +218,9 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
 
     def setUp(self):
         """Set up annotations for testing."""
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli}
-                }
             )
-        })
 
     def test_update_and_log_metrics(self):
         """Test update_and_log_metrics method."""
@@ -220,15 +230,18 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
         )
         learner = MockLearner(metrics=metrics)
-        
-        # Create metrics args (2 samples, 2 concepts)
-        metrics_args = {
-            'preds': torch.tensor([[0.8, 0.7], [0.2, 0.3]]),
-            'target': torch.tensor([[1.0, 1.0], [0.0, 0.0]])
-        }
-        
+
+        # Create ModelOutput (2 samples, 2 concepts)
+        out = ModelOutput(
+            logits=AnnotatedTensor(torch.tensor([[0.8, 0.7], [0.2, 0.3]]), self.annotations),
+            target=AnnotatedTensor(
+                torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
+                self.annotations.to_concept_space(),
+            ),
+        )
+
         # Should not raise error
-        learner.update_and_log_metrics(metrics_args, step='train', batch_size=2)
+        learner.update_and_log_metrics(out, out.target, step='train', batch_size=2)
 
 
 class TestBaseLearnerBatchHandling(unittest.TestCase):
@@ -386,10 +399,12 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
     def test_update_metrics_invalid_type_is_noop(self):
         """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        preds = torch.tensor([0.8, 0.2])
-        targets = torch.tensor([1, 0])
+        out = ModelOutput(
+            logits=torch.tensor([0.8, 0.2]),
+            target=torch.tensor([1, 0])
+        )
         # Should not raise — train_metrics is None so nothing happens
-        learner.update_metrics(preds, targets, step='train')
+        learner.update_metrics(out, out.target, step='train')
 
 
 # ======================================================================
@@ -397,44 +412,31 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
 # ======================================================================
 
 class TestGetInferenceKwargs(unittest.TestCase):
-    """Test _get_inference_kwargs with and without inference attribute."""
+    """Test shared_step's build_query/forward integration replaces the old _get_inference_kwargs."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
-        })
 
     def test_no_inference_returns_empty(self):
-        """Without inference attr, returns empty dict."""
-        learner = MockLearner(n_concepts=2)
-        # MockLearner has no .inference attribute
-        batch = {
-            'inputs': {'x': torch.randn(4, 3)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
-        }
-        result = learner._get_inference_kwargs(batch)
+        """FullMockLearner.build_query with None ground_truth returns empty dict."""
+        learner = FullMockLearner(self.annotations, n_concepts=2)
+        # build_query(None) returns an empty dict (no teacher-forcing)
+        result = learner.build_query(None)
+        self.assertIsInstance(result, dict)
         self.assertEqual(result, {})
 
     def test_with_inference_returns_kwargs(self):
-        """With inference attr, returns ground_truth / concept_names / return_logits."""
+        """FullMockLearner.build_query with a real ground_truth returns per-concept tensors."""
         learner = FullMockLearner(self.annotations, n_concepts=2)
-        learner.inference = True  # simulate having an inference engine
         c = torch.randint(0, 2, (4, 2)).float()
-        batch = {
-            'inputs': {'x': torch.randn(4, 3)},
-            'concepts': {'c': c},
-        }
-        result = learner._get_inference_kwargs(batch)
-        self.assertIn('ground_truth', result)
-        self.assertTrue(torch.equal(result['ground_truth'], c))
-        self.assertEqual(result['concept_names'], self.annotations.get_axis_annotation(1).labels)
-        self.assertTrue(result['return_logits'])
+        result = learner.build_query(c)
+        self.assertIsInstance(result, dict)
+        # build_query maps each concept name to a (batch, 1) tensor
+        for name in ('C1', 'C2'):
+            self.assertIn(name, result)
+            self.assertEqual(result[name].shape[0], 4)
 
 
 # ======================================================================
@@ -445,17 +447,10 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
     """Test shared_step and the per-split step methods."""
 
     def setUp(self):
-        self.annotations = Annotations({
-            1: AxisAnnotation(
+        self.annotations = Annotations(
                 labels=('C1', 'C2'),
-                metadata={
-                    'C1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'C2': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
-        })
         self.loss_fn = ConceptLoss(
-            self.annotations,
             binary=nn.BCEWithLogitsLoss(),
         )
         self.batch = {
@@ -490,22 +485,18 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         self.assertIn('train_loss', learner._logged)
 
     def test_shared_step_no_loss(self):
-        """shared_step with loss=None still returns (the uninitialized variable raises)."""
+        """shared_step with loss=None returns None."""
         learner = FullMockLearner(
             self.annotations, n_concepts=2,
             loss=None,
         )
         self._patch_logging(learner)
-        # loss local variable is never assigned when self.loss is None,
-        # so returning it raises UnboundLocalError — this is the current
-        # behaviour and we document it.
-        with self.assertRaises(UnboundLocalError):
-            learner.shared_step(self.batch, step='train')
+        result = learner.shared_step(self.batch, step='train')
+        self.assertIsNone(result)
 
     def test_shared_step_with_composite_loss(self):
         """shared_step works when loss uses per-type composition."""
         loss = ConceptLoss(
-            self.annotations,
             binary=[nn.BCEWithLogitsLoss(), nn.BCEWithLogitsLoss()],
             binary_weights=[1.0, 0.5],
         )
@@ -562,6 +553,28 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         learner.log_loss('train', fake_loss, batch_size=8)
         self.assertIn('train_loss', learner._logged)
         self.assertAlmostEqual(learner._logged['train_loss'].item(), 0.42, places=5)
+
+class TestBaseLearnerMetricsEdgeCases(unittest.TestCase):
+    """Cover log_metrics else branch."""
+
+    def setUp(self):
+        self.annotations = Annotations(
+                labels=('C1', 'C2'),
+            )
+
+    def test_log_metrics_non_concept_metrics(self):
+        """log_metrics with a plain MetricCollection uses the else branch."""
+        learner = MockLearner(n_concepts=2)
+        learner._logged = {}
+        def _fake_log_dict(d, **kw):
+            learner._logged.update(d)
+        learner.log_dict = _fake_log_dict
+
+        coll = torchmetrics.MetricCollection({
+            'acc': torchmetrics.classification.BinaryAccuracy(),
+        })
+        # Should go through the else branch (not ConceptMetrics)
+        learner.log_metrics(coll)
 
 
 if __name__ == '__main__':

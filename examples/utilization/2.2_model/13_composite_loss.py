@@ -13,12 +13,12 @@ Three scenarios are demonstrated:
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Bernoulli, Categorical, OneHotCategorical
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, L1LogitRegularizer
-from torch_concepts.data.datamodules import BnLearnDataModule
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, L1LogitRegularizer, MLP
+from torch_concepts.data import BnLearnDataModule
 
 
 def main():
@@ -36,22 +36,24 @@ def main():
     datamodule.setup('fit')
 
     annotations = datamodule.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     # Assign distribution families to each concept
-    axis = annotations.get_axis_annotation(1)
+    axis = annotations
     variable_distributions = {
-        name: Bernoulli if axis.cardinalities[i] == 1 else Categorical
+        name: Bernoulli if axis.cardinalities[i] == 1 else OneHotCategorical
         for i, name in enumerate(concept_names)
     }
 
     # Shared model kwargs
+    input_size = datamodule.dataset.input_data.shape[1]
     model_kwargs = dict(
-        input_size=datamodule.dataset.input_data.shape[1],
+        input_size=input_size,
         annotations=annotations,
         variable_distributions=variable_distributions,
         task_names=['PropCost'],          # no separate task — all nodes are concepts
-        latent_encoder_kwargs={'hidden_size': 32, 'n_layers': 2},
+        backbone=MLP(input_size=input_size, hidden_size=32, n_layers=2),
+        latent_size=32,
         lightning=True,
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 1e-3},
@@ -63,7 +65,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=nn.BCEWithLogitsLoss(),
         categorical=nn.CrossEntropyLoss(),
     )
@@ -78,7 +79,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
         binary_weights=[1.0, 0.5],
         categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
@@ -95,7 +95,6 @@ def main():
     print("=" * 60)
 
     loss_fn = ConceptLoss(
-        annotations=annotations,
         binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.05)],
         binary_weights=[1.0, 0.5],
         categorical=nn.CrossEntropyLoss(),   # single module, no extra weight

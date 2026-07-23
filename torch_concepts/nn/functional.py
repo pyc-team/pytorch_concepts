@@ -7,7 +7,7 @@ exogenous mixture, and evaluation metrics for concept-based models.
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
-from typing import Callable, List, Union, Dict
+from typing import Callable, List, Optional, Tuple, Union, Dict
 from torch.nn import Linear
 import warnings
 import numbers
@@ -21,10 +21,11 @@ from scipy.sparse.linalg import LinearOperator
 _constr_keys = {"fun", "lb", "ub", "jac", "hess", "hessp", "keep_feasible"}
 _bounds_keys = {"lb", "ub", "keep_feasible"}
 
+from torch_concepts.tensor import AnnotatedTensor
 from .modules.low.semantic import CMRSemantic
 
 
-def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
+def _default_concept_names(n_concepts: int) -> Dict[int, List[str]]:
     """
     Generate default concept names for a given shape.
 
@@ -35,9 +36,9 @@ def _default_concept_names(shape: List[int]) -> Dict[int, List[str]]:
         Dict mapping dimension index to list of concept names.
     """
     concept_names = {}
-    for dim in range(len(shape)):
+    for dim in range(n_concepts):
         concept_names[dim+1] = [
-            f"concept_{dim+1}_{i}" for i in range(shape[dim])
+            f"concept_{dim+1}_{i}" for i in range(n_concepts)
         ]
     return concept_names
 
@@ -154,15 +155,11 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
         >>>
         >>> # Apply grouped mixture
         >>> mixed = grouped_concept_exogenous_mixture(c_emb, c_scores, groups)
-        >>> print(mixed.shape)  # torch.Size([4, 3, 10])
-        >>> # Output shape: (batch_size, n_groups, emb_size // 2)
-        >>>
-        >>> # Singleton groups use two-half mixture
-        >>> # Multi-concept groups use weighted average of base exogenous
+        >>> print(mixed.shape)
+        torch.Size([4, 3, 20])
     """
     B, C, D = c_emb.shape
     assert sum(groups) == C, f"group_sizes must sum to n_concepts. Current group_sizes: {groups}, n_concepts: {C}"
-    assert torch.all(torch.tensor(groups) > 1), f"All group sizes must be greater than 1. Current group_sizes: {groups}"
 
     s = c_scores.unsqueeze(-1)                            # [B, C, 1]
 
@@ -646,6 +643,314 @@ def intervention_score(
     return intervention_effectiveness
 
 
+def tcav_score(
+    embeddings: torch.Tensor,
+    head: Callable,
+    cavs: torch.Tensor,
+    target: Union[int, str, Tuple[str, str]] = 0,
+) -> torch.Tensor:
+    """Compute TCAV scores of concepts for a target output.
+
+    The conceptual sensitivity of concept ``C`` for target ``k`` at an input
+    ``x`` is the directional derivative of the target output along the
+    concept activation vector, ``S_{C,k}(x) = grad(head(x)[k]) . v_C``: a
+    positive value means an infinitesimal step towards the concept
+    increases the target output. The TCAV score is the fraction of inputs
+    with positive sensitivity; scores far from 0.5 indicate the concept is
+    relevant to the target. The paper's statistical significance test
+    against CAVs fit on random labels is experiment protocol and is shown
+    in ``examples/utilization/0_layer/5_tcav.py``.
+
+    Main reference:
+    Kim et al. "Interpretability Beyond Feature Attribution: Quantitative
+    Testing with Concept Activation Vectors (TCAV)", ICML 2018.
+    https://proceedings.mlr.press/v80/kim18d
+
+    Note: the sensitivity follows the paper's definition (gradient of the
+    target output). The official TCAV code differentiates the softmax
+    cross-entropy loss of the target class instead; to reproduce it
+    exactly, pass a ``head`` returning minus that loss per sample.
+
+    Args:
+        embeddings (torch.Tensor): Activations of shape (batch_size,
+            n_features) of the examples to test, at the layer where the
+            CAVs were fit.
+        head (Callable): The part of the model downstream of these
+            activations, mapping (batch_size, n_features) embeddings to
+            outputs of shape (batch_size, n_outputs) or (batch_size,). The
+            output is the explanandum (e.g. a task class or a downstream
+            concept) — distinct from the ``cavs`` concepts being tested.
+            The head must process samples independently for the per-sample
+            gradients to be exact — put modules that mix the batch (e.g.
+            BatchNorm) in eval mode.
+        cavs (torch.Tensor): Concept activation vectors of shape
+            (n_concepts, n_features), e.g.
+            :attr:`CAVEmbeddingToConcept.cavs`.
+        target (Union[int, str, Tuple[str, str]]): Which column of the
+            head output to differentiate. An integer indexes it directly;
+            ignored if the head output is 1-dimensional. A string names a
+            single-column (binary/continuous) concept; a ``(concept,
+            state)`` pair names one state logit of a categorical concept.
+            Names are resolved against the head output's annotation, which
+            requires ``head`` to return an
+            :class:`~torch_concepts.tensor.AnnotatedTensor` (e.g. via a
+            :class:`~torch_concepts.nn.Sequential` with ``out_concepts``).
+            Default is 0.
+
+    Returns:
+        torch.Tensor: TCAV scores in [0, 1] of shape (n_concepts,).
+    """
+    if len(embeddings) == 0:
+        raise ValueError(
+            "tcav_score needs at least one example; got an empty batch."
+        )
+    x = embeddings.detach().requires_grad_(True)
+    with torch.enable_grad():
+        outputs = head(x)
+        if isinstance(target, bool):
+            # bool passes Integral but indexes as a mask, not a column
+            raise TypeError("target must be an int, str, or (concept, "
+                            "state) pair, got a bool.")
+        # numbers.Integral also admits numpy integers (e.g. from np.argmax)
+        if not isinstance(target, numbers.Integral):
+            if not isinstance(outputs, AnnotatedTensor):
+                raise TypeError(
+                    f"target={target!r} was given by name, but head(...) "
+                    f"returned {type(outputs).__name__}, not an "
+                    f"AnnotatedTensor to resolve it against. Pass an integer "
+                    f"column index, or a head that annotates its output "
+                    f"columns."
+                )
+            annotation = outputs.annotation
+            if isinstance(target, str):
+                columns = annotation.get_slice(target)
+                if columns.stop - columns.start > 1:
+                    raise ValueError(
+                        f"target {target!r} is categorical and spans columns "
+                        f"{columns.start}:{columns.stop}; the sensitivity is "
+                        f"defined for a single logit, so name one state via "
+                        f"target=({target!r}, state)."
+                    )
+                target = columns.start
+            else:  # (concept, state): one state logit of a categorical
+                concept, state = target
+                target = (annotation.get_slice(concept).start
+                          + annotation.get_state_index(concept, state))
+        if isinstance(outputs, AnnotatedTensor):
+            outputs = outputs.tensor
+        if outputs.dim() > 1:
+            outputs = outputs[..., target]
+        # samples are independent, so summing yields per-sample gradients
+        grads = torch.autograd.grad(outputs.sum(), x)[0]
+    sensitivity = grads @ cavs.t().to(grads)
+    return (sensitivity > 0).to(sensitivity.dtype).mean(dim=0)
+
+
+def _concept_group_ids(
+    cardinalities: List[int],
+    num_cols: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Map each weight column to its concept index given per-concept cardinalities.
+
+    A scalar (binary/continuous) concept has cardinality 1 and occupies a single
+    column; a categorical concept of cardinality ``m`` occupies ``m`` consecutive
+    columns. Returns a ``(num_cols,)`` long tensor of concept ids in ``[0, G)``
+    where ``G == len(cardinalities)``.
+    """
+    cards = [int(c) for c in cardinalities]
+    if any(c < 1 for c in cards):
+        raise ValueError(
+            f"cardinalities must be positive integers, got {cardinalities}"
+        )
+    total = sum(cards)
+    if total != num_cols:
+        raise ValueError(
+            f"cardinalities sum to {total} but weight has {num_cols} columns"
+        )
+    return torch.repeat_interleave(
+        torch.arange(len(cards), device=device),
+        torch.as_tensor(cards, device=device),
+    )
+
+
+def number_of_effective_concepts(
+    weight: torch.Tensor,
+    threshold: float = 0.0,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Effective Concepts (NEC) of a linear layer.
+
+    NEC measures the average number of concepts each class relies on for its
+    prediction, serving as both a **sparsity** and an **information-leakage
+    control** metric: a smaller NEC constrains how much unintended information
+    the bottleneck can encode in the downstream prediction.
+
+    Formally, for a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`
+    with :math:`C` classes and :math:`k` concepts:
+
+    .. math::
+        \\text{NEC}(W_F) = \\frac{1}{C} \\sum_{i=1}^{C} \\sum_{j=1}^{k}
+        \\mathbf{1}[(W_F)_{ij} \\neq 0]
+
+    Main reference: `"VLG-CBM: Training Concept Bottleneck Models with
+    Vision-Language Guidance" <https://arxiv.org/abs/2408.01432>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities`` so each concept is counted once: a class is
+    deemed to rely on a concept if **any** of that concept's columns is nonzero.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        threshold (float): Absolute weight magnitude below which a weight is
+            treated as zero.  Use ``0.0`` (default) for weights that have
+            been pruned to exact zero (e.g. via elastic-net / GLM-SAGA).
+            Set a small positive value (e.g. ``1e-6``) when using standard
+            L1 regularisation without hard pruning.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.cardinalities``.
+
+    Returns:
+        float: Average number of concepts each class relies on.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 0.0, -0.5],
+        ...                   [0.0, 0.3,  0.0]])
+        >>> number_of_effective_concepts(W)  # (2 + 1) / 2
+        1.5
+        >>> # columns 1-2 form one categorical concept: class 0 uses both
+        >>> # concepts (2), class 1 uses only the categorical one (1) -> mean 1.5
+        >>> number_of_effective_concepts(W, cardinalities=[1, 2])
+        1.5
+    """
+    mask = (weight.abs() > threshold).float()  # (C, k)
+    if cardinalities is None:
+        return mask.sum(dim=1).mean().item()
+
+    group_ids = _concept_group_ids(cardinalities, mask.size(1), mask.device)
+    num_concepts = len(cardinalities)
+    grouped = torch.zeros(
+        mask.size(0), num_concepts, device=mask.device, dtype=mask.dtype
+    ).index_add(1, group_ids, mask)
+    return (grouped > 0).float().sum(dim=1).mean().item()
+
+
+def number_of_contributing_concepts(
+    weight: torch.Tensor,
+    concept_activations: torch.Tensor,
+    coverage: float = 0.95,
+    predicted_class_only: bool = False,
+    cardinalities: Optional[List[int]] = None,
+) -> float:
+    """Number of Contributing Concepts (NCC) of a concept layer.
+
+    NCC is a **decision-level** sparsity (and information-leakage control)
+    metric that generalises :func:`number_of_effective_concepts` (NEC).
+    Whereas NEC counts nonzero *weights* per class, NCC counts how many
+    concepts are actually needed to *explain* each decision, by ranking
+    concepts by their **contribution** — the magnitude of the concept logit
+    times its class weight — and counting how many top contributors are
+    required to cover a fraction :math:`\\tau` of the total contribution.
+
+    For a concept logit vector :math:`g(a^{(i)}) \\in \\mathbb{R}^{k}` for
+    image :math:`i` and a weight matrix :math:`W_F \\in \\mathbb{R}^{C \\times k}`,
+    the absolute contribution of concept :math:`j` to class :math:`r` is
+
+    .. math::
+        u^{(i)}_{j,r} = \\left| [g(a^{(i)})]_{j} \\, (W_F)_{r,j} \\right|.
+
+    Letting :math:`u^{(i)}_{(s),r}` denote the :math:`s`-th largest absolute
+    contribution for class :math:`r`, NCC at coverage level
+    :math:`\\tau \\in [0, 1]` is
+
+    .. math::
+        \\text{NCC}_\\tau = \\frac{1}{|D|\\,C} \\sum_{i=1}^{|D|}
+        \\sum_{r=1}^{C} \\min \\Big\\{ \\kappa \\in \\{0, \\dots, k\\} :
+        \\sum_{s=1}^{\\kappa} u^{(i)}_{(s),r} \\geq \\tau
+        \\sum_{j=1}^{k} u^{(i)}_{j,r} \\Big\\}.
+
+    At :math:`\\tau = 1` NCC reduces to NEC. Lower NCC means more concise,
+    less leakage-prone explanations.
+
+    Main reference: `"Learning Concept Bottleneck Models from Mechanistic
+    Explanations" (M-CBM, ICLR 2026)
+    <https://openreview.net/forum?id=gdEWoxhb70>`_
+
+    Each weight column is treated as one concept, which is correct for scalar
+    (binary / continuous) concepts. For categorical concepts that span several
+    columns, pass ``cardinalities``; the absolute contributions of a concept's
+    columns are **summed** into a single per-concept contribution before ranking.
+
+    Args:
+        weight (torch.Tensor): Final linear layer weight matrix of shape
+            ``(C, k)`` — C classes, k concept columns.
+        concept_activations (torch.Tensor): Concept logits / activations of
+            shape ``(N, k)`` for N samples (the inputs to the final layer).
+        coverage (float): Fraction :math:`\\tau \\in [0, 1]` of the per-class
+            absolute contribution that the top concepts must cover.
+            Default: ``0.95``.
+        predicted_class_only (bool): If True, average only over each sample's
+            predicted class (``argmax`` of the logits) instead of over all C
+            classes. Default: ``False``.
+        cardinalities (list of int, optional): Number of columns each concept
+            occupies, in column order, summing to ``k``. Use ``1`` for scalar
+            (binary/continuous) concepts and ``m`` for an ``m``-way categorical
+            concept. If ``None`` (default), every column is its own concept.
+            If you use the annotation system, pass
+            ``cardinalities=annotations.cardinalities``.
+
+    Returns:
+        float: Average number of concepts needed to explain a fraction
+        ``coverage`` of each decision.
+
+    Example::
+
+        >>> W = torch.tensor([[1.0, 1.0, 0.0],
+        ...                   [0.0, 0.0, 2.0]])
+        >>> a = torch.tensor([[1.0, 1.0, 1.0]])
+        >>> number_of_contributing_concepts(W, a, coverage=1.0)  # == NEC
+        1.5
+    """
+    # Absolute contributions u: (N, C, k) = |activation * weight|.
+    contrib = (concept_activations.unsqueeze(1) * weight.unsqueeze(0)).abs()
+    if cardinalities is not None:
+        # Sum each categorical concept's column contributions into one concept.
+        group_ids = _concept_group_ids(
+            cardinalities, contrib.size(-1), contrib.device
+        )
+        num_concepts = len(cardinalities)
+        contrib = torch.zeros(
+            contrib.size(0), contrib.size(1), num_concepts,
+            device=contrib.device, dtype=contrib.dtype,
+        ).index_add(2, group_ids, contrib)
+    # Sort contributions per (sample, class) in descending order.
+    sorted_contrib, _ = torch.sort(contrib, dim=-1, descending=True)
+    cumsum = sorted_contrib.cumsum(dim=-1)  # (N, C, k)
+    # Use the cumulative total (same accumulation order) so that tau=1 is exact.
+    total = cumsum[..., -1:]  # (N, C, 1)
+    target = coverage * total
+    # Smallest kappa whose top-kappa cumulative sum reaches the target.
+    kappa = (cumsum < target).sum(dim=-1) + 1  # (N, C)
+    # Degenerate decisions (zero total contribution) need no concepts.
+    kappa = torch.where(
+        total.squeeze(-1) <= 0, torch.zeros_like(kappa), kappa
+    )
+
+    if predicted_class_only:
+        logits = concept_activations @ weight.t()  # (N, C)
+        pred = logits.argmax(dim=1, keepdim=True)  # (N, 1)
+        kappa = kappa.gather(1, pred)  # (N, 1)
+
+    return kappa.float().mean().item()
+
+
 def cace_score(y_pred_c0, y_pred_c1):
     """Compute the Average Causal Effect (ACE) / Causal Concept Effect (CaCE) score.
 
@@ -664,11 +969,12 @@ def cace_score(y_pred_c0, y_pred_c1):
     Returns:
         torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
 
-    Example::
-
+    Example:
+        >>> import torch
         >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
         >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
-        >>> cace_score(y_c0, y_c1)  # tensor([ 0.5, -0.5])
+        >>> cace_score(y_c0, y_c1)
+        tensor([ 0.5000, -0.5000])
     """
     if y_pred_c0.shape != y_pred_c1.shape:
         raise RuntimeError(
@@ -1126,8 +1432,14 @@ def minimize_constr(
             )
         original_fun = constr["fun"]
         original_jac = constr["jac"]
-        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy()
-        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy()
+        # scipy's SLSQP backend requires float64 inputs/outputs throughout.
+        constr["fun"] = lambda x: original_fun(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        constr["jac"] = lambda x: original_jac(torch.tensor(x).float()).cpu().numpy().astype("float64")
+        x0_np = x0_np.astype("float64")
+        f_slsqp = f_with_jac
+        f_with_jac = lambda x: tuple(
+            v.astype("float64") for v in f_slsqp(x)
+        )
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",

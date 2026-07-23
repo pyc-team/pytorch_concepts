@@ -1,3 +1,60 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytorch_concepts"
+description = "Concept-Based Deep Learning Library for PyTorch."
+readme = "README.md"
+license = { text = "Apache 2.0" }
+maintainers = [{ name = "PyC Team", email = "pyc.devteam@gmail.com" }]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Operating System :: Unix",
+    "Programming Language :: Python",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development",
+]
+dynamic = ["dependencies", "version"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+version = { attr = "torch_concepts._version.__version__" }
+
+[project.optional-dependencies]
+data = [
+    "Pillow",
+    "opencv-python",
+    "torchvision",
+    "bnlearn",
+    "datasets",
+    "transformers",
+    "tables",
+]
+tests = [
+    "pytest-cov",
+    "pytest",
+]
+docs = [
+    "matplotlib",
+    "numpydoc",
+    "furo",
+    "sphinx-gallery",
+    "sphinx",
+    "sphinx_design",
+    "sphinxext-opengraph",
+    "sphinx-copybutton",
+    "myst-nb",
+    "sphinx-hoverxref",
+]
+
+[tool.setuptools.packages.find]
+include = ["torch_concepts", "torch_concepts.*"]
+
+[tool.setuptools.package-data]
+torch_concepts = ["assets/*"]

@@ -6,8 +6,7 @@ and conditional probability tables (CPTs) to generate synthetic data from
 a Directed Acyclic Graph (DAG).
 """
 
-from torch_concepts.data.datasets import ToyDAGDataset
-from torch_concepts.data.datamodules import ToyDAGDataModule
+from torch_concepts.data import ToyDAGDataset, ToyDAGDataModule
 
 
 def main():

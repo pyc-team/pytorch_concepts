@@ -29,7 +29,7 @@ import os
 import torch
 import pandas as pd
 from typing import List, Mapping, Optional
-from torch_concepts import Annotations, AxisAnnotation
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
 
@@ -147,10 +147,10 @@ def build(self):
     # Step 5: Create concept annotations
     concept_names = list(concept_columns)
     
-    # Define metadata for each concept (REQUIRED: must include 'type')
-    # type can be 'discrete' or 'continuous' ('continuous' is not yet supported)
+    #Define each concept type. Each can be 'binary' / 'categorical' or 'continuous'
+    types = ['categorical', 'categorical', 'binary', 'binary'] # Example: 2 categorical and 2 binary concepts
     concept_metadata = {
-        name: {'type': 'discrete'} for name in concept_names
+        name: {'metadata key': ...} for name in concept_names
     }
     
     # Define cardinalities (number of possible values)
@@ -167,15 +167,12 @@ def build(self):
               [label_1, label_2]] # state labels for concept 4
 
     # Create annotations object
-    annotations = Annotations({
-        # Axis 0 is batch (usually not annotated)
-        # Axis 1 is concepts (MUST be annotated)
-        1: AxisAnnotation(
-            labels=concept_names,
-            cardinalities=cardinalities,
-            metadata=concept_metadata
-        )
-    })
+    annotations = Annotations(
+        labels=concept_names,
+        cardinalities=cardinalities,
+        types=types,
+        metadata=concept_metadata
+    )
     
     # Step 6 (optional): If the dataset has a causal graph structure, create it here
     # skip this step if no graph is available, graph defaults is `None`
@@ -271,9 +268,8 @@ Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base
 
 ```python
 from env import DATA_ROOT
-from torch_concepts.data.datasets import YourDataset
+from torch_concepts.data import YourDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
-from torch_concepts.typing import BackboneType
 
 
 class YourDataModule(ConceptDataModule):
@@ -289,9 +285,6 @@ class YourDataModule(ConceptDataModule):
         ftune_size: Fine-tuning set size (fraction or absolute count)
         ftune_val_size: Fine-tuning validation set size (fraction or absolute count)
         batch_size: Batch size for dataloaders
-        backbone: Model backbone to use (if applicable)
-        precompute_embs: Whether to precompute embeddings from backbone
-        force_recompute: Force recomputation of cached embeddings
         workers: Number of workers for dataloaders
         [dataset-specific parameters]
     """
@@ -304,9 +297,6 @@ class YourDataModule(ConceptDataModule):
         ftune_size: int | float = 0.0,
         ftune_val_size: int | float = 0.0,
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         workers: int = 0,
         # Add your dataset-specific parameters
         concept_subset: list | None = None,
@@ -330,9 +320,6 @@ class YourDataModule(ConceptDataModule):
             ftune_size=ftune_size,
             ftune_val_size=ftune_val_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
         )
 ```
@@ -449,11 +436,6 @@ seed: ${seed}
 param1: default_value1
 param2: default_value2
 
-# Backbone configuration (if applicable)
-backbone: null
-precompute_embs: false
-force_recompute: false
-
 # Concept descriptions (optional but recommended)
 label_descriptions:
   concept_1: "Description of concept 1"
@@ -514,8 +496,7 @@ default_task_names: [outcome, severity]
 Create a test script to verify your implementation:
 
 ```python
-from torch_concepts.data import YourDataset
-from torch_concepts.data.datamodules import YourDataModule
+from torch_concepts.data import YourDataset, YourDataModule
 
 # Test dataset loading
 dataset = YourDataset(

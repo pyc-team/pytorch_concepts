@@ -3,8 +3,8 @@ from copy import deepcopy
 from sklearn.metrics import accuracy_score
 from torch.distributions import RelaxedOneHotCategorical, RelaxedBernoulli
 
-from torch_concepts import Annotations, AxisAnnotation, ConceptGraph
-from torch_concepts.data.datasets import ToyDataset
+from torch_concepts import Annotations, ConceptGraph
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import DoIntervention, intervention, DeterministicInference, LazyConstructor, \
     LinearLatentToExogenous, LinearExogenousToConcept, GroundTruthIntervention, UniformPolicy, \
     HyperlinearConceptExogenousToConcept, GraphModel, WANDAGraphLearner
@@ -40,14 +40,14 @@ def main():
         'c2_copy': {'distribution': RelaxedBernoulli, 'type': 'binary', 'description': 'Concept 2 Copy'},
         'xor_copy': {'distribution': RelaxedOneHotCategorical, 'type': 'categorical', 'description': 'XOR Task Copy'},
     }
-    annotations = Annotations({1: AxisAnnotation(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)})
+    annotations = Annotations(concept_names + task_names, cardinalities=cardinalities, metadata=metadata)
 
     model_graph = ConceptGraph(torch.tensor([[0, 0, 0, 0, 1, 1],
                                              [0, 0, 0, 1, 0, 1],
                                              [0, 0, 0, 1, 1, 0],
                                              [0, 0, 0, 0, 0, 0],
                                              [0, 0, 0, 0, 0, 0],
-                                             [0, 0, 0, 0, 0, 0]]), list(annotations.get_axis_annotation(1).labels))
+                                             [0, 0, 0, 0, 0, 0]]), list(annotations.labels))
 
     # ProbabilisticModel Initialization
     encoder = torch.nn.Sequential(torch.nn.Linear(x_train.shape[1], latent_dims), torch.nn.LeakyReLU())
@@ -77,8 +77,8 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb}, debug=True, return_logits=True)
-        c_pred = cy_pred[:, :cy_train_one_hot.shape[1]//2]
-        y_pred = cy_pred[:, cy_train_one_hot.shape[1]//2:]
+        c_pred = cy_pred.logits[:, :cy_train_one_hot.shape[1]//2]
+        y_pred = cy_pred.logits[:, cy_train_one_hot.shape[1]//2:]
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train_one_hot)
@@ -111,7 +111,7 @@ def main():
         # generate concept and task predictions
         emb = encoder(x_train)
         cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-        task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+        task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
         print(f"Unrolling accuracies | Task Acc: {task_accuracy:.2f}")
 
 
@@ -124,9 +124,9 @@ def main():
                           strategies=int_strategy_c1,
                           target_concepts=[intervened_concept]):
             cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-            task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+            task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
             print(f"Do intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
-            print(cy_pred[:5])
+            print(cy_pred.probs[:5])
             print()
 
             int_policy_c1 = UniformPolicy(out_concepts=concept_model.probabilistic_model.concept_to_variable[intervened_concept].size)
@@ -135,9 +135,9 @@ def main():
                               strategies=int_strategy_c1,
                               target_concepts=[intervened_concept]):
                 cy_pred = inference_engine.query(query_concepts, evidence={'input': emb})
-                task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.ravel() > 0.)
+                task_accuracy = accuracy_score(c_train_one_hot.ravel(), cy_pred.probs.ravel() > 0.)
                 print(f"Ground truth intervention on {intervened_concept} | Task Acc: {task_accuracy:.2f}")
-                print(cy_pred[:5])
+                print(cy_pred.probs[:5])
 
     return
 

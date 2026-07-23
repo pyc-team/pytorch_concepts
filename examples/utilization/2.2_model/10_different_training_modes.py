@@ -13,17 +13,19 @@ built-in train/eval mode.  Calling `model.train()` activates
 `train_inference`; calling `model.eval()` activates
 `eval_inference`.  Lightning toggles this automatically.
 
-Current inference options:
-- DeterministicInference: Returns logits directly (standard behavior)
-- AncestralSamplingInference: Samples from distributions
-
-Note: Independent training (where each level uses ground truth from previous levels)
-can be implemented by creating a custom train_inference that uses evidence.
+Train and eval must use the *same* inference class; the two regimes are
+differentiated through ``train_inference_kwargs``.  Independent training (each
+level conditioned on ground-truth parents) is obtained by teacher-forcing the
+ground-truth concepts during training only, via ``p_int=1.0`` on the training
+engine, while evaluation keeps the default ``p_int=0.0``.
 """
 
 from torch_concepts.nn.modules.loss import ConceptLoss, MaskedLoss, CMRReconstructionLoss
 import torch
 from torch_concepts import seed_everything
+from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP
+from torch_concepts.nn import DeterministicInference, IndependentInference
+from torch_concepts.data import ToyDataset
 from torch_concepts.nn import (
     CMRLoss,
     ConceptBottleneckModel,
@@ -57,9 +59,11 @@ def evaluate(model, datamodule, n_concepts, query):
         test_loader = datamodule.test_dataloader()
         for batch in test_loader:
             # model.eval() automatically selects eval_inference
-            endogenous = model(x=batch['inputs']['x'], query=query)
-            c_pred = endogenous[:, :n_concepts]
-            y_pred = endogenous[:, n_concepts:]
+            out = model(input=batch['inputs']['x'], query=query)
+            c_logits = out.logits[:, :n_concepts]
+            y_logits = out.logits[:, n_concepts:]
+            c_pred = torch.sigmoid(c_logits)
+            y_pred = torch.sigmoid(y_logits)
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]
@@ -92,13 +96,14 @@ def main():
     n_samples = 10000
     batch_size = 2048
     dataset = ToyDataset(dataset='xor', seed=seed, n_gen=n_samples)
-    datamodule = ConceptDataModule(dataset=dataset, 
+    datamodule = ConceptDataModule(dataset=dataset,
                                    batch_size=batch_size,
                                    val_size=0.1,
-                                   test_size=0.2)
+                                   test_size=0.2,
+                                   seed=seed)
     datamodule.setup()
     annotations = dataset.annotations
-    concept_names = annotations.get_axis_annotation(1).labels
+    concept_names = annotations.labels
 
     n_features = dataset.input_data.shape[1]
     n_concepts = 2

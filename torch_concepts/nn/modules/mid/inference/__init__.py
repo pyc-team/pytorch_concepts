@@ -1,11 +1,6 @@
-from .forward import ForwardInference
-from .deterministic import DeterministicInference
-from .independent import IndependentInference
-from .ancestral import AncestralSamplingInference
+"""Inference engines for PGM-based models (internal).
 
-__all__: list[str] = [
-    "ForwardInference",
-    "DeterministicInference",
-    "AncestralSamplingInference",
-    "IndependentInference",
-]
+Backends live in the :mod:`.torch` (pure-PyTorch) and :mod:`.pyro` subpackages.
+The public API is re-exported from :mod:`torch_concepts.nn`.
+"""
+__all__: list[str] = []
