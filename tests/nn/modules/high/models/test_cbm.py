@@ -682,21 +682,26 @@ class TestDirectedGraphModelBase:
         }
 
     def test_flexible_parametrization_normal_explicit_second(self):
-        """`second` overrides the copied head, as a module or as a size-taking factory."""
-        import functools
+        """`second` supplies the scale head: a concrete layer, or a deferred
+        LazyConstructor left unbuilt for the CPD to size from the parents."""
         import torch.distributions as dist
+        from torch_concepts.nn import LazyConstructor, LinearEmbeddingToConcept
         from torch_concepts.nn.modules.mid.variable import ConceptVariable
         model = self._graph_model()
         norm_var = ConceptVariable("v", distribution=dist.Normal, size=3)
         head = torch.nn.Linear(4, 3)
 
         as_module = model._flexible_parametrization(norm_var, torch.nn.Linear(4, 3), second=head)
-        as_factory = model._flexible_parametrization(
-            norm_var, torch.nn.Linear(4, 3), second=functools.partial(torch.nn.Linear, 4)
+        as_lazy = model._flexible_parametrization(
+            norm_var, LazyConstructor(LinearEmbeddingToConcept), second=LazyConstructor(LinearEmbeddingToConcept)
         )
 
         assert as_module["scale"][0] is head
-        assert as_factory["scale"][0].out_features == 3  # sized from param_sizes
+        # The lazy scale head is stored unbuilt (the CPD sizes it later) and
+        # already composed with its activation.
+        lazy_head = as_lazy["scale"][0]
+        assert isinstance(lazy_head, LazyConstructor) and lazy_head.module is None
+        assert isinstance(as_lazy["scale"][1], torch.nn.Softplus)
 
     def test_flexible_parametrization_multivariate_normal(self):
         """A MultivariateNormal gets a matrix-valued, positive-diagonal scale_tril."""
