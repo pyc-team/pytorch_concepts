@@ -253,14 +253,23 @@ class ParametricCPD(ParametricFactor):
         the default aggregators flatten every event into a single feature axis
         before a module sees it, so the relevant scalar is ``Variable.size``
         (``== math.prod(shape)``).
+
+        The lazy layer may be the parametrization entry itself, or the **first**
+        module of a ``Sequential`` — a continuous variable's scale head is composed
+        with its activation as ``Sequential(LazyConstructor(...), softplus)``, and
+        the layer before the activation is what needs sizing.
         """
         from ...low.lazy import LazyConstructor
 
+        def lazy_head(module):
+            """The unbuilt ``LazyConstructor`` to size, or ``None`` if there is
+            nothing to build: the entry itself, or a ``Sequential``'s first module."""
+            if isinstance(module, nn.Sequential) and len(module):
+                module = module[0]
+            return module if isinstance(module, LazyConstructor) and module.module is None else None
+
         # Fast path: every module is already a concrete layer — nothing to build.
-        if not any(
-            isinstance(m, LazyConstructor) and m.module is None
-            for m in parametrization.values()
-        ):
+        if not any(lazy_head(m) for m in parametrization.values()):
             return parametrization
 
         in_concepts = sum(p.size for p in parents if p.variable_type == "concept")
@@ -269,13 +278,21 @@ class ParametricCPD(ParametricFactor):
 
         resolved: Dict[str, nn.Module] = {}
         for pname, module in parametrization.items():
-            if isinstance(module, LazyConstructor) and module.module is None:
+            lazy = lazy_head(module)
+            if lazy is not None:
                 # build() instantiates the layer and returns the concrete module.
-                module = module.build(
+                built = lazy.build(
                     out_concepts=out_sizes.get(pname, variable.size),
                     in_concepts=in_concepts or None,
                     in_embeddings=in_embeddings or None,
                 )
+                if isinstance(module, nn.Sequential):
+                    # Scale head: keep the Sequential (and its activation),
+                    # swapping in the now-built first module.
+                    module[0] = built
+                else:
+                    # Bare entry: replace it with the built layer.
+                    module = built
             resolved[pname] = module
         return resolved
 

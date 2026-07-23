@@ -167,13 +167,12 @@ class DirectedGraphModel(GraphModel, ABC):
             The child variable whose CPD parametrization is being built.
         first : nn.Module
             Layer producing the primary parameter (logits / probs / value / loc).
-        second : nn.Module, callable, or ``'auto'``, optional
+        second : nn.Module or ``'auto'``, optional
             The continuous variable's raw scale head: a layer (including an unbuilt
-            :class:`~torch_concepts.nn.LazyConstructor`, sized by the CPD), a
-            partially-initialized layer — a callable missing only its output size,
-            which is called with that size — or ``'auto'`` to use an independent
-            copy of ``first``. Unused for discrete / Delta variables, so a caller
-            whose variables may be of any type can pass ``'auto'`` unconditionally.
+            :class:`~torch_concepts.nn.LazyConstructor`, sized by the CPD from the
+            parents just like ``first``), or ``'auto'`` to use an independent copy
+            of ``first``. Unused for discrete / Delta variables, so a caller whose
+            variables may be of any type can pass ``'auto'`` unconditionally.
 
         Raises
         ------
@@ -190,10 +189,8 @@ class DirectedGraphModel(GraphModel, ABC):
         if names == {"probs", "logits"}:
             return {self.param_for_discrete_var: first}
         if "loc" in names:
-            # Continuous: location from ``first``; the scale parameter
-            # (``scale`` for Normal, ``scale_tril`` for MultivariateNormal) needs a
-            # layer whose output size comes from the spec via ``param_sizes``.
-            scale_param = (names - {"loc"}).pop()
+            # Normal, MultivariateNormal, etc., with a location and a scale parameter
+            scale_param = (names - {"loc"}).pop() # either ``scale`` or ``scale_tril``
             return {
                 "loc": first,
                 scale_param: self._scale_parametrization(
@@ -211,12 +208,17 @@ class DirectedGraphModel(GraphModel, ABC):
         A CPD applies no activation, so the result is a raw head followed by the
         activation that makes its output valid (see :meth:`_scale_activation`).
 
-        The raw head comes from ``second``: a layer, a callable missing only its
-        output size, or ``'auto'`` for a copy of ``first``. Copying needs ``first``
-        to already emit the right number of values, so ``'auto'`` is rejected for a
-        deferred :class:`~torch_concepts.nn.LazyConstructor` (no fixed width yet)
-        and for a family that is not one-scalar-per-element (``scale_tril`` needs
-        ``size * (size + 1) // 2`` outputs, not ``size``).
+        The raw head comes from ``second``, one of:
+
+        * a :class:`~torch_concepts.nn.LazyConstructor` — sized from this CPD's
+          parents and this parameter's width when the CPD builds it, exactly like
+          ``first`` (see :meth:`ParametricCPD._instantiate_lazy`);
+        * a concrete layer — used as is;
+        * ``'auto'`` — a copy of ``first``. Copying needs ``first`` to already emit
+          the right number of values, so ``'auto'`` is rejected for a deferred
+          ``first`` (no fixed width yet) and for a family that is not
+          one-scalar-per-element (``scale_tril`` needs ``size * (size + 1) // 2``
+          outputs, not ``size``); pass a ``LazyConstructor`` in those cases.
         """
         spec = spec_for(variable.distribution)
         scale_size = variable.param_sizes[scale_param]
@@ -230,20 +232,19 @@ class DirectedGraphModel(GraphModel, ABC):
                     f"_flexible_parametrization: {variable.name!r} "
                     f"({variable.distribution.__name__}) cannot copy `first` into a "
                     f"{scale_param!r} head of {scale_size} outputs: it {why}. Pass "
-                    "`second` — that layer, or a callable taking the output size."
+                    "`second` — that layer, or a LazyConstructor for it."
                 )
             head = copy.deepcopy(first)
         elif second is None:
             raise ValueError(
                 f"_flexible_parametrization: {variable.name!r} "
                 f"({variable.distribution.__name__}) needs a {scale_param!r} head of "
-                f"{scale_size} outputs. Pass `second` — a layer, a callable taking "
-                "that size, or 'auto' to copy `first`."
+                f"{scale_size} outputs. Pass `second` — a layer, a LazyConstructor "
+                "for it, or 'auto' to copy `first`."
             )
         else:
-            # A `second` that is not a layer is partially initialized: it is a
-            # callable missing only its output size.
-            head = second if isinstance(second, nn.Module) else second(scale_size)
+            # A LazyConstructor (built later, from the parents) or a concrete layer.
+            head = second
 
         return Sequential(head, self._scale_activation(variable))
 
