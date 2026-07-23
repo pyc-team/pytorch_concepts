@@ -66,8 +66,7 @@ def main(cfg: DictConfig) -> None:
         graph=resolve_graph(datamodule.graph, datamodule.annotations, cfg.dataset.default_task_names),
         backbone=attach_latent_encoder(cfg, backbone),
         loss=loss,
-        metrics=metrics,
-        scalers=datamodule.fitted_scalers,
+        metrics=metrics
     )
     logger.info(f"Model: {model}")
     

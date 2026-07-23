@@ -11,10 +11,11 @@ datamodule:
   concept_subset: null
 
   # Every concept here is continuous and the ranges differ by orders of
-  # magnitude, so standardise them for training. Metrics stay in the original scale.
+  # magnitude, so standardise them for training.
   scalers:
     concepts:
       _target_: torch_concepts.data.scalers.StandardScaler
+
   # Formulas for the dataset
   formulas: 
     circle: "exp(sin(pi * 2 * x_position) + cos (pi * 2 * y_position))"

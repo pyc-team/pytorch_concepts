@@ -326,7 +326,7 @@ class TestTaskOnlyModel:
         )
 
     def test_query_uses_full_concept_axis(self, annotations, batch, scalers):
-        """Regression guard: build_query indexes the *full* concept tensor with
+        """Regression guard: fully_observed_query indexes the *full* concept tensor with
         task offsets, so it must not be handed the task-sliced target."""
         torch.manual_seed(0)
         model = BlackBoxTaskOnly(
