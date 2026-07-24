@@ -173,11 +173,7 @@ def check_collection(annotations: Annotations,
     has_binary = len(groups['binary']['labels']) > 0
     has_categorical = len(groups['categorical']['labels']) > 0
     has_continuous = len(groups['continuous']['labels']) > 0
-    
-    # Raise error if continuous concepts are present
-    if has_continuous:
-        raise NotImplementedError("Continuous concepts not yet implemented.")
-    
+
     # Extract items from collection
     binary = collection.get('binary')
     categorical = collection.get('categorical')
@@ -215,13 +211,13 @@ def check_collection(annotations: Annotations,
     if errors:
         raise ValueError(f"{collection_name} validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
     
-    # Warnings for unused items
-    if not has_binary and binary is not None:
-        warnings.warn(f"Binary {collection_name} will be ignored (no binary concepts).")
-    if not has_categorical and categorical is not None:
-        warnings.warn(f"Categorical {collection_name} will be ignored (no categorical concepts).")
-    if not has_continuous and continuous is not None:
-        warnings.warn(f"Continuous {collection_name} will be ignored (no continuous concepts).")
+    # # Warnings for unused items
+    # if not has_binary and binary is not None:
+    #     warnings.warn(f"Binary {collection_name} will be ignored (no binary concepts).")
+    # if not has_categorical and categorical is not None:
+    #     warnings.warn(f"Categorical {collection_name} will be ignored (no categorical concepts).")
+    # if not has_continuous and continuous is not None:
+    #     warnings.warn(f"Continuous {collection_name} will be ignored (no continuous concepts).")
     
     # Build filtered GroupConfig with only needed items
     filtered = GroupConfig()

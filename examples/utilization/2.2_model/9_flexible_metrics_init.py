@@ -14,6 +14,7 @@ This flexibility allows you to:
 
 import torch
 from torch_concepts import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch.distributions import Bernoulli, Categorical
@@ -152,8 +153,10 @@ def main():
         torch.randint(0, 3, (batch_size, 1)),  # cat1 (3 classes)
         torch.randint(0, 4, (batch_size, 1)),  # cat2 (4 classes)
     ], dim=1)
-    
-    metrics_mixed.update(endogenous, targets)
+
+    preds = AnnotatedTensor(endogenous, annotations, axis=-1)
+    target = AnnotatedTensor(targets, annotations.to_concept_space(), axis=-1)
+    metrics_mixed.update(preds, target)
     results = metrics_mixed.compute()
     
     print(f"\nComputed metrics ({len(results)} total):")

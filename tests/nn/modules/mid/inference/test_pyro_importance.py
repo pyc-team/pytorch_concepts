@@ -13,9 +13,9 @@ import torch.distributions as dist
 
 pyro = pytest.importorskip("pyro", reason="pyro not installed")
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.mid.inference.pyro.importance import PyroImportanceSampling
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
 from torch_concepts.distributions import Delta
@@ -147,7 +147,7 @@ class TestValidate:
     def test_batch_size_mismatch_raises(self):
         pgm, x, c = _make_bernoulli_pgm()
         eng = PyroImportanceSampling(pgm, n_samples=10)
-        with pytest.raises(ValueError, match="batch sizes"):
+        with pytest.raises(ValueError, match="mismatched leading"):
             eng.query(query={"c": torch.ones(2, 2)}, evidence={"x": torch.randn(3, 4)})
 
     def test_unknown_variable_name_raises(self):

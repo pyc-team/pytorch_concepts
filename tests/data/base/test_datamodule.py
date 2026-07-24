@@ -23,7 +23,7 @@ from torch.utils.data import Subset
 
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.data.datasets.toy import ToyDataset
-from torch_concepts.data.backbone import Backbone
+from torch_concepts.backbone import Backbone
 from torch_concepts.annotations import Annotations
 
 
@@ -79,8 +79,6 @@ class TestConceptDataModuleInit:
 
         assert dm.dataset == toy_dataset
         assert dm.batch_size == 32
-        assert dm.precompute_embs is False
-        assert dm.backbone is None
 
     def test_init_default_values(self, toy_dataset):
         """Test that default values are correctly set."""
@@ -89,20 +87,6 @@ class TestConceptDataModuleInit:
         assert dm.batch_size == 64  # Default batch size
         assert dm.workers == 0  # Default workers
         assert dm.pin_memory is False  # Default pin_memory
-        assert dm.precompute_embs is False
-        assert dm.force_recompute is False
-
-    def test_init_with_string_backbone(self, toy_dataset):
-        """Test initialization with string backbone name."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18',
-            batch_size=16
-        )
-
-        assert dm.backbone is not None
-        assert isinstance(dm.backbone, Backbone)
-        assert dm.backbone.name == 'resnet18'
 
     def test_init_with_scalers(self, toy_dataset):
         """Test initialization with custom scalers."""
@@ -132,32 +116,21 @@ class TestConceptDataModuleInit:
         assert dm.workers == 4
         assert dm.pin_memory is True
 
-    def test_init_sets_embs_precomputed_false(self, toy_dataset):
-        """Test that dataset's embs_precomputed is set to False on init."""
+    def test_dataset_embs_precomputed_false_by_default(self, toy_dataset):
+        """The dataset owns the embs_precomputed flag; default is False."""
         dm = ConceptDataModule(dataset=toy_dataset)
         assert dm.dataset.embs_precomputed is False
 
-    def test_init_with_precompute_embs_flag(self, toy_dataset):
-        """Test initialization with precompute_embs flag."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18',
-            precompute_embs=True
-        )
-        
-        assert dm.precompute_embs is True
-        assert dm.backbone is not None
+    def test_max_samples_truncates_dataset(self, toy_dataset):
+        """max_samples truncates the dataset at construction."""
+        dm = ConceptDataModule(dataset=toy_dataset, max_samples=10)
 
-    def test_init_with_force_recompute(self, toy_dataset):
-        """Test initialization with force_recompute flag."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18',
-            precompute_embs=True,
-            force_recompute=True
-        )
-        
-        assert dm.force_recompute is True
+        assert dm.n_samples == 10
+        assert len(dm.dataset.concepts) == 10
+
+        dm.setup('fit')
+        total = sum(l for l in (dm.train_len, dm.val_len, dm.test_len) if l)
+        assert total == 10
 
 
 # =============================================================================
@@ -194,20 +167,6 @@ class TestConceptDataModuleProperties:
         with pytest.raises(AttributeError):
             _ = dm.nonexistent_attribute
 
-    def test_backbone_property_none(self, toy_dataset):
-        """Test backbone property when no backbone provided."""
-        dm = ConceptDataModule(dataset=toy_dataset)
-        assert dm.backbone is None
-
-    def test_backbone_property_with_backbone(self, toy_dataset):
-        """Test backbone property with backbone."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18'
-        )
-        assert dm.backbone is not None
-        assert isinstance(dm.backbone, Backbone)
-
     def test_split_properties_before_setup(self, toy_dataset):
         """Test split properties before setup."""
         dm = ConceptDataModule(dataset=toy_dataset)
@@ -235,7 +194,7 @@ class TestConceptDataModuleSetup:
             test_size=0.2
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.trainset is not None
         assert dm.valset is not None
@@ -256,7 +215,7 @@ class TestConceptDataModuleSetup:
             test_size=0.2
         )
 
-        dm.setup('test', verbose=False)
+        dm.setup('test')
 
         assert dm.testset is not None
         assert dm.test_len > 0
@@ -269,7 +228,7 @@ class TestConceptDataModuleSetup:
             test_size=0.2
         )
 
-        dm.setup(None, verbose=False)
+        dm.setup(None)
 
         assert dm.trainset is not None
         assert dm.valset is not None
@@ -283,27 +242,12 @@ class TestConceptDataModuleSetup:
             test_size=0.2
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         # With 100 samples, 0.2 test should give ~20, 0.1 val should give ~10
         assert dm.test_len == pytest.approx(20, abs=2)
         assert dm.val_len == pytest.approx(10, abs=2)
         assert dm.train_len == pytest.approx(70, abs=2)
-
-    def test_setup_verbose_false(self, toy_dataset):
-        """Test setup with verbose=False doesn't raise errors."""
-        dm = ConceptDataModule(dataset=toy_dataset)
-        dm.setup('fit', verbose=False)  # Should not print anything
-
-    def test_setup_sets_embs_precomputed_false(self, toy_dataset):
-        """Test that setup sets embs_precomputed=False when not precomputing."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            precompute_embs=False
-        )
-        dm.setup('fit', verbose=False)
-
-        assert dm.dataset.embs_precomputed is False
 
     def test_setup_is_idempotent(self, toy_dataset):
         """Test that calling setup twice yields the same split (splitter caches)."""
@@ -311,11 +255,11 @@ class TestConceptDataModuleSetup:
             dataset=toy_dataset, val_size=0.1, test_size=0.2, seed=0
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
         sizes_1 = (dm.train_len, dm.val_len, dm.test_len)
         train_idxs_1 = list(dm.splitter.train_idxs)
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
         sizes_2 = (dm.train_len, dm.val_len, dm.test_len)
         train_idxs_2 = list(dm.splitter.train_idxs)
 
@@ -336,7 +280,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.train_dataloader()
 
@@ -349,7 +293,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.val_dataloader()
 
@@ -362,7 +306,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('test', verbose=False)
+        dm.setup('test')
 
         loader = dm.test_dataloader()
 
@@ -375,7 +319,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.get_dataloader(split=None)
 
@@ -390,7 +334,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.get_dataloader(split='train', batch_size=8)
 
@@ -399,7 +343,7 @@ class TestConceptDataModuleDataLoaders:
     def test_get_dataloader_invalid_split(self, toy_dataset):
         """Test get_dataloader with invalid split raises ValueError."""
         dm = ConceptDataModule(dataset=toy_dataset)
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         with pytest.raises(ValueError, match="must be one of"):
             dm.get_dataloader(split='invalid')
@@ -410,7 +354,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.train_dataloader()
         batch = next(iter(loader))
@@ -430,7 +374,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=large_toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         # Get two iterations - they should be different if shuffled
         loader = dm.train_dataloader(shuffle=True)
@@ -449,7 +393,7 @@ class TestConceptDataModuleDataLoaders:
             dataset=toy_dataset,
             batch_size=16
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         loader = dm.val_dataloader(shuffle=False)
         batch1 = next(iter(loader))
@@ -481,7 +425,7 @@ class TestConceptDataModuleRepr:
     def test_repr_after_setup(self, toy_dataset):
         """Test repr after setup."""
         dm = ConceptDataModule(dataset=toy_dataset)
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
         repr_str = repr(dm)
 
         assert 'ConceptDataModule' in repr_str
@@ -531,6 +475,131 @@ class TestConceptDataModuleScalers:
         dm = ConceptDataModule(dataset=toy_dataset)
         assert dm.scalers == {}
 
+    def test_no_scalers_means_nothing_fitted(self, toy_dataset):
+        """Without a configured scaler, the dataset's scaler dict stays empty."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+        dm.setup('fit')
+        assert dm.dataset.scalers == {}
+
+
+class TestConceptDataModuleScalerFitting:
+    """Test that setup('fit') fits the configured scalers correctly."""
+
+    @staticmethod
+    def _continuous_dataset(n=100):
+        """Dataset whose concepts are continuous with a strong index-dependent
+        trend, so train-only statistics are distinguishable from full-data ones."""
+        from torch_concepts.data.base.dataset import ConceptDataset
+
+        annotations = Annotations(
+            labels=['a', 'b'], cardinalities=[1, 1],
+            types=['continuous', 'continuous'],
+        )
+        concepts = torch.stack([
+            torch.arange(n, dtype=torch.float32),
+            torch.arange(n, dtype=torch.float32) * 100.0,
+        ], dim=1)
+        return ConceptDataset(
+            input_data=torch.randn(n, 4),
+            concepts=concepts,
+            annotations=annotations,
+        )
+
+    def test_fits_continuous_concepts(self):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+
+        fitted = dm.dataset.scalers['concepts']
+        assert list(fitted.mean.annotation.labels) == ['a', 'b']
+
+    def test_statistics_use_the_train_split_only(self):
+        """The decisive property: validation/test rows must not leak into the
+        statistics the model is normalised with."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+
+        train_idx = dm.trainset.indices
+        fitted = dm.dataset.scalers['concepts']
+        expected = dataset.concepts[train_idx][:, 0].unsqueeze(-1).mean()
+        assert fitted.mean['a'].tensor.item() == pytest.approx(
+            expected.item(), rel=1e-5
+        )
+        # ...and that is genuinely not the full-dataset mean.
+        assert fitted.mean['a'].tensor.item() != pytest.approx(
+            dataset.concepts[:, 0].mean().item(), rel=1e-4
+        )
+
+    def test_dataset_data_is_not_mutated(self):
+        """Fitting stores stats on `dataset.scalers`; the concepts tensor itself
+        stays in its original scale (scaling happens per-batch in the learner)."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        before = dataset.concepts.tensor.clone()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert torch.equal(dataset.concepts.tensor, before)
+
+    def test_scalers_are_refitted_on_every_setup_call(self):
+        """Unlike the earlier `fitted_scalers` design, setup() always (re)fits
+        when called with stage in ('fit', None) — there is no fitted-once guard."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+        first = dm.dataset.scalers['concepts']
+        dm.setup('fit')
+        assert dm.dataset.scalers['concepts'] is first  # same prototype instance,
+        assert dm.dataset.scalers['concepts'].mean is not None  # refit in place
+
+    def test_binary_only_dataset_warns_and_skips(self, toy_dataset):
+        """Binary/categorical concepts are class labels and are never scaled."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        with pytest.warns(UserWarning, match="no continuous concepts"):
+            dm.setup('fit')
+        assert 'concepts' not in dm.dataset.scalers
+
+    def test_unknown_scaler_key_raises(self, toy_dataset):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'targets': StandardScaler()}, seed=0,
+        )
+        with pytest.raises(RuntimeError, match="cannot find attribute 'targets'"):
+            dm.setup('fit')
+
+    def test_input_scaler_on_flat_features(self, toy_dataset):
+        """ToyDataset stores (N, 2) floats and serves (2,) — layouts line up."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'input': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert 'input' in dm.dataset.scalers
+        assert dm.dataset.scalers['input'].mean.shape[-1] == toy_dataset.input_data.shape[-1]
+
 
 # =============================================================================
 # Test ConceptDataModule Edge Cases
@@ -550,7 +619,7 @@ class TestConceptDataModuleEdgeCases:
             batch_size=2
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.train_len + dm.val_len + dm.test_len == 10
 
@@ -565,7 +634,7 @@ class TestConceptDataModuleEdgeCases:
             batch_size=8
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.val_len == 0 or dm.val_len is None or dm.valset is None
 
@@ -578,7 +647,7 @@ class TestConceptDataModuleEdgeCases:
             test_size=0.1
         )
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
         loader = dm.train_dataloader()
 
         # Should still work
@@ -586,48 +655,6 @@ class TestConceptDataModuleEdgeCases:
         assert len(batches) >= 1
         if len(batches) > 0:
             assert batches[0]['inputs']['x'].shape[0] == 50
-
-
-# =============================================================================
-# Test ConceptDataModule Backbone Integration
-# =============================================================================
-
-class TestConceptDataModuleBackbone:
-    """Test ConceptDataModule with backbone embeddings."""
-
-    def test_precompute_embs_flag(self, toy_dataset):
-        """Test precompute_embs flag."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18',
-            precompute_embs=True,
-            batch_size=16
-        )
-
-        assert dm.precompute_embs is True
-        assert dm.backbone is not None
-
-    def test_force_recompute_flag(self, toy_dataset):
-        """Test force_recompute flag."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone='resnet18',
-            precompute_embs=True,
-            force_recompute=True
-        )
-
-        assert dm.force_recompute is True
-
-    def test_precompute_without_backbone_raises(self, toy_dataset):
-        """Test that precompute_embs=True without backbone raises error."""
-        dm = ConceptDataModule(
-            dataset=toy_dataset,
-            backbone=None,  # No backbone
-            precompute_embs=True
-        )
-
-        with pytest.raises(ValueError, match="precompute_embs=True but no backbone"):
-            dm.setup('fit', verbose=False)
 
 
 # =============================================================================
@@ -650,7 +677,7 @@ class TestConceptDataModuleSplitter:
 
         assert dm.splitter == splitter
 
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         # Check that splits are created
         assert dm.train_len > 0
@@ -765,7 +792,7 @@ class TestConceptDataModuleDataLoaderBehavior:
         dm = ConceptDataModule(
             dataset=toy_dataset, val_size=0.0, test_size=0.2
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.valset is None
         assert dm.val_dataloader() is None
@@ -773,7 +800,7 @@ class TestConceptDataModuleDataLoaderBehavior:
     def test_train_dataloader_drop_last(self, toy_dataset):
         """Train loader drops the last partial batch; val/test do not."""
         dm = ConceptDataModule(dataset=toy_dataset, batch_size=16)
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.train_dataloader().drop_last is True
         assert dm.val_dataloader().drop_last is False
@@ -784,7 +811,7 @@ class TestConceptDataModuleDataLoaderBehavior:
         dm = ConceptDataModule(
             dataset=toy_dataset, batch_size=16, pin_memory=True
         )
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.train_dataloader().pin_memory is True
         # Non-train splits pass pin_memory=None -> DataLoader stores False.
@@ -793,14 +820,14 @@ class TestConceptDataModuleDataLoaderBehavior:
     def test_workers_propagated_to_dataloader(self, toy_dataset):
         """The configured worker count reaches the DataLoader."""
         dm = ConceptDataModule(dataset=toy_dataset, batch_size=16, workers=2)
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         assert dm.train_dataloader().num_workers == 2
 
     def test_get_dataloader_val_test_explicit(self, toy_dataset):
         """get_dataloader('val'|'test') returns loaders with the given batch size."""
         dm = ConceptDataModule(dataset=toy_dataset, batch_size=16)
-        dm.setup('fit', verbose=False)
+        dm.setup('fit')
 
         val_loader = dm.get_dataloader('val', batch_size=4)
         test_loader = dm.get_dataloader('test', batch_size=4)
@@ -810,67 +837,156 @@ class TestConceptDataModuleDataLoaderBehavior:
 
 
 # =============================================================================
-# Test ConceptDataModule embedding precompute / caching
+# Test embedding caching (dataset.precompute_embeddings + datamodule delegate)
 # =============================================================================
 
-class TestConceptDataModuleEmbeddingCache:
-    """Test _maybe_precompute_backbone_embeddings compute/cache/load branches.
+class TestCacheEmbeddings:
+    """Test precompute_embeddings compute/cache/load branches.
 
     A fake backbone (only needs a ``filename``) plus a stubbed
     ``_compute_embeddings`` exercise the caching logic without a real model.
     """
 
     @staticmethod
-    def _make_dm(tmp_path):
+    def _make_ds(tmp_path):
         ds = ToyDataset('xor', n_gen=20, seed=0, root=str(tmp_path))
-        dm = ConceptDataModule(dataset=ds, val_size=0.1, test_size=0.2)
-        # Inject a minimal fake backbone and enable precomputation.
-        dm._backbone = SimpleNamespace(filename='bb.pt')
-        dm.precompute_embs = True
-        return dm, ds
+        return ds, SimpleNamespace(filename='bb.pt')
 
-    def test_precompute_computes_and_caches(self, tmp_path):
-        dm, ds = self._make_dm(tmp_path)
+    def test_computes_and_caches(self, tmp_path):
+        ds, bb = self._make_ds(tmp_path)
         embs = torch.randn(len(ds), 8)
-        dm._compute_embeddings = MagicMock(return_value=embs)
+        ds._compute_embeddings = MagicMock(return_value=embs)
 
-        dm.setup('fit', verbose=False)
+        ds.precompute_embeddings(bb)
 
         cache_path = os.path.join(ds.root_dir, 'bb.pt')
         assert os.path.exists(cache_path)              # cached to disk
-        dm._compute_embeddings.assert_called_once()
-        assert torch.equal(dm.dataset.input_data, embs)
-        assert dm.dataset.embs_precomputed is True
+        ds._compute_embeddings.assert_called_once()
+        assert torch.equal(ds.input_data, embs)
+        assert ds.embs_precomputed is True
 
-    def test_precompute_loads_from_cache(self, tmp_path):
-        dm, ds = self._make_dm(tmp_path)
+    def test_loads_from_cache(self, tmp_path):
+        ds, bb = self._make_ds(tmp_path)
         cached = torch.randn(len(ds), 8)
-        cache_path = os.path.join(ds.root_dir, 'bb.pt')
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(cached, cache_path)
+        torch.save(cached, os.path.join(ds.root_dir, 'bb.pt'))
 
-        dm._compute_embeddings = MagicMock()  # must NOT be called
+        ds._compute_embeddings = MagicMock()  # must NOT be called
 
-        dm.setup('fit', verbose=False)
+        ds.precompute_embeddings(bb)
 
-        dm._compute_embeddings.assert_not_called()
-        assert torch.equal(dm.dataset.input_data, cached)
-        assert dm.dataset.embs_precomputed is True
+        ds._compute_embeddings.assert_not_called()
+        assert torch.equal(ds.input_data, cached)
+        assert ds.embs_precomputed is True
 
-    def test_force_recompute_ignores_cache(self, tmp_path):
-        dm, ds = self._make_dm(tmp_path)
-        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+    def test_force_ignores_cache(self, tmp_path):
+        ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(torch.randn(len(ds), 8), cache_path)  # stale cache present
+        torch.save(torch.randn(len(ds), 8), os.path.join(ds.root_dir, 'bb.pt'))
 
-        dm.force_recompute = True
         fresh = torch.randn(len(ds), 8)
-        dm._compute_embeddings = MagicMock(return_value=fresh)
+        ds._compute_embeddings = MagicMock(return_value=fresh)
 
-        dm.setup('fit', verbose=False)
+        ds.precompute_embeddings(bb, force=True)
 
-        dm._compute_embeddings.assert_called_once()
-        assert torch.equal(dm.dataset.input_data, fresh)
+        ds._compute_embeddings.assert_called_once()
+        assert torch.equal(ds.input_data, fresh)
+
+    def test_stale_row_count_recomputes(self, tmp_path):
+        """A cache with the wrong number of rows (e.g. written from a subset)
+        is ignored and recomputed."""
+        ds, bb = self._make_ds(tmp_path)
+        os.makedirs(ds.root_dir, exist_ok=True)
+        torch.save(torch.randn(5, 8), os.path.join(ds.root_dir, 'bb.pt'))  # 5 != 20
+
+        fresh = torch.randn(len(ds), 8)
+        ds._compute_embeddings = MagicMock(return_value=fresh)
+
+        ds.precompute_embeddings(bb)
+
+        ds._compute_embeddings.assert_called_once()
+        assert torch.equal(ds.input_data, fresh)
+
+    def test_cache_false_computes_in_memory_only(self, tmp_path):
+        """cache=False computes without reading or writing the cache file."""
+        ds, bb = self._make_ds(tmp_path)
+        os.makedirs(ds.root_dir, exist_ok=True)
+        stale = torch.randn(len(ds), 8)
+        torch.save(stale, os.path.join(ds.root_dir, 'bb.pt'))  # must be ignored
+
+        fresh = torch.randn(len(ds), 8)
+        ds._compute_embeddings = MagicMock(return_value=fresh)
+
+        ds.precompute_embeddings(bb, cache=False)
+
+        ds._compute_embeddings.assert_called_once()          # cache not read
+        assert torch.equal(ds.input_data, fresh)
+        assert torch.equal(                                  # cache not overwritten
+            torch.load(os.path.join(ds.root_dir, 'bb.pt')), stale
+        )
+        assert ds.embs_precomputed is True
+
+    def test_datamodule_delegates_with_own_defaults(self, tmp_path):
+        """dm.precompute_embeddings forwards its batch_size/workers to the dataset."""
+        ds, bb = self._make_ds(tmp_path)
+        dm = ConceptDataModule(dataset=ds, batch_size=7, workers=3)
+        ds.precompute_embeddings = MagicMock()
+
+        dm.precompute_embeddings(bb, force=True)
+
+        ds.precompute_embeddings.assert_called_once_with(
+            bb, batch_size=7, workers=3, cache=True, cache_dir=None, force=True
+        )
+
+    def test_cache_dir_overrides_root_dir(self, tmp_path):
+        """cache_dir redirects the cache file away from the dataset root."""
+        ds, bb = self._make_ds(tmp_path)
+        ds._compute_embeddings = MagicMock(return_value=torch.randn(len(ds), 8))
+        other = os.path.join(str(tmp_path), 'scratch')
+
+        ds.precompute_embeddings(bb, cache_dir=other)
+
+        assert os.path.exists(os.path.join(other, 'bb.pt'))
+        assert not os.path.exists(os.path.join(ds.root_dir, 'bb.pt'))
+
+
+class TestMaxSamplesNativeSplitter:
+    """`max_samples` with a NativeSplitter is rejected with a clear error."""
+
+    def test_native_splitter_incompatible_with_max_samples(self, toy_dataset):
+        from torch_concepts.data.splitters.native import NativeSplitter
+        with pytest.raises(ValueError, match="max_samples.*incompatible.*NativeSplitter"):
+            ConceptDataModule(dataset=toy_dataset, splitter=NativeSplitter(), max_samples=10)
+
+
+class TestComputeEmbeddingsEvalGuard:
+    """_compute_embeddings forces eval during extraction and restores the mode."""
+
+    def test_forces_eval_and_restores_mode(self, tmp_path):
+        ds = ToyDataset('xor', n_gen=8, seed=0, root=str(tmp_path))
+
+        class _RecordingBackbone(nn.Module):
+            source = "torchvision"
+
+            def __init__(self):
+                super().__init__()
+                self.out_features = 4
+                self.seen_training = None
+                self._p = nn.Parameter(torch.zeros(1))
+
+            def forward(self, x):
+                self.seen_training = self.training
+                return torch.zeros(x.shape[0], self.out_features)
+
+        bb = _RecordingBackbone()
+        bb.train()
+        assert bb.training
+
+        embs = ds._compute_embeddings(bb, batch_size=4, workers=0)
+
+        assert bb.seen_training is False      # ran in eval (deterministic BN/Dropout)
+        assert bb.training is True            # caller's mode restored afterwards
+        assert embs.shape == (len(ds), 4)
 
 
 if __name__ == '__main__':

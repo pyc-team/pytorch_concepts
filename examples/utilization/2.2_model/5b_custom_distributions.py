@@ -85,7 +85,7 @@ def main():
 
         # Forward pass - query all variables (concepts + tasks).
         out = model(query=query, input=x_train)
-        logits = torch.cat([out.params[name]["logits"] for name in query], dim=1)
+        logits = out.logits[list(query)]
 
         loss = loss_fn(logits, target)
         loss.backward()
@@ -106,8 +106,8 @@ def main():
     model.eval()
     with torch.no_grad():
         out = model(query=query, input=x_train)
-        c_pred = torch.cat([out.params[name]["logits"] for name in concept_names], dim=1)
-        y_pred = torch.cat([out.params[name]["logits"] for name in task_names], dim=1)
+        c_pred = out.logits[list(concept_names)]
+        y_pred = out.logits[list(task_names)]
 
         print(f"Concept accuracy: {concept_acc_fn(c_pred, c_train.int()).item():.4f}")
         print(f"Task accuracy:    {task_acc_fn(y_pred, y_train.int()).item():.4f}")

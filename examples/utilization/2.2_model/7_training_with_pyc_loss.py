@@ -57,7 +57,6 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations = annotations,
         binary = torch.nn.BCEWithLogitsLoss(),
         categorical = torch.nn.CrossEntropyLoss(), # not used as concepts are binary, but included for demonstration
         continuous = torch.nn.MSELoss() # not used as concepts are binary, but included for demonstration

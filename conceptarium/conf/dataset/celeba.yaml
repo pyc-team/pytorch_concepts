@@ -2,20 +2,21 @@ defaults:
   - _commons
   - _self_
 
-_target_: torch_concepts.data.datamodules.celeba.CelebADataModule
-
 name: celeba
 
-# backbone handling and embedding precomputation
-backbone: resnet50 # facebook/dinov2-base
-precompute_embs: true 
-force_recompute: false
+datamodule:
+  _target_: torch_concepts.data.datamodules.celeba.CelebADataModule
+
+  # as default, we use the native splitter provided by the dataset 
+  splitter: 
+    _target_: torch_concepts.data.splitters.native.NativeSplitter
+
+  # all CelebA attributes are binary facial features
+  label_descriptions: null
 
 default_task_names: [Attractive]
 
-# splitter
-splitter: 
-  _target_: torch_concepts.data.splitters.native.NativeSplitter
-
-# all CelebA attributes are binary facial features
-label_descriptions: null
+backbone:
+  _target_: torch_concepts.backbone.ImageBackbone
+  name: resnet50
+  freeze: True
