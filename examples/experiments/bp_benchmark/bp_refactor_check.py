@@ -146,13 +146,13 @@ def marginal_loss(
     n = labels.shape[0]
     total = labels.new_zeros((), dtype=torch.get_default_dtype())
     for i, (name, k) in enumerate(zip(names, n_states)):
-        logits = out.logits[name]
+        probs = out.probs[name]
         if k == 2:
-            total = total + F.binary_cross_entropy_with_logits(
-                logits.expand(n, 1), labels[:, i : i + 1].float()
+            total = total + F.binary_cross_entropy(
+                probs.expand(n, 1), labels[:, i : i + 1].float()
             )
         else:
-            total = total + F.cross_entropy(logits.expand(n, k), labels[:, i])
+            total = total + F.nll_loss(probs.expand(n, k).log(), labels[:, i])
     return total
 
 

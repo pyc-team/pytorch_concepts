@@ -118,10 +118,10 @@ def _assert_marginals_match(fg, out, exact, names, atol=1e-5):
         assert torch.allclose(bp.sum(-1), torch.ones_like(bp.sum(-1)), atol=1e-5)
 
 
-def _binary_ce(logits, target):
-    """Cross-entropy on a binary variable's canonical (log-odds) logits."""
-    return torch.nn.functional.binary_cross_entropy_with_logits(
-        logits.squeeze(-1), target.to(logits.dtype)
+def _binary_ce(probs, target):
+    """Cross-entropy on a binary variable's marginal P(x=1)."""
+    return torch.nn.functional.binary_cross_entropy(
+        probs.squeeze(-1), target.to(probs.dtype)
     )
 
 
@@ -215,7 +215,7 @@ class TestBPTrainingAndMixed:
         fg = _ConcreteModel(variables=[a, b, c], factors=[cpd_a, cpd_b, cpd_c, pot])
         assert fg.is_mixed
         out = BeliefPropagation(fg, iters=6).query(query=["c"], evidence={})
-        loss = _binary_ce(out.logits["c"], torch.tensor([1]))
+        loss = _binary_ce(out.probs["c"], torch.tensor([1]))
         loss.backward()
         grads = [p.grad for p in fg.parameters() if p.grad is not None]
         assert grads and any(g.abs().sum() > 0 for g in grads)
@@ -234,7 +234,7 @@ class TestBPTrainingAndMixed:
         for step in range(300):
             opt.zero_grad()
             out = eng.query(query=["a"], evidence={"emb": x})
-            loss = _binary_ce(out.logits["a"], target)
+            loss = _binary_ce(out.probs["a"], target)
             loss.backward()
             opt.step()
             if step == 0:

@@ -20,8 +20,9 @@ from .base import TorchBaseInference
 #: while staying finite under subtraction.
 LOG0 = -1e4
 
-#: One compiled bucket: ``(arity, cardinalities, log-potential stack, edge ids)``.
-_Bucket = Tuple[int, Tuple[int, ...], torch.Tensor, torch.Tensor]
+#: One compiled bucket: ``(cardinalities, log-potential stack, edge ids)``.
+#: The arity is ``len(cardinalities)`` — never stored twice.
+_Bucket = Tuple[Tuple[int, ...], torch.Tensor, torch.Tensor]
 
 
 class BeliefPropagation(TorchBaseInference):
@@ -30,46 +31,37 @@ class BeliefPropagation(TorchBaseInference):
     Consumes the unified factor interface (``scope`` + ``log_potential``), so
     directed (:class:`~..graph.bayesian_network.BayesianNetwork`), undirected
     (:class:`~..graph.markov_network.MarkovNetwork`) and mixed graphs all run
-    through the same code path. Every **free** (non-evidence) variable must be
-    discrete with finite cardinality; continuous variables are supported as
-    **observed evidence** feeding the factors' energies (the CRF case). A
-    continuous free variable raises a clear error.
+    through the same code path. 
 
+    On a tree, enough iterations make BP exact; with loops it is the
+    standard approximation.
+    
     The whole pass is differentiable (unrolled message passing), so gradients
     flow from a marginal loss into every factor/CPD parametrization.
+    
+    NOTE: Every **free** (non-evidence) variable must be
+    discrete with finite cardinality; continuous variables are supported as
+    **observed evidence** feeding the factors' energies (the CRF case).
 
     Parameters
     ----------
     pgm : ProbabilisticModel
         Any factor graph (directed, undirected, or mixed).
     iters : int, default 5
-        Maximum number of synchronous (flooding) message-passing rounds. On a
-        tree/forest, enough iterations make BP exact; with loops it is the
-        standard approximation.
+        Maximum number of synchronous (flooding) message-passing rounds.
     damping : float, default 0.0
-        Weight in ``[0, 1)`` given to the *previous* factor->variable message,
-        applied in **log space** (a geometric mean in probability space), which
-        is the form the convergence analyses assume. ``0`` is no damping;
-        larger values trade convergence speed for stability on loopy graphs.
-        Only the factor->variable family is damped — the variable->factor
-        messages are a deterministic function of it, so damping one damps the
-        whole iteration.
+        Weight in ``[0, 1)`` given to the *previous* factor->variable message. 
+        ``0`` is no damping; larger values trade convergence speed for stability 
+        on loopy graphs.
     tol : float, optional
         If set, stop early once the max absolute change in factor->variable
         messages drops below ``tol``.
     check_every : int, default 1
-        How many rounds between convergence tests. The test needs the residual
-        on the host, which forces a device synchronisation; on small graphs that
-        sync can cost more than the arithmetic, so raising this to ~10 trades at
-        most ``check_every - 1`` wasted rounds for far fewer syncs. Ignored when
-        ``tol`` is ``None`` (no test, no sync).
+        How many rounds between convergence tests. Ignored when ``tol`` is 
+        ``None`` (no test, no sync).
     init_noise : float, default 0.0
         Standard deviation of the perturbation applied to the initial
-        factor->variable messages. ``0`` gives the classic uniform start. A
-        non-zero value only matters on *symmetric* graphs, where it lets the
-        iteration reach symmetry-broken fixed points instead of sitting on the
-        symmetric one; on a model with asymmetric local fields it is wasted
-        work.
+        factor->variable messages. ``0`` gives the classic uniform start.
     """
 
     name = "BeliefPropagation"
@@ -124,7 +116,7 @@ class BeliefPropagation(TorchBaseInference):
 
     @staticmethod
     def _norm(v: torch.Tensor) -> torch.Tensor:
-        """``norm(v)`` of the pseudocode: subtract the log-partition of the state axis."""
+        """normalize by subtracting the log-partition of the state axis."""
         return v - torch.logsumexp(v, dim=-1, keepdim=True)
 
     @staticmethod
@@ -136,6 +128,16 @@ class BeliefPropagation(TorchBaseInference):
             (*v.shape[:-1], states - card), LOG0, dtype=v.dtype, device=v.device
         )
         return torch.cat([v, pad], dim=-1)
+
+    @staticmethod
+    def _on_state_axis(msg: torch.Tensor, a: int, arity: int) -> torch.Tensor:
+        """``(..., card)`` -> ``(..., 1, …, card, …, 1)`` with ``card`` on state axis ``a``.
+
+        How a message is broadcast onto its own axis of a factor's table.
+        """
+        block = [1] * arity
+        block[a] = msg.shape[-1]
+        return msg.reshape(*msg.shape[:-1], *block)
 
     def _encode_states(
         self,
@@ -200,27 +202,23 @@ class BeliefPropagation(TorchBaseInference):
         free_cards = [enumerable_cardinality(v) for v in free_vars]
         if not free_cards:
             return None
-        n_leading = len(leading)
         grid = math.prod(free_cards)
 
-        # State index of slot ``a`` at each grid position, in C order (the last
-        # slot varies fastest) so the final reshape maps axis ``a`` to slot ``a``.
-        assignment: Dict[Variable, torch.Tensor] = {}
-        inner = grid
-        for a, v in enumerate(free_vars):
-            card = free_cards[a]
-            inner //= card
-            outer = grid // (inner * card)
-            states = (
-                torch.arange(card, device=device).repeat_interleave(inner).repeat(outer)
-            )
-            assignment[v] = self._encode_states(v, states, leading, dtype)
+        # ``cartesian_prod`` enumerates in C order (last slot varies fastest),
+        # which is what makes the final reshape map axis ``a`` to slot ``a``.
+        states = torch.cartesian_prod(
+            *[torch.arange(c, device=device) for c in free_cards]
+        ).reshape(grid, len(free_cards))
+        assignment: Dict[Variable, torch.Tensor] = {
+            v: self._encode_states(v, states[:, a], leading, dtype)
+            for a, v in enumerate(free_vars)
+        }
         for v, value in fixed.items():
             assignment[v] = value.unsqueeze(0).expand(grid, *value.shape)
 
         logp = factor.log_potential(assignment).reshape(grid, *leading)
         # (grid, *leading) -> (*leading, grid) -> (*leading, *free_cards)
-        return logp.permute(*range(1, n_leading + 1), 0).reshape(*leading, *free_cards)
+        return torch.movedim(logp, 0, -1).reshape(*leading, *free_cards)
 
     # ------------------------------------------------------------------ query
     def query(
@@ -228,35 +226,14 @@ class BeliefPropagation(TorchBaseInference):
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
-        """Run loopy BP and return per-variable marginals.
-
-        ``out.params`` follows the same contract as every other engine: it is
-        keyed by parameter name, each entry an annotated tensor shaped
-        ``(*leading, width)`` and sliceable by variable name. The BP marginal is
-        therefore reported in the variable's *own* parametrization rather than
-        as a state-space belief — a binary concept gets Bernoulli
-        ``{'probs': P(x=1), 'logits': log-odds}`` of width 1, a ``k``-way
-        categorical gets ``{'probs', 'logits'}`` of width ``k``. The same
-        ``binary_cross_entropy_with_logits`` / ``cross_entropy`` call that trains
-        a :class:`~..forward.ForwardInference` model therefore trains this one.
-
-        Only queried names that are *active* (free, computed) variables appear in
-        ``params``; a fully-observed queried variable emits none (its value is
-        its evidence), mirroring the directed engines.
-
-        Query and evidence tensors may carry any number of leading (batch-like)
-        dimensions; messages and marginals carry the same ones.
-
-        On a loopy graph the marginals are **approximate** — see the class
-        docstring.
-        """
+        """Run loopy BP and return per-variable marginals."""
+        
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         query_names = list(query)
 
         tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
         leading = self._query_leading_shape(query, evidence)
-        n_leading = len(leading)
         dtype = self._dtype()
         device = tensors[0].device if tensors else torch.device("cpu")
 
@@ -284,26 +261,21 @@ class BeliefPropagation(TorchBaseInference):
             return InferenceOutput(params=self._assemble_params({}, query_names))
         # Enumerability precondition (raises a clear error for continuous free vars).
         cards = [enumerable_cardinality(v) for v in active_vars]
-        vindex = {v.name: i for i, v in enumerate(active_vars)}
-        n_states = max(cards)
 
         bias, vid, pad, buckets = self._compile(
-            active_vars, cards, vindex, n_states, evidence_names, observed,
-            leading, dtype, device,
+            active_vars, cards, observed, leading, dtype, device
         )
 
         # ══ R. READOUT ═════════════════════════════════════════════════════
+        # No normalisation here: ``_marginal``'s softmax normalises anyway.
+        # Every factor being degree-1 leaves no edges, and the bias is the answer.
+        belief = bias
         if vid.numel():
-            m_fv = self._run_message_passing(
-                bias, vid, pad, buckets, n_leading, dtype, device
-            )
-            belief = self._norm(bias.index_add(n_leading, vid, m_fv))
-        else:
-            # Every factor was degree-1 after reduction: the bias *is* the answer.
-            belief = self._norm(bias)
+            m_fv = self._run_message_passing(bias, vid, pad, buckets)
+            belief = bias.index_add(-2, vid, m_fv)
 
         computed = {
-            v.name: self._canonical_params(v, belief[..., i, : cards[i]])
+            v.name: self._marginal(v, belief[..., i, : cards[i]])
             for i, v in enumerate(active_vars)
         }
         return InferenceOutput(params=self._assemble_params(computed, query_names))
@@ -313,9 +285,6 @@ class BeliefPropagation(TorchBaseInference):
         self,
         active_vars: List[Variable],
         cards: List[int],
-        vindex: Dict[str, int],
-        n_states: int,
-        evidence_names,
         observed: Dict[str, torch.Tensor],
         leading: torch.Size,
         dtype: torch.dtype,
@@ -335,42 +304,42 @@ class BeliefPropagation(TorchBaseInference):
           holding the stacked log-potentials ``(*leading, n_b, *cards)`` and the
           edge ids ``(n_b, arity)`` of each factor's slots.
         """
-        n_leading = len(leading)
+        n_states = max(cards)
+        vindex = {v.name: i for i, v in enumerate(active_vars)}
         unary: List[List[torch.Tensor]] = [[] for _ in active_vars]
         edge_var: List[int] = []
-        raw: Dict[Tuple[int, Tuple[int, ...]], Tuple[List[torch.Tensor], List[List[int]]]] = {}
+        raw: Dict[Tuple[int, ...], Tuple[List[torch.Tensor], List[List[int]]]] = {}
 
         for f in self.pgm.factors.values():
             free_vars = [v for v in f.scope if v.name in vindex]
-            fixed = {v: observed[v.name] for v in f.scope if v.name in evidence_names}
+            fixed = {v: observed[v.name] for v in f.scope if v.name in observed}
             table = self._factor_table(f, free_vars, fixed, leading, dtype, device)
             if table is None:
                 continue
             if len(free_vars) == 1:
-                # P5-P7: a degree-1 factor's outgoing message is constant.
+                # A degree-1 factor's outgoing message is constant.
                 unary[vindex[free_vars[0].name]].append(self._norm(table))
                 continue
-            signature = (
-                len(free_vars),
-                tuple(enumerable_cardinality(v) for v in free_vars),
+            # Signature = the cardinality tuple; its length is the arity.
+            tables, idx = raw.setdefault(
+                tuple(cards[vindex[v.name]] for v in free_vars), ([], [])
             )
-            tables, idx = raw.setdefault(signature, ([], []))
             tables.append(table)
-            slots = []
-            for v in free_vars:
-                slots.append(len(edge_var))
-                edge_var.append(vindex[v.name])
-            idx.append(slots)
+            idx.append(list(range(len(edge_var), len(edge_var) + len(free_vars))))
+            edge_var.extend(vindex[v.name] for v in free_vars)
 
-        # P2-P4/P6: one padded, unary-loaded row per variable.
-        rows = []
-        for i, card in enumerate(cards):
-            row = (
-                torch.stack(unary[i], dim=0).sum(dim=0) if unary[i]
-                else torch.zeros(*leading, card, dtype=dtype, device=device)
-            )
-            rows.append(self._pad_states(row, card, n_states))
-        bias = torch.stack(rows, dim=n_leading)
+        # One padded, unary-loaded row per variable.
+        bias = torch.stack(
+            [
+                self._pad_states(
+                    torch.stack(rows, dim=0).sum(dim=0) if rows
+                    else torch.zeros(*leading, card, dtype=dtype, device=device),
+                    card, n_states,
+                )
+                for card, rows in zip(cards, unary)
+            ],
+            dim=-2,
+        )
 
         vid = torch.tensor(edge_var, dtype=torch.long, device=device)
         # Which message entries are states their variable does not have. Built
@@ -382,12 +351,11 @@ class BeliefPropagation(TorchBaseInference):
         pad = torch.arange(n_states, device=device) >= edge_cards.unsqueeze(-1)
         buckets: List[_Bucket] = [
             (
-                arity,
                 bcards,
-                torch.stack(tables, dim=n_leading),
+                torch.stack(tables, dim=-len(bcards) - 1),
                 torch.tensor(idx, dtype=torch.long, device=device),
             )
-            for (arity, bcards), (tables, idx) in raw.items()
+            for bcards, (tables, idx) in raw.items()
         ]
         return bias, vid, pad, buckets
 
@@ -398,9 +366,6 @@ class BeliefPropagation(TorchBaseInference):
         vid: torch.Tensor,
         pad: torch.Tensor,
         buckets: List[_Bucket],
-        n_leading: int,
-        dtype: torch.dtype,
-        device: torch.device,
     ) -> torch.Tensor:
         """Synchronous (flooding) log-domain sum-product; returns the final
         factor->variable messages, shaped ``(*leading, E, n_states)``.
@@ -408,68 +373,83 @@ class BeliefPropagation(TorchBaseInference):
         The two half-steps have disjoint read/write sets — the factor half reads
         only the ``m_vf`` written by the variable half — so a whole round is one
         parallel update and no message is read "fresh" within its own round.
-        """
-        leading = bias.shape[:n_leading]
-        vdim = n_leading  # the edge / variable axis
-        lam = 1.0 - self.damping
-        n_states = int(pad.shape[-1])
 
-        # I1-I2: uniform (log 1 == 0) start, optionally perturbed, with the
+        Every axis is addressed from the *right*: the edge axis is always ``-2``
+        and a bucket's ``d`` state axes are always the last ``d``. That is why
+        the number of leading (batch-like) dimensions never appears here.
+        """
+        n_states = int(pad.shape[-1])
+        lam = 1.0 - self.damping
+        # The previous message is only needed to damp with or to measure
+        # convergence against. On the defaults neither is asked for, so it is
+        # not gathered at all.
+        need_old = self.damping > 0.0 or self.tol is not None
+
+        # Uniform (log 1 == 0) start, optionally perturbed, with the
         # padded states pinned at LOG0 so they stay inert for the whole run.
-        m_fv = torch.zeros(*leading, *pad.shape, dtype=dtype, device=device)
+        m_fv = torch.zeros(
+            *bias.shape[:-2], *pad.shape, dtype=bias.dtype, device=bias.device
+        )
         if self.init_noise:
             m_fv = m_fv + self.init_noise * torch.randn_like(m_fv)
         m_fv = m_fv.masked_fill(pad, LOG0)
 
-        # I4: on-device residual — a Python float would force a host sync per round.
-        residual = torch.zeros((), dtype=dtype, device=device)
+        # On-device residual — a Python float would force a host sync per round.
+        residual = torch.zeros((), dtype=bias.dtype, device=bias.device)
 
         for step in range(self.iters):
             residual = torch.zeros_like(residual)
 
             # ─ variable -> factor: exclusive sum as total minus self ─────────
-            total = bias.index_add(vdim, vid, m_fv)
-            m_vf = self._norm(total.index_select(vdim, vid) - m_fv).clamp(min=LOG0)
+            # No clamp is needed on the subtraction. Padding is applied *last*
+            # when a row is built, so a padded state holds exactly LOG0 in both
+            # operands and never a finite value plus LOG0 — there is nothing to
+            # cancel catastrophically. Those states stay hugely negative (so
+            # every logsumexp ignores them) and are never read back anyway:
+            # each gather below slices to its slot's own cardinality.
+            total = bias.index_add(-2, vid, m_fv)
+            m_vf = self._norm(total.index_select(-2, vid) - m_fv)
 
             # ─ factor -> variable: one batched logsumexp per bucket ──────────
             edge_ids: List[torch.Tensor] = []
             values: List[torch.Tensor] = []
-            for arity, bcards, phi, idx in buckets:
-                n_b = int(idx.shape[0])
-                gathered = m_vf.index_select(vdim, idx.reshape(-1))
-                gathered = gathered.reshape(*leading, n_b, arity, n_states)
+            for bcards, phi, idx in buckets:
+                arity = len(bcards)
+                gathered = m_vf.index_select(-2, idx.reshape(-1)).reshape(
+                    *m_vf.shape[:-2], idx.shape[0], arity, n_states
+                )
+                slots = [
+                    self._on_state_axis(gathered[..., a, :card], a, arity)
+                    for a, card in enumerate(bcards)
+                ]
 
-                # L8-L10: the full theta, built once per bucket.
+                # The full theta, built once per bucket.
                 theta = phi
-                slots: List[torch.Tensor] = []
-                for a, card in enumerate(bcards):
-                    shape = [*leading, n_b] + [1] * arity
-                    shape[vdim + 1 + a] = card
-                    slot = gathered[..., a, :card].reshape(shape)
-                    slots.append(slot)
+                for slot in slots:
                     theta = theta + slot
 
-                # L11-L18: exclusive by subtraction, marginalise the other slots.
+                # Exclusive by subtraction, marginalise the other slots.
                 for a, card in enumerate(bcards):
-                    axes = [vdim + 1 + j for j in range(arity) if j != a]
-                    new = torch.logsumexp(theta - slots[a], dim=axes)
+                    new = torch.logsumexp(
+                        theta - slots[a],
+                        dim=[j - arity for j in range(arity) if j != a],
+                    )
                     eid = idx[:, a]
-                    old = m_fv.index_select(vdim, eid)[..., :card]
+                    old = m_fv.index_select(-2, eid)[..., :card] if need_old else None
                     if lam != 1.0:
                         new = lam * new + self.damping * old
-                    new = self._norm(new).clamp(min=LOG0)
-                    residual = torch.maximum(residual, (new - old).abs().amax())
+                    new = self._norm(new)
+                    if old is not None:
+                        residual = torch.maximum(residual, (new - old).abs().amax())
                     edge_ids.append(eid)
                     values.append(self._pad_states(new, card, n_states))
 
             # Every edge is written by exactly one (bucket, slot) pair, so the
             # concatenated indices are a permutation of ``0..E-1`` and this is a
             # single out-of-place scatter (in-place would break autograd).
-            m_fv = m_fv.index_copy(
-                vdim, torch.cat(edge_ids), torch.cat(values, dim=vdim)
-            )
+            m_fv = m_fv.index_copy(-2, torch.cat(edge_ids), torch.cat(values, dim=-2))
 
-            # L19-L20: the only host sync, and only when a tolerance is asked for.
+            # The only host sync, and only when a tolerance is asked for.
             if (
                 self.tol is not None
                 and (step + 1) % self.check_every == 0
@@ -480,24 +460,17 @@ class BeliefPropagation(TorchBaseInference):
         return m_fv
 
     @staticmethod
-    def _canonical_params(
-        variable: Variable, belief: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
-        """Express a state-space belief in ``variable``'s own parametrization.
+    def _marginal(variable: Variable, belief: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """The marginal ``P(x)``, in the width ``variable``'s own family uses.
 
-        ``belief`` is the (log-)belief over the variable's discrete states,
-        shape ``(*leading, cardinality)``. The result matches what a forward
-        engine puts in ``out.params`` for the same variable:
-
-        - **binary** (2 states, width 1) -> Bernoulli ``probs`` = ``P(x=1)`` and
-          ``logits`` = the log-odds, both ``(*leading, 1)``, satisfying
-          ``sigmoid(logits) == probs``;
-        - **categorical** (one state per class) -> ``probs`` and normalised
-          ``logits`` of width ``variable.size``, satisfying
-          ``softmax(logits) == probs``.
+        ``belief`` is the un-normalised log-belief over the variable's discrete
+        states, shape ``(*leading, cardinality)``. BP computes exactly one
+        thing — a probability — so that is all this reports: a ``k``-way
+        categorical gets the full ``(*leading, k)`` distribution, and a binary
+        variable gets Bernoulli ``P(x=1)`` at ``(*leading, 1)``, since its
+        ``P(x=0)`` is redundant.
         """
-        log_norm = belief - torch.logsumexp(belief, dim=-1, keepdim=True)
+        probs = torch.softmax(belief, dim=-1)
         if enumerable_cardinality(variable) == 2 and variable.size == 1:
-            logits = log_norm[..., 1:2] - log_norm[..., 0:1]
-            return {"probs": torch.sigmoid(logits), "logits": logits}
-        return {"probs": log_norm.exp(), "logits": log_norm}
+            return {"probs": probs[..., 1:2]}
+        return {"probs": probs}
