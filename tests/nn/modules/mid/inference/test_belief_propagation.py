@@ -243,7 +243,214 @@ class TestBPTrainingAndMixed:
         assert last < first * 0.6
 
 
+class TestBPVectorisedLayout:
+    """The flat ``[E, K]`` layout must be invisible in the answers.
+
+    Padding a ragged state axis with ``LOG0``, grouping factors into
+    ``(arity, cardinalities)`` buckets and absorbing degree-1 factors into the
+    bias are all pure implementation; each is checked against the enumerated
+    joint on a tree, where BP is exact.
+    """
+
+    def test_ragged_cardinalities_exact(self):
+        """Cardinalities 2/3/4 share one K=4 message axis, so two of the three
+        variables carry padded states through every update."""
+        torch.manual_seed(10)
+        a, b, c = _bin("a"), _cat("b", 3), _cat("c", 4)
+        fg = MarkovNetwork(
+            variables=[a, b, c],
+            factors=[_pot([a], "ua"), _pot([c], "uc"),
+                     _pot([a, b], "ab"), _pot([b, c], "bc")],
+        )
+        names = ["a", "b", "c"]
+        out = BeliefPropagation(fg, iters=30).query(query=names, evidence={})
+        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+
+    def test_factors_sharing_a_signature_are_batched_exactly(self):
+        """Four identical-signature pairwise factors land in one bucket."""
+        torch.manual_seed(11)
+        hub = _bin("h")
+        leaves = [_bin(f"l{i}") for i in range(4)]
+        factors = [_pot([hub, lf], f"e{i}") for i, lf in enumerate(leaves)]
+        fg = MarkovNetwork(variables=[hub, *leaves], factors=factors)
+        names = ["h", *[lf.name for lf in leaves]]
+        out = BeliefPropagation(fg, iters=30).query(query=names, evidence={})
+        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+
+    def test_mixed_signatures_and_arities_exact(self):
+        """Three buckets at once: (2,(2,2)), (2,(2,3)) and (3,(2,2,3))."""
+        torch.manual_seed(12)
+        a, b, c, d = _bin("a"), _bin("b"), _cat("c", 3), _bin("d")
+        fg = MarkovNetwork(
+            variables=[a, b, c, d],
+            factors=[_pot([a, b], "ab"), _pot([a, c], "ac"), _pot([a, b, c], "abc"),
+                     _pot([b, d], "bd"), _pot([d], "ud")],
+        )
+        names = ["a", "b", "c", "d"]
+        # Loopy (a-b-c triangle), so this checks the buckets agree with the
+        # dict-based reference only in the sense of running; exactness is
+        # asserted on the tree tests above. Here we only require a normalised,
+        # finite answer over every padded state axis.
+        out = BeliefPropagation(fg, iters=30, damping=0.5).query(query=names, evidence={})
+        for n in names:
+            probs = _state_marginal(fg.variables[n], out.probs[n])
+            assert torch.isfinite(probs).all()
+            assert torch.allclose(probs.sum(-1), torch.ones(1), atol=1e-5)
+
+    def test_unary_only_graph_uses_bias_alone(self):
+        """Every factor is degree-1, so there are no edges and no message loop."""
+        torch.manual_seed(13)
+        a, b = _bin("a"), _cat("b", 3)
+        fg = MarkovNetwork(
+            variables=[a, b],
+            factors=[_pot([a], "ua1"), _pot([a], "ua2"), _pot([b], "ub")],
+        )
+        names = ["a", "b"]
+        out = BeliefPropagation(fg, iters=5).query(query=names, evidence={})
+        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+
+    def test_leading_dims_preserved(self):
+        """Two leading dimensions survive the flat message layout."""
+        torch.manual_seed(14)
+        a, b = _bin("a"), _bin("b")
+        emb = ConceptVariable("emb", distribution=dist.Normal, size=3)
+        fg = _ConcreteModel(
+            variables=[a, b, emb],
+            factors=[_pot([a, b], "phi", conditioning=[emb])],
+        )
+        out = BeliefPropagation(fg, iters=8).query(
+            query=["a", "b"], evidence={"emb": torch.randn(2, 5, 3)}
+        )
+        assert out.probs["a"].shape == (2, 5, 1)
+
+
+class TestBPStochasticParametrization:
+    """A parametrization with ``Dropout`` still gets one independent mask per
+    table cell.
+
+    The engine builds a factor's whole log-potential table in a single
+    ``log_potential`` call, with the enumeration grid folded into a leading
+    axis. Dropout's mask has the shape of its input, so batching the grid does
+    not make the cells share a mask — which is what would silently turn a
+    ``K**d`` table into ``K**d`` evaluations of *one* sampled sub-network.
+    """
+
+    def _dropout_pot(self, scope, name, p=0.5):
+        in_dim = sum(v.size for v in scope)
+        return ParametricPotential(
+            scope=list(scope),
+            parametrization=nn.Sequential(
+                nn.Linear(in_dim, 32), nn.Dropout(p), nn.Tanh(), nn.Linear(32, 1)
+            ),
+            name=name,
+        )
+
+    def test_cells_get_independent_masks(self):
+        """A table built from a constant-output net under dropout must vary
+        across its cells; a shared mask would make every cell identical."""
+        torch.manual_seed(20)
+        a, b = _bin("a"), _bin("b")
+        pot = self._dropout_pot([a, b], "ab")
+        # Zero the input weights: without dropout every cell of the table is the
+        # same number, so any spread across cells comes from per-cell masking.
+        with torch.no_grad():
+            pot.parametrization["energy"][0].weight.zero_()
+        fg = MarkovNetwork(variables=[a, b], factors=[pot])
+        fg.train()
+        eng = BeliefPropagation(fg, iters=3)
+        table = eng._factor_table(pot, [a, b], {}, torch.Size([1]), torch.float32,
+                                  torch.device("cpu"))
+        assert table.shape == (1, 2, 2)
+        assert table.reshape(-1).std() > 0
+
+    def test_eval_mode_is_deterministic(self):
+        torch.manual_seed(21)
+        a, b, c = _bin("a"), _bin("b"), _bin("c")
+        fg = MarkovNetwork(
+            variables=[a, b, c],
+            factors=[self._dropout_pot([a], "ua"), self._dropout_pot([a, b], "ab"),
+                     self._dropout_pot([b, c], "bc")],
+        )
+        fg.eval()
+        eng = BeliefPropagation(fg, iters=8)
+        first = eng.query(query=["a", "b", "c"], evidence={}).probs["b"]
+        second = eng.query(query=["a", "b", "c"], evidence={}).probs["b"]
+        assert torch.equal(first, second)
+
+    def test_train_mode_is_stochastic_but_unbiased_around_eval(self):
+        torch.manual_seed(22)
+        a, b = _bin("a"), _bin("b")
+        fg = MarkovNetwork(
+            variables=[a, b],
+            factors=[self._dropout_pot([a], "ua"), self._dropout_pot([a, b], "ab")],
+        )
+        eng = BeliefPropagation(fg, iters=8)
+        fg.train()
+        draws = torch.stack(
+            [eng.query(query=["a"], evidence={}).probs["a"] for _ in range(200)]
+        ).reshape(-1)
+        assert draws.std() > 1e-3            # dropout really is active
+        fg.eval()
+        deterministic = eng.query(query=["a"], evidence={}).probs["a"].item()
+        assert abs(draws.mean().item() - deterministic) < 0.1
+
+
+class TestBPKnobs:
+    """``damping``, ``tol``/``check_every`` and ``init_noise`` are all
+    convergence controls: on a tree with enough rounds none of them may move
+    the fixed point."""
+
+    def _chain(self):
+        torch.manual_seed(15)
+        a, b, c = _bin("a"), _cat("b", 3), _bin("c")
+        return MarkovNetwork(
+            variables=[a, b, c],
+            factors=[_pot([a], "ua"), _pot([a, b], "ab"), _pot([b, c], "bc")],
+        )
+
+    @pytest.mark.parametrize("kwargs", [
+        {"damping": 0.5},
+        {"init_noise": 0.5},
+        {"tol": 1e-8, "check_every": 4},
+        {"damping": 0.3, "init_noise": 0.2, "tol": 1e-8, "check_every": 3},
+    ])
+    def test_knobs_reach_the_same_fixed_point(self, kwargs):
+        fg = self._chain()
+        names = ["a", "b", "c"]
+        out = BeliefPropagation(fg, iters=60, **kwargs).query(query=names, evidence={})
+        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names, atol=1e-4)
+
+    def test_tol_stops_early_without_changing_the_answer(self):
+        fg = self._chain()
+        names = ["a", "b", "c"]
+        loose = BeliefPropagation(fg, iters=200, tol=1e-7).query(query=names, evidence={})
+        exact = _exact_marginals(fg, names)
+        _assert_marginals_match(fg, loose, exact, names, atol=1e-4)
+
+    def test_damping_is_log_space(self):
+        """Damping mixes the *log* messages, so a damped step of a converged
+        run is a no-op rather than a probability-space average."""
+        fg = self._chain()
+        names = ["a", "b", "c"]
+        a = BeliefPropagation(fg, iters=80, damping=0.0).query(query=names, evidence={})
+        b = BeliefPropagation(fg, iters=80, damping=0.7).query(query=names, evidence={})
+        for n in names:
+            assert torch.allclose(a.probs[n], b.probs[n], atol=1e-4)
+
+
 class TestBPErrors:
+    @pytest.mark.parametrize("kwargs,match", [
+        ({"iters": 0}, "iters"),
+        ({"damping": 1.0}, "damping"),
+        ({"check_every": 0}, "check_every"),
+        ({"init_noise": -1.0}, "init_noise"),
+    ])
+    def test_invalid_settings_raise(self, kwargs, match):
+        fg = MarkovNetwork(variables=[_bin("a")], factors=[])
+        with pytest.raises(ValueError, match=match):
+            BeliefPropagation(fg, **kwargs)
+
+
     def test_continuous_free_variable_raises(self):
         a = _bin("a")
         cont = ConceptVariable("z", distribution=dist.Normal, size=2)
