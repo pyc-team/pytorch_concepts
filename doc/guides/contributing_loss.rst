@@ -89,7 +89,6 @@ parameters you need and nothing else.
       from torch.nn import BCEWithLogitsLoss
 
       loss_fn = ConceptLoss(
-          annotations=ann,
           binary=[BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
           binary_weights=[1.0, 0.5],
       )
@@ -163,16 +162,20 @@ parameters you need and nothing else.
       )
 
       loss_fn = ConceptLoss(
-          annotations=ann,
           binary=[BCEWithLogitsLoss(), EntropyRegularizer(scale=0.05)],
           binary_weights=[1.0, 0.5],
           categorical=torch.nn.CrossEntropyLoss(),
       )
 
       from torch_concepts.nn.modules.outputs import ModelOutput
+      from torch_concepts.tensor import AnnotatedTensor
+
       batch = 8
-      logits = torch.randn(batch, 5)   # 1 + 3 + 1 logits
-      target = torch.randint(0, 2, (batch, 3)).float()
+      # logits live in logit-space (one column per class: 1 + 3 + 1 = 5), target in
+      # concept-space (one column per concept: 3) — ConceptLoss reads both by name
+      # off their annotations, so both must be AnnotatedTensor.
+      logits = AnnotatedTensor(torch.randn(batch, 5), ann)
+      target = AnnotatedTensor(torch.randint(0, 2, (batch, 3)).float(), ann.to_concept_space())
       out = ModelOutput(logits=logits, target=target)
       loss = loss_fn(out)
       print(loss)  # scalar tensor
@@ -189,7 +192,6 @@ parameters you need and nothing else.
       from torch_concepts.nn import WeightedConceptLoss
 
       loss_fn = WeightedConceptLoss(
-          annotations=ann,
           concept_weight=0.5,
           task_weight=1.0,
           task_names=["label"],
@@ -228,15 +230,20 @@ parameters you need and nothing else.
 
    **3. API reference page** (optional but recommended)
 
-   Add an ``autoclass`` directive to ``doc/modules/loss_api.rst`` so the
-   docstring appears in the rendered documentation:
+   Add your class name to the autosummary table in ``doc/modules/nn.loss.rst`` so
+   the docstring appears in the rendered documentation:
 
    .. code-block:: rst
 
-      .. autoclass:: torch_concepts.nn.EntropyRegularizer
-         :members:
-         :undoc-members:
-         :show-inheritance:
+      .. autosummary::
+         :toctree: generated
+         :nosignatures:
+
+         ConceptLoss
+         WeightedConceptLoss
+         DepthWeightedConceptLoss
+         L1LogitRegularizer
+         EntropyRegularizer
 
    **4. Tests**
 

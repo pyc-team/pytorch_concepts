@@ -59,9 +59,12 @@ Expand each block below for an explanation and an example of how to use it.
     :icon: package
 
     An :class:`~torch_concepts.AnnotatedTensor` pairs a plain :class:`torch.Tensor` with an
-    :class:`~torch_concepts.Annotations` describing its second axis (axis 1). You can then slice
-    columns **by concept name** or **by type**. Any operation that leaves the concept axis
-    unchanged keeps the annotation attached.
+    :class:`~torch_concepts.Annotations` describing one of its axes — the **last** axis by
+    default, or axis ``1`` for the concept axis of a ``(batch, concepts, embedding)`` tensor
+    (``axis`` must be given explicitly whenever the tensor has more than 2 dimensions).
+    You can then slice columns **by concept name** or **by type**. Any operation that leaves 
+    the annotated axis unchanged keeps the annotation attached — including moving the tensor 
+    across devices/dtypes with ``.to(...)``.
 
     .. code-block:: python
 
@@ -73,8 +76,23 @@ Expand each block below for an explanation and an example of how to use it.
            annotation=annotations,
        )
 
-       smoking = tensor["smoking"]              # slice by concept name
-       binary = tensor.split_by_type("binary")  # slice by concept type
+       smoking     = tensor["smoking"]              # slice by concept name
+       two_of_them = tensor["smoking", "tar"]        # slice by several names at once
+       binary      = tensor.binary()                 # sub-tensor of binary concepts (or None)
+       categorical = tensor.categorical()             # sub-tensor of categorical concepts (or None)
+
+    Several annotated tensors can be concatenated along the annotated axis with
+    ``union_with``, merging their annotations in the process. ``register_plate_label`` makes one
+    label act as an alias for a group of columns, selectable as a single block while each member
+    stays individually addressable:
+
+    .. code-block:: python
+
+       merged = tensor.union_with(other_tensor)   # concat + merge annotations
+
+       tensor.register_plate_label("concepts", ["smoking", "genotype", "tar"])
+       tensor["concepts"]   # -> smoking | genotype | tar, as one block
+       tensor["genotype"]   # -> still individually addressable
 
 
 .. dropdown:: PyC layers
@@ -193,7 +211,7 @@ Expand each block below for an explanation and an example of how to use it.
         weights, making the layer monotonic).
 
     - A **policy** decides *which* concepts are targeted — e.g. ``UniformPolicy`` (all),
-      ``UncertaintyPolicy`` (least certain), ``GradientPolicy`` (most influential).
+      ``UncertaintyInterventionPolicy`` (least certain), ``GradientPolicy`` (most influential).
 
     .. code-block:: python
 

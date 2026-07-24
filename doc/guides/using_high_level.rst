@@ -61,9 +61,9 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import ConceptBottleneckModel, MLP
 
        annotations = pyc.Annotations(
-           labels=["smoking", "genotype", "tar"],
-           cardinalities=[1, 3, 1],
-           types=["binary", "categorical", "continuous"],
+           labels=["smoking", "genotype", "tar", "cancer"],
+           cardinalities=[1, 3, 1, 1],
+           types=["binary", "categorical", "continuous", "binary"],
        )
        n_features = 64
 
@@ -97,7 +97,6 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import ConceptLoss
 
        loss = ConceptLoss(
-           annotations=annotations,
            binary=torch.nn.BCEWithLogitsLoss(),
            categorical=torch.nn.CrossEntropyLoss(),
            continuous=torch.nn.MSELoss(),
@@ -112,7 +111,6 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
 
        loss = ConceptLoss(
-           annotations=annotations,
            binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=1.0)],
            binary_weights=[1.0, 0.01],
            categorical=torch.nn.CrossEntropyLoss(),
@@ -127,7 +125,6 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import WeightedConceptLoss
 
        loss = WeightedConceptLoss(
-           annotations=annotations,
            concept_weight=0.5,
            task_weight=1.0,
            task_names=['cancer'],
@@ -177,12 +174,12 @@ Expand each block below for an explanation and an example.
        model = ConceptBottleneckModel(
            input_size=n_features,
            annotations=annotations,
-           task_names=['xor'],
+           task_names=['cancer'],
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
        )
 
-       query = ['c1', 'c2', 'xor']
+       query = ['smoking', 'genotype', 'tar', 'cancer']
        optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
        loss_fn = torch.nn.BCEWithLogitsLoss()
 
@@ -206,7 +203,7 @@ Expand each block below for an explanation and an example.
        model = ConceptBottleneckModel(
            input_size=n_features,
            annotations=annotations,
-           task_names=['xor'],
+           task_names=['cancer'],
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
            lightning=True,
@@ -246,7 +243,6 @@ Expand each block below for an explanation and an example.
 
        # Type-aware loss
        loss = ConceptLoss(
-           annotations=annotations,
            binary=torch.nn.BCEWithLogitsLoss(),
            categorical=torch.nn.CrossEntropyLoss(),
        )
