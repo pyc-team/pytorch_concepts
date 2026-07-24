@@ -52,12 +52,20 @@ def build_relaxed_distribution(
     # single size axis as the event, so batch_shape stays (*batch,); the
     # variable's declared shape is restored on the sampled realization, not here.
     spec = spec_for(D, f"Variable {variable.name!r}")
+    from ..utils import build_distribution, build_plate
+
     if spec.relaxed is not None:
-        return spec.relaxed(params, temperature, validate_args)
+        # Same per-member split as the exact builder: a relaxed *categorical*
+        # plate is k independent RelaxedOneHotCategoricals, not one over the
+        # flattened width. ``build_plate`` is a no-op for the per-element
+        # relaxed families (Bernoulli), which already handle a plate column-wise.
+        return build_plate(
+            variable, spec, params,
+            lambda p: spec.relaxed(p, temperature, validate_args),
+        )
     if spec.no_relaxed_reason is not None:
         raise ValueError(f"Variable {variable.name!r}: {spec.no_relaxed_reason}")
     # Continuous families are already reparameterisable — use the exact one.
-    from ..utils import build_distribution
     return build_distribution(variable, params)
 
 

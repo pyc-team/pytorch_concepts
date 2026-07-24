@@ -358,8 +358,10 @@ class TestBPStochasticParametrization:
         fg = MarkovNetwork(variables=[a, b], factors=[pot])
         fg.train()
         eng = BeliefPropagation(fg, iters=3)
-        table = eng._factor_table(pot, [a, b], {}, torch.Size([1]), torch.float32,
-                                  torch.device("cpu"))
+        table = eng._factor_table(
+            pot, ["a", "b"], {"a": a, "b": b}, {}, torch.Size([1]),
+            torch.float32, torch.device("cpu"),
+        )
         assert table.shape == (1, 2, 2)
         assert table.reshape(-1).std() > 0
 
@@ -471,9 +473,287 @@ class TestBPErrors:
         with pytest.raises(TypeError, match="ProbabilisticModel"):
             BeliefPropagation(object())
 
-    def test_member_evidence_not_supported(self):
-        plate = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
-        a = _bin("a")
-        fg = _ConcreteModel(variables=[a, plate], factors=[_pot([a], "ua")])
-        with pytest.raises(NotImplementedError, match="member"):
-            BeliefPropagation(fg, iters=3).query(query=["a"], evidence={"m1": torch.ones(1, 1)})
+
+
+class TestBPPlateMembers:
+    """Plates are inferred one **member** at a time.
+
+    The unit of inference is a member, not the plate, so a plate of ``k``
+    members contributes ``k`` nodes to the factor graph. That is what makes
+    *partial* evidence expressible — observe some members, marginalise the rest
+    — and it incidentally fixes a plate-granular engine's blind spot: a
+    Bernoulli plate used to be rejected outright, because a size-``k``
+    Bernoulli is not one enumerable variable.
+
+    Note the cost: a CPD over a ``k``-member plate becomes an arity-``k+parents``
+    factor, so its table has ``2**k * parent_states`` cells. Messages still
+    factorise across members; the table does not.
+    """
+
+    def _two_plate_bn(self, seed=30):
+        """A BayesianNetwork with two plates hanging off one root::
+
+            root ──► g{g1, g2}
+                 └─► h{h1, h2, h3}
+        """
+        torch.manual_seed(seed)
+        from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
+        root = _bin("root")
+        g = ConceptVariable("g", members=["g1", "g2"], distribution=dist.Bernoulli)
+        h = ConceptVariable("h", members=["h1", "h2", "h3"], distribution=dist.Bernoulli)
+        return BayesianNetwork(
+            variables=[root, g, h],
+            factors=[
+                ParametricCPD(root, {"logits": LearnablePrior(1)}),
+                ParametricCPD(g, {"logits": nn.Linear(1, g.size)}, parents=[root]),
+                ParametricCPD(h, {"logits": nn.Linear(1, h.size)}, parents=[root]),
+            ],
+        )
+
+    def _exact_member_marginals(self, fg, evidence_states, batch=1):
+        """Every member's marginal, by enumerating the full joint.
+
+        ``evidence_states`` maps a member name to its observed state; every
+        other member (and every ordinary variable) is enumerated.
+        """
+        members = [(v, m) for v in fg.variables.values() for m in v.members]
+        free = [(v, m) for v, m in members if m not in evidence_states]
+        cards = [enumerable_cardinality(v.member(m)) for v, m in free]
+
+        scores = []
+        for combo in itertools.product(*[range(c) for c in cards]):
+            assign = dict(evidence_states)
+            assign.update({m: s for (_, m), s in zip(free, combo)})
+            values = {
+                v: torch.cat(
+                    [_encode(v.member(m), assign[m], batch) for m in v.members], dim=-1
+                )
+                for v in fg.variables.values()
+            }
+            total = 0.0
+            for f in fg.factors.values():
+                total = total + f.log_potential(values)
+            scores.append(total)
+        joint = torch.softmax(torch.stack(scores, dim=-1), dim=-1).reshape(batch, *cards)
+
+        return {
+            m: joint.sum(dim=tuple(ax for ax in range(1, len(free) + 1) if ax != i + 1))
+            for i, (_, m) in enumerate(free)
+        }
+
+    def _member_probs(self, fg, out, owner_name, member):
+        """The engine's marginal for one member, widened to a state distribution."""
+        owner = fg.variables[owner_name]
+        return _state_marginal(
+            owner.member(member), out.probs[owner_name][..., owner.column_of(member)]
+        )
+
+    # -- test-time queries --------------------------------------------------
+    def test_no_evidence_matches_exact(self):
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=30).query(query=["root", "g", "h"], evidence={})
+        exact = self._exact_member_marginals(fg, {})
+        for owner in ("g", "h"):
+            for member in fg.variables[owner].members:
+                bp = self._member_probs(fg, out, owner, member)
+                assert torch.allclose(bp, exact[member], atol=1e-5), (member, bp, exact[member])
+
+    def test_partial_plate_evidence_matches_exact(self):
+        """Observe one member of each plate; the rest must be marginalised."""
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=30).query(
+            query=["root", "g", "h"],
+            evidence={"g1": torch.ones(1, 1), "h3": torch.zeros(1, 1)},
+        )
+        exact = self._exact_member_marginals(fg, {"g1": 1, "h3": 0})
+        for owner, member in [("g", "g2"), ("h", "h1"), ("h", "h2")]:
+            bp = self._member_probs(fg, out, owner, member)
+            assert torch.allclose(bp, exact[member], atol=1e-5), (member, bp, exact[member])
+        # An observed member reports its evidence: conditioning makes it a point mass.
+        g = fg.variables["g"]
+        assert torch.allclose(out.probs["g"][..., g.column_of("g1")], torch.ones(1, 1))
+        h = fg.variables["h"]
+        assert torch.allclose(out.probs["h"][..., h.column_of("h3")], torch.zeros(1, 1))
+
+    def test_evidence_on_a_member_moves_the_other_plate(self):
+        """Both plates hang off ``root``, so conditioning one must move the other."""
+        fg = self._two_plate_bn()
+        eng = BeliefPropagation(fg, iters=30)
+        free = eng.query(query=["h"], evidence={}).probs["h"]
+        clamped = eng.query(query=["h"], evidence={"g1": torch.ones(1, 1)}).probs["h"]
+        assert not torch.allclose(free, clamped, atol=1e-4)
+
+    def test_whole_plate_evidence_still_works(self):
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=25).query(
+            query=["root", "h"], evidence={"g": torch.tensor([[1.0, 0.0]])}
+        )
+        exact = self._exact_member_marginals(fg, {"g1": 1, "g2": 0})
+        for member in fg.variables["h"].members:
+            bp = self._member_probs(fg, out, "h", member)
+            assert torch.allclose(bp, exact[member], atol=1e-5), member
+        assert "g" not in out.variables          # fully observed -> no parameters
+
+    def test_two_members_of_the_same_plate_observed(self):
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=25).query(
+            query=["h"], evidence={"h1": torch.ones(1, 1), "h2": torch.zeros(1, 1)}
+        )
+        exact = self._exact_member_marginals(fg, {"h1": 1, "h2": 0})
+        bp = self._member_probs(fg, out, "h", "h3")
+        assert torch.allclose(bp, exact["h3"], atol=1e-5)
+
+    def test_batched_partial_evidence(self):
+        fg = self._two_plate_bn()
+        ev = torch.tensor([[0.0]] * 4 + [[1.0]] * 4)
+        out = BeliefPropagation(fg, iters=15).query(query=["g", "h"], evidence={"g1": ev})
+        assert out.probs["g"].shape == (8, 2)
+        assert out.probs["h"].shape == (8, 3)
+        # Rows conditioned differently must get different answers.
+        assert not torch.allclose(out.probs["h"][0], out.probs["h"][7], atol=1e-4)
+        # ...and rows conditioned the same must agree.
+        assert torch.allclose(out.probs["h"][0], out.probs["h"][3], atol=1e-6)
+
+    def test_single_member_query_slices_the_plate(self):
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=20).query(
+            query=["g2"], evidence={"g1": torch.ones(1, 1)}
+        )
+        assert out.probs.annotation.labels == ["g2"]
+        exact = self._exact_member_marginals(fg, {"g1": 1})
+        assert torch.allclose(
+            _state_marginal(fg.variables["g"].member("g2"), out.probs["g2"]),
+            exact["g2"], atol=1e-5,
+        )
+
+    # -- training -----------------------------------------------------------
+    def test_gradients_reach_every_cpd_under_partial_evidence(self):
+        fg = self._two_plate_bn()
+        out = BeliefPropagation(fg, iters=8).query(
+            query=["g", "h"], evidence={"h1": torch.ones(1, 1)}
+        )
+        (out.probs["g"].tensor.pow(2).sum() + out.probs["h"].tensor.pow(2).sum()).backward()
+        grads = [p.grad for p in fg.parameters() if p.grad is not None]
+        assert len(grads) == len(list(fg.parameters()))
+        assert all(torch.isfinite(g).all() for g in grads)
+        assert any(g.abs().sum() > 0 for g in grads)
+
+    def test_training_on_free_members_reduces_loss(self):
+        """Supervise the free members while one member of each plate is observed."""
+        fg = self._two_plate_bn(seed=31)
+        eng = BeliefPropagation(fg, iters=6)
+        n = 16
+        evidence = {"g1": torch.ones(n, 1), "h1": torch.zeros(n, 1)}
+        targets = {"g2": torch.ones(n), "h2": torch.ones(n), "h3": torch.zeros(n)}
+        opt = torch.optim.Adam(fg.parameters(), lr=0.1)
+
+        def losses():
+            out = eng.query(query=["g", "h"], evidence=evidence)
+            return sum(
+                _binary_ce(
+                    out.probs[owner][..., fg.variables[owner].column_of(m)], target
+                )
+                for owner, m, target in [
+                    ("g", "g2", targets["g2"]),
+                    ("h", "h2", targets["h2"]),
+                    ("h", "h3", targets["h3"]),
+                ]
+            )
+
+        first = losses().item()
+        for _ in range(200):
+            opt.zero_grad()
+            loss = losses()
+            loss.backward()
+            opt.step()
+        assert loss.item() < first * 0.5
+
+        out = eng.query(query=["g", "h"], evidence=evidence)
+        assert out.probs["g"][0, fg.variables["g"].column_of("g2")].item() > 0.9
+        assert out.probs["h"][0, fg.variables["h"].column_of("h2")].item() > 0.9
+        assert out.probs["h"][0, fg.variables["h"].column_of("h3")].item() < 0.1
+
+    # -- categorical plates (needs build_distribution's per-member split) ----
+    def _mixed_plate_bn(self, seed=32):
+        """Two plates of *different* families off one root::
+
+            root ──► g{g1, g2}          Bernoulli members
+                 └─► h{h1, h2}          OneHotCategorical members, 3 classes each
+        """
+        torch.manual_seed(seed)
+        from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
+        root = _bin("root")
+        g = ConceptVariable("g", members=["g1", "g2"], distribution=dist.Bernoulli)
+        h = ConceptVariable(
+            "h", members=["h1", "h2"], distribution=dist.OneHotCategorical, size=3
+        )
+        return BayesianNetwork(
+            variables=[root, g, h],
+            factors=[
+                ParametricCPD(root, {"logits": LearnablePrior(1)}),
+                ParametricCPD(g, {"logits": nn.Linear(1, g.size)}, parents=[root]),
+                ParametricCPD(h, {"logits": nn.Linear(1, h.size)}, parents=[root]),
+            ],
+        )
+
+    def test_categorical_plate_members_are_independent(self):
+        """A k-member categorical plate is k distributions, not one k*m-way one.
+
+        Every member must be able to take every class at once — the whole point
+        the flattened build got wrong.
+        """
+        fg = self._mixed_plate_bn()
+        out = BeliefPropagation(fg, iters=30).query(query=["h"], evidence={})
+        h = fg.variables["h"]
+        for member in h.members:
+            block = out.probs["h"][..., h.column_of(member)]
+            assert block.shape == (1, 3)
+            assert torch.allclose(block.sum(-1), torch.ones(1), atol=1e-5), member
+        exact = self._exact_member_marginals(fg, {})
+        for member in h.members:
+            assert torch.allclose(
+                out.probs["h"][..., h.column_of(member)], exact[member], atol=1e-5
+            ), member
+
+    def test_categorical_plate_partial_evidence(self):
+        fg = self._mixed_plate_bn()
+        out = BeliefPropagation(fg, iters=30).query(
+            query=["g", "h"],
+            evidence={"h1": torch.tensor([[0.0, 0.0, 1.0]]), "g1": torch.ones(1, 1)},
+        )
+        exact = self._exact_member_marginals(fg, {"h1": 2, "g1": 1})
+        h, g = fg.variables["h"], fg.variables["g"]
+        assert torch.allclose(out.probs["h"][..., h.column_of("h2")], exact["h2"], atol=1e-5)
+        assert torch.allclose(
+            _state_marginal(g.member("g2"), out.probs["g"][..., g.column_of("g2")]),
+            exact["g2"], atol=1e-5,
+        )
+        # observed members echo their evidence
+        assert torch.allclose(
+            out.probs["h"][..., h.column_of("h1")], torch.tensor([[0.0, 0.0, 1.0]])
+        )
+
+    def test_categorical_plate_trains(self):
+        fg = self._mixed_plate_bn(seed=33)
+        eng = BeliefPropagation(fg, iters=6)
+        n = 16
+        evidence = {"h1": torch.tensor([[1.0, 0.0, 0.0]]).expand(n, 3)}
+        target = torch.full((n,), 2)
+        h = fg.variables["h"]
+        opt = torch.optim.Adam(fg.parameters(), lr=0.1)
+
+        def loss_fn():
+            out = eng.query(query=["h"], evidence=evidence)
+            return torch.nn.functional.nll_loss(
+                out.probs["h"][..., h.column_of("h2")].log(), target
+            )
+
+        first = loss_fn().item()
+        for _ in range(200):
+            opt.zero_grad()
+            loss = loss_fn()
+            loss.backward()
+            opt.step()
+        assert loss.item() < first * 0.5
+        out = eng.query(query=["h"], evidence=evidence)
+        assert out.probs["h"][0, h.column_of("h2")][2].item() > 0.9

@@ -246,3 +246,38 @@ class TestCPDFactorInterface:
         lp = cpd.log_potential({a: av})
         expected = build_distribution(a, cpd.root_params(2)).log_prob(av)
         assert torch.allclose(lp, expected)
+
+
+class TestBuildDistributionPlates:
+    """A plate of a whole-event family (``OneHotCategorical``) is ``k`` independent
+    per-member distributions, not one over the flattened ``k * member_size``
+    classes — otherwise most valid plate values score as impossible."""
+
+    def test_categorical_plate_scores_each_member_independently(self):
+        h = ConceptVariable(
+            "h", members=["h1", "h2"], distribution=dist.OneHotCategorical, size=3
+        )
+        logits = torch.randn(4, 6)
+        d = build_distribution(h, {"logits": logits})
+        # A value where *both* members are one-hot must be in support and score
+        # as the sum of the two members' log-probs.
+        value = torch.tensor([[1.0, 0, 0, 0, 0, 1]]).expand(4, 6)
+        per_member = dist.OneHotCategorical(logits=logits.reshape(4, 2, 3))
+        expected = per_member.log_prob(value.reshape(4, 2, 3)).sum(-1)
+        assert torch.allclose(d.log_prob(value), expected, atol=1e-5)
+
+    def test_categorical_plate_samples_are_per_member_one_hot(self):
+        h = ConceptVariable(
+            "h", members=["h1", "h2"], distribution=dist.OneHotCategorical, size=3
+        )
+        s = build_distribution(h, {"logits": torch.zeros(64, 6)}).sample()
+        assert s.shape == (64, 6)
+        assert torch.allclose(s[..., :3].sum(-1), torch.ones(64))
+        assert torch.allclose(s[..., 3:].sum(-1), torch.ones(64))
+        assert set(s.unique().tolist()) <= {0.0, 1.0}
+
+    def test_bernoulli_plate_unchanged(self):
+        g = ConceptVariable("g", members=["g1", "g2"], distribution=dist.Bernoulli)
+        d = build_distribution(g, {"logits": torch.zeros(1, 2)})
+        assert isinstance(d, dist.Independent)
+        assert d.log_prob(torch.tensor([[1.0, 0.0]])).shape == (1,)
