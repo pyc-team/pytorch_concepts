@@ -21,9 +21,9 @@ import pandas as pd
 from ......distributions import Delta
 from ......concept_graph import ConceptGraph
 from ......annotations import Annotations
-from ....mid.models.variable import ConceptVariable, EmbeddingVariable
-from ....mid.models.bayesian_network import BayesianNetwork
-from ....mid.models.cpd import ParametricCPD
+from ....mid.variable import ConceptVariable, EmbeddingVariable
+from ....mid.graph.bayesian_network import BayesianNetwork
+from ....mid.factors.cpd import ParametricCPD
 from ....mid.inference.base import BaseInference
 from ....mid.inference.torch.deterministic import DeterministicInference
 from ....low.priors import FixedPrior, TiedPrior

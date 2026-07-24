@@ -21,7 +21,7 @@ from torch_concepts.nn.modules.high.models.steerling import SteerlingModel, top_
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the model ──────────────────────────────────────
-model = SteerlingModel(use_epsilon_correction=True)
+model = SteerlingModel()
 
 model.to(device=device)
 model.eval()
