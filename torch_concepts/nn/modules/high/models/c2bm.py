@@ -16,7 +16,7 @@ https://arxiv.org/abs/2503.04363
 """
 from typing import Optional
 
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli, Normal, OneHotCategorical
 
 from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
@@ -24,7 +24,7 @@ from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.variable import _DEFAULT_DIST_KWARGS
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.homogen import HomogenGraphModel
 
 
@@ -57,7 +57,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``).
     """
 
-    supported_concept_types = frozenset({"binary", "categorical"})
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
     param_for_discrete_var = "logits"
     source_embeddings = True
     internal_embeddings = True
@@ -66,8 +66,9 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
     variable_distributions = {
         'binary': Bernoulli,
         'categorical': OneHotCategorical,
+        'continuous': Normal,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,
@@ -94,7 +95,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
         self.embedding_size = embedding_size
         self.hypernet_hidden_size = hypernet_hidden_size
         self.hypernet_use_bias = hypernet_use_bias
-        self.pgm = self._build_individual_model()
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(

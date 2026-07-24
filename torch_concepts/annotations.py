@@ -18,6 +18,21 @@ from typing import Dict, List, Tuple, Union, Optional, Any, Sequence
 _CONCEPT_TYPES = ('binary', 'categorical', 'continuous')
 
 
+def _as_contiguous_slice(indices):
+    """Turn an ascending run of consecutive indices into an equivalent ``slice``.
+
+    Advanced (list) indexing always copies, while a ``slice`` returns a view. The
+    labels a caller selects are usually one concept, or several adjacent ones, so
+    this makes the common label lookup free — which matters when the annotated
+    tensor is the single storage for a whole inference result and per-variable
+    access is expected to be a view into it.
+    """
+    if not isinstance(indices, list) or not indices:
+        return indices
+    start, stop = indices[0], indices[0] + len(indices)
+    return slice(start, stop) if indices == list(range(start, stop)) else indices
+
+
 @dataclass(frozen=True)
 class Concept:
     """Read-only, per-concept view over a single column of an :class:`Annotations`.
@@ -35,7 +50,6 @@ class Concept:
         type (str): Concept type, one of ``'binary'`` / ``'categorical'`` / ``'continuous'``.
         states (Optional[List[str]]): State labels for this concept.
         slice (slice): Column span of this concept in the flattened (logit) tensor.
-        metadata (dict): Raw per-concept metadata (escape hatch for extra keys).
     """
     name: str
     index: int
@@ -43,7 +57,6 @@ class Concept:
     type: str
     states: Optional[List[str]]
     slice: slice
-    metadata: dict = field(default_factory=dict)
 
     @property
     def is_continuous(self) -> bool:
@@ -75,7 +88,7 @@ class Annotations:
         states (Optional[list[list[str]]]): State labels for each concept (if nested).
         cardinalities (Optional[list[int]]): Cardinality of each concept.
         types (Optional[list[str]]): ``'binary'`` / ``'categorical'`` / ``'continuous'`` per concept.
-        metadata (Optional[Dict[str, Dict]]): Additional metadata for each label.
+        groups (Optional[Dict[str, list[str]]]): ``owner -> labels`` aliases; see :meth:`register_group`.
         is_nested (bool): Whether the axis has nested/hierarchical structure.
 
     Args:
@@ -83,7 +96,7 @@ class Annotations:
         states: Optional list of state lists for nested concepts.
         cardinalities: Optional list of cardinalities per concept.
         types: Optional concept types per concept.
-        metadata: Optional metadata dictionary keyed by label names.
+        groups: Optional ``owner -> member labels`` aliases (plate names).
 
     Example:
         >>> from torch_concepts import Annotations
@@ -139,7 +152,6 @@ class Annotations:
     states: Optional[List[List[str]]] = field(default=None)
     cardinalities: Optional[List[int]] = field(default=None)
     types: Optional[List[str]] = field(default=None)  # 'binary' | 'categorical' | 'continuous'
-    metadata: Optional[Dict[str, Dict]] = field(default=None)
     # Concept-space annotation: each concept occupies a single integer-coded
     # column regardless of its type (so all cardinalities are 1). This describes
     # a ground-truth concept tensor, not the model's logit space. When True the
@@ -147,13 +159,27 @@ class Annotations:
     # concept's column holds an integer class index). Build one from a normal
     # (logit-space) annotation via :meth:`to_concept_space`.
     concept_space: bool = field(default=False)
+    #: ``owner name -> the labels it owns``, for a name that addresses several
+    #: labels at once without being a label itself (a plate and its members).
+    #: Explicit and first-class: the owner needs no per-label bookkeeping, and
+    #: the labels carry nothing about it. Register one with
+    #: :meth:`register_group` (or ``AnnotatedTensor.register_plate_label``).
+    groups: Optional[Dict[str, List[str]]] = field(default=None)
+
+    #: Caches that carry ``groups`` into derived annotations, dropped whenever
+    #: ``groups`` is reassigned. Everything else derives from the write-once
+    #: structural fields, so only these need invalidating.
+    _GROUP_DERIVED_CACHES = ('_subset_cache', '_slice_cache', '_concept_space_view')
 
     def __setattr__(self, key, value):
-        # `metadata` may change after construction, so it is
-        # freely reassignable. The structural fields (labels, states,
+        # ``groups`` is the one field that may change after construction, so it is
+        # freely reassignable; the structural fields (labels, states,
         # cardinalities, types) remain write-once.
-        if key == 'metadata':
+        if key == 'groups':
             super().__setattr__(key, value)
+            # Anything computed from the old value is now stale.
+            for cache in self._GROUP_DERIVED_CACHES:
+                self.__dict__.pop(cache, None)
             return
         if key in self.__dict__ and self.__dict__[key] is not None:
             raise AttributeError(f"'{key}' is write-once and already set")
@@ -245,22 +271,16 @@ class Annotations:
 
         object.__setattr__(self, 'is_nested', is_nested)
 
-        # Consistency checks on metadata
-        if self.metadata is not None:
-            if not isinstance(self.metadata, dict):
-                raise ValueError("metadata must be a dictionary")
-            # Only validate if metadata is non-empty
-            if self.metadata:
-                for label in self.labels:
-                    if label not in self.metadata:
-                        raise ValueError(f"Metadata missing for label {label!r}")
-
-    @property
+    @cached_property
     def size(self) -> int:
         """Flattened concept dimension: ``sum(cardinalities)``.
 
         Equals ``len(labels)`` when non-nested (all cardinalities are 1). This is the
         size of axis 1 of the annotated (logit-space) tensor.
+
+        Cached: ``cardinalities`` is write-once, and every ``AnnotatedTensor``
+        construction reads this for its shape check, so an uncached sum would be
+        O(labels) per wrapped tensor.
         """
         return sum(self.cardinalities)
 
@@ -273,30 +293,67 @@ class Annotations:
         """
         return (-1, self.size)
 
-    def has_metadata(self, key) -> bool:
-        """Check if metadata contains a specific key for all labels."""
-        if self.metadata is None:
-            return False
-        return all(key in self.metadata.get(label, {}) for label in self.labels)
+    def register_group(self, owner: str, members: Sequence[str]) -> None:
+        """Make ``owner`` address ``members`` as one block.
 
-    def groupby_metadata(self, key, layout: str='labels') -> dict:
-        """Check if metadata contains a specific key for all labels."""
-        if self.metadata is None:
-            return {}
-        result = {}
-        for label in self.labels:
-            meta = self.metadata.get(label, {})
-            if key in meta:
-                group = meta[key]
-                if group not in result:
-                    result[group] = []
-                if layout == 'labels':
-                    result[group].append(label)
-                elif layout == 'indices':
-                    result[group].append(self.get_index(label))
-                else:
-                    raise ValueError(f"Unknown layout {layout}")
-        return result
+        ``owner`` is *not* a label — it adds no column. It becomes an alias that
+        label-based slicing expands to ``members``, in the order given, so a
+        plate name selects its members' columns while each member stays
+        addressable on its own.
+
+        Raises
+        ------
+        ValueError
+            If ``members`` is empty, names something that is not a label, or if
+            ``owner`` is itself a label (a label always wins the lookup, so the
+            registration could never take effect).
+        """
+        members = list(members)
+        if not members:
+            raise ValueError(f"register_group({owner!r}): `members` must be non-empty.")
+        if owner in self.label_to_index:
+            raise ValueError(
+                f"register_group({owner!r}): {owner!r} is already a label, so it "
+                "addresses its own column and cannot alias a group."
+            )
+        unknown = [m for m in members if m not in self.label_to_index]
+        if unknown:
+            raise ValueError(
+                f"register_group({owner!r}): unknown labels {unknown}; "
+                f"labels are {self.labels}."
+            )
+        groups = dict(self.groups) if self.groups else {}
+        groups[owner] = members
+        self.groups = groups  # via __setattr__, which drops the derived caches
+
+    def _carry_groups(self, source: Optional[Dict[str, List[str]]]) -> None:
+        """Re-register ``source``'s groups on ``self``, keeping what still applies.
+
+        Used by every operation that derives a new annotation
+        (:meth:`subset`, :meth:`union_with`, :meth:`to_concept_space`,
+        :meth:`from_dict`). A group is carried with its surviving members, in
+        registration order; one whose members are all gone is dropped, as is one
+        whose owner is a label here (a label wins the lookup, so the alias could
+        never fire).
+        """
+        if not source:
+            return
+        known = self.label_to_index
+        for owner, members in source.items():
+            if owner in known:
+                continue
+            kept = [m for m in members if m in known]
+            if kept:
+                self.register_group(owner, kept)
+
+    @property
+    def label_groups(self) -> Dict[str, List[str]]:
+        """Every name that expands to several labels, ``owner -> labels``.
+
+        The single place group resolution reads: the explicit :attr:`groups`
+        registered via :meth:`register_group` (empty when none were).
+        """
+        return self.groups or {}
 
     def __len__(self) -> int:
         """Return number of labels."""
@@ -463,10 +520,8 @@ class Annotations:
         Groups the concept's per-column properties (cardinality, type, states, logit slice)
         into one object, so callers can write ``annotations.concept('color').cardinality``
         instead of the index-dance over the parallel lists.
-        Built fresh on each call so it always reflects the current (mutable) ``metadata``.
         """
         i = self.get_index(name)
-        meta = (self.metadata.get(name, {}) if self.metadata else {}) or {}
         return Concept(
             name=name,
             index=i,
@@ -474,7 +529,6 @@ class Annotations:
             type=self.types[i],
             states=self.states[i] if self.states is not None else None,
             slice=self.concept_slices[name],
-            metadata=meta,
         )
 
     @property
@@ -482,8 +536,7 @@ class Annotations:
         """All concepts as :class:`Concept` views, in axis order.
 
         Views are read from the canonical parallel lists (no duplicated storage);
-        useful for one-pass iteration. Not cached, so it reflects the
-        current (mutable) ``metadata``.
+        useful for one-pass iteration.
         """
         return [self.concept(name) for name in self.labels]
 
@@ -564,6 +617,43 @@ class Annotations:
         """
         return self.get_slice(labels)
 
+    def _expand(self, keys) -> List[str]:
+        """Expand plate/group names in ``keys`` to their member labels.
+
+        A real label passes through unchanged; a registered group owner expands to
+        its members (in registration order); anything else falls through as-is so
+        the downstream lookup raises a clear error.
+        """
+        known = self.label_to_index
+        groups = self.label_groups
+        labels: List[str] = []
+        for key in keys:
+            if key in known:
+                labels.append(key)
+            else:
+                labels.extend(groups.get(key, [key]))
+        return labels
+
+    def resolve(self, keys, cache_key=None) -> Tuple[Union[slice, List[int]], "Annotations"]:
+        """Resolve concept/plate names to ``(selector, sub_annotation)``, memoised.
+
+        ``selector`` is a ``slice`` for a contiguous column run (indexing it returns
+        a tensor view) or a ``List[int]`` otherwise; ``sub_annotation`` is the
+        matching :meth:`subset`. This is the hot entry point for label-based tensor
+        slicing — results are cached on the annotation, so repeating a lookup is
+        O(1). Pass ``cache_key`` (e.g. a concept-type string) to key the cache by a
+        short constant instead of hashing the full ``keys`` tuple. Errors raise
+        before anything is cached.
+        """
+        cache = self.__dict__.setdefault('_slice_cache', {})
+        ck = cache_key if cache_key is not None else tuple(keys)
+        resolved = cache.get(ck)
+        if resolved is None:
+            labels = self._expand(keys)
+            resolved = (_as_contiguous_slice(self.get_slice(labels)), self.subset(labels))
+            cache[ck] = resolved
+        return resolved
+
     @classmethod
     def empty(
             cls,
@@ -607,7 +697,7 @@ class Annotations:
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
             'types': list(self.types) if self.types else None,
-            'metadata': self.metadata,
+            'groups': {k: list(v) for k, v in self.groups.items()} if self.groups else None,
         }
         return result
 
@@ -631,23 +721,39 @@ class Annotations:
         states = [list(s) for s in data['states']] if data.get('states') else None
         cardinalities = data['cardinalities']
 
-        return cls(
+        result = cls(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
             types=data.get('types'),
-            metadata=data.get('metadata'),
         )
+        result._carry_groups(data.get('groups'))
+        return result
 
     def subset(self, keep_labels: Sequence[str]) -> "Annotations":
         """
         Return a new Annotations restricted to `keep_labels`
         (order follows the order in `keep_labels`).
 
+        Memoised by the requested label sequence: every label-based slice of an
+        :class:`~torch_concepts.tensor.AnnotatedTensor` builds one of these, so
+        a training loop slicing the same names each step would otherwise pay a
+        full ``Annotations`` construction (with its validation passes) per
+        access. The cache is dropped when ``groups`` is reassigned; the
+        structural fields it also reads are write-once.
+
+        The result is shared, not copied — callers must not mutate it.
+
         Raises
         ------
         ValueError if any requested label is missing.
         """
+        cache = self.__dict__.setdefault('_subset_cache', {})
+        cache_key = tuple(keep_labels)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # 1) validate + map to indices, preserving requested order
         label_set = set(self.labels)
         missing = [lab for lab in keep_labels if lab not in label_set]
@@ -668,20 +774,17 @@ class Annotations:
 
         new_types = [self.types[i] for i in idxs]
 
-        # 3) slice metadata (if present)
-        new_metadata = None
-        if self.metadata is not None:
-            new_metadata = {lab: self.metadata[lab] for lab in keep_labels}
-
-        # 4) build a fresh object
-        return Annotations(
+        # 3) build a fresh object, carrying over the groups that still apply
+        result = Annotations(
             labels=new_labels,
             states=new_states,
             cardinalities=new_cards,
             types=new_types,
-            metadata=new_metadata,
             concept_space=self.concept_space,
         )
+        result._carry_groups(self.groups)
+        cache[cache_key] = result
+        return result
 
     def to_concept_space(self) -> "Annotations":
         """Return a concept-space view: one integer-coded column per concept.
@@ -694,16 +797,27 @@ class Annotations:
         label-based slicing / :meth:`labels_by_type` operate per concept.
 
         Returns ``self`` unchanged if this annotation is already concept-space.
+
+        Memoised: the target of a loss/metric is re-derived from the (stable)
+        concept annotations every forward, so returning the same instance keeps
+        that target's own slice/subset caches warm across steps. Dropped when
+        ``groups`` is reassigned.
         """
         if self.concept_space:
             return self
-        return Annotations(
+        cached = self.__dict__.get('_concept_space_view')
+        if cached is not None:
+            return cached
+        result = Annotations(
             labels=list(self.labels),
             cardinalities=[1] * len(self.labels),
             types=list(self.types),
-            metadata=self.metadata,
             concept_space=True,
         )
+        # Same labels, only narrower columns -- every group carries over intact.
+        result._carry_groups(self.groups)
+        self.__dict__['_concept_space_view'] = result
+        return result
 
     def union_with(self, other: "Annotations") -> "Annotations":
         left = list(self.labels)
@@ -722,16 +836,11 @@ class Annotations:
         new_states = _merge(self.states, other.states)
         new_types = _merge(self.types, other.types)
 
-        # merge metadata left-wins
-        meta = None
-        if self.metadata or other.metadata:
-            meta = {}
-            if self.metadata: meta.update(self.metadata)
-            if other.metadata:
-                for k, v in other.metadata.items():
-                    if k not in meta:
-                        meta[k] = v
-        return Annotations(
+        result = Annotations(
             labels=labels, states=new_states, cardinalities=None,
-            types=new_types, metadata=meta,
+            types=new_types,
         )
+        # Left wins on a clash.
+        result._carry_groups(other.groups)
+        result._carry_groups(self.groups)
+        return result

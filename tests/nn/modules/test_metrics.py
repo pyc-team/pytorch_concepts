@@ -15,6 +15,7 @@ from sklearn.metrics import f1_score
 from torch_concepts.nn.functional import completeness_score, intervention_score, cace_score
 from torch_concepts.nn.modules.metrics import ConceptMetrics, Metric
 from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class ANDModel(torch.nn.Module):
@@ -139,11 +140,6 @@ class TestComputeCace(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete', 'distribution': Bernoulli},
-                    'c2': {'type': 'discrete', 'distribution': Bernoulli},
-                    'task': {'type': 'discrete', 'distribution': Bernoulli},
-                }
             )
         self.model = ConceptBottleneckModel(
             input_size=4, annotations=ann, task_names=['task']
@@ -234,12 +230,6 @@ class TestConceptMetrics(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
         
@@ -247,11 +237,6 @@ class TestConceptMetrics(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
         
@@ -259,28 +244,26 @@ class TestConceptMetrics(unittest.TestCase):
         axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_categorical = axis_categorical
 
     def test_binary_only_metrics(self):
         """Test ConceptMetrics with only binary concepts."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('train/SUMMARY-binary_accuracy', result)
         self.assertIsInstance(result['train/SUMMARY-binary_accuracy'], torch.Tensor)
         self.assertTrue(0 <= result['train/SUMMARY-binary_accuracy'] <= 1)
@@ -288,7 +271,7 @@ class TestConceptMetrics(unittest.TestCase):
     def test_categorical_only_metrics(self):
         """Test ConceptMetrics with only categorical concepts."""
         metrics = ConceptMetrics(
-            self.annotations_categorical,
+            annotations=self.annotations_categorical,
             categorical={
                 'accuracy': torchmetrics.classification.MulticlassAccuracy(
                     num_classes=5, average='micro'
@@ -297,23 +280,25 @@ class TestConceptMetrics(unittest.TestCase):
             summary=True,
             prefix='val'
         )
-        
+
         endogenous = torch.randn(16, 8)
         targets = torch.cat([
             torch.randint(0, 3, (16, 1)),
             torch.randint(0, 5, (16, 1))
         ], dim=1)
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_categorical, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_categorical.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('val/SUMMARY-categorical_accuracy', result)
         self.assertTrue(0 <= result['val/SUMMARY-categorical_accuracy'] <= 1)
 
     def test_mixed_concepts_metrics(self):
         """Test ConceptMetrics with mixed concept types."""
         metrics = ConceptMetrics(
-            self.annotations_mixed,
+            annotations=self.annotations_mixed,
             binary={
                 'accuracy': torchmetrics.classification.BinaryAccuracy(),
                 'f1': torchmetrics.classification.BinaryF1Score()
@@ -326,17 +311,19 @@ class TestConceptMetrics(unittest.TestCase):
             summary=True,
             prefix='test'
         )
-        
+
         endogenous = torch.randn(16, 9)
         targets = torch.cat([
             torch.randint(0, 2, (16, 2)).float(),
             torch.randint(0, 3, (16, 1)),
             torch.randint(0, 4, (16, 1)),
         ], dim=1)
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_mixed, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_mixed.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('test/SUMMARY-binary_accuracy', result)
         self.assertIn('test/SUMMARY-binary_f1', result)
         self.assertIn('test/SUMMARY-categorical_accuracy', result)
@@ -344,19 +331,21 @@ class TestConceptMetrics(unittest.TestCase):
     def test_per_concept(self):
         """Test per-concept metric tracking."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=False,
             per_concept=['b1', 'b2'],
             prefix='train'
         )
-        
+
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('train/b1_accuracy', result)
         self.assertIn('train/b2_accuracy', result)
         self.assertNotIn('train/b3_accuracy', result)
@@ -364,19 +353,21 @@ class TestConceptMetrics(unittest.TestCase):
     def test_summary_and_per_concept(self):
         """Test combining summary and per-concept metrics."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             per_concept=True,
             prefix='val'
         )
-        
+
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('val/SUMMARY-binary_accuracy', result)
         self.assertIn('val/b1_accuracy', result)
         self.assertIn('val/b2_accuracy', result)
@@ -385,23 +376,27 @@ class TestConceptMetrics(unittest.TestCase):
     def test_multiple_splits_via_clone(self):
         """Test independent tracking for train/val/test via clone."""
         base = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True
         )
         train_metrics = base.clone(prefix='train')
         val_metrics = base.clone(prefix='val')
-        
+
         torch.manual_seed(42)
         train_endogenous = torch.randn(16, 3)
         train_targets = torch.randint(0, 2, (16, 3)).float()
-        
+
         torch.manual_seed(43)
         val_endogenous = torch.randn(16, 3)
         val_targets = torch.randint(0, 2, (16, 3)).float()
-        
-        train_metrics.update(preds=train_endogenous, target=train_targets)
-        val_metrics.update(preds=val_endogenous, target=val_targets)
+
+        train_preds = AnnotatedTensor(train_endogenous, self.annotations_binary, axis=-1)
+        train_target = AnnotatedTensor(train_targets, self.annotations_binary.to_concept_space(), axis=-1)
+        val_preds = AnnotatedTensor(val_endogenous, self.annotations_binary, axis=-1)
+        val_target = AnnotatedTensor(val_targets, self.annotations_binary.to_concept_space(), axis=-1)
+        train_metrics.update(preds=train_preds, target=train_target)
+        val_metrics.update(preds=val_preds, target=val_target)
         
         train_result = train_metrics.compute()
         val_result = val_metrics.compute()
@@ -412,44 +407,35 @@ class TestConceptMetrics(unittest.TestCase):
     def test_reset_metrics(self):
         """Test metric reset functionality."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result1 = metrics.compute()
-        
+
         metrics.reset()
         endogenous2 = torch.randn(16, 3)
         targets2 = torch.randint(0, 2, (16, 3)).float()
-        metrics.update(preds=endogenous2, target=targets2)
+        preds2 = AnnotatedTensor(endogenous2, self.annotations_binary, axis=-1)
+        target2 = AnnotatedTensor(targets2, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds2, target=target2)
         result2 = metrics.compute()
         
         self.assertIsInstance(result1['train/SUMMARY-binary_accuracy'], torch.Tensor)
         self.assertIsInstance(result2['train/SUMMARY-binary_accuracy'], torch.Tensor)
 
-    def test_missing_required_metrics(self):
-        """Test that missing required metrics raises error."""
-        with self.assertRaises(ValueError):
-            ConceptMetrics(
-                self.annotations_binary,
-                categorical={
-                    'accuracy': torchmetrics.classification.MulticlassAccuracy(
-                        num_classes=3, average='micro'
-                    )
-                },
-                summary=True
-            )
-
     def test_metric_class_with_kwargs(self):
         """Test passing metric class with user kwargs as tuple."""
         metrics = ConceptMetrics(
-            self.annotations_categorical,
+            annotations=self.annotations_categorical,
             categorical={
                 'accuracy': (
                     torchmetrics.classification.MulticlassAccuracy,
@@ -459,43 +445,47 @@ class TestConceptMetrics(unittest.TestCase):
             summary=True,
             prefix='train'
         )
-        
+
         endogenous = torch.randn(16, 8)
         targets = torch.cat([
             torch.randint(0, 3, (16, 1)),
             torch.randint(0, 5, (16, 1))
         ], dim=1)
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_categorical, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_categorical.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('train/SUMMARY-categorical_accuracy', result)
         self.assertTrue(0 <= result['train/SUMMARY-categorical_accuracy'] <= 1)
 
     def test_metric_class_without_kwargs(self):
         """Test passing just metric class (no instantiation)."""
         metrics = ConceptMetrics(
-            self.annotations_categorical,
+            annotations=self.annotations_categorical,
             categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy},
             summary=True,
             prefix='val'
         )
-        
+
         endogenous = torch.randn(16, 8)
         targets = torch.cat([
             torch.randint(0, 3, (16, 1)),
             torch.randint(0, 5, (16, 1))
         ], dim=1)
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_categorical, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_categorical.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('val/SUMMARY-categorical_accuracy', result)
 
     def test_mixed_metric_specs(self):
         """Test mixing instantiated, class+kwargs, and class-only metrics."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={
                 'accuracy': torchmetrics.classification.BinaryAccuracy(),
                 'f1': (torchmetrics.classification.BinaryF1Score, {'threshold': 0.5}),
@@ -504,13 +494,15 @@ class TestConceptMetrics(unittest.TestCase):
             summary=True,
             prefix='test'
         )
-        
+
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('test/SUMMARY-binary_accuracy', result)
         self.assertIn('test/SUMMARY-binary_f1', result)
         self.assertIn('test/SUMMARY-binary_precision', result)
@@ -519,7 +511,7 @@ class TestConceptMetrics(unittest.TestCase):
         """Test that providing num_classes in kwargs raises ValueError."""
         with self.assertRaises(ValueError) as cm:
             ConceptMetrics(
-                self.annotations_categorical,
+                annotations=self.annotations_categorical,
                 categorical={
                     'accuracy': (
                         torchmetrics.classification.MulticlassAccuracy,
@@ -528,7 +520,7 @@ class TestConceptMetrics(unittest.TestCase):
                 },
                 summary=True
             )
-        
+
         self.assertIn('num_classes', str(cm.exception))
         self.assertIn('automatically', str(cm.exception).lower())
 
@@ -541,107 +533,117 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations_binary = axis_binary
     
     def test_empty_batch_update(self):
         """Test updating with empty batch."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
-        endogenous = torch.randn(0, 2)
-        targets = torch.randint(0, 2, (0, 2)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        endogenous = torch.randn(4, 2)
+        targets = torch.randint(0, 2, (4, 2)).float()
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
+
+        empty_endogenous = torch.randn(0, 2)
+        empty_targets = torch.randint(0, 2, (0, 2)).float()
+        empty_preds = AnnotatedTensor(empty_endogenous, self.annotations_binary, axis=-1)
+        empty_target = AnnotatedTensor(empty_targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=empty_preds, target=empty_target)
+
         result = metrics.compute()
-        
+
         self.assertIn('train/SUMMARY-binary_accuracy', result)
     
     def test_single_sample_batch(self):
         """Test with batch size of 1."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         endogenous = torch.randn(1, 2)
         targets = torch.randint(0, 2, (1, 2)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('train/SUMMARY-binary_accuracy', result)
         self.assertTrue(0 <= result['train/SUMMARY-binary_accuracy'] <= 1)
     
     def test_very_large_batch(self):
         """Test with large batch size."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         batch_size = 10000
         endogenous = torch.randn(batch_size, 2)
         targets = torch.randint(0, 2, (batch_size, 2)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('train/SUMMARY-binary_accuracy', result)
     
     def test_no_prefix(self):
         """Test creating metrics without prefix."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True
         )
-        
+
         endogenous = torch.randn(16, 2)
         targets = torch.randint(0, 2, (16, 2)).float()
-        
-        metrics.update(preds=endogenous, target=targets)
+
+        preds = AnnotatedTensor(endogenous, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertIn('SUMMARY-binary_accuracy', result)
-    
+
     def test_empty_collection(self):
         """Test creating metrics with empty config."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={},
             summary=True
         )
-        
+
         self.assertEqual(len(metrics.collection), 0)
-    
+
     def test_perconcept_invalid_name(self):
         """Test that invalid concept names in per_concept are handled."""
         with self.assertRaises(ValueError):
             ConceptMetrics(
-                self.annotations_binary,
+                annotations=self.annotations_binary,
                 binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
                 summary=True,
                 per_concept=['nonexistent_concept']
             )
-    
+
     def test_perconcept_invalid_type(self):
         """Test that invalid type for per_concept raises error."""
         with self.assertRaises(ValueError):
             ConceptMetrics(
-                self.annotations_binary,
+                annotations=self.annotations_binary,
                 binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
                 summary=True,
                 per_concept="invalid_string"
@@ -656,75 +658,77 @@ class TestConceptMetricsAccuracy(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations_binary = axis_binary
     
     def test_perfect_accuracy(self):
         """Test that perfect predictions give 100% accuracy."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         torch.manual_seed(42)
         targets = torch.randint(0, 2, (32, 2)).float()
         predictions = targets.clone()
-        
-        metrics.update(preds=predictions, target=targets)
+
+        preds = AnnotatedTensor(predictions, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertAlmostEqual(
-            result['train/SUMMARY-binary_accuracy'].item(), 
-            1.0, 
+            result['train/SUMMARY-binary_accuracy'].item(),
+            1.0,
             places=5
         )
     
     def test_zero_accuracy(self):
         """Test that completely wrong predictions give 0% accuracy."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         torch.manual_seed(42)
         targets = torch.randint(0, 2, (32, 2)).float()
         predictions = 1 - targets
-        
-        metrics.update(preds=predictions, target=targets)
+
+        preds = AnnotatedTensor(predictions, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertAlmostEqual(
-            result['train/SUMMARY-binary_accuracy'].item(), 
-            0.0, 
+            result['train/SUMMARY-binary_accuracy'].item(),
+            0.0,
             places=5
         )
     
     def test_known_accuracy_value(self):
         """Test with known accuracy value."""
         metrics = ConceptMetrics(
-            self.annotations_binary,
+            annotations=self.annotations_binary,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         targets = torch.tensor([[1.0, 1.0], [0.0, 0.0]])
         predictions = torch.tensor([[1.0, 1.0], [1.0, 0.0]])  # 3 out of 4
-        
-        metrics.update(preds=predictions, target=targets)
+
+        preds = AnnotatedTensor(predictions, self.annotations_binary, axis=-1)
+        target = AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1)
+        metrics.update(preds=preds, target=target)
         result = metrics.compute()
-        
+
         self.assertAlmostEqual(
-            result['train/SUMMARY-binary_accuracy'].item(), 
-            0.75, 
+            result['train/SUMMARY-binary_accuracy'].item(),
+            0.75,
             places=5
         )
 
@@ -737,30 +741,36 @@ class TestConceptMetricsMultipleBatches(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
-            metadata={'b1': {'type': 'discrete'}}
         )
         self.annotations = axis_binary
     
     def test_accumulation_across_batches(self):
         """Test that metrics correctly accumulate across batches."""
         metrics = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
         targets1 = torch.tensor([[1.0], [1.0]])
         preds1 = torch.tensor([[1.0], [1.0]])
-        
+
         targets2 = torch.tensor([[1.0], [1.0]])
         preds2 = torch.tensor([[0.0], [0.0]])
-        
-        metrics.update(preds=preds1, target=targets1)
-        metrics.update(preds=preds2, target=targets2)
-        
+
+        ann_concept = self.annotations.to_concept_space()
+        metrics.update(
+            preds=AnnotatedTensor(preds1, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets1, ann_concept, axis=-1),
+        )
+        metrics.update(
+            preds=AnnotatedTensor(preds2, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets2, ann_concept, axis=-1),
+        )
+
         result = metrics.compute()
-        
+
         self.assertAlmostEqual(
             result['train/SUMMARY-binary_accuracy'].item(),
             0.5,
@@ -770,27 +780,35 @@ class TestConceptMetricsMultipleBatches(unittest.TestCase):
     def test_reset_clears_accumulation(self):
         """Test that reset clears accumulated state."""
         metrics = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True,
             prefix='train'
         )
-        
+
+        ann_concept = self.annotations.to_concept_space()
+
         targets1 = torch.tensor([[1.0], [1.0]])
         preds1 = torch.tensor([[0.0], [0.0]])
-        
-        metrics.update(preds=preds1, target=targets1)
+
+        metrics.update(
+            preds=AnnotatedTensor(preds1, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets1, ann_concept, axis=-1),
+        )
         result1 = metrics.compute()
         self.assertAlmostEqual(result1['train/SUMMARY-binary_accuracy'].item(), 0.0)
-        
+
         metrics.reset()
-        
+
         targets2 = torch.tensor([[1.0], [1.0]])
         preds2 = torch.tensor([[1.0], [1.0]])
-        
-        metrics.update(preds=preds2, target=targets2)
+
+        metrics.update(
+            preds=AnnotatedTensor(preds2, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets2, ann_concept, axis=-1),
+        )
         result2 = metrics.compute()
-        
+
         self.assertAlmostEqual(result2['train/SUMMARY-binary_accuracy'].item(), 1.0)
 
 
@@ -802,17 +820,13 @@ class TestConceptMetricsRepr(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'}
-            }
         )
         self.annotations = axis_binary
     
     def test_repr_with_metrics(self):
         """Test __repr__ method."""
         metrics = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={
                 'accuracy': torchmetrics.classification.BinaryAccuracy(),
                 'f1': torchmetrics.classification.BinaryF1Score()
@@ -820,11 +834,10 @@ class TestConceptMetricsRepr(unittest.TestCase):
             summary=True,
             per_concept=False
         )
-        
+
         repr_str = repr(metrics)
-        
+
         self.assertIn('ConceptMetrics', repr_str)
-        self.assertIn('n_concepts=2', repr_str)
         self.assertIn('summary=True', repr_str)
         self.assertIn('BinaryAccuracy', repr_str)
         self.assertIn('BinaryF1Score', repr_str)
@@ -832,7 +845,7 @@ class TestConceptMetricsRepr(unittest.TestCase):
     def test_repr_with_mixed_metric_specs(self):
         """Test __repr__ with different metric specification methods."""
         metrics = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={
                 'accuracy': torchmetrics.classification.BinaryAccuracy(),
                 'f1': (torchmetrics.classification.BinaryF1Score, {}),
@@ -856,56 +869,75 @@ class TestConceptMetricsClone(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1',),
             cardinalities=[1],
-            metadata={'b1': {'type': 'discrete'}}
         )
         self.annotations = axis_binary
     
     def test_clone_with_prefix(self):
         """Test cloning with a new prefix."""
         base = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True
         )
         cloned = base.clone(prefix='train')
-        
+
         targets = torch.tensor([[1.0], [1.0]])
         preds = torch.tensor([[1.0], [1.0]])
-        cloned.update(preds=preds, target=targets)
+        cloned.update(
+            preds=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        )
         result = cloned.compute()
-        
+
         self.assertIn('train/SUMMARY-binary_accuracy', result)
-    
+
     def test_clones_are_independent(self):
         """Test that cloned instances have independent state."""
         base = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True
         )
         train = base.clone(prefix='train')
         val = base.clone(prefix='val')
-        
-        # Update only train
+
+        ann_concept = self.annotations.to_concept_space()
+
+        # Update train and val with different data
         targets = torch.tensor([[1.0], [1.0]])
         preds = torch.tensor([[1.0], [1.0]])
-        train.update(preds=preds, target=targets)
-        
+        train.update(
+            preds=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, ann_concept, axis=-1),
+        )
+
+        val_targets = torch.tensor([[1.0], [1.0]])
+        val_preds = torch.tensor([[0.0], [0.0]])
+        val.update(
+            preds=AnnotatedTensor(val_preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(val_targets, ann_concept, axis=-1),
+        )
+
         train_result = train.compute()
         val_result = val.compute()
-        
+
         self.assertAlmostEqual(train_result['train/SUMMARY-binary_accuracy'].item(), 1.0)
-        # val was never updated, so its result should be the default (0.0 for accuracy)
-        self.assertIn('val/SUMMARY-binary_accuracy', val_result)
-    
+        # val was updated with different data, so its result differs from train
+        self.assertAlmostEqual(val_result['val/SUMMARY-binary_accuracy'].item(), 0.0)
+
     def test_collection_property(self):
         """Test the collection property returns non-empty sub-collections."""
         metrics = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             summary=True
         )
-        
+        preds = AnnotatedTensor(torch.tensor([[1.0], [1.0]]), self.annotations, axis=-1)
+        target = AnnotatedTensor(
+            torch.tensor([[1.0], [1.0]]), self.annotations.to_concept_space(), axis=-1
+        )
+        metrics.update(preds=preds, target=target)
+
         coll = metrics.collection
         self.assertIn('binary', coll)
         self.assertTrue(len(coll) > 0)
@@ -919,36 +951,33 @@ class TestConceptMetricsIntegration(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1'),
             cardinalities=[1, 1, 3],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'}
-            }
         )
         self.annotations = axis_mixed
     
     def test_full_training_epoch_simulation(self):
         """Simulate a complete training epoch with multiple batches."""
         base = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy},
             summary=True,
             per_concept=True
         )
         train_metrics = base.clone(prefix='train')
-        
+
         num_batches = 10
         batch_size = 32
-        
+
         for _ in range(num_batches):
             predictions = torch.randn(batch_size, 5)
             targets = torch.cat([
                 torch.randint(0, 2, (batch_size, 2)),
                 torch.randint(0, 3, (batch_size, 1))
             ], dim=1)
-            
-            train_metrics.update(preds=predictions, target=targets)
+
+            preds = AnnotatedTensor(predictions, self.annotations, axis=-1)
+            target = AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1)
+            train_metrics.update(preds=preds, target=target)
         
         results = train_metrics.compute()
         
@@ -966,7 +995,7 @@ class TestConceptMetricsIntegration(unittest.TestCase):
     def test_train_val_test_workflow(self):
         """Simulate complete train/val/test workflow."""
         base = ConceptMetrics(
-            self.annotations,
+            annotations=self.annotations,
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy},
             summary=True
@@ -974,32 +1003,42 @@ class TestConceptMetricsIntegration(unittest.TestCase):
         train_metrics = base.clone(prefix='train')
         val_metrics = base.clone(prefix='val')
         test_metrics = base.clone(prefix='test')
-        
+
         batch_size = 16
-        
+        ann_concept = self.annotations.to_concept_space()
+
         for _ in range(5):
             predictions = torch.randn(batch_size, 5)
             targets = torch.cat([
                 torch.randint(0, 2, (batch_size, 2)),
                 torch.randint(0, 3, (batch_size, 1))
             ], dim=1)
-            train_metrics.update(preds=predictions, target=targets)
-        
+            train_metrics.update(
+                preds=AnnotatedTensor(predictions, self.annotations, axis=-1),
+                target=AnnotatedTensor(targets, ann_concept, axis=-1),
+            )
+
         for _ in range(2):
             predictions = torch.randn(batch_size, 5)
             targets = torch.cat([
                 torch.randint(0, 2, (batch_size, 2)),
                 torch.randint(0, 3, (batch_size, 1))
             ], dim=1)
-            val_metrics.update(preds=predictions, target=targets)
-        
+            val_metrics.update(
+                preds=AnnotatedTensor(predictions, self.annotations, axis=-1),
+                target=AnnotatedTensor(targets, ann_concept, axis=-1),
+            )
+
         for _ in range(3):
             predictions = torch.randn(batch_size, 5)
             targets = torch.cat([
                 torch.randint(0, 2, (batch_size, 2)),
                 torch.randint(0, 3, (batch_size, 1))
             ], dim=1)
-            test_metrics.update(preds=predictions, target=targets)
+            test_metrics.update(
+                preds=AnnotatedTensor(predictions, self.annotations, axis=-1),
+                target=AnnotatedTensor(targets, ann_concept, axis=-1),
+            )
         
         train_results = train_metrics.compute()
         val_results = val_metrics.compute()
@@ -1060,17 +1099,26 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
 
     def test_collection_property_binary(self):
         m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
+        preds = AnnotatedTensor(torch.randn(4, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), self.ann_binary.to_concept_space(), axis=-1)
+        m.update(preds, targets)
         coll = m.collection
         assert 'binary' in coll
 
     def test_collection_property_categorical(self):
         m = ConceptMetrics(annotations=self.ann_cat, categorical=self.cat_metrics)
+        preds = AnnotatedTensor(torch.randn(4, 3), self.ann_cat, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 3, (4, 1)), self.ann_cat.to_concept_space(), axis=-1)
+        m.update(preds, targets)
         coll = m.collection
         assert 'categorical' in coll
 
     def test_clone_with_prefix(self):
         m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
         cloned = m.clone(prefix='val')
+        preds = AnnotatedTensor(torch.randn(4, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), self.ann_binary.to_concept_space(), axis=-1)
+        cloned.update(preds, targets)
         assert 'val/SUMMARY-binary_' in cloned.binary.prefix
 
     def test_per_concept_tracking(self):
@@ -1079,8 +1127,8 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
             binary=self.bin_metrics,
             per_concept=True,
         )
-        preds = torch.randn(4, 2)
-        targets = torch.randint(0, 2, (4, 2))
+        preds = AnnotatedTensor(torch.randn(4, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), self.ann_binary.to_concept_space(), axis=-1)
         m.update(preds, targets)
         results = m.compute()
         assert len(results) > 0
@@ -1091,8 +1139,8 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
             binary=self.bin_metrics,
             per_concept=['b1'],
         )
-        preds = torch.randn(4, 2)
-        targets = torch.randint(0, 2, (4, 2))
+        preds = AnnotatedTensor(torch.randn(4, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), self.ann_binary.to_concept_space(), axis=-1)
         m.update(preds, targets)
         results = m.compute()
         # b1 per-concept collection present
@@ -1101,15 +1149,17 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
     def test_update_skips_empty_batch(self):
         m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
         # Empty batch — should return without error
-        m.update(torch.zeros(0, 2), torch.zeros(0, 2))
+        preds = AnnotatedTensor(torch.zeros(0, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.zeros(0, 2), self.ann_binary.to_concept_space(), axis=-1)
+        m.update(preds, targets)
 
     def test_instantiate_metric_from_tuple(self):
         m = ConceptMetrics(
             annotations=self.ann_cat,
             categorical={'acc': (self.MulticlassAccuracy, {})},
         )
-        preds = torch.randn(4, 3)
-        targets = torch.randint(0, 3, (4, 1))
+        preds = AnnotatedTensor(torch.randn(4, 3), self.ann_cat, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 3, (4, 1)), self.ann_cat.to_concept_space(), axis=-1)
         m.update(preds, targets)
         results = m.compute()
         assert len(results) > 0
@@ -1123,8 +1173,8 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
 
     def test_reset_clears_state(self):
         m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
-        preds = torch.randn(4, 2)
-        targets = torch.randint(0, 2, (4, 2))
+        preds = AnnotatedTensor(torch.randn(4, 2), self.ann_binary, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), self.ann_binary.to_concept_space(), axis=-1)
         m.update(preds, targets)
         m.reset()
         # After reset computing should still work (fresh state)
@@ -1138,21 +1188,26 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2))
         mo = ModelOutput()
-        mo.logits = preds
-        mo.target = targets
+        mo.logits = AnnotatedTensor(preds, self.ann_binary, axis=-1)
+        mo.target = AnnotatedTensor(targets, self.ann_binary.to_concept_space(), axis=-1)
         m.update(mo)
         results = m.compute()
         assert len(results) > 0
 
-    def test_continuous_not_supported_raises(self):
-        ann_cont = Annotations(
-                labels=['cont1'],
-                cardinalities=[1],
-                types=['continuous'],
-            )
+    def test_continuous_supported(self):
+        """A continuous concept builds and updates its regression metric on ``loc``."""
         from torchmetrics.regression import MeanSquaredError
-        with self.assertRaises(NotImplementedError):
-            ConceptMetrics(annotations=ann_cont, continuous={'mse': MeanSquaredError()})
+        from torch_concepts.tensor import AnnotatedTensor
+        from torch_concepts.nn.modules.outputs import ModelOutput
+
+        ann_cont = Annotations(labels=['cont1'], cardinalities=[1], types=['continuous'])
+        m = ConceptMetrics(annotations=ann_cont, continuous={'mse': MeanSquaredError()},
+                           per_concept=True)
+        out = ModelOutput()
+        out.loc = AnnotatedTensor(torch.randn(4, 1), ann_cont, axis=-1)
+        out.target = AnnotatedTensor(torch.randn(4, 1), ann_cont.to_concept_space(), axis=-1)
+        m.update(out)
+        self.assertIn('cont1_mse', m.compute())
 
     def test_per_concept_categorical(self):
         m = ConceptMetrics(
@@ -1160,8 +1215,8 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
             categorical=self.cat_metrics,
             per_concept=True,
         )
-        preds = torch.randn(4, 3)
-        targets = torch.randint(0, 3, (4, 1))
+        preds = AnnotatedTensor(torch.randn(4, 3), self.ann_cat, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 3, (4, 1)), self.ann_cat.to_concept_space(), axis=-1)
         m.update(preds, targets)
         results = m.compute()
         assert len(results) > 0
@@ -1204,6 +1259,10 @@ class TestConceptMetricsMissingLines(unittest.TestCase):
             binary={'acc': torchmetrics.classification.BinaryAccuracy()},
             per_concept=True,
         )
+        preds = AnnotatedTensor(torch.randn(4, 2), ann, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 2)), ann.to_concept_space(), axis=-1)
+        m.update(preds, targets)
+
         cloned = m.clone(prefix='test')
         # Check b1 collection has updated prefix
         assert cloned._per_concept  # non-empty
@@ -1212,9 +1271,8 @@ class TestConceptMetricsMissingLines(unittest.TestCase):
 
     def test_clone_with_none_prefix_no_change(self):
         """clone(prefix=None) keeps existing prefix."""
-        ann = self._make_binary_ann()
         m = ConceptMetrics(
-            annotations=ann,
+            annotations=self._make_binary_ann(),
             binary={'acc': torchmetrics.classification.BinaryAccuracy()},
         )
         original_prefix = m.binary.prefix
@@ -1228,21 +1286,20 @@ class TestConceptMetricsMissingLines(unittest.TestCase):
             annotations=ann,
             categorical={'acc': torchmetrics.classification.MulticlassAccuracy},
         )
-        preds = torch.randn(4, 3)
-        targets = torch.randint(0, 3, (4, 1))
+        preds = AnnotatedTensor(torch.randn(4, 3), ann, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 3, (4, 1)), ann.to_concept_space(), axis=-1)
         m.update(preds, targets)
         results = m.compute()
         assert len(results) > 0
 
 
 class TestConceptMetricsContinuousPaths(unittest.TestCase):
-    """Cover continuous-concept code paths by bypassing the NotImplementedError guard.
+    """Continuous-concept code paths.
 
-    The continuous branches exist in the source but are currently gated behind
-    NotImplementedError raises in both ConceptMetrics.__init__ and
-    utils.check_collection.  We reach them by constructing a valid binary-only
-    ConceptMetrics and then surgically replacing its internal state so that the
-    continuous MetricCollection contains a real metric — no source modifications.
+    Continuous concepts are supported: a continuous concept reports ``loc`` (its
+    mean), so metrics score it on that quantity rather than on logits. The update
+    tests build a real continuous :class:`ModelOutput`; the collection/clone/compute
+    tests reuse a binary metric with an injected continuous collection for brevity.
     """
 
     def _make_binary_metrics(self):
@@ -1286,6 +1343,9 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
             binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
             per_concept=True,
         )
+        preds = AnnotatedTensor(torch.randn(4, 1), ann, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 1)), ann.to_concept_space(), axis=-1)
+        m.update(preds, targets)
         coll = m.collection
         # _per_concept has 'b1' with a BinaryAccuracy inside — len > 0
         self.assertIn('b1', coll)
@@ -1296,112 +1356,59 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
     def test_clone_updates_continuous_prefix(self):
         """clone(prefix=...) updates continuous collection prefix (line 189)."""
         m = self._make_binary_metrics()
+        ann = Annotations(labels=['b1'], cardinalities=[1], types=['binary'])
+        preds = AnnotatedTensor(torch.randn(4, 1), ann, axis=-1)
+        targets = AnnotatedTensor(torch.randint(0, 2, (4, 1)), ann.to_concept_space(), axis=-1)
+        m.update(preds, targets)
         self._inject_continuous_collection(m)
         cloned = m.clone(prefix='val')
         # The prefix of continuous should contain 'val/'
         self.assertIn('val/', cloned.continuous.prefix)
 
     # ------------------------------------------------------------------
-    # _setup_metrics() continuous summary branch — lines 253-254
-    # ------------------------------------------------------------------
-    def test_setup_metrics_continuous_summary(self):
-        """_setup_metrics populates summary_continuous from fn_collection (lines 253-254)."""
-        from torchmetrics.regression import MeanSquaredError
-
-        m = self._make_binary_metrics()
-        # Inject a continuous entry into fn_collection (bypassing check_collection)
-        m.fn_collection['continuous'] = {'mse': MeanSquaredError()}
-        # Inject a fake continuous type_group so _setup_metrics iterates it
-        m.groups['continuous'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
-        _, _, summary_cont, _ = m._setup_metrics()
-        self.assertIn('mse', summary_cont)
-
-    # ------------------------------------------------------------------
-    # _setup_metrics() continuous per-concept branch — lines 271-273
-    # ------------------------------------------------------------------
-    def test_setup_metrics_continuous_per_concept(self):
-        """_setup_metrics instantiates per-concept continuous metrics (lines 271-273)."""
-        from torchmetrics.regression import MeanSquaredError
-
-        ann = Annotations(
-                labels=['b1'],
-                cardinalities=[1],
-                types=['binary'],
-            )
-        m = ConceptMetrics(
-            annotations=ann,
-            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
-            per_concept=True,
-        )
-        # Override the concept type to 'continuous' for b1
-        m.types = ['continuous']
-        # Inject continuous metrics into fn_collection
-        m.fn_collection['continuous'] = {'mse': MeanSquaredError()}
-        m.fn_collection._config.pop('binary', None)
-        # Re-run _setup_metrics — should hit the elif c_type == 'continuous' branch
-        m._concepts_to_trace = ['b1']
-        _, _, _, per_concept = m._setup_metrics()
-        self.assertIn('b1', per_concept)
-
-    # ------------------------------------------------------------------
     # update() continuous summary path — line 331
     # ------------------------------------------------------------------
-    def test_update_raises_for_continuous_summary(self):
-        """update() raises NotImplementedError for continuous summary (line 331)."""
-        from torchmetrics import MetricCollection
+    def test_update_summary_continuous(self):
+        """Summary metric for continuous concepts is computed on ``loc``."""
         from torchmetrics.regression import MeanSquaredError
+        from torch_concepts.tensor import AnnotatedTensor
+        from torch_concepts.nn.modules.outputs import ModelOutput
 
-        m = self._make_binary_metrics()
-        # Make the continuous collection non-empty
-        m.continuous = MetricCollection(
-            {'mse': MeanSquaredError()},
-            prefix='t/SUMMARY-continuous_',
+        ann = Annotations(labels=['x', 'y'], cardinalities=[1, 1],
+                          types=['continuous', 'continuous'])
+        m = ConceptMetrics(
+            annotations=ann,
+            continuous={'mse': MeanSquaredError()},
+            summary=True, per_concept=False,
         )
-        # Inject a fake continuous group entry so the guard passes
-        m.groups['continuous'] = {
-            'labels': ['fake_cont'],
-            'concept_idx': [0],
-            'logits_idx': slice(0, 1),
-        }
-        # Clear the binary group so we skip straight to the continuous check
-        m.groups['binary'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
-        m.groups['categorical'] = {'labels': [], 'concept_idx': [], 'logits_idx': []}
-        preds = torch.randn(4, 1)
-        targets = torch.randn(4, 1)
-        with self.assertRaises(NotImplementedError):
-            m.update(preds, targets)
+        out = ModelOutput()
+        out.loc = AnnotatedTensor(torch.randn(4, 2), ann, axis=-1)
+        out.target = AnnotatedTensor(torch.randn(4, 2), ann.to_concept_space(), axis=-1)
+        m.update(out)
+        result = m.compute()
+        self.assertTrue(any('continuous' in k for k in result))
 
     # ------------------------------------------------------------------
     # update() per-concept continuous path — lines 343-344
     # ------------------------------------------------------------------
     def test_update_per_concept_continuous(self):
-        """update() calls per-concept collection for continuous type (lines 343-344)."""
-        from torchmetrics import MetricCollection
+        """Per-concept metric for a continuous concept reads its ``loc`` and updates."""
         from torchmetrics.regression import MeanSquaredError
+        from torch_concepts.tensor import AnnotatedTensor
+        from torch_concepts.nn.modules.outputs import ModelOutput
 
-        ann = Annotations(
-                labels=['b1'],
-                cardinalities=[1],
-                types=['binary'],
-            )
+        ann = Annotations(labels=['x'], cardinalities=[1], types=['continuous'])
         m = ConceptMetrics(
             annotations=ann,
-            binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
-            per_concept=True,
+            continuous={'mse': MeanSquaredError()},
+            per_concept=True, summary=False,
         )
-        # Replace per-concept b1 collection with a continuous-style MSE metric
-        mse = MeanSquaredError()
-        m._per_concept['b1'] = MetricCollection({'mse': mse}, prefix='b1_')
-        # Override type to continuous for b1
-        m.types = ['continuous']
-        # Disable summary to avoid hitting line 321
-        m.summary = False
-
-        preds = torch.randn(4, 1)
-        targets = torch.randn(4, 1)
-        m.update(preds, targets)  # should not raise
+        out = ModelOutput()
+        out.loc = AnnotatedTensor(torch.randn(4, 1), ann, axis=-1)
+        out.target = AnnotatedTensor(torch.randn(4, 1), ann.to_concept_space(), axis=-1)
+        m.update(out)
         result = m.compute()
-        self.assertIn('b1_mse', result)
+        self.assertIn('x_mse', result)
 
     # ------------------------------------------------------------------
     # compute() continuous branch — line 354

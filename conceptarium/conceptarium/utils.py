@@ -7,13 +7,12 @@ This module provides helper functions for:
 - Managing concept annotations and distributions
 """
 import os
-import inspect
 import torch
 import logging
 import pandas as pd
 from torch import nn
 from omegaconf import DictConfig, OmegaConf, open_dict
-from hydra.utils import instantiate, get_class
+from hydra.utils import instantiate
 from torch_concepts import seed_everything, Backbone, ConceptGraph
 from torch_concepts.nn import MLP
 from torch_concepts.utils import ensure_list
@@ -51,27 +50,6 @@ def setup_run_env(cfg: DictConfig):
         with open_dict(cfg):
             cfg.dataset.datamodule.update(root = data_root)
     return cfg
-
-def instantiate_loss(cfg: DictConfig, annotations):
-    """Instantiate loss, passing ``annotations`` only if accepted.
-
-    Inspects the target class constructor to decide whether to forward the
-    ``annotations`` argument.
-    """
-    target = cfg.get("_target_")
-    needs_annotations = False
-    if target:
-        try:
-            cls = get_class(target)
-            sig = inspect.signature(cls.__init__)
-            needs_annotations = "annotations" in sig.parameters
-        except Exception:
-            needs_annotations = True  # safe fallback: pass it anyway
-
-    if needs_annotations:
-        return instantiate(cfg, _convert_="all", _partial_=True)(annotations=annotations)
-    return instantiate(cfg, _convert_="all")
-
 
 def maybe_precompute_embeddings(cfg: DictConfig, dm: ConceptDataModule, backbone: Backbone = None):
     """Decide what to do with ``backbone`` given ``cfg.precompute_embeddings``.

@@ -32,9 +32,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .....annotations import Annotations
+from .....tensor import AnnotatedTensor
+from .....distributions import Delta
 from ...utils import with_training_mode
-from ...outputs import ModelOutput, logits_from_params
-from ...mid.models.variable import _DEFAULT_DISTRIBUTIONS, _DEFAULT_DIST_KWARGS
+from ...outputs import ModelOutput
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.variable import _DEFAULT_DISTRIBUTIONS, ConceptVariable, EmbeddingVariable
 
 class BaseModel(nn.Module, ABC):
     """Abstract base class for concept-based models.
@@ -213,7 +216,7 @@ class BaseModel(nn.Module, ABC):
     #: per instance with the ``variable_distributions`` constructor arg.
     variable_distributions: Dict[str, Type] = dict(_DEFAULT_DISTRIBUTIONS)
     #: Default keyword arguments per distribution class (e.g. relaxation temperature).
-    variable_dist_kwargs: Dict[Type, dict] = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs: Dict[Type, dict] = dict(DEFAULT_DIST_KWARGS)
 
     def __new__(cls, *args, lightning: bool = False, **kwargs):
         """Create instance with BaseLearner mixin for Lightning training.
@@ -246,6 +249,7 @@ class BaseModel(nn.Module, ABC):
         backbone: Optional[nn.Module] = None,
         latent_size: Optional[int] = None,
         lightning: bool = False,  # Consumed by __new__, included for signature
+        plate: Optional[bool] = None,
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
@@ -256,6 +260,11 @@ class BaseModel(nn.Module, ABC):
             self.variable_distributions = {**self.variable_distributions, **variable_distributions}
         if variable_dist_kwargs is not None:
             self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
+
+        # Plate preference used by the level factories: None = auto-detect per
+        # level, True = force a plate (raise on a heterogeneous level), False =
+        # force one variable per concept.
+        self._plate_pref = plate
 
         self._setup_annotations(annotations)
         self._setup_backbone(backbone, input_size, latent_size)
@@ -284,6 +293,132 @@ class BaseModel(nn.Module, ABC):
     def dist_kwargs_of(self, name: str) -> dict:
         """Distribution keyword arguments this model uses for concept ``name``."""
         return dict(self.variable_dist_kwargs.get(self.distribution_of(name), {}))
+
+    # ------------------------------------------------------------------
+    # Level factories (plate grouping) — shared by all concept models
+    # ------------------------------------------------------------------
+    def _plate_groups(self, names: List[str]) -> list:
+        """Partition ``names`` into homogeneous ``(type, cardinality)`` groups.
+
+        Returns ``[((type, cardinality), [names]), ...]`` in first-appearance
+        order — one entry per distinct ``(type, cardinality)``. A plate must be
+        homogeneous, so this is the **minimum** number of plates that can cover the
+        level: fully homogeneous → 1 group, two homogeneous families (e.g. 10
+        Bernoulli + 10 identical categorical) → 2 groups, all distinct → N groups.
+        Reads only annotation scalars — it builds no ``Variable`` objects — so it
+        stays cheap even for very large levels.
+        """
+        axis = self.concept_annotations
+        groups: Dict[tuple, List[str]] = {}
+        for n in names:
+            c = axis.concept(n)
+            groups.setdefault((c.type, c.cardinality), []).append(n)
+        return list(groups.items())
+
+    def _plate_layout(self, names: List[str], plate_name: str) -> list:
+        """Resolve how a level is laid out, shared by the variable factories.
+
+        Returns a list of ``(kind, name, members)`` where ``kind`` is ``"plate"``
+        or ``"individual"``. Honours the ``plate`` preference (:attr:`_plate_pref`):
+
+        * ``None`` (default) / ``True`` — group homogeneous concepts into the
+          minimum number of plates; even a lone concept becomes a single-member
+          plate, so the level is always a list of plates and ``plate_name`` is
+          always used.
+        * ``False`` — no plates: one individual variable per concept, named after
+          the concept.
+
+        A single plate keeps the bare ``plate_name``; multiple plates are suffixed
+        with their ``type`` and ``cardinality`` (e.g. ``concepts_binary_1``) so the
+        names are unique.
+        """
+        if self._plate_pref is False:
+            return [("individual", n, [n]) for n in names]
+        # None / True: always plates (a lone concept is a single-member plate).
+        groups = self._plate_groups(names)
+        single = len(groups) == 1
+        return [
+            ("plate", plate_name if single else f"{plate_name}_{ctype}_{card}", members)
+            for (ctype, card), members in groups
+        ]
+
+    def _make_concept_plate(self, members: List[str], name: str) -> ConceptVariable:
+        """A single plate :class:`ConceptVariable` over homogeneous ``members``."""
+        c0 = self.concept_annotations.concept(members[0])
+        return ConceptVariable(
+            names=name,
+            members=list(members),
+            distribution=self.distribution_of(c0.name),
+            dist_kwargs=self.dist_kwargs_of(c0.name),
+            size=c0.cardinality,
+        )
+
+    def _make_concept_variable(self, name: str) -> ConceptVariable:
+        """A single (non-plate) :class:`ConceptVariable` for concept ``name``."""
+        c = self.concept_annotations.concept(name)
+        return ConceptVariable(
+            names=c.name,
+            distribution=self.distribution_of(c.name),
+            dist_kwargs=self.dist_kwargs_of(c.name),
+            size=c.cardinality,
+        )
+
+    def build_concept_variables(self, names: List[str], plate_name: str) -> List[ConceptVariable]:
+        """Build the concept variable(s) for a set of concepts, as a list of ``ConceptVariable``.
+
+        Uses :meth:`_plate_layout`. By default (``plate`` ``None``/``True``)
+        homogeneous concepts are grouped into the minimum number of plates — each a
+        :class:`ConceptVariable` with one member per grouped concept, and even a
+        lone concept a single-member plate. With ``plate=False`` each concept is an
+        individual variable named after itself. Returning a list lets callers wire
+        the CPDs and the Bayesian network identically however the set splits.
+        """
+        out: List[ConceptVariable] = []
+        for kind, name, members in self._plate_layout(names, plate_name):
+            if kind == "plate":
+                out.append(self._make_concept_plate(members, name))
+            else:
+                out.append(self._make_concept_variable(name))
+        return out
+
+    def build_concept_embedding_variables(
+        self,
+        names: List[str],
+        embedding_size: int,
+        plate_name: str,
+        name_fmt: str = "{}_embedding",
+    ) -> List[EmbeddingVariable]:
+        """Build the per-concept state-embedding variable(s), aligned with the concepts.
+
+        Each concept contributes ``cardinality`` state embeddings of width
+        ``embedding_size``. This uses the **same** :meth:`_plate_layout` as
+        :meth:`build_concept_variables`, so — called with the same ``names`` — the
+        returned list aligns element-by-element with the concept variables: group
+        ``i``'s embeddings feed group ``i``'s concepts. Per group it returns:
+
+        * a plate of ``k`` homogeneous concepts → one :class:`EmbeddingVariable` of
+          shape ``(k * cardinality, embedding_size)`` (the members' state embeddings
+          stacked into one matrix); a lone concept is a single-member plate of shape
+          ``(cardinality, embedding_size)``;
+        * with ``plate=False``, one ``EmbeddingVariable`` per concept of shape
+          ``(cardinality, embedding_size)``, named via ``name_fmt``.
+
+        Only *concept* embeddings belong here. Global/shared embeddings (``input``,
+        ``latent``, model-wide latents) are not per-concept and carry no grouping —
+        build those directly with :class:`EmbeddingVariable`. ``plate_name`` must
+        differ from the concepts' ``plate_name`` so the plate nodes do not collide.
+        """
+        out: List[EmbeddingVariable] = []
+        for kind, name, members in self._plate_layout(names, plate_name):
+            if kind == "plate":
+                card0 = self.concept_annotations.concept(members[0]).cardinality
+                shape = (len(members) * card0, embedding_size)
+            else:
+                name = name_fmt.format(name)
+                card = self.concept_annotations.concept(members[0]).cardinality
+                shape = (card, embedding_size)
+            out.append(EmbeddingVariable(name, distribution=Delta, shape=shape))
+        return out
 
     def _setup_backbone(
         self,
@@ -459,10 +594,10 @@ class BaseModel(nn.Module, ABC):
 
         The active inference engine is selected automatically based on
         ``self.training`` (toggled by ``.train()`` / ``.eval()``). The result is
-        returned as raw per-variable parameters under ``ModelOutput.params``:
-        ``out.params[name]`` is the queried variable's parameter dict (e.g.
-        ``{'logits': ...}`` or ``{'value': ...}``). Callers assemble the columns
-        they need, e.g. ``torch.cat([out.params[n]['logits'] for n in query], -1)``.
+        keyed by *quantity*: ``out.logits`` (equivalently ``out.params['logits']``)
+        is one annotated tensor spanning every queried concept, sliceable by name
+        — ``out.logits['c1']`` — with the columns of a variable that reports a
+        different quantity living under its own key (``out.loc`` / ``out.scale``).
 
         Parameters
         ----------
@@ -490,16 +625,12 @@ class BaseModel(nn.Module, ABC):
             **inference_kwargs,
         )
 
-        out = ModelOutput(
+        return ModelOutput(
             params=result.params,
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
         )
-
-        # FIXME: update ModelOutput to generalize beyond logits
-        out.logits = logits_from_params(result.params)
-        return out
 
     @functools.cached_property
     def _query_plan(self):
@@ -509,7 +640,7 @@ class BaseModel(nn.Module, ABC):
         Returns a list ``[(variable_name, [(gt_col_index, cardinality), ...]), ...]``
         over the concept variables only — a plate contributes one entry whose member
         list has all its members, an individual concept contributes a single-member
-        entry. :meth:`build_query` applies this without re-deriving structure or
+        entry. :meth:`fully_observed_query` applies this without re-deriving structure or
         touching non-concept variables, keeping per-query cost at ``O(n_query)``.
         """
         axis = self.concept_annotations
@@ -519,7 +650,7 @@ class BaseModel(nn.Module, ABC):
             if var.variable_type == "concept"
         ]
 
-    def build_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def fully_observed_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Build the full-observation query that fills every concept's tensor.
 
         Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
@@ -542,19 +673,23 @@ class BaseModel(nn.Module, ABC):
         return query
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
-        """Prepare ground truth labels for loss/metrics.
+        """Prepare ground-truth labels for loss/metrics.
 
-        Override in subclasses that need to transform the target
-        (e.g. slice to task-only columns).
+        Returns the target as a concept-space :class:`AnnotatedTensor` (one column
+        per concept), so losses and metrics can align it to the predictions by
+        name. A target that already carries an annotation is returned unchanged.
+        Override in subclasses that predict a subset of concepts (e.g. task-only).
 
         Parameters
         ----------
         target : torch.Tensor
-            Raw ground truth labels from the batch.
+            Raw ground-truth labels from the batch.
 
         Returns
         -------
-        torch.Tensor
-            Transformed target tensor.
+        AnnotatedTensor or None
+            Concept-space annotated target.
         """
-        return target
+        if target is None or hasattr(target, 'annotation'):
+            return target
+        return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)

@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable, EmbeddingVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
 from torch_concepts.distributions import Delta
 
@@ -259,7 +259,7 @@ class TestRootParams:
         v = _bernoulli_var(size=3)
         prior = FixedPrior(torch.tensor([0.1, 0.5, 0.9]))
         cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
-        params = cpd.root_params(batch_size=7)
+        params = cpd.root_params(7)
         assert "probs" in params
         assert params["probs"].shape == (7, 3)
 
@@ -547,7 +547,7 @@ class TestParametricFactorAggregate:
     def test_split_by_type_invalid_variable_type_raises(self):
         # factor.py lines 222-228: _split_by_type raises for invalid variable_type
         import torch.distributions as dist
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
 
         # Create a CPD with a parent, then monkey-patch parent's variable_type
         x = _delta_var(size=4)
@@ -555,7 +555,7 @@ class TestParametricFactorAggregate:
 
         # Need a pyc-style module to trigger _pyc_aggregate -> _split_by_type.
         # We'll use an EmbeddingVariable with a modified variable_type.
-        from torch_concepts.nn.modules.mid.models.variable import EmbeddingVariable
+        from torch_concepts.nn.modules.mid.variable import EmbeddingVariable
         e = EmbeddingVariable("e", distribution=dist.Normal, size=4)
         # Monkey-patch to an invalid type so _split_by_type raises
         e.__class__ = type("BrokenVar", (EmbeddingVariable,), {"variable_type": property(lambda self: "invalid")})
@@ -597,3 +597,26 @@ class TestLazyConstructorAlreadyBuilt:
         # The parametrization should contain the concrete module, not the LazyConstructor
         mod = cpd.parametrization["probs"]
         assert not isinstance(mod, LazyConstructor)
+
+    def test_lazy_head_inside_sequential_is_sized(self):
+        # A continuous variable's scale head is Sequential(LazyConstructor, softplus):
+        # the CPD must size the *inner* lazy layer from the parents and this
+        # parameter's width, keeping the activation.
+        from torch_concepts.nn.modules.low.lazy import LazyConstructor
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+
+        x = _delta_var(size=4)               # parent -> in_concepts = 4
+        n = _normal_var(size=2)              # child  -> loc/scale width = 2
+        cpd = ParametricCPD(
+            variable=n,
+            parametrization={
+                "loc": LazyConstructor(LinearConceptToConcept),
+                "scale": nn.Sequential(LazyConstructor(LinearConceptToConcept), nn.Softplus()),
+            },
+            parents=[x],
+        )
+        scale = cpd.parametrization["scale"]
+        assert not isinstance(scale[0], LazyConstructor)   # inner head built
+        assert isinstance(scale[1], nn.Softplus)           # activation preserved
+        out = scale(torch.randn(5, 4))
+        assert out.shape == (5, 2) and bool((out > 0).all())

@@ -7,7 +7,7 @@ exogenous mixture, and evaluation metrics for concept-based models.
 import torch
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score
-from typing import Callable, List, Optional, Union, Dict
+from typing import Callable, List, Optional, Tuple, Union, Dict
 from torch.nn import Linear
 import warnings
 import numbers
@@ -21,6 +21,7 @@ from scipy.sparse.linalg import LinearOperator
 _constr_keys = {"fun", "lb", "ub", "jac", "hess", "hessp", "keep_feasible"}
 _bounds_keys = {"lb", "ub", "keep_feasible"}
 
+from torch_concepts.tensor import AnnotatedTensor
 from .modules.low.semantic import CMRSemantic
 
 
@@ -640,6 +641,109 @@ def intervention_score(
             sum(intervention_effectiveness) / len(intervention_groups)
         )
     return intervention_effectiveness
+
+
+def tcav_score(
+    embeddings: torch.Tensor,
+    head: Callable,
+    cavs: torch.Tensor,
+    target: Union[int, str, Tuple[str, str]] = 0,
+) -> torch.Tensor:
+    """Compute TCAV scores of concepts for a target output.
+
+    The conceptual sensitivity of concept ``C`` for target ``k`` at an input
+    ``x`` is the directional derivative of the target output along the
+    concept activation vector, ``S_{C,k}(x) = grad(head(x)[k]) . v_C``: a
+    positive value means an infinitesimal step towards the concept
+    increases the target output. The TCAV score is the fraction of inputs
+    with positive sensitivity; scores far from 0.5 indicate the concept is
+    relevant to the target. The paper's statistical significance test
+    against CAVs fit on random labels is experiment protocol and is shown
+    in ``examples/utilization/0_layer/5_tcav.py``.
+
+    Main reference:
+    Kim et al. "Interpretability Beyond Feature Attribution: Quantitative
+    Testing with Concept Activation Vectors (TCAV)", ICML 2018.
+    https://proceedings.mlr.press/v80/kim18d
+
+    Note: the sensitivity follows the paper's definition (gradient of the
+    target output). The official TCAV code differentiates the softmax
+    cross-entropy loss of the target class instead; to reproduce it
+    exactly, pass a ``head`` returning minus that loss per sample.
+
+    Args:
+        embeddings (torch.Tensor): Activations of shape (batch_size,
+            n_features) of the examples to test, at the layer where the
+            CAVs were fit.
+        head (Callable): The part of the model downstream of these
+            activations, mapping (batch_size, n_features) embeddings to
+            outputs of shape (batch_size, n_outputs) or (batch_size,). The
+            output is the explanandum (e.g. a task class or a downstream
+            concept) — distinct from the ``cavs`` concepts being tested.
+            The head must process samples independently for the per-sample
+            gradients to be exact — put modules that mix the batch (e.g.
+            BatchNorm) in eval mode.
+        cavs (torch.Tensor): Concept activation vectors of shape
+            (n_concepts, n_features), e.g.
+            :attr:`CAVEmbeddingToConcept.cavs`.
+        target (Union[int, str, Tuple[str, str]]): Which column of the
+            head output to differentiate. An integer indexes it directly;
+            ignored if the head output is 1-dimensional. A string names a
+            single-column (binary/continuous) concept; a ``(concept,
+            state)`` pair names one state logit of a categorical concept.
+            Names are resolved against the head output's annotation, which
+            requires ``head`` to return an
+            :class:`~torch_concepts.tensor.AnnotatedTensor` (e.g. via a
+            :class:`~torch_concepts.nn.Sequential` with ``out_concepts``).
+            Default is 0.
+
+    Returns:
+        torch.Tensor: TCAV scores in [0, 1] of shape (n_concepts,).
+    """
+    if len(embeddings) == 0:
+        raise ValueError(
+            "tcav_score needs at least one example; got an empty batch."
+        )
+    x = embeddings.detach().requires_grad_(True)
+    with torch.enable_grad():
+        outputs = head(x)
+        if isinstance(target, bool):
+            # bool passes Integral but indexes as a mask, not a column
+            raise TypeError("target must be an int, str, or (concept, "
+                            "state) pair, got a bool.")
+        # numbers.Integral also admits numpy integers (e.g. from np.argmax)
+        if not isinstance(target, numbers.Integral):
+            if not isinstance(outputs, AnnotatedTensor):
+                raise TypeError(
+                    f"target={target!r} was given by name, but head(...) "
+                    f"returned {type(outputs).__name__}, not an "
+                    f"AnnotatedTensor to resolve it against. Pass an integer "
+                    f"column index, or a head that annotates its output "
+                    f"columns."
+                )
+            annotation = outputs.annotation
+            if isinstance(target, str):
+                columns = annotation.get_slice(target)
+                if columns.stop - columns.start > 1:
+                    raise ValueError(
+                        f"target {target!r} is categorical and spans columns "
+                        f"{columns.start}:{columns.stop}; the sensitivity is "
+                        f"defined for a single logit, so name one state via "
+                        f"target=({target!r}, state)."
+                    )
+                target = columns.start
+            else:  # (concept, state): one state logit of a categorical
+                concept, state = target
+                target = (annotation.get_slice(concept).start
+                          + annotation.get_state_index(concept, state))
+        if isinstance(outputs, AnnotatedTensor):
+            outputs = outputs.tensor
+        if outputs.dim() > 1:
+            outputs = outputs[..., target]
+        # samples are independent, so summing yields per-sample gradients
+        grads = torch.autograd.grad(outputs.sum(), x)[0]
+    sensitivity = grads @ cavs.t().to(grads)
+    return (sensitivity > 0).to(sensitivity.dtype).mean(dim=0)
 
 
 def _concept_group_ids(

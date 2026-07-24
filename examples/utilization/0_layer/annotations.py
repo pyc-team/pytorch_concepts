@@ -48,10 +48,10 @@ def main():
     )
 
     # slice by concept name
-    tensor["smoking"]  
+    tensor["smoking"]
 
     # slice by concept type
-    tensor.split_by_type('binary')  
+    tensor.binary()
 
     return
 

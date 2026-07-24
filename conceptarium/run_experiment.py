@@ -18,7 +18,7 @@ from conceptarium.hydra import parse_hyperparams
 from conceptarium.registry import register_run
 from conceptarium.resolvers import register_custom_resolvers
 from conceptarium.utils import setup_run_env, maybe_precompute_embeddings, \
-    attach_latent_encoder, resolve_graph, update_config_from_data, instantiate_loss
+    attach_latent_encoder, resolve_graph, update_config_from_data
 
 @hydra.main(config_path="conf", config_name="sweep", version_base="1.3")
 def main(cfg: DictConfig) -> None:
@@ -53,7 +53,7 @@ def main(cfg: DictConfig) -> None:
     # 4. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
-    loss = instantiate_loss(cfg.loss, datamodule.annotations)
+    loss = instantiate(cfg.loss, _convert_="all")
     logger.info(f"Loss: {loss}")
 
     metrics = instantiate(cfg.metrics, _convert_="all", _partial_=True)(
@@ -66,7 +66,7 @@ def main(cfg: DictConfig) -> None:
         graph=resolve_graph(datamodule.graph, datamodule.annotations, cfg.dataset.default_task_names),
         backbone=attach_latent_encoder(cfg, backbone),
         loss=loss,
-        metrics=metrics,
+        metrics=metrics
     )
     logger.info(f"Model: {model}")
     
