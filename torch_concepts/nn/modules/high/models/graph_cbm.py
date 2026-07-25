@@ -36,7 +36,7 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``).
     """
 
-    supported_concept_types = frozenset({"binary", "categorical"})
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
     param_for_discrete_var = "logits"
     source_embeddings = False
     internal_embeddings = False

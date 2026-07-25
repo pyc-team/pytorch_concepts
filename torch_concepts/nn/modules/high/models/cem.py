@@ -196,6 +196,9 @@ class ConceptEmbeddingModel(BipartiteModel):
             ],
         )
         # embeddings → concepts: decode one score per state embedding (per group).
+        # `second='auto'` throughout: these encoders/predictors are built with a
+        # fixed output width, so a continuous variable's scale head is an
+        # independent copy of `first` (a no-op for the discrete ones).
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
@@ -210,7 +213,7 @@ class ConceptEmbeddingModel(BipartiteModel):
                         # Collapse the (n_concepts, 1) score dims -> n_concepts
                         nn.Flatten(start_dim=-2),
                     ),
-                    second=None,  # will be partial(...)
+                    second='auto',
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -242,7 +245,7 @@ class ConceptEmbeddingModel(BipartiteModel):
                         in_embeddings=self.embedding_size,
                         out_concepts=tvar.size,
                     ),
-                    second=None,  # will be partial(...)
+                    second='auto',
                 )
                 for tvar in tasks
             ],

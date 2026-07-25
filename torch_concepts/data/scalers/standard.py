@@ -36,7 +36,7 @@ def zeros_to_one_(scale: Union[float, Tensor]) -> Union[float, Tensor]:
     
     eps = 10 * torch.finfo(scale.dtype).eps
     zeros = torch.isclose(scale, torch.tensor(0.0, device=scale.device, dtype=scale.dtype), atol=eps, rtol=eps)
-    scale[zeros] = 1.0
+    scale.masked_fill_(zeros, 1.0)
     return scale
 
 
@@ -112,3 +112,18 @@ class StandardScaler(Scaler):
             Tensor in original scale.
         """
         return x * self.std + self.mean
+
+    def to(self, device) -> "StandardScaler":
+        """Move the fitted mean/std to ``device`` in place.
+
+        Defining ``to`` makes this scaler a Lightning ``_TransferableDataType``
+        (the check is just "has a callable ``to``"), so when the scaler is
+        shipped inside the batch it is moved onto the batch's device by
+        ``transfer_batch_to_device`` — automatically, alongside the inputs and
+        concepts — even though a ``Scaler`` is a plain object, not an
+        ``nn.Module``. Mirrors :meth:`AnnotatedTensor.to`. The scaler is fitted
+        on CPU (from the dataset) and reaches ``transform`` already on-device.
+        """
+        self.mean = self.mean.to(device)
+        self.std = self.std.to(device)
+        return self

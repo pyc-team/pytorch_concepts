@@ -475,6 +475,131 @@ class TestConceptDataModuleScalers:
         dm = ConceptDataModule(dataset=toy_dataset)
         assert dm.scalers == {}
 
+    def test_no_scalers_means_nothing_fitted(self, toy_dataset):
+        """Without a configured scaler, the dataset's scaler dict stays empty."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+        dm.setup('fit')
+        assert dm.dataset.scalers == {}
+
+
+class TestConceptDataModuleScalerFitting:
+    """Test that setup('fit') fits the configured scalers correctly."""
+
+    @staticmethod
+    def _continuous_dataset(n=100):
+        """Dataset whose concepts are continuous with a strong index-dependent
+        trend, so train-only statistics are distinguishable from full-data ones."""
+        from torch_concepts.data.base.dataset import ConceptDataset
+
+        annotations = Annotations(
+            labels=['a', 'b'], cardinalities=[1, 1],
+            types=['continuous', 'continuous'],
+        )
+        concepts = torch.stack([
+            torch.arange(n, dtype=torch.float32),
+            torch.arange(n, dtype=torch.float32) * 100.0,
+        ], dim=1)
+        return ConceptDataset(
+            input_data=torch.randn(n, 4),
+            concepts=concepts,
+            annotations=annotations,
+        )
+
+    def test_fits_continuous_concepts(self):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+
+        fitted = dm.dataset.scalers['concepts']
+        assert list(fitted.mean.annotation.labels) == ['a', 'b']
+
+    def test_statistics_use_the_train_split_only(self):
+        """The decisive property: validation/test rows must not leak into the
+        statistics the model is normalised with."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+
+        train_idx = dm.trainset.indices
+        fitted = dm.dataset.scalers['concepts']
+        expected = dataset.concepts[train_idx][:, 0].unsqueeze(-1).mean()
+        assert fitted.mean['a'].tensor.item() == pytest.approx(
+            expected.item(), rel=1e-5
+        )
+        # ...and that is genuinely not the full-dataset mean.
+        assert fitted.mean['a'].tensor.item() != pytest.approx(
+            dataset.concepts[:, 0].mean().item(), rel=1e-4
+        )
+
+    def test_dataset_data_is_not_mutated(self):
+        """Fitting stores stats on `dataset.scalers`; the concepts tensor itself
+        stays in its original scale (scaling happens per-batch in the learner)."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        before = dataset.concepts.tensor.clone()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert torch.equal(dataset.concepts.tensor, before)
+
+    def test_scalers_are_refitted_on_every_setup_call(self):
+        """Unlike the earlier `fitted_scalers` design, setup() always (re)fits
+        when called with stage in ('fit', None) — there is no fitted-once guard."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+        first = dm.dataset.scalers['concepts']
+        dm.setup('fit')
+        assert dm.dataset.scalers['concepts'] is first  # same prototype instance,
+        assert dm.dataset.scalers['concepts'].mean is not None  # refit in place
+
+    def test_binary_only_dataset_warns_and_skips(self, toy_dataset):
+        """Binary/categorical concepts are class labels and are never scaled."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        with pytest.warns(UserWarning, match="no continuous concepts"):
+            dm.setup('fit')
+        assert 'concepts' not in dm.dataset.scalers
+
+    def test_unknown_scaler_key_raises(self, toy_dataset):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'targets': StandardScaler()}, seed=0,
+        )
+        with pytest.raises(RuntimeError, match="cannot find attribute 'targets'"):
+            dm.setup('fit')
+
+    def test_input_scaler_on_flat_features(self, toy_dataset):
+        """ToyDataset stores (N, 2) floats and serves (2,) — layouts line up."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'input': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert 'input' in dm.dataset.scalers
+        assert dm.dataset.scalers['input'].mean.shape[-1] == toy_dataset.input_data.shape[-1]
+
 
 # =============================================================================
 # Test ConceptDataModule Edge Cases

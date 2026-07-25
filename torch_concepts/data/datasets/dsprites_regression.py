@@ -22,8 +22,10 @@ class DSpritesRegressionDataset(ConceptDataset):
     """DSprites regression dataset with sympy formula-based targets.
 
     Each sample is a 64x64 grayscale image of a simple shape with known
-    generative factors (concepts). A per-shape sympy formula over the concept
-    values produces the regression target.
+    generative factors (concepts), served as ``(3, 64, 64)`` (the single
+    channel is replicated so pretrained RGB backbones can consume it). A
+    per-shape sympy formula over the concept values produces the regression
+    target.
 
     Parameters
     ----------

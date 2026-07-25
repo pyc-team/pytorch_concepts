@@ -114,7 +114,9 @@ class ConceptLoss(TypeAwareLoss):
         categorical_param (str): Output quantity to read categorical predictions
             from. Default ``'logits'``.
         continuous_param (str): Output quantity to read continuous predictions
-            from. Default ``'loc'``.
+            from. Default ``'loc'``. Like ``binary_param`` / ``categorical_param``,
+            this must match what the model actually reports — set it to
+            ``'value'`` for continuous concepts modelled as a ``Delta``.
 
     Example:
         >>> from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
@@ -354,7 +356,10 @@ class WeightedConceptLoss(TypeAwareLoss):
         continuous_weights (list of float, optional): Per-term weights when ``continuous`` is a list.
         binary_param (str): Output quantity for binary predictions. Default ``'logits'``.
         categorical_param (str): Output quantity for categorical predictions. Default ``'logits'``.
-        continuous_param (str): Output quantity for continuous predictions. Default ``'loc'``.
+        continuous_param (str): Output quantity for continuous predictions. Default
+            ``'loc'``; set to ``'value'`` if continuous concepts are modelled as a
+            ``Delta`` (must match what the model reports, like ``binary_param`` /
+            ``categorical_param``).
 
     Example:
         >>> from torch_concepts.nn.modules.loss import WeightedConceptLoss
@@ -451,7 +456,10 @@ class DepthWeightedConceptLoss(TypeAwareLoss):
             ``continuous`` is a list.
         binary_param (str): Output quantity for binary predictions. Default ``'logits'``.
         categorical_param (str): Output quantity for categorical predictions. Default ``'logits'``.
-        continuous_param (str): Output quantity for continuous predictions. Default ``'loc'``.
+        continuous_param (str): Output quantity for continuous predictions. Default
+            ``'loc'``; set to ``'value'`` if continuous concepts are modelled as a
+            ``Delta`` (must match what the model reports, like ``binary_param`` /
+            ``categorical_param``).
 
     Example:
         >>> import torch
@@ -546,8 +554,8 @@ class DepthWeightedConceptLoss(TypeAwareLoss):
         Returns:
             torch.Tensor: Total depth-weighted loss (scalar).
         """
-        any_pred = output.logits if output.logits is not None else output.loc
-        total_loss = torch.tensor(0.0, device=any_pred.device)
+        contributions = []
+        
         # Concepts in the output but absent from the graph are scored at depth 0.
         missing = [n for n in output.target.annotation.labels if n not in self._graph_names]
         for i, d in enumerate(self._depth_levels):
@@ -556,8 +564,9 @@ class DepthWeightedConceptLoss(TypeAwareLoss):
             if not sub.params:
                 continue
             sub_loss = getattr(self, f"loss_depth_{d}")
-            total_loss = total_loss + self._depth_weights_list[i] * sub_loss(sub)
-        return total_loss
+            contributions.append(self._depth_weights_list[i] * sub_loss(sub))
+        
+        return sum(contributions) if contributions else torch.zeros(())
 
 
 class L1LogitRegularizer(nn.Module):

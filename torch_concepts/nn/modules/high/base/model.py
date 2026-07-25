@@ -640,7 +640,7 @@ class BaseModel(nn.Module, ABC):
         Returns a list ``[(variable_name, [(gt_col_index, cardinality), ...]), ...]``
         over the concept variables only — a plate contributes one entry whose member
         list has all its members, an individual concept contributes a single-member
-        entry. :meth:`build_query` applies this without re-deriving structure or
+        entry. :meth:`fully_observed_query` applies this without re-deriving structure or
         touching non-concept variables, keeping per-query cost at ``O(n_query)``.
         """
         axis = self.concept_annotations
@@ -650,26 +650,76 @@ class BaseModel(nn.Module, ABC):
             if var.variable_type == "concept"
         ]
 
-    def build_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Build the full-observation query that fills every concept's tensor.
+    @functools.cached_property
+    def _query_segments(self):
+        """Precompute the gather/one-hot plan used by :meth:`fully_observed_query`.
 
-        Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
-        columns in ``concept_annotations.labels`` order) to
-        ``{concept_variable_name: tensor}`` for every concept variable in the PGM.
-        The query is keyed by the *variable* name (so the inference engine teacher-
-        forces it via ``query.get(variable.name)`` — uniformly for plate and
-        individual layouts), and each tensor is assembled from the variable's members:
-        a categorical member (``cardinality > 1``) is one-hot encoded, a binary /
-        scalar member is taken as-is. Evidence (the raw input) is supplied separately.
+        Run-length-encodes each concept variable's members (from :attr:`_query_plan`)
+        into segments, in member order: a maximal run of consecutive cardinality-1
+        members (binary and/or continuous, which need no expansion) is merged into
+        one ``'plain'`` segment fetched with a single vectorized gather; each
+        cardinality>1 member (categorical) becomes its own ``'onehot'`` segment.
+        Computed once and cached, since the PGM structure is fixed after construction.
+
+        Returns:
+            dict[str, list[tuple]]: Map from concept variable name to its ordered
+            list of segments. Each segment is one of:
+
+            - ``('plain', index_tensor)`` — a :class:`torch.LongTensor` of
+              ground-truth column indices to gather directly (no expansion).
+            - ``('onehot', (index, cardinality))`` — a single ground-truth column
+              index and its number of classes, to be one-hot encoded.
         """
-        query = {}
+        segments = {}
         for name, members in self._query_plan:
-            cols = [
-                ground_truth[:, i].float().unsqueeze(-1) if card == 1
-                else F.one_hot(ground_truth[:, i].long(), card).float()
-                for i, card in members
-            ]
-            query[name] = torch.cat(cols, dim=-1)
+            var_segments = []
+            run = []
+            for i, card in members:
+                if card == 1:
+                    run.append(i)
+                    continue
+                if run:
+                    var_segments.append(('plain', torch.tensor(run, dtype=torch.long)))
+                    run = []
+                var_segments.append(('onehot', (i, card)))
+            if run:
+                var_segments.append(('plain', torch.tensor(run, dtype=torch.long)))
+            segments[name] = var_segments
+        return segments
+
+    def fully_observed_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Build the teacher-forcing query from full concept ground truth.
+
+        Assembles, for every concept variable in the PGM, the tensor the inference
+        engine should force it to during a fully-observed pass (e.g. teacher forcing
+        in training/eval). Each variable's tensor is built from :attr:`_query_segments`:
+        binary/continuous columns are gathered directly, categorical columns are
+        one-hot encoded. Evidence (the raw input) is supplied separately by the caller.
+
+        Args:
+            ground_truth: Batch concept ground truth of shape ``(batch, n_concepts)``,
+                integer-coded, with columns ordered as in ``concept_annotations.labels``.
+                May be a plain :class:`torch.Tensor` or an :class:`AnnotatedTensor`
+                (unwrapped internally).
+
+        Returns:
+            dict[str, torch.Tensor]: Map from concept variable name to its query
+            tensor, keyed for lookup via ``query.get(variable.name)``.
+        """
+        raw = ground_truth.tensor if isinstance(ground_truth, AnnotatedTensor) else ground_truth
+        query = {}
+        for name, segments in self._query_segments.items():
+            if len(segments) == 1 and segments[0][0] == 'plain':
+                query[name] = raw[:, segments[0][1]].float()
+                continue
+            pieces = []
+            for kind, payload in segments:
+                if kind == 'plain':
+                    pieces.append(raw[:, payload].float())
+                else:
+                    i, card = payload
+                    pieces.append(F.one_hot(raw[:, i].long(), card).float())
+            query[name] = torch.cat(pieces, dim=-1)
         return query
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:

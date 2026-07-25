@@ -597,3 +597,26 @@ class TestLazyConstructorAlreadyBuilt:
         # The parametrization should contain the concrete module, not the LazyConstructor
         mod = cpd.parametrization["probs"]
         assert not isinstance(mod, LazyConstructor)
+
+    def test_lazy_head_inside_sequential_is_sized(self):
+        # A continuous variable's scale head is Sequential(LazyConstructor, softplus):
+        # the CPD must size the *inner* lazy layer from the parents and this
+        # parameter's width, keeping the activation.
+        from torch_concepts.nn.modules.low.lazy import LazyConstructor
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+
+        x = _delta_var(size=4)               # parent -> in_concepts = 4
+        n = _normal_var(size=2)              # child  -> loc/scale width = 2
+        cpd = ParametricCPD(
+            variable=n,
+            parametrization={
+                "loc": LazyConstructor(LinearConceptToConcept),
+                "scale": nn.Sequential(LazyConstructor(LinearConceptToConcept), nn.Softplus()),
+            },
+            parents=[x],
+        )
+        scale = cpd.parametrization["scale"]
+        assert not isinstance(scale[0], LazyConstructor)   # inner head built
+        assert isinstance(scale[1], nn.Softplus)           # activation preserved
+        out = scale(torch.randn(5, 4))
+        assert out.shape == (5, 2) and bool((out > 0).all())
