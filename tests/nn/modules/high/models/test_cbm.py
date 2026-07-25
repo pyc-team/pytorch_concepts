@@ -18,13 +18,14 @@ from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, 
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn import MLP
+from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.annotations import Annotations
 
 
 def _logits(out, names):
     """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 class DummyBackbone(nn.Module):
@@ -45,12 +46,6 @@ class TestCBMInitialization(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
     
     def test_init_defaults(self):
@@ -114,12 +109,6 @@ class TestCBMForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
         
         self.model = ConceptBottleneckModel(
@@ -187,11 +176,6 @@ class TestCBMPrepareTarget(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         
         self.model = ConceptBottleneckModel(
@@ -216,11 +200,6 @@ class TestCBMTraining(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
     
     def test_manual_training_mode(self):
@@ -273,10 +252,6 @@ class TestCBMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
             )
         
         model = ConceptBottleneckModel(
@@ -294,10 +269,6 @@ class TestCBMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'},
-                }
             )
 
         model = ConceptBottleneckModel(
@@ -322,11 +293,6 @@ class TestCBMFactory(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_factory_joint_mode(self):
@@ -372,11 +338,6 @@ class TestCBMUnifiedForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.x = torch.randn(4, 8)
     
@@ -429,11 +390,6 @@ class TestTrainingModes(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.kwargs = {
             'input_size': 8,
@@ -465,11 +421,6 @@ class TestLearnerIntegration(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         self.batch = {
             'inputs': {'x': torch.randn(4, 8)},
@@ -478,7 +429,7 @@ class TestLearnerIntegration(unittest.TestCase):
 
     def _make_model(self, lightning=True, with_loss=True, train_inference=None):
         """Helper to create model with optional loss."""
-        loss = nn.BCEWithLogitsLoss() if with_loss else None
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss()) if with_loss else None
         kwargs = {
             'lightning': lightning,
             'input_size': 8,
@@ -613,27 +564,29 @@ class TestDirectedGraphModelBase:
             # Pass no graph → should fail in _resolve_graph or validation
             GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=None)
 
-    def test_build_plate_model_raises_not_implemented(self):
-        """Calling _build_plate_model on a model that doesn't implement it raises."""
+    def test_graph_model_rejects_plate_true(self):
+        """Graph models are individual-only; plate=True is rejected."""
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
-        model = GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=graph)
-        with pytest.raises(NotImplementedError):
-            model._build_plate_model()
+        with pytest.raises(ValueError):
+            GraphConceptBottleneckModel(
+                input_size=4, annotations=ann, graph=graph, plate=True
+            )
 
-    def test_build_individual_model_raises_on_base_class(self):
-        """Base DirectedGraphModel raises NotImplementedError on _build_individual_model."""
-        # We just verify GraphCBM's implementation is callable (already tested elsewhere)
+    def test_graph_model_plate_false_default(self):
+        """Graph models build one (individual) variable per concept node."""
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
         model = GraphConceptBottleneckModel(input_size=4, annotations=ann, graph=graph)
-        # model._build_individual_model() should work (overridden by GraphCBM)
-        assert model.pgm is not None
+        concept_vars = [v for v in model.pgm.variables.values()
+                        if v.variable_type == "concept"]
+        assert {v.name for v in concept_vars} == set(ann.labels)
+        assert all(not v.is_plate for v in concept_vars)
 
     def test_flexible_parametrization_continuous_raises(self):
         """_flexible_parametrization raises NotImplementedError for continuous vars."""
         import torch.distributions as dist
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
         from torch_concepts.nn.modules.high.models.graph_cbm import GraphConceptBottleneckModel
         ann = _make_simple_ann()
         graph = _make_two_node_dag()
@@ -658,21 +611,6 @@ class TestDirectedGraphModelBase:
         axis_ann = ann
         result = DirectedGraphModel.plate_compatible_levels(axis_ann, graph)
         assert all(result)
-
-    def test_plate_compatible_levels_metadata_fallback(self):
-        """plate_compatible_levels uses metadata type when types is None."""
-        # Build annotation without explicit types (uses metadata)
-        ann_axis = Annotations(
-            labels=['a', 'b'],
-            cardinalities=[1, 1],
-            metadata={'a': {'type': 'binary'}, 'b': {'type': 'binary'}},
-        )
-        # types is None initially, but gets resolved after __init__
-        # Test via the graph model static method directly with an axis that has metadata
-        graph = ConceptGraph(torch.tensor([[0., 0.], [0., 0.]]), node_names=['a', 'b'])
-        result = DirectedGraphModel.plate_compatible_levels(ann_axis, graph)
-        assert isinstance(result, list)
-        assert len(result) >= 1
 
     def test_dag_validation_rejects_cycle(self):
         """DirectedGraphModel validates that the graph is a DAG."""

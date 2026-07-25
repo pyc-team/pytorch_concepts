@@ -59,7 +59,10 @@ class ConceptDataset(Dataset):
         annotations: Optional annotations for the native concepts.
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
-        name: Optional dataset name.
+        reorder_by_type: Group same-type concepts contiguously -- binary, then
+            categorical (ascending cardinality), then continuous (default:
+            True), so type-based slicing on the resulting AnnotatedTensor is a
+            view instead of a copy. Ties keep their relative order.
         precision: Numerical precision (16, 32, or 64, default: 32).
         exogenous: Optional exogenous variables (not yet implemented).
 
@@ -83,7 +86,7 @@ class ConceptDataset(Dataset):
         annotations: Optional[Annotations] = None,
         graph: Optional[pd.DataFrame] = None,
         concept_names_subset: Optional[List[str]] = None,
-        name: Optional[str] = None,
+        reorder_by_type: bool = True,
         precision: Union[int, str] = 32,
         # TODO: implement handling of exogenous inputs
     ):
@@ -123,16 +126,14 @@ class ConceptDataset(Dataset):
 
         # set concept annotations
         self._annotations = annotations
-        if concepts is not None:
-            # maybe reduce annotations based on subset of concept names
-            self._maybe_reduce_annotations(annotations,
-                                           concept_names_subset)
-        else:
-            self.concept_names_all = []
-            if concept_names_subset is not None:
-                raise ValueError(
-                    "concept_names_subset requires native concepts."
-                )
+        # maybe reduce annotations based on subset of concept names
+        self._maybe_reduce_annotations(annotations,
+                                       concept_names_subset)
+        # group same-type concepts contiguously (stable within each type) so
+        # AnnotatedTensor.binary()/.categorical()/.continuous() resolve to a
+        # view instead of a per-batch advanced-index copy
+        if reorder_by_type:
+            self._annotations = self._maybe_reorder_by_type(self._annotations)
 
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
@@ -219,7 +220,11 @@ class ConceptDataset(Dataset):
             if isinstance(concepts, dict):
                 c = concepts.get('c')
                 if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.size:
-                    concepts['c'] = AnnotatedTensor(c, annotation)
+                    # axis=1 to match how the concepts are stored (see the
+                    # explanatory comment in ``_set_concepts``); for this 2-D
+                    # batch it is the same axis as the default -1, but pinning it
+                    # keeps the stored and collated representations consistent.
+                    concepts['c'] = AnnotatedTensor(c, annotation, axis=1)
         return batch
 
 
@@ -408,7 +413,7 @@ class ConceptDataset(Dataset):
         Parameters
         ----------
         backbone : Backbone
-            Feature extractor (needs ``filename``, ``is_huggingface`` and
+            Feature extractor (needs ``filename``, ``source`` and
             ``__call__``).
         batch_size : int, default 64
             Batch size for the extraction pass.
@@ -449,7 +454,7 @@ class ConceptDataset(Dataset):
         the stacked ``(n_samples, emb_dim)`` embeddings on CPU."""
         def collate_fn(batch):
             images = [sample['inputs']['x'] for sample in batch]
-            if not backbone.is_huggingface and isinstance(images[0], Tensor):
+            if backbone.source != "huggingface" and isinstance(images[0], Tensor):
                 return torch.stack(images)
             return images
 
@@ -626,21 +631,28 @@ class ConceptDataset(Dataset):
             # Reduce types
             reduced_types = tuple(axis_annotation.types[i] for i in indices)
 
-            # Reduce metadata if present
-            if axis_annotation.metadata is not None:
-                reduced_metadata = {reduced_labels[i]: axis_annotation.metadata[axis_annotation.labels[indices[i]]]
-                                   for i in range(len(indices))}
-            else:
-                reduced_metadata = None
-
             # Create reduced annotations
             self._annotations = Annotations(
                 labels=reduced_labels,
                 cardinalities=reduced_cardinalities,
                 states=reduced_states,
                 types=reduced_types,
-                metadata=reduced_metadata
             )
+
+    def _maybe_reorder_by_type(self, annotations: Annotations) -> Annotations:
+        """Reorder ``annotations`` so same-type concepts sit contiguously
+        (binary, then categorical, then continuous), categorical concepts
+        further sorted by ascending cardinality. Ties keep their relative
+        order. A no-op if already in this order.
+        """
+        sorted_labels = [
+            label
+            for labels in annotations.labels_by_type.values()
+            for label in sorted(labels, key=lambda l: annotations.concept(l).cardinality)
+        ]
+        if sorted_labels == list(annotations.labels):
+            return annotations
+        return annotations.subset(sorted_labels)
 
     def set_graph(self, graph: pd.DataFrame):
         """Set the adjacency matrix of the causal graph between concepts 
@@ -692,12 +704,19 @@ class ConceptDataset(Dataset):
 
         # Wrap the full concept tensor with a *concept-space* annotation (one
         # integer-coded column per concept, so categorical labels are class
-        # indices) so it carries the concept labels/types. Per-sample
-        # ``__getitem__`` indexing returns a plain 1-D row (the annotation needs
-        # axis 1); batches are re-annotated by :meth:`collate`.
-        concept_ann = self._annotations.to_concept_space()
+        # indices) so it carries the concept labels/types.
+        #
+        # ``axis=1`` is passed explicitly rather than taking the default: it is
+        # what makes per-sample ``__getitem__`` indexing return a *plain* 1-D
+        # row. An annotation on axis 1 needs 2+ dims, so indexing a row drops
+        # it, and ``default_collate`` can then stack the rows as ordinary
+        # tensors; :meth:`collate` re-annotates the assembled batch. Under the
+        # default ``axis=-1`` the row would keep its annotation (its last axis
+        # is still the concept axis) and collation would fail on a list of
+        # AnnotatedTensors.
+        concept_ann = self.annotations.to_concept_space()
         if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(concepts, concept_ann)
+            self.concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
         else:
             self.concepts = concepts
         self._resolve_ground_truth()

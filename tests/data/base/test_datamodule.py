@@ -863,7 +863,7 @@ class TestComputeEmbeddingsEvalGuard:
         ds = ToyDataset('xor', n_gen=8, seed=0, root=str(tmp_path))
 
         class _RecordingBackbone(nn.Module):
-            is_huggingface = False
+            source = "torchvision"
 
             def __init__(self):
                 super().__init__()

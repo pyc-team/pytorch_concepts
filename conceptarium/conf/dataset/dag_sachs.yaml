@@ -3,6 +3,8 @@ defaults:
   - _commons_bnlearn
   - _self_
 
+name: sachs
+
 datamodule:
   _target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
 

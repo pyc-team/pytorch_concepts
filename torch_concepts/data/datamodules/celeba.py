@@ -57,26 +57,18 @@ class CelebADataModule(ConceptDataModule):
     --------
     Basic usage with default settings:
 
+    >>> from torch_concepts import ImageBackbone
     >>> from torch_concepts.data import CelebADataModule
-    >>> 
+    >>>
     >>> dm = CelebADataModule(
     ...     seed=42,
     ...     root='./data/celeba',
     ...     batch_size=64
     ... )
+    >>> dm.precompute_embeddings(ImageBackbone("resnet50"))  # optional
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
 
-    With precomputed backbone embeddings (explicit, before setup):
-
-    >>> from torch_concepts import Backbone
-    >>>
-    >>> dm = CelebADataModule(
-    ...     seed=42,
-    ...     root='./data/celeba',
-    ...     concept_subset=['Smiling', 'Male', 'Young']
-    ... )
-    >>> dm.precompute_embeddings(Backbone('resnet50'))
 
     See Also
     --------

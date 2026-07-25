@@ -22,7 +22,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
 from ...metrics import ConceptMetrics
-from ...outputs import ModelOutput, logits_from_params
+from ...loss import TypeAwareLoss
+from ...outputs import ModelOutput
 
 
 class BaseLearner(pl.LightningModule):
@@ -57,18 +58,10 @@ class BaseLearner(pl.LightningModule):
     ):        
         super(BaseLearner, self).__init__(**kwargs)
 
-        # loss function
+        # loss function. Only a TypeAwareLoss (e.g. ConceptLoss), which consumes
+        # the whole ModelOutput, is supported.
         self.loss = loss
-        self._loss_takes_model_output = False
-        if loss is not None:
-            import inspect
-            sig = inspect.signature(loss.forward)
-            n_pos = sum(
-                1 for p in sig.parameters.values()
-                if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                              inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            )
-            self._loss_takes_model_output = (n_pos == 1)
+        self._loss_takes_model_output = isinstance(loss, TypeAwareLoss)
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -101,31 +94,33 @@ class BaseLearner(pl.LightningModule):
         self.val_metrics = metrics.clone(prefix="val")
         self.test_metrics = metrics.clone(prefix="test") 
 
-    def update_and_log_metrics(self, out: ModelOutput, step: str, batch_size: int):
+    def update_and_log_metrics(self, out: ModelOutput, target, step: str, batch_size: int):
         """Update metrics and log them.
-        
+
         Args:
-            out (ModelOutput): Model output containing logits and target.
+            out (ModelOutput): Model output containing the predictions.
+            target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
             batch_size (int): Batch size for metric logging.
         """
-        self.update_metrics(out, step)
-        
+        self.update_metrics(out, target, step)
+
         # Get the collection to log
         collection = getattr(self, f"{step}_metrics", None)
         if collection is not None:
             self.log_metrics(collection, batch_size=batch_size)
 
-    def update_metrics(self, out: ModelOutput, step: str):
-        """Update metrics with model output.
-        
+    def update_metrics(self, out: ModelOutput, target, step: str):
+        """Update metrics with model output and target.
+
         Args:
-            out (ModelOutput): Model output containing logits and target.
+            out (ModelOutput): Model output containing the predictions.
+            target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
         """
         collection = getattr(self, f"{step}_metrics", None)
         if collection is not None:
-            collection.update(out)
+            collection.update(out, target)
         
     def log_metrics(self, metrics, **kwargs):
         """Log metrics to logger (W&B) at epoch end.
@@ -240,6 +235,23 @@ class BaseLearner(pl.LightningModule):
         """List of concept variable names (plate names or individual concepts)."""
         return [var.name for var in self.pgm.variables.values() if var.variable_type == 'concept']
 
+    def default_query(self, c):
+        """Default query for a training/eval step: observe **every** concept,
+        teacher-forced to its ground-truth value (via :meth:`build_query`).
+
+        This is the full-observation query the standard step uses. Override in a
+        learner that should observe only a subset of concepts (or leave them
+        latent) — e.g. a task-only learner.
+        """
+        return self.build_query(c)
+
+    def default_evidence(self, inputs):
+        """Default evidence for a training/eval step: the raw input only
+        (``{"input": inputs["x"]}``).
+
+        Override to supply additional observed (non-concept) variables.
+        """
+        return {"input": inputs["x"]}
 
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
@@ -257,6 +269,7 @@ class BaseLearner(pl.LightningModule):
             Scalar loss value.
         """
         inputs, concepts, transforms = self.unpack_batch(batch)
+        # TODO: needs to extend to arbitrary leading dims (e.g., for text)
         batch_size = batch['inputs']['x'].size(0)
         c = c_loss = concepts.get('c', None)
 
@@ -266,16 +279,15 @@ class BaseLearner(pl.LightningModule):
         #                                         transforms)
 
         # TODO: add option to semi-supervise a subset of concepts?
-        # TODO: handle backbone kwargs when present
 
         # --- Model forward ---
-        # Observe ALL concepts. Evidence is only the raw input var.
-        query = self.build_query(c)
-        out = self.forward(query=query, evidence={"input": inputs['x']})
+        # Defaults: observe all concepts, pass the raw input as evidence.
+        query = self.default_query(c)
+        out = self.forward(query=query, evidence=self.default_evidence(inputs))
 
-        # Attach target to the output (prepare_target handles slicing for
-        # models like BlackBoxTaskOnly that predict a subset of concepts).
-        out.target = self.prepare_target(c_loss)
+        # prepare_target returns a concept-space annotated target (and slices it
+        # for models like BlackBoxTaskOnly that predict a subset of concepts).
+        target = self.prepare_target(c_loss)
 
         # TODO: implement scaling only for continuous concepts
         # out = self.maybe_apply_postprocessing(not scale_concepts_flag,
@@ -288,21 +300,16 @@ class BaseLearner(pl.LightningModule):
         # --- Compute loss ---
         loss = None
         if self.loss is not None:
-            if self._loss_takes_model_output:
-                # ConceptLoss-style: consumes the ModelOutput (reads out.params).
-                loss = self.loss(out)
-            else:
-                # Plain loss(logits, target), e.g. BCEWithLogitsLoss: assemble the
-                # queried concepts' logits from out.params and align the target with
-                # build_query's per-variable tensors (same keys/order -> they line up,
-                # and the query values are already the one-hot-expanded ground truth).
-                logits = logits_from_params(out.params, keys=list(query))
-                target = torch.cat([query[v] for v in query], dim=-1)
-                loss = self.loss(logits, target)
+            if not self._loss_takes_model_output:
+                raise NotImplementedError(
+                    "Only a TypeAwareLoss (e.g. ConceptLoss) is supported; a plain "
+                    "loss(input, target) is not."
+                )
+            loss = self.loss(out, target)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics ---
-        self.update_and_log_metrics(out, step, batch_size)
+        self.update_and_log_metrics(out, target, step, batch_size)
         return loss
 
     def training_step(self, batch):

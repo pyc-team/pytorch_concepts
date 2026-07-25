@@ -5,89 +5,88 @@ ParametricCPD — Conditional distribution parameterised by a neural network.
 from __future__ import annotations
 
 import copy
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-import torch.distributions as dist
-
+from ..distributions import spec_for
 from .factor import ParametricFactor
-from .variable import Variable, Delta, PARAM_DIM
-
-
-# ---------------------------------------------------------------------------
-# Expected parameter names per distribution family, used to validate and
-# dispatch per-parameter module dicts.
-# ---------------------------------------------------------------------------
-# Maps each distribution family to valid parameter-key sets.
-# For families that accept both ``probs`` and ``logits``, both options are listed.
-# The user's parametrization dict must match EXACTLY ONE of the listed sets.
-_DIST_VALID_PARAM_SETS: Dict[type, List[set]] = {
-    dist.Bernoulli:                [{"probs"}, {"logits"}],
-    dist.RelaxedBernoulli:         [{"probs"}, {"logits"}],
-    dist.Categorical:              [{"probs"}, {"logits"}],
-    dist.OneHotCategorical:        [{"probs"}, {"logits"}],
-    dist.RelaxedOneHotCategorical: [{"probs"}, {"logits"}],
-    dist.Normal:                   [{"loc", "scale"}],
-    dist.MultivariateNormal:       [{"loc", "scale_tril"}],
-    Delta:                         [{"value"}],
-}
-
-# ---------------------------------------------------------------------------
-# Default parameter-name list per distribution (used for the nn.Module shorthand).
-# ---------------------------------------------------------------------------
-# For distributions whose only ambiguity is probs-vs-logits, ``probs`` is the
-# default.  For distributions that require *multiple distinct* parameters (e.g.
-# Normal needs both ``loc`` and ``scale``), the single-module shorthand is
-# rejected at construction time and the user must supply a dict.
-_DIST_DEFAULT_PARAM_SET: Dict[type, List[str]] = {
-    dist.Bernoulli:                ["probs"],
-    dist.RelaxedBernoulli:         ["probs"],
-    dist.Categorical:              ["probs"],
-    dist.OneHotCategorical:        ["probs"],
-    dist.RelaxedOneHotCategorical: ["probs"],
-    dist.Normal:                   ["loc", "scale"],
-    dist.MultivariateNormal:       ["loc", "scale_tril"],
-    Delta:                         ["value"],
-}
+from ..variable import Variable, Delta
 
 
 class ParametricCPD(ParametricFactor):
     """Conditional distribution parameterised by a neural network
     :math:`p(c_i \\mid \\mathrm{PA}(c_i))`.
 
-    ``parametrization`` is **required** (no default is inferred) and accepts two
-    forms:
+    Every parametrization module must already emit a value in the parameter's
+    natural domain — no activation is applied on its output. Root CPDs (no
+    parents) use the same interface: pass a
+    :class:`~torch_concepts.nn.LearnablePrior`, which holds a learnable
+    parameter and returns it from a no-argument ``forward()``.
 
-    * **Dict** ``{param_name: nn.Module}`` — explicit, works for any distribution.
-    * **Single** ``nn.Module`` — shorthand when the distribution has 
-      one parameter (e.g. Bernoulli → ``probs``, Delta → ``value``). Raises if the
-      distribution requires multiple distinct parameters (e.g. Normal needs both
-      ``loc`` and ``scale``); pass a dict in that case.
+    Parameters
+    ----------
+    variable : Variable or list of Variable
+        The child variable this CPD parametrizes. A **list** builds one
+        independent CPD per variable, all sharing the same ``parents``, and
+        returns them as a list. A plate (a ``Variable`` with named members) is
+        still a single variable: one CPD produces every member at once.
+    parametrization : nn.Module or dict[str, nn.Module] or list of dict
+        Required — no default is inferred. Accepts:
 
-    Every module must already emit a value in the parameter's natural domain. 
-    Root CPDs (no parents) use the same interface:
-    pass a :class:`~torch_concepts.nn.LearnablePrior` as the parametrization,
-    which holds a learnable parameter and returns it on ``forward()``.
+        - a **dict** ``{param_name: nn.Module}``, explicit and valid for any
+          distribution;
+        - a single **nn.Module**, shorthand for a family with exactly one
+          parameter (Bernoulli → ``probs``, Delta → ``value``). Rejected for a
+          family needing several distinct parameters (Normal needs both ``loc``
+          and ``scale``) — pass a dict there;
+        - a per-CPD **list of dicts**, only when ``variable`` is a list.
 
-    Example — root Bernoulli prior (logits parametrized by a LearnablePrior):
-    ```
-        prior = ParametricCPD(variable=z, parametrization={"logits": LearnablePrior(z.size)})
-    ```
+        A single dict or module passed alongside a list of variables is
+        deep-copied per CPD, so the CPDs do not share weights. Any unbuilt
+        :class:`LazyConstructor` entry is instantiated here, sized from the
+        parents and from ``variable.param_sizes``.
+    parents : list of Variable, optional
+        The conditioning set — this *is* the graph structure. Entries may be
+        whole variables or plate-member handles (``plate.member('c1')``), in
+        which case only that member's column is sliced out of the plate's value.
+        Empty or omitted makes this a **root** CPD, whose modules are called
+        with no arguments.
+    aggregate : callable or dict[str, callable], optional
+        How parent values are combined into each module's input; see
+        :class:`ParametricFactor`. Defaults to concatenating the parents along
+        the last dimension (or splitting them by variable type for a PyC-style
+        module).
 
-    Example — non-root Bernoulli CPD (single-module shorthand):
-    ```
-        cpd = ParametricCPD(
-            variable=c,
-            parametrization=nn.Linear(4, 1),       # expanded to {'probs': ...} automatically
-            parents=[x],
-        )
-    ```
+    Raises
+    ------
+    ValueError
+        If ``parametrization`` is omitted, is an empty dict, uses parameter
+        names the variable's distribution family does not accept, or uses the
+        single-module shorthand for a multi-parameter family.
+    TypeError
+        If ``variable`` is neither a ``Variable`` nor a list of them, if a
+        parent is not a ``Variable``, or if a parametrization value is not an
+        ``nn.Module``.
 
-    Passing a list of ``Variable`` instances returns a list of independent CPDs
-    sharing the same parent list; ``parametrization`` may be a single dict /
-    ``nn.Module`` (deep-copied per CPD), or a per-CPD list of dicts.
+    Examples
+    --------
+    A root Bernoulli prior, with the logits held by a learnable parameter:
+
+    >>> prior = ParametricCPD(
+    ...     variable=z,
+    ...     parametrization={"logits": LearnablePrior(z.size)},
+    ... )
+
+    A non-root Bernoulli CPD using the single-module shorthand, which expands
+    to ``{'probs': ...}`` automatically:
+
+    >>> cpd = ParametricCPD(
+    ...     variable=c,
+    ...     parametrization=nn.Linear(4, 1),
+    ...     parents=[x],
+    ... )
     """
 
     def __new__(
@@ -165,6 +164,9 @@ class ParametricCPD(ParametricFactor):
 
         D = variable.distribution
 
+        # Get the distribution's parameter spec, which lists the valid parameter names.
+        spec = spec_for(D, f"ParametricCPD({variable.name!r})")
+
         # --- Expand parametrization shorthands ---
         if parametrization is None:
             raise ValueError(
@@ -175,17 +177,12 @@ class ParametricCPD(ParametricFactor):
                 "e.g. parametrization={'logits': LearnablePrior(size)}."
             )
         elif isinstance(parametrization, nn.Module):
-            default_pnames = next(
-                (pnames for base, pnames in _DIST_DEFAULT_PARAM_SET.items()
-                 if issubclass(D, base)),
-                None,
-            )
-            if default_pnames is None or len(default_pnames) > 1:
-                pnames_str = default_pnames or "unknown"
+            default_pnames = spec.default_params
+            if len(default_pnames) > 1:
                 raise ValueError(
                     f"ParametricCPD({variable.name!r}): {D.__name__} requires multiple "
-                    f"parameters {pnames_str}; pass a dict mapping each parameter name "
-                    "to its nn.Module."
+                    f"parameters {list(default_pnames)}; pass a dict mapping each "
+                    "parameter name to its nn.Module."
                 )
             parametrization = {default_pnames[0]: parametrization}
         elif not isinstance(parametrization, dict):
@@ -196,16 +193,13 @@ class ParametricCPD(ParametricFactor):
             )
 
         # --- Validate parameter keys against known distribution families ---
-        valid_sets = next(
-            (sets for base, sets in _DIST_VALID_PARAM_SETS.items() if issubclass(D, base)),
-            None,
-        )
         got_keys = set(parametrization.keys())
         if not got_keys:
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): `parametrization` dict must not be empty."
             )
-        if valid_sets is not None and not any(got_keys == vs for vs in valid_sets):
+        valid_sets = spec.valid_param_sets
+        if not any(got_keys == vs for vs in valid_sets):
             options = [sorted(vs) for vs in valid_sets]
             raise ValueError(
                 f"ParametricCPD({variable.name!r}): invalid parametrization keys "
@@ -286,29 +280,32 @@ class ParametricCPD(ParametricFactor):
         return resolved
 
     @property
+    def inputs(self) -> List[Variable]:
+        """The aggregation inputs required by :class:`ParametricFactor` — for a
+        directed CPD these are exactly its parents.
+
+        A property rather than a copy, so it keeps tracking ``parents`` when
+        :meth:`BayesianNetwork._validate_graph` rewrites that list to dedup it.
+        """
+        return self.parents
+
+    @property
     def is_root(self) -> bool:
         return len(self.parents) == 0
 
     def forward(
         self,
-        parent_values: Optional[Dict[str, torch.Tensor]] = None,
+        parent_values: Optional[Mapping[str, torch.Tensor]] = None,
         **layer_kwargs,
     ):
-        """Compute the distribution parameters by processing the parent values through the
-        nn.Module(s).
+        """Compute the conditional distribution parameters by processing 
+        the parent values through the nn.Module(s).
 
         Root CPDs are called with no parent values: the parametrization module
         is called with no arguments and its output is returned under the named
-        parameter dict for ``self.variable.distribution`` (typically a
-        :class:`~torch_concepts.nn.LearnablePrior`).
+        parameter dict. Non-root CPDs receive a ``parent_values`` dict. 
 
-        Non-root CPDs receive a ``parent_values`` dict mapping each parent name
-        to its tensor value (shape ``(*batch, *parent.shape)``). These tensors are
-        passed to ``self.aggregate`` (default: flatten event dims and concatenate
-        along the last axis) to produce a single input tensor, which is then
-        forwarded to each parameter module independently.
-
-        No activation is applied: each module's output is used as the distribution
+        NOTE: no activation is applied. Each module's output is used as the distribution
         parameter verbatim, so the module must already emit a value in the
         parameter's natural domain.
 
@@ -324,72 +321,106 @@ class ParametricCPD(ParametricFactor):
             }
 
         # Compose the Variable → Tensor dict for the parents (ordered by parent list).
-        parent_variable_values = {p: parent_values[p.name] for p in self.parents}
+        parent_variable_values = {
+            p: self.resolve_value(p, parent_values) for p in self.parents
+        }
 
         # Each parameter module uses its own pre-resolved aggregation function.
+        # The aggregated inputs are merged into a *fresh* kwargs dict per
+        # parameter: a PyC-style module contributes ``concepts``/``embeddings``
+        # keys that a standard module in the same parametrization cannot accept,
+        # so they must not leak across iterations.
         result = {}
         for pname, mod in self.parametrization.items():
             cat = self._aggregators[pname](parent_variable_values)
             if isinstance(cat, dict):
-                layer_kwargs.update(cat)
-                out = mod(**layer_kwargs)
+                out = mod(**{**layer_kwargs, **cat})
             else:
                 out = mod(cat, **layer_kwargs)
             result[pname] = out
         return result
 
-    def root_params(self, batch_size: int) -> Dict[str, torch.Tensor]:
-        """Root (parent-less) params broadcast to a batch.
+    def root_params(
+        self, leading: Union[int, torch.Size, Tuple[int, ...]]
+    ) -> Dict[str, torch.Tensor]:
+        """Root (parent-less) params broadcast over the leading dimensions.
 
-        A root CPD's parametrization produces a single batch-less prior; this runs
-        it and expands each parameter to ``(batch_size, *param_shape)`` so the
-        engine doesn't have to. Only meaningful for root CPDs.
+        A root CPD's parametrization produces a single batch-less prior; this
+        runs it and expands each parameter to ``(*leading, *param_shape)`` so the
+        engine doesn't have to. ``leading`` may be a plain batch size or any
+        leading shape, e.g. ``(batch1, batch2)``. Only meaningful for root CPDs.
+
+        The expansion is a broadcast view, not a copy.
         """
+        if isinstance(leading, int):
+            leading = (leading,)
+        leading = tuple(leading)
         return {
-            key: value.unsqueeze(0).expand(batch_size, *value.shape)
+            key: value.expand(*leading, *value.shape)
             for key, value in self(parent_values={}).items()
         }
 
-    # ---- member addressing (a plate produces all members; these slice) ------
-    # ``forward`` runs once and returns the whole stacked output; the methods
-    # below pick out a single member's column span (a view, no copy). They are
-    # the only thing that differs between addressing this CPD by its variable
-    # name vs by one of its members — every inference backend reuses them.
+    # ---- unified factor-graph interface (see ParametricFactor) --------------
+    @property
+    def name(self) -> str:
+        """This factor's key: the child variable's name (keeps ``BayesianNetwork``'s
+        historical ``{child_name: cpd}`` factor keying)."""
+        return self.variable.name
 
+    @property
+    def scope(self) -> List[Variable]:
+        """``[child, *parents]`` — the variables this CPD wires together."""
+        return [self.variable, *self.parents]
+
+    def log_potential(
+        self,
+        assignment: Mapping["Variable", torch.Tensor],
+    ) -> torch.Tensor:
+        """``log p(child | parents)`` evaluated at ``assignment``.
+
+        Directed factors act as ordinary factor-graph factors: the child value
+        is scored against the distribution built from its parents' values, all
+        taken from ``assignment`` (keyed by ``Variable``).
+        """
+        # local imports: avoid an import cycle with the inference package
+        from ..inference.utils import build_distribution, leading_shape
+
+        values: Dict[str, torch.Tensor] = {var.name: val for var, val in assignment.items()}
+        child_value: Optional[torch.Tensor] = values.get(self.variable.name)
+        if child_value is None:
+            raise KeyError(
+                f"ParametricCPD({self.variable.name!r}).log_potential: no value for "
+                f"the child variable {self.variable.name!r} in the assignment."
+            )
+
+        leading = leading_shape(
+            self.variable.shape, self.variable.size, child_value,
+            f"ParametricCPD({self.variable.name!r}).log_potential",
+        )
+        params = self.root_params(leading) if self.is_root else self(parent_values=values)
+        d = build_distribution(self.variable, params)
+        param_dtype = next(iter(params.values())).dtype
+        child_flat = child_value.reshape(*leading, self.variable.size).to(param_dtype)
+        return d.log_prob(child_flat)
+
+    # ---- member addressing (delegates to Variable; kept for back-compat) -----
+    # Slicing a member's column span is a pure function of the variable's own
+    # column layout, so the logic lives on ``Variable``. These thin delegators
+    # preserve the historical CPD-level API every inference backend already calls.
     def select(
         self, params: Dict[str, torch.Tensor], name: str
     ) -> Dict[str, torch.Tensor]:
-        """Distribution params for ``name``: the whole output for this CPD's own
-        variable, or a member's column slice."""
-        if name == self.variable.name:
-            return params
-        columns = self.variable.column_of(name)
-        return {key: value[..., columns] for key, value in params.items()}
+        """Distribution params for ``name`` (delegates to :meth:`Variable.select`)."""
+        return self.variable.select(params, name)
 
     def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
-        """Realised value for ``name``: the whole value, or a member's column slice."""
-        if name == self.variable.name:
-            return value
-        return value[..., self.variable.column_of(name)]
+        """Realised value for ``name`` (delegates to :meth:`Variable.select_value`)."""
+        return self.variable.select_value(value, name)
 
     def clamp_members(
         self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Clamp individually-observed members to their observed values.
-
-        Used for *partial observation* of a plate: the CPD has produced the whole
-        stacked ``value``, and this overwrites the columns of the observed members
-        with their observed tensors, leaving the unobserved members at the model's
-        value. ``observed`` maps member name -> observed tensor. Returns a new
-        tensor (the input is not mutated); a no-op when ``observed`` is empty.
-        """
-        if not observed:
-            return value
-        value = value.clone()
-        for member, obs in observed.items():
-            columns = self.variable.column_of(member)
-            slot = value[..., columns]
-            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
-        return value
-    
+        """Clamp individually-observed members (delegates to
+        :meth:`Variable.clamp_members`)."""
+        return self.variable.clamp_members(value, observed)
 

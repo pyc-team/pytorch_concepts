@@ -35,7 +35,7 @@ from torch_concepts.annotations import Annotations
 def _logits(out, names):
     """Concatenate the per-concept logits for ``names`` along the feature axis."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 class DummyBackbone(nn.Module):
     """Simple backbone for testing."""
@@ -59,13 +59,9 @@ class DummyLatentEncoder(nn.Module):
 
 def make_annotations(labels, cardinalities, distributions=None):
     """Helper to create annotations (defaults will fill in distributions)."""
-    metadata = {}
-    for label, card in zip(labels, cardinalities):
-        metadata[label] = {'type': 'discrete'}
     return Annotations(
             labels=labels,
             cardinalities=cardinalities,
-            metadata=metadata
         )
 
 
@@ -130,10 +126,6 @@ class TestBlackBoxInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
             )
         
         model = BlackBox(
@@ -427,65 +419,6 @@ class TestBlackBoxLightning(unittest.TestCase):
         
         self.assertEqual(out.logits.shape, (2, 2))
     
-    def test_lightning_training_step(self):
-        """Test Lightning training_step works for BlackBox."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.train()
-        
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
-        }
-        
-        loss = model.training_step(batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
-    def test_lightning_validation_step(self):
-        """Test Lightning validation_step works for BlackBox."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.eval()
-        
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
-        }
-        
-        loss = model.validation_step(batch)
-        
-        self.assertIsNotNone(loss)
-    
-    def test_lightning_configure_optimizers(self):
-        """Test optimizer configuration for Lightning mode."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        
-        config = model.configure_optimizers()
-        
-        self.assertIn('optimizer', config)
-        self.assertIsInstance(config['optimizer'], torch.optim.Adam)
-    
     def test_lightning_no_optimizer_returns_none(self):
         """Test configure_optimizers returns None when no optimizer set."""
         model = BlackBox(
@@ -610,10 +543,6 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         
         model = BlackBoxTaskOnly(
@@ -865,30 +794,6 @@ class TestBlackBoxTaskOnlyLightning(unittest.TestCase):
         )
         self.assertFalse(isinstance(model, BaseLearner))
     
-    def test_lightning_training_step(self):
-        """Test Lightning training_step works for BlackBoxTaskOnly."""
-        model = BlackBoxTaskOnly(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            task_names='task',
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.train()
-        
-        # Concept-level target: one column per concept (c1, c2, task)
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
-        }
-        
-        loss = model.training_step(batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
     def test_lightning_configure_optimizers(self):
         """Test optimizer configuration for Lightning mode."""
         model = BlackBoxTaskOnly(
@@ -935,8 +840,9 @@ class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
         self.assertIn('BlackBoxTaskOnly', repr_str)
 
 
-class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
-    """Test that BlackBoxTaskOnly rebuilds ConceptLoss with task-only annotations."""
+class TestBlackBoxTaskOnlyConceptLoss(unittest.TestCase):
+    """BlackBoxTaskOnly accepts a ConceptLoss and uses it as-is; the loss adapts
+    to the task-only annotated output produced by prepare_target."""
 
     def setUp(self):
         self.ann = make_annotations(
@@ -944,12 +850,11 @@ class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
             [1, 2, 1]
         )
 
-    def test_concept_loss_is_rebuilt_for_task_only(self):
-        """Test that passing a ConceptLoss triggers the rebuild branch."""
+    def test_concept_loss_is_accepted(self):
+        """A ConceptLoss passed to BlackBoxTaskOnly is stored unchanged."""
         # All concepts are binary (cardinality 1), so only binary loss needed
         ann = make_annotations(['c1', 'c2', 'task'], [1, 1, 1])
         concept_loss = ConceptLoss(
-            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
         )
         model = BlackBoxTaskOnly(
@@ -959,14 +864,12 @@ class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
             task_names='task',
             loss=concept_loss,
         )
-        # The rebuilt loss should use task-only annotations
         self.assertIsInstance(model.loss, ConceptLoss)
 
-    def test_concept_loss_rebuild_with_categorical(self):
-        """Test ConceptLoss rebuild when task is categorical."""
+    def test_concept_loss_with_categorical(self):
+        """A ConceptLoss with a categorical task is accepted unchanged."""
         ann = make_annotations(['c1', 'task'], [1, 3])
         concept_loss = ConceptLoss(
-            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss(),
         )

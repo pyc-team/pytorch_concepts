@@ -19,7 +19,6 @@ class TestConceptSubset(unittest.TestCase):
         self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
-                metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
 
     def test_subset_selection(self):
@@ -78,21 +77,6 @@ class TestConceptSubset(unittest.TestCase):
         self.assertEqual(dataset.n_concepts, 1)
         self.assertEqual(dataset.concepts.shape[1], 1)
 
-    def test_subset_metadata_preserved(self):
-        """Test that metadata is correctly preserved for subset."""
-        subset = ['concept_1', 'concept_3']
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-            concept_names_subset=subset
-        )
-
-        metadata = dataset.annotations.metadata
-        self.assertEqual(set(metadata.keys()), set(subset))
-        for name in subset:
-            self.assertEqual(metadata[name]['type'], 'discrete')
-
     def test_subset_none_uses_all_concepts(self):
         """Test that None subset uses all concepts."""
         dataset = ConceptDataset(
@@ -118,7 +102,6 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.annotations = Annotations(
                 labels=self.all_concept_names,
                 cardinalities=(1, 1, 1, 1, 1),
-                metadata={name: {'type': 'discrete'} for name in self.all_concept_names}
             )
         # Graph: c0 -> c1 -> c2 -> c3 -> c4
         self.graph = pd.DataFrame(0, index=self.all_concept_names, columns=self.all_concept_names)
@@ -203,137 +186,60 @@ class TestConceptSubsetWithGraph(unittest.TestCase):
         self.assertEqual(dataset.graph.data.shape, (2, 2))
 
 
-class TestGeneratedGroundTruthSelection(unittest.TestCase):
-    """Test selecting a generated concept source as ground truth."""
+class TestReorderByType(unittest.TestCase):
+    """Test that mixed-type concepts are grouped contiguously by type."""
 
     def setUp(self):
-        self.X = torch.randn(4, 3)
-        self.C = torch.zeros(4, 2)
-        self.annotations = Annotations(labels=["native_0", "native_1"])
-        self.generated_annotations = {
-            "first": Annotations(labels=["first_0"]),
-            "second": Annotations(labels=["second_0", "second_1"]),
-        }
-        self.generated_values = {
-            "first": torch.ones(4, 1),
-            "second": torch.full((4, 2), 2.0),
-        }
+        self.n_samples = 20
+        self.X = torch.randn(self.n_samples, 10)
+        # Interleaved types: categorical(card 2), binary, binary, categorical(card 3).
+        self.labels = ['cat_a', 'bin_a', 'bin_b', 'cat_b']
+        self.annotations = Annotations(labels=self.labels, cardinalities=(2, 1, 1, 3))
+        self.C = torch.stack([
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 2, (self.n_samples,)),
+            torch.randint(0, 3, (self.n_samples,)),
+        ], dim=1)
 
-    def test_selects_named_generated_source_when_used_as_ground_truth(self):
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-        )
-
-        dataset.set_generated_concepts(
-            self.generated_annotations,
-            self.generated_values,
-            use_as_gt=True,
-            generated_gt_name="second",
-        )
-
-        self.assertTrue(torch.equal(dataset.ground_truth, self.generated_values["second"]))
-        self.assertEqual(dataset.concept_names, ["second_0", "second_1"])
-        sample = dataset[0]
-        self.assertNotIn("ground_truth", sample["concepts"])
-        self.assertIs(sample["concepts"]["c"], sample["concepts"]["generated"]["second"])
-
-    def test_missing_generated_ground_truth_source_raises(self):
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-        )
-
-        with self.assertRaisesRegex(ValueError, "generated_gt_name='missing'"):
-            dataset.set_generated_concepts(
-                self.generated_annotations,
-                self.generated_values,
-                use_as_gt=True,
-                generated_gt_name="missing",
-            )
-
-    def test_generate_concepts_runs_pipeline_with_kwargs(self):
-        calls = []
-
-        class Pipeline:
-            def __call__(self, dataset, **kwargs):
-                calls.append((dataset, kwargs))
-                return self_values, self_annotations
-
-        self_values = self.generated_values
-        self_annotations = self.generated_annotations
-
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-        )
-        dataset.generate_concepts(
-            Pipeline(),
-            num_concepts=2,
-            use_as_gt=True,
-            generated_gt_name="second",
-        )
-
-        self.assertEqual(len(calls), 1)
-        self.assertIs(calls[0][0], dataset)
-        self.assertEqual(calls[0][1], {"class_names": None, "num_concepts": 2})
-        self.assertTrue(torch.equal(dataset.ground_truth, self.generated_values["second"]))
-
-    def test_generate_concepts_can_name_self_and_annotate_extra_datasets(self):
-        calls = []
-        val_dataset = ConceptDataset(
-            torch.randn(2, 3),
-            torch.zeros(2, 2),
-            annotations=self.annotations,
-        )
-
-        class Pipeline:
-            def __call__(self, dataset, **kwargs):
-                calls.append((dataset, kwargs))
-                return (
-                    {
-                        "train": torch.ones(len(dataset), 1),
-                        "val": torch.zeros(len(val_dataset), 1),
-                    },
-                    {
-                        "train": Annotations(labels=["generated"]),
-                        "val": Annotations(labels=["generated"]),
-                    },
-                )
-
-        dataset = ConceptDataset(
-            self.X,
-            self.C,
-            annotations=self.annotations,
-        )
-        dataset.generate_concepts(
-            Pipeline(),
-            self_annotation_name="train",
-            datasets_to_annotate={"val": val_dataset},
-        )
-
-        self.assertEqual(len(calls), 1)
-        self.assertIs(calls[0][0], dataset)
-        self.assertEqual(calls[0][1]["class_names"], None)
-        self.assertEqual(
-            calls[0][1]["annotation_datasets"],
-            {"train": dataset, "val": val_dataset},
-        )
-        self.assertEqual(set(dataset.generated_annotations), {"train", "val"})
-
-    def test_native_c_reuses_native_sample_object(self):
+    def test_default_groups_by_type(self):
         dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
 
-        sample = dataset[0]
-
-        self.assertIs(sample["concepts"]["c"], sample["concepts"]["native"])
-        self.assertEqual(
-            set(sample["concepts"]),
-            {"c", "native", "generated"},
+        self.assertEqual(list(dataset.concept_names), ['bin_a', 'bin_b', 'cat_a', 'cat_b'])
+        # Values follow their label, not their original column position.
+        bin_a_col = self.labels.index('bin_a')
+        torch.testing.assert_close(
+            dataset.concepts.tensor[:, dataset.concept_names.index('bin_a')],
+            self.C[:, bin_a_col].to(dataset.concepts.tensor.dtype),
         )
+
+    def test_disabled_keeps_original_order(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations, reorder_by_type=False)
+
+        self.assertEqual(list(dataset.concept_names), self.labels)
+
+
+class TestReorderByCardinality(unittest.TestCase):
+    """Within categorical concepts, group further by ascending cardinality."""
+
+    def test_categoricals_sorted_by_cardinality(self):
+        n_samples = 20
+        X = torch.randn(n_samples, 10)
+        # cat_5 and cat_3 out of order, plus a binary concept thrown in.
+        labels = ['cat_5', 'bin_a', 'cat_3', 'cat_3b']
+        annotations = Annotations(labels=labels, cardinalities=(5, 1, 3, 3))
+        C = torch.stack([
+            torch.randint(0, 5, (n_samples,)),
+            torch.randint(0, 2, (n_samples,)),
+            torch.randint(0, 3, (n_samples,)),
+            torch.randint(0, 3, (n_samples,)),
+        ], dim=1)
+
+        dataset = ConceptDataset(X, C, annotations=annotations)
+
+        # binary first, then categoricals ascending by cardinality;
+        # cat_3 before cat_3b since it was first in the original order (stable tie-break).
+        self.assertEqual(list(dataset.concept_names), ['bin_a', 'cat_3', 'cat_3b', 'cat_5'])
 
 
 if __name__ == '__main__':

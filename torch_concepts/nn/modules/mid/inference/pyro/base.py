@@ -17,13 +17,14 @@ Parameter sharing with the wrapped PGM is inherited from
 """
 from __future__ import annotations
 
+from collections import ChainMap
 from typing import Dict, List, Optional
 
 import torch
 import torch.distributions as td
 
-from ...models.bayesian_network import BayesianNetwork
-from ...models.variable import Delta
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Delta
 from ..base import BaseInference
 from ..utils import build_distribution, reshape_value_to_event
 from .utils import dist_to_params, trace_to_params
@@ -50,6 +51,14 @@ class PyroBaseInference(BaseInference):
     Bundles the model/guide stochastic functions and the Pyro-side parameter
     harvesters. Subclasses (e.g. :class:`VariationalInference`) supply
     their own ``query`` method that orchestrates effect handlers.
+
+    Parameters
+    ----------
+    pgm : BayesianNetwork
+        The directed model to run inference on, held by reference (see
+        :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`).
+        Pyro's model/guide traces walk the topological order, so a general
+        (undirected or mixed) ``ProbabilisticModel`` is not supported here.
     """
 
     name = "PyroBaseInference"
@@ -101,37 +110,6 @@ class PyroBaseInference(BaseInference):
         return build_distribution(variable, params)
 
     # ------------------------------------------------------------------
-    # Plate (member) addressing — shared by the Pyro engines, reusing the
-    # CPD's slicing so a plate behaves the same as under the torch engine.
-    # ------------------------------------------------------------------
-    def _gather_parents(self, cpd, cache, data):
-        """Parent values for ``cpd``, slicing member-handle parents out of their
-        plate's (sampled or observed) value — the Pyro counterpart of the torch
-        engine's member-as-parent handling."""
-        parents: Dict[str, torch.Tensor] = {}
-        for p in cpd.parents:
-            src = p.plate.name  # owning plate for a member handle, else p.name
-            value = cache.get(src, data.get(src))
-            if value is None:
-                raise ValueError(
-                    f"{self.name}: parent {p.name!r} of {cpd.variable.name!r} is "
-                    "neither sampled nor in data."
-                )
-            if p.name != src:  # member handle -> slice its column from the plate value
-                value = self.pgm.factors[src].select_value(value, p.name)
-            parents[p.name] = value
-        return parents
-
-    def _expose_members(self, params, query_names):
-        """Add per-member entries for queried plate members, sliced (a view) from
-        their plate's params, so members are addressable by name in the output."""
-        for name in query_names:
-            var = self.pgm.resolve(name)
-            if name != var.name and var.name in params:
-                params[name] = self.pgm.factors[var.name].select(params[var.name], name)
-        return params
-
-    # ------------------------------------------------------------------
     # Stochastic functions (bound to ``self.pgm``)
     # ------------------------------------------------------------------
     def model_fn(
@@ -141,6 +119,7 @@ class PyroBaseInference(BaseInference):
         latent_names: List[str],
         batch_size: Optional[int] = None,
         layer_kwargs: Dict[str, Dict] = {},
+        member_evidence: Dict[str, Dict[str, torch.Tensor]] = {},
     ) -> Dict[str, torch.Tensor]:
         """Pyro stochastic function for the generative model.
 
@@ -152,9 +131,11 @@ class PyroBaseInference(BaseInference):
         - Variables absent from ``data`` are sampled via a straight-through
           relaxation so gradients flow through the discrete sites.
 
-        Registers ``self.pgm`` with Pyro's param store via ``pyro.module`` on
-        every call so SVI updates flow back into the original PGM's
-        ``nn.Parameter`` tensors (no parameter duplication).
+        ``member_evidence`` forces individually-observed plate members onto the
+        sampled value (value forcing; no likelihood term). Registers ``self.pgm``
+        with Pyro's param store via ``pyro.module`` on every call so SVI updates
+        flow back into the original PGM's ``nn.Parameter`` tensors (no parameter
+        duplication).
         """
         pyro, _, _ = _import_pyro()
         pgm = self.pgm
@@ -178,8 +159,10 @@ class PyroBaseInference(BaseInference):
                     if cpd.is_root:
                         params = cpd.root_params(B)
                     else:
-                        parent_values = self._gather_parents(cpd, cache, data)
-                        params = cpd(parent_values=parent_values, **layer_kwargs.get(var.name, {}))
+                        # cache (sampled/observed values) wins over raw data; the
+                        # CPD resolves member-handle parents from the plate value.
+                        # ChainMap avoids an O(#variables) dict copy per site.
+                        params = cpd(parent_values=ChainMap(cache, data), **layer_kwargs.get(var.name, {}))
 
                     obs = data.get(var.name, None)
                     if obs is not None:
@@ -193,8 +176,12 @@ class PyroBaseInference(BaseInference):
                     )
                     sample = pyro.sample(var.name, d, obs=obs)
                     # Cache the realization in the variable's event shape; downstream
-                    # CPD aggregation re-flattens it as needed.
-                    cache[var.name] = reshape_value_to_event(var, sample)
+                    # CPD aggregation re-flattens it as needed. Partial-plate evidence
+                    # is forced onto the observed members here.
+                    value = reshape_value_to_event(var, sample)
+                    cache[var.name] = cpd.clamp_members(
+                        value, member_evidence.get(var.name, {})
+                    )
 
         return cache
 
@@ -204,6 +191,7 @@ class PyroBaseInference(BaseInference):
         temperature: torch.Tensor,
         latent_names: List[str],
         layer_kwargs: Dict[str, Dict] = {},
+        member_evidence: Dict[str, Dict[str, torch.Tensor]] = {},
     ) -> None:
         """Pyro stochastic function for the variational posterior.
 
@@ -212,7 +200,10 @@ class PyroBaseInference(BaseInference):
 
         Registers the guide ``nn.ModuleDict`` with Pyro's param store via
         ``pyro.module`` on every call so SVI updates flow back into the
-        original guide CPDs' ``nn.Parameter`` tensors.
+        original guide CPDs' ``nn.Parameter`` tensors. ``member_evidence`` is
+        threaded for symmetry with ``model_fn``; the guide conditions on
+        observed ``data`` (member evidence included by name), so it clamps
+        nothing itself.
         """
         pyro, _, _ = _import_pyro()
         pgm = self.pgm
@@ -229,8 +220,8 @@ class PyroBaseInference(BaseInference):
                         k: v.unsqueeze(0).expand(B, *v.shape) for k, v in params.items()
                     }
                 else:
-                    parent_values = {p.name: data[p.name] for p in cpd.parents}
-                    params = cpd(parent_values=parent_values, **layer_kwargs.get(name, {}))
+                    # The CPD resolves member-handle parents from ``data``.
+                    params = cpd(parent_values=data, **layer_kwargs.get(name, {}))
 
                 q = self._pyro_relaxed_distribution(cpd.variable, params, temperature)
                 pyro.sample(name, q)

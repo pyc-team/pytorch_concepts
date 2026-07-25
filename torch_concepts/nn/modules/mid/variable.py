@@ -1,6 +1,6 @@
 """
-This script defines the abstract base class ``Variable``
-and its concrete subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
+Abstract base class ``Variable`` and its concrete 
+subclasses ``ConceptVariable`` and ``EmbeddingVariable``, 
 which represent random variables in a Probabilistic Graphical Model.
 """
 
@@ -9,55 +9,23 @@ from __future__ import annotations
 import copy
 import math
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union
-from functools import partial, cached_property
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.distributions as dist
 
-from .....distributions.delta import Delta
+from ....distributions.delta import Delta
+from .distributions import spec_for
 
 
-# ---------------------------------------------------------------------------
-# Per-parameter dimension lookup table.
-# ---------------------------------------------------------------------------
-PARAM_DIM: Dict[Type[dist.Distribution], Dict[str, Callable[[int], int]]] = {
-    Delta:                         {"value": lambda size: size},
-    dist.Bernoulli:                {"probs": lambda size: size, "logits": lambda size: size},
-    dist.RelaxedBernoulli:         {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Categorical:              {"probs": lambda size: size, "logits": lambda size: size},
-    dist.OneHotCategorical:        {"probs": lambda size: size, "logits": lambda size: size},
-    dist.RelaxedOneHotCategorical: {"probs": lambda size: size, "logits": lambda size: size},
-    dist.Normal:                   {"loc": lambda size: size, "scale": lambda size: size},
-    dist.MultivariateNormal:       {"loc": lambda size: size,
-                                    "scale_tril": lambda size: size * (size + 1) // 2},
-}
-
+# Semantic concept type -> distribution family. A high-level *policy* (which
+# family should a "binary" concept get?) that subclasses override.
 _DEFAULT_DISTRIBUTIONS = {
     'binary': dist.Bernoulli,
     'categorical': dist.OneHotCategorical,
     'continuous': dist.Normal,
 }
 
-_DEFAULT_DIST_KWARGS = {
-    dist.RelaxedBernoulli: {'temperature': 0.5},
-    dist.RelaxedOneHotCategorical: {'temperature': 0.5},
-}
-
-# Per-parameter activation mapping a raw network output to a valid distribution
-# parameter, keyed by distribution family and then by the parameter name the
-# CPD produced.
-DEFAULT_ACTIVATIONS = {
-    Delta:                         {"value": lambda x: x},
-    dist.Bernoulli:                {"probs": lambda x: x, "logits": torch.sigmoid},
-    dist.RelaxedBernoulli:         {"probs": lambda x: x, "logits": torch.sigmoid},
-    dist.Categorical:              {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.OneHotCategorical:        {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.RelaxedOneHotCategorical: {"probs": lambda x: x, "logits": partial(torch.softmax, dim=-1)},
-    dist.Normal:                   {"loc": lambda x: x, "scale": lambda x: x},
-    dist.MultivariateNormal:       {"loc": lambda x: x, "scale_tril": lambda x: x},
-}
 
 def _broadcast(value, n: int, name: str):
     """Return a list of length ``n``: broadcast scalar or check list length.
@@ -78,14 +46,44 @@ class Variable(ABC):
     """Abstract random variable.
 
     Holds the node name (``name``), its distribution family (``distribution``),
-    its event ``shape``, and any extra distribution kwargs.  ``size`` is a
-    read-only property equal to ``math.prod(shape)``.
+    its event ``shape``, and any extra distribution kwargs.
 
     Passing a list of names to the constructor returns a list of independent
     ``Variable`` instances (one per name); ``distribution``, ``shape``, and
     ``dist_kwargs`` may then be a single value (broadcast) or a per-name list.
 
     Concrete subclasses must implement :attr:`variable_type`.
+
+    Parameters
+    ----------
+    names : str or list of str
+        A single name builds one variable. A **list** of names builds one
+        independent variable per name and returns them as a list; the remaining
+        arguments are then either a single value (broadcast to every name) or a
+        per-name list of the same length.
+    distribution : type
+        The distribution family (e.g. ``dist.Bernoulli``, ``dist.Normal``,
+        ``Delta``). Required — there is no default. Determines which parameters
+        a CPD must produce for this variable, how engines propagate and sample
+        it, and whether belief propagation can enumerate it.
+    shape : int or tuple of int or torch.Size, optional
+        Event shape of a single realisation, e.g. ``(n_concepts, emb_dim)``.
+        Mutually exclusive with ``size``; defaults to ``(1,)``. Not allowed
+        together with ``members``.
+    dist_kwargs : dict, optional
+        Extra keyword arguments forwarded to the distribution constructor
+        (e.g. ``{'temperature': 0.5}`` for the relaxed families).
+    size : int, optional
+        Shorthand for ``shape=(size,)``. When ``members`` is given this is
+        instead the **per-member** size (default ``1``), and the total event
+        width becomes ``len(members) * size``.
+    members : list of str, optional
+        Turn this into a **plate**: one variable whose event stacks the named
+        members along the last dimension, each still addressable by its own name
+        for queries, evidence and interventions. Only valid with a single
+        (string) ``names``, mutually exclusive with ``shape``, and requires a
+        registered family whose parameters are one-scalar-per-element (so
+        ``MultivariateNormal`` is rejected).
     """
 
     @property
@@ -150,6 +148,16 @@ class Variable(ABC):
             return
         self.name: str = names
 
+        # A variable's family must be one the registry knows. This is the single
+        # gate every variable passes through.
+        if distribution is None:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): `distribution` is required. "
+                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
+                "or dist.Delta)."
+            )
+        spec = spec_for(distribution, f"{type(self).__name__}({names!r})")
+
         if members is not None:
             # Plate: a single variable holding several named members. ``size`` is
             # the per-member size (default 1); the total event width is
@@ -184,9 +192,7 @@ class Variable(ABC):
             # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
             # is triangular (size*(size+1)/2), so its members aren't sliceable —
             # model those as separate variables instead.
-            if distribution in PARAM_DIM and not all(
-                fn(total) == total for fn in PARAM_DIM[distribution].values()
-            ):
+            if not spec.is_per_element:
                 raise ValueError(
                     f"{type(self).__name__}({names!r}): plate `members` need a distribution "
                     f"with per-element parameters; {distribution.__name__} has a "
@@ -225,15 +231,9 @@ class Variable(ABC):
             self.members = [self.name]
             self.member_size = math.prod(shape)
 
-        if distribution is None:
-            raise ValueError(
-                f"{type(self).__name__}({names!r}): `distribution` is required. "
-                "Pass an explicit distribution (e.g. dist.Normal, dist.Bernoulli, "
-                "or dist.Delta)."
-            )
         self.distribution = distribution
         self._shape: torch.Size = shape
-        # Column span of each member within the event (last) dimension.
+        # Dictionary mapping member name -> slice corresponding to that member.
         self._column: Dict[str, slice] = {
             m: slice(i * self.member_size, (i + 1) * self.member_size)
             for i, m in enumerate(self.members)
@@ -255,34 +255,33 @@ class Variable(ABC):
         """The plate this variable belongs to.
 
         For a member handle (from :meth:`member`) this is the owning plate; for an
-        ordinary variable or a plate itself it is the variable. Graph code uses
-        ``p.plate.name`` to find the node an edge from ``p`` originates at.
+        ordinary variable or a plate itself it is None. 
         """
         return self._plate if self._plate is not None else self
 
     def column_of(self, member: str) -> slice:
-        """Column span of ``member`` within this variable's event (last) dimension."""
+        """The slice of the event dimension corresponding to a member."""
         return self._column[member]
 
     def member(self, name: str) -> "Variable":
-        """A handle to a single member, usable as a parent (an edge to that member only).
+        """A handle to a single member.
 
-        A child can then depend on just this member of the plate; the engine
-        slices the member's column out of the plate's output. The handle carries
-        the member's name, per-member size and the plate's distribution, plus a
-        back-reference to the owning plate so the graph routes the edge from it.
+        The handle carries the member's name, per-member size and the plate's distribution, 
+        plus a back-reference to the owning plate so the graph routes the edge from it.
         """
         if name not in self._column:
             raise KeyError(
                 f"{type(self).__name__}({self.name!r}) has no member {name!r}; "
                 f"members are {self.members}."
             )
+        # Create the new member-only variable.
         view = type(self)(
             name,
             distribution=self.distribution,
             size=self.member_size,
             dist_kwargs=copy.deepcopy(self.dist_kwargs),
         )
+        # Set the back-reference to the owning plate.
         view._plate = self
         return view
 
@@ -296,33 +295,76 @@ class Variable(ABC):
         """Total number of scalar elements: ``math.prod(self.shape)``."""
         return math.prod(self._shape)
 
-    @cached_property
-    def concept_slices(self) -> Dict[str, slice]:
-        """Precomputed mapping from concept name to slice in flattened tensor.
-        """
-        cum = self.member_size
-        return {name: slice(cum*i, cum*(i+1))
-                for i, name in enumerate(self.members)}
-
-
+    # FIXME: there is a tricky for loop here. Maybe the same can be done without looping.
     def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
-        """Get slice or indices for concept(s) in the flattened tensor.
-        """
-        slices = self.concept_slices  # Use cached property
+        """Flattened indices for member(s) in this variable's event dimension.
 
-        # Single concept → 1 element list
+        The indices address event columns corresponding to the named member(s). 
+        If a single string is passed, a single slice is returned; 
+        if a list of strings is passed, a list of indices is returned.
+        """
         if isinstance(labels, str):
             labels = [labels]
 
-        # Multiple concepts → return flattened indices
-        logits_indices = []
+        indices = []
         for label in labels:
-            if label not in slices:
-                raise ValueError(f"Label '{label}' not found in axis labels {self.labels}")
-            s = slices[label]
-            logits_indices.extend(range(s.start, s.stop))
+            if label not in self._column:
+                raise ValueError(f"Label '{label}' not found in members {self.members}")
+            s = self._column[label]
+            indices.extend(range(s.start, s.stop))
 
-        return logits_indices
+        return indices
+
+    def select(
+        self, params: Dict[str, torch.Tensor], name: str
+    ) -> Dict[str, torch.Tensor]:
+        """Return a dictionary containing the distribution parameters for a specific member
+        of the variable. 
+        
+        If the name matches the variable's own name, return the
+        whole dictionary. Otherwise, return a dictionary with the same keys but with
+        values sliced to the columns corresponding to the member's slice.
+        """
+        if name == self.name:
+            return params
+        columns = self.column_of(name)
+        return {key: value[..., columns] for key, value in params.items()}
+
+    def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
+        """Realised value for ``name``: the whole value, or a member's column slice."""
+        if name == self.name:
+            return value
+        return value[..., self.column_of(name)]
+
+    # FIXME: another for loop spotted here. Maybe the same can be done without looping.
+    def clamp_members(
+        self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Overwrite observed members' columns with their observed values.
+
+        A plate's CPD/sampler produces one tensor stacking every member along
+        the last axis, but evidence may cover only some members. E.g. for a
+        plate ``"person"`` with members ``"person_1", "person_2", "person_3"``,
+        observing only ``person_2`` means ``value`` holds the model's output
+        for all three members while ``observed = {"person_2": obs}`` holds
+        just that one. This returns a copy of ``value`` with the
+        ``person_2`` column replaced by ``obs``, and the ``person_1`` /
+        ``person_3`` columns left exactly as the model produced them.
+        No-op (returns ``value`` itself) when ``observed`` is empty.
+
+        NOTE: the clone is required since the caller caches this value and reuses 
+        it as a parent input for downstream factors, so writing the observed columns
+        in place would corrupt that cache and break autograd on the tensor the
+        CPD produced.
+        """
+        if not observed:
+            return value
+        value = value.clone()
+        for member, obs in observed.items():
+            columns = self.column_of(member)
+            slot = value[..., columns]
+            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
+        return value
 
     @property
     def param_sizes(self) -> Dict[str, int]:
@@ -332,24 +374,19 @@ class Variable(ABC):
         ``Normal``, ``"probs"``/``"logits"`` for ``Bernoulli``) to the true
         number of scalar network outputs needed to produce it. Most equal
         :attr:`size` (one scalar per event element); the exceptions are encoded
-        in :data:`PARAM_DIM` — e.g. ``MultivariateNormal``'s ``scale_tril``
-        needs ``size * (size + 1) // 2`` lower-triangular Cholesky entries.
+        in the family's :class:`~.distributions.DistributionSpec` — e.g.
+        ``MultivariateNormal``'s ``scale_tril`` needs ``size * (size + 1) // 2``
+        lower-triangular Cholesky entries.
 
         Raises
         ------
         ValueError
-            If the distribution family has no :data:`PARAM_DIM` entry.
+            If the distribution family is not in the spec registry.
         """
-        if self.distribution not in PARAM_DIM:
-            raise ValueError(
-                f"{type(self).__name__}({self.name!r}): distribution "
-                f"{self.distribution.__name__} has no PARAM_DIM entry; cannot "
-                "resolve per-parameter sizes."
-            )
-        return {
-            param: fn(self.size)
-            for param, fn in PARAM_DIM[self.distribution].items()
-        }
+        spec = spec_for(
+            self.distribution, f"{type(self).__name__}({self.name!r})"
+        )
+        return {param: fn(self.size) for param, fn in spec.param_sizes.items()}
 
     def __repr__(self) -> str:
         s = (

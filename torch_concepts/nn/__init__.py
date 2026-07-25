@@ -25,6 +25,8 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
+from .modules.low.encoders.cav import CAVEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
@@ -57,11 +59,14 @@ from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 # Models (mid-level)
-from .modules.mid.models.factor import ParametricFactor
-from .modules.mid.models.cpd import ParametricCPD
-from .modules.mid.models.probabilistic_model import ProbabilisticModel
-from .modules.mid.models.bayesian_network import BayesianNetwork
-from .modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
+from .modules.mid.factors.factor import ParametricFactor
+from .modules.mid.factors.cpd import ParametricCPD
+from .modules.mid.factors.potential import ParametricPotential
+from .modules.mid.graph.probabilistic_model import ProbabilisticModel
+from .modules.mid.graph.bayesian_network import BayesianNetwork
+from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.chain_graph import ChainGraph
+from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
 # base
@@ -77,6 +82,7 @@ from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
 from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
+from .modules.mid.inference.torch.belief_propagation import BeliefPropagation
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 from .modules.mid.inference.pyro.importance import PyroImportanceSampling
@@ -118,6 +124,9 @@ __all__ = [
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "ConceptWhitening",
+    "WhitenedEmbeddingToConcept",
+    "CAVEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
@@ -161,8 +170,11 @@ __all__ = [
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
+    "ParametricPotential",
     "ProbabilisticModel",
     "BayesianNetwork",
+    "MarkovNetwork",
+    "ChainGraph",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",
@@ -178,6 +190,7 @@ __all__ = [
     "ImportanceSampling",
     "BaseProposal",
     "MutilatedNetworkProposal",
+    "BeliefPropagation",
     "PyroBaseInference",
     "VariationalInference",
     "PyroImportanceSampling",

@@ -1,10 +1,23 @@
 """Concept Bottleneck Model (CBM).
 
-A bipartite concept model: a linear encoder maps the latent representation to
-concepts, and a linear predictor maps concepts to tasks. Two building paths are
-provided: :meth:`_build_plate_model` (``plate=True``, default) groups each
-bipartite level into a single plate variable; :meth:`_build_individual_model`
-(``plate=False``) creates one variable per concept/task.
+A bipartite model where the input is mapped to a set of concepts and the tasks
+are predicted from those concepts (Koh et al., ICML 2020): a linear encoder maps
+the latent representation to the concepts, and a linear predictor maps the
+concepts to the tasks (no concept embeddings).
+
+The model is assembled by a single builder, :meth:`_build_model`. Each bipartite
+level (concepts, tasks) is built by the shared factory
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`,
+which groups homogeneous concepts into the minimum number of plates: a fully
+homogeneous level collapses to a single plate, a heterogeneous level splits into
+one plate per ``(type, cardinality)`` family, and even a lone concept is a
+single-member plate. Because each level is always a list of variables, the CPD
+wiring and the :class:`BayesianNetwork` assembly are written once and work for
+every layout.
+
+References
+----------
+Koh et al. "Concept Bottleneck Models", ICML 2020. https://proceedings.mlr.press/v119/koh20a.html
 """
 from typing import List, Optional, Union
 
@@ -15,13 +28,15 @@ from torch.distributions import Bernoulli, OneHotCategorical, Normal
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.lazy import LazyConstructor
 from ...low.predictors.linear import LinearConceptToConcept
 from ...low.priors import LearnablePrior
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable, _DEFAULT_DIST_KWARGS
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
 
@@ -51,11 +66,10 @@ class ConceptBottleneckModel(BipartiteModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
-        Controls which building path is used.  ``None`` (default) auto-detects:
-        uses plates only when **all** graph levels are plate-compatible (see
-        :meth:`~torch_concepts.nn.modules.high.base.graph.DirectedGraphModel.plate_compatible_levels`),
-        otherwise falls back to individual variables.  Pass ``True`` to force
-        plates or ``False`` to force individual variables.
+        Per-level plate preference (forwarded to :class:`BaseModel` and consumed by
+        the level factories). ``None`` (default) and ``True`` group homogeneous
+        concepts into the minimum number of plates — even a lone concept becomes a
+        single-member plate. ``False`` uses one individual variable per concept.
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
         the Lightning training arguments).
@@ -70,7 +84,7 @@ class ConceptBottleneckModel(BipartiteModel):
         'categorical': OneHotCategorical,
         'continuous': Normal,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,
@@ -82,6 +96,7 @@ class ConceptBottleneckModel(BipartiteModel):
         train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
+        plate: Optional[bool] = None,
         **kwargs,
     ):
         super().__init__(
@@ -89,15 +104,11 @@ class ConceptBottleneckModel(BipartiteModel):
             annotations=annotations,
             task_names=task_names,
             lightning=lightning,
+            plate=plate,
             **kwargs,
         )
-        if all(self.plate):
-            # if all graph levels are plate-compatible
-            # build the model with one plate variable per bipartite level (concepts, tasks)
-            self.pgm = self._build_plate_model()
-        else:
-            # build the model with one variable per concept and one per task
-            self.pgm = self._build_individual_model()
+        # One builder for both layouts (plate / individual, decided per level).
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(
@@ -107,127 +118,71 @@ class ConceptBottleneckModel(BipartiteModel):
             train_inference_kwargs,
         )
 
-    # ------------------------------------------------------------------
-    # Shared helpers
-    # ------------------------------------------------------------------
     def _input_latent_block(self):
-        """Raw input → latent block shared by both building paths.
+        """Raw input → latent block.
 
-        Returns ``(input_var, latent_var, [input_cpd, latent_cpd])``: the raw
+        Returns ``(input_var, latent_var, input_cpd, latent_cpd)``: the raw
         ``input`` enters the PGM as evidence and the backbone runs *inside* the
         PGM as the ``latent | input`` CPD.
         """
         input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
         latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
-            input_var, 
+            input_var,
             parents=[],
             parametrization=LearnablePrior(input_var.shape),
         )
         latent_cpd = ParametricCPD(
-            latent_var, 
+            latent_var,
             parents=[input_var],
             parametrization=self.backbone,
         )
         return input_var, latent_var, input_cpd, latent_cpd
     
-    def _build_plate_model(self) -> BayesianNetwork:
-        """Build using one plate variable per bipartite level (concepts, tasks)."""
-        axis = self.concept_annotations
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble the CBM Bayesian network: ``input → latent → concepts → tasks``.
 
+        The backbone runs as the ``latent | input`` CPD; a linear encoder maps
+        ``latent`` to the concepts and a linear predictor maps the concepts to the
+        tasks. Each concept-side level is materialised by
+        :meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`
+        as a list of concept variables — homogeneous concepts share a plate, the
+        rest are individual variables. ``ParametricCPD`` broadcasts over each list
+        to build one CPD per variable, with the parametrization built per variable
+        so every distribution family gets its correct parameter (e.g. ``logits``);
+        ``LazyConstructor`` then sizes each layer from the variable's ``param_sizes``
+        and its parents' sizes.
+        """
         input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
-        concept0 = axis.concept(self.intermediate_concept_names[0])
-        task0 = axis.concept(self.task_names[0])
-        concepts = ConceptVariable(
-            names="concepts",
-            members=self.intermediate_concept_names,
-            distribution=self.distribution_of(concept0.name),
-            dist_kwargs=self.dist_kwargs_of(concept0.name),
-            size=concept0.cardinality,
-        )
-        tasks = ConceptVariable(
-            names="tasks",
-            members=self.task_names,
-            distribution=self.distribution_of(task0.name),
-            dist_kwargs=self.dist_kwargs_of(task0.name),
-            size=task0.cardinality,
-        )
+        concepts = self.build_concept_variables(self.intermediate_concept_names, plate_name="concepts")
+        tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
 
+        # latent → concepts: one encoder per concept variable (per group).
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
-            parametrization=self._flexible_parametrization(
-                variable=concepts,
-                first=LinearEmbeddingToConcept(
-                    in_embeddings=self.latent_size,
-                    out_concepts=concepts.size,
-                ),
-                second=None # will be partial(...)
-            )
+            parametrization=[
+                self._flexible_parametrization(
+                    variable=c,
+                    first=LazyConstructor(LinearEmbeddingToConcept),
+                    second=None # will be partial(...)
+                )
+                for c in concepts
+            ],
         )
+        # concepts → tasks: every concept group is a parent of every task.
         predictors = ParametricCPD(
             variable=tasks,
-            parents=[concepts],
-            parametrization=self._flexible_parametrization(
-                variable=tasks,
-                first=LinearConceptToConcept(
-                    in_concepts=concepts.size,
-                    out_concepts=tasks.size,
-                ),
-                second=None # will be partial(...)
-            )
-        )
-
-        return BayesianNetwork(
-            variables=[input_var, latent_var, concepts, tasks],
-            factors=[input_cpd, latent_cpd, encoders, predictors],
-        )
-
-    def _build_individual_model(self) -> BayesianNetwork:
-        """Build with one variable per concept and one per task."""
-        axis = self.concept_annotations
-        
-        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
-
-        intermediate = [axis.concept(name) for name in self.intermediate_concept_names]
-        task_concepts = [axis.concept(name) for name in self.task_names]
-        concepts = ConceptVariable(
-            names=self.intermediate_concept_names,
-            distribution=[self.distribution_of(c.name) for c in intermediate],
-            dist_kwargs=[self.dist_kwargs_of(c.name) for c in intermediate],
-            size=[c.cardinality for c in intermediate],
-        )
-        tasks = ConceptVariable(
-            names=self.task_names,
-            distribution=[self.distribution_of(t.name) for t in task_concepts],
-            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
-            size=[t.cardinality for t in task_concepts],
-        )
-
-        encoders = ParametricCPD(
-            variable=concepts,
-            parents=[latent_var],
-            parametrization=[self._flexible_parametrization(
-                variable=concept,
-                first=LinearEmbeddingToConcept(
-                    in_embeddings=self.latent_size,
-                    out_concepts=concept.size,
-                ),
-                second=None  # will be partial(...)
-            ) for concept in concepts],
-        )
-        predictors = ParametricCPD(
-            variable=tasks,
-            parents=[*concepts],
-            parametrization=[self._flexible_parametrization(
-                variable=task,
-                first=LinearConceptToConcept(
-                    in_concepts=sum(c.size for c in concepts),
-                    out_concepts=task.size,
-                ),
-                second=None  # will be partial(...)
-            ) for task in tasks],
+            parents=concepts,
+            parametrization=[
+                self._flexible_parametrization(
+                    variable=t,
+                    first=LazyConstructor(LinearConceptToConcept),
+                    second=None # will be partial(...)
+                )
+                for t in tasks
+            ],
         )
 
         return BayesianNetwork(

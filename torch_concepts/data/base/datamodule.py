@@ -7,7 +7,7 @@ data splitting, embedding precomputation, and DataLoader creation.
 
 Example
 -------
->>> from torch_concepts import Backbone
+>>> from torch_concepts import ImageBackbone
 >>> from torch_concepts.data import ConceptDataModule, CelebADataset
 >>>
 >>> dataset = CelebADataset(root='./data/celeba')
@@ -118,14 +118,14 @@ class ConceptDataModule(LightningDataModule):
 
     >>> from torch_concepts.data import ToyDataset
     >>> dataset = ToyDataset(dataset='xor', n_gen=1000)
-    >>> from torch_concepts import Backbone
+    >>> from torch_concepts import ImageBackbone
     >>> dm = ConceptDataModule(dataset=image_dataset, batch_size=64)
-    >>> dm.precompute_embeddings(Backbone('resnet50'))  # computes or loads cache
+    >>> dm.precompute_embeddings(ImageBackbone('resnet50'))  # computes or loads cache
     >>> dm.setup('fit')  # splitting only
 
     See Also
     --------
-    torch_concepts.Backbone : Feature extraction wrapper class.
+    torch_concepts.ImageBackbone : Feature extraction wrapper class.
     ConceptDataset : Base dataset class for concept data.
     RandomSplitter : Default splitter for train/val/test splits.
     NativeSplitter : Splitter using dataset's native splits.

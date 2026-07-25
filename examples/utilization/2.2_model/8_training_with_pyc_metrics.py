@@ -57,7 +57,6 @@ def main():
 
     # Define loss function
     loss_fn = ConceptLoss(
-        annotations = annotations,
         binary = torch.nn.BCEWithLogitsLoss(),
         categorical = torch.nn.CrossEntropyLoss(),
         continuous = torch.nn.MSELoss()
@@ -67,11 +66,11 @@ def main():
     variable_distributions = {name: Bernoulli for name in concept_names}
     
     metrics = ConceptMetrics(
-        annotations = annotations,
+        annotations=annotations,
         summary=True,
         per_concept=True,
-        binary = {'accuracy': torchmetrics.classification.BinaryAccuracy()},
-        categorical = {'accuracy': torchmetrics.classification.MulticlassAccuracy} # filtered out since we don't 
+        binary={'accuracy': torchmetrics.classification.BinaryAccuracy()},
+        categorical={'accuracy': torchmetrics.classification.MulticlassAccuracy} # filtered out since we don't
                                                                                    # have categorical concepts in this dataset
     )
 

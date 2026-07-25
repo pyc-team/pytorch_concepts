@@ -114,16 +114,12 @@ class DirectedGraphModel(GraphModel, ABC):
     :class:`~torch_concepts.nn.BayesianNetwork`. This is the only branch of the
     hierarchy that is implemented today.
 
-    Concrete models build ``self.model`` (or ``self.pgm``) in their own
-    ``__init__``, then call :meth:`_assemble` to wire inference. Two optional
-    building hooks are provided for subclasses that want a plate vs individual
-    split:
-
-    * :meth:`_build_plate_model` — plate variables, one per homogeneous level.
-    * :meth:`_build_individual_model` — one variable per concept.
-
-    Whether to use them, and how to choose between them, is left entirely to
-    the concrete model.
+    Concrete models build ``self.pgm`` in their own ``__init__`` (via a
+    ``_build_model`` method) and then call :meth:`setup_inference` to wire
+    inference. How the graph becomes variables and CPDs is left to the concrete
+    model: the bipartite models group each level into the minimum number of plates,
+    while the homogeneous graph assembler walks the DAG node-by-node (one variable
+    per node).
     """
 
     def __init__(self, *args, graph: Optional[ConceptGraph] = None, **kwargs):
@@ -136,33 +132,6 @@ class DirectedGraphModel(GraphModel, ABC):
         assert graph.is_directed_acyclic(), (
             "DirectedGraphModel requires a directed acyclic graph (DAG)."
         )
-
-    # ------------------------------------------------------------------
-    # Model-building hooks (implement one or both in concrete subclasses)
-    # ------------------------------------------------------------------
-
-    def _build_plate_model(self):
-        """Build using plate variables (one per homogeneous concept level).
-
-        Override this when the model represents homogeneous levels as a single
-        plate :class:`~torch_concepts.nn.ConceptVariable`. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_plate_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_plate_model`."
-        )
-
-    def _build_individual_model(self):
-        """Build using one variable per concept.
-
-        Override this as the flat (non-plate) building path. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_individual_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_individual_model`."
-        )
     
     #: Distribution parameter used for discrete variables — ``"logits"`` or
     #: ``"probs"``. Concrete models may override; defaults to ``"logits"`` so the
@@ -173,7 +142,7 @@ class DirectedGraphModel(GraphModel, ABC):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
 
         The dict's keys are the distribution's parameter names — taken from
-        :data:`~torch_concepts.nn.modules.mid.models.variable.PARAM_DIM` and exposed
+        :class:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec` and exposed
         per-variable as ``variable.param_sizes``:
 
         * **Discrete** families (Bernoulli / Categorical and their relaxed variants)
@@ -204,7 +173,7 @@ class DirectedGraphModel(GraphModel, ABC):
         ValueError
             If the variable's distribution is unsupported.
         """
-        param_sizes = variable.param_sizes  # {param_name: output_size}, from PARAM_DIM
+        param_sizes = variable.param_sizes  # {param_name: output_size}, from the DistributionSpec
         names = set(param_sizes)
 
         if names == {"value"}:
@@ -214,7 +183,7 @@ class DirectedGraphModel(GraphModel, ABC):
         if "loc" in names:
             # Continuous: location from ``first``; the scale parameter
             # (``scale`` for Normal, ``scale_tril`` for MultivariateNormal) needs a
-            # layer whose output size comes from PARAM_DIM via ``param_sizes``.
+            # layer whose output size comes from the spec via ``param_sizes``.
             scale_param = (names - {"loc"}).pop()
             scale_size = param_sizes[scale_param]
             raise NotImplementedError(
@@ -261,12 +230,7 @@ class DirectedGraphModel(GraphModel, ABC):
         def type_and_size(name: str):
             idx = axis_annotation.get_index(name)
             size = int(axis_annotation.cardinalities[idx])
-            # Prefer the first-class ``types`` field, fall back to metadata['type'].
-            if axis_annotation.types is not None:
-                concept_type = axis_annotation.types[idx]
-            else:
-                concept_type = (axis_annotation.metadata.get(name, {}) or {}).get("type")
-            return (concept_type, size)
+            return (axis_annotation.types[idx], size)
 
         return [
             len({type_and_size(name) for name in level}) == 1

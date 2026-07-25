@@ -33,7 +33,7 @@ from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSam
 def _logits(out, names):
     """Concatenate per-variable logits for the queried ``names`` -> (B, sum cardinalities)."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 def _make_graph(adj, names):
@@ -67,7 +67,6 @@ def _binary_annotations(names):
     return Annotations(
             labels=list(names),
             cardinalities=[1] * len(names),
-            metadata={n: {'type': 'discrete'} for n in names},
         )
 
 
@@ -76,11 +75,6 @@ def _mixed_annotations():
     return Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
-            metadata={
-                'A': {'type': 'discrete'},
-                'B': {'type': 'discrete'},
-                'C': {'type': 'discrete'},
-            },
         )
 
 
@@ -189,11 +183,6 @@ class TestC2BMInitialization:
         ann_no_dist = Annotations(
                 labels=['A', 'B', 'C'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'A': {'type': 'discrete'},
-                    'B': {'type': 'discrete'},
-                    'C': {'type': 'discrete'},
-                },
             )
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
@@ -400,10 +389,10 @@ class TestC2BMTrainEvalRouting:
 # ===========================================================================
 
 class TestC2BMReturnLogits:
-    """The return_logits API no longer exists — logits live in out.params[name]['logits']."""
+    """The return_logits API no longer exists — logits live in out.logits[name]."""
 
     def test_return_logits_shape(self, chain_graph, binary_chain_ann):
-        """Logits are accessed via out.params[name]['logits'], not a top-level attribute."""
+        """Logits are accessed via out.logits[name], not a top-level attribute."""
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
@@ -414,8 +403,8 @@ class TestC2BMReturnLogits:
         out = model(query=query, input=x)
         # Each queried concept has logits in params
         for name in query:
-            assert name in out.params
-            assert 'logits' in out.params[name]
+            assert name in out.variables
+            assert name in out.logits
         assert _logits(out, query).shape == (4, 3)
 
 
@@ -549,7 +538,7 @@ class TestC2BMAncestralSamplingInference:
         names = binary_chain_ann.labels
         out = model(query=list(names), input=x)
         assert out.params
-        assert all('logits' in v for v in out.params.values())
+        assert 'logits' in out.params
 
 
 # ===========================================================================

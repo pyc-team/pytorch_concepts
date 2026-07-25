@@ -12,6 +12,7 @@ from torch import nn
 from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
 from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class TestConceptLoss(unittest.TestCase):
@@ -23,12 +24,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
         
@@ -36,11 +31,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
         
@@ -48,10 +38,6 @@ class TestConceptLoss(unittest.TestCase):
         axis_categorical = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_categorical = axis_categorical
         
@@ -68,31 +54,37 @@ class TestConceptLoss(unittest.TestCase):
 
     def test_binary_only_loss(self):
         """Test ConceptLoss with only binary concepts."""
-        loss_fn = ConceptLoss(self.annotations_binary, binary=nn.BCEWithLogitsLoss())
-        
+        loss_fn = ConceptLoss(binary=nn.BCEWithLogitsLoss())
+
         # Binary concepts: endogenous shape (batch, 3)
         endogenous = torch.randn(16, 3)
         targets = torch.randint(0, 2, (16, 3)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        ))
+
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
     def test_categorical_only_loss(self):
         """Test ConceptLoss with only categorical concepts."""
-        loss_fn = ConceptLoss(self.annotations_categorical, categorical=nn.CrossEntropyLoss())
-        
+        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
+
         # Categorical: cat1 (3 classes) + cat2 (5 classes) = 8 endogenous total
         endogenous = torch.randn(16, 8)
         targets = torch.cat([
             torch.randint(0, 3, (16, 1)),
             torch.randint(0, 5, (16, 1))
         ], dim=1)
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations_categorical, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_categorical.to_concept_space(), axis=-1),
+        ))
+
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -105,11 +97,10 @@ class TestConceptLoss(unittest.TestCase):
     def test_mixed_concepts_loss(self):
         """Test ConceptLoss with mixed concept types (binary and categorical only)."""
         loss_fn = ConceptLoss(
-            self.annotations_mixed,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss()
         )
-        
+
         # Mixed: 2 binary + (3 + 4) categorical = 9 endogenous
         endogenous = torch.randn(16, 9)
         targets = torch.cat([
@@ -117,23 +108,29 @@ class TestConceptLoss(unittest.TestCase):
             torch.randint(0, 3, (16, 1)),  # cat1
             torch.randint(0, 4, (16, 1)),  # cat2
         ], dim=1)
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations_mixed, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_mixed.to_concept_space(), axis=-1),
+        ))
+
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
     def test_gradient_flow(self):
         """Test that gradients flow properly through ConceptLoss."""
-        loss_fn = ConceptLoss(self.annotations_binary, binary=nn.BCEWithLogitsLoss())
-        
+        loss_fn = ConceptLoss(binary=nn.BCEWithLogitsLoss())
+
         endogenous = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        ))
         loss.backward()
-        
+
         self.assertIsNotNone(endogenous.grad)
         self.assertTrue(torch.any(endogenous.grad != 0))
 
@@ -142,7 +139,7 @@ class TestConceptLoss(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_repr_binary_only(self):
         """repr shows binary loss type."""
-        loss = ConceptLoss(self.annotations_binary, binary=nn.BCEWithLogitsLoss())
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss())
         r = repr(loss)
         self.assertIn('ConceptLoss', r)
         self.assertIn('binary=BCEWithLogitsLoss', r)
@@ -150,7 +147,6 @@ class TestConceptLoss(unittest.TestCase):
     def test_repr_mixed(self):
         """repr shows all configured loss types."""
         loss = ConceptLoss(
-            self.annotations_mixed,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss(),
         )
@@ -161,16 +157,19 @@ class TestConceptLoss(unittest.TestCase):
     # ------------------------------------------------------------------
     # Continuous concepts (guarded by check_collection)
     # ------------------------------------------------------------------
-    def test_continuous_raises_at_construction(self):
-        """Continuous concepts raise NotImplementedError via check_collection."""
+    def test_continuous_supported(self):
+        """Continuous concepts are supported through the continuous loss term."""
         axis = Annotations(
             labels=('cont1',),
             cardinalities=[1],
             types=['continuous'],
         )
-        ann = axis
-        with self.assertRaises(NotImplementedError):
-            ConceptLoss(ann, continuous=nn.MSELoss())
+        loss_fn = ConceptLoss(continuous=nn.MSELoss())
+        out = ModelOutput()
+        out.loc = AnnotatedTensor(torch.randn(4, 1), axis, axis=-1)
+        out.target = AnnotatedTensor(torch.randn(4, 1), axis.to_concept_space(), axis=-1)
+        loss = loss_fn(out)
+        self.assertEqual(loss.ndim, 0)
 
 
 class TestWeightedConceptLoss(unittest.TestCase):
@@ -182,13 +181,6 @@ class TestWeightedConceptLoss(unittest.TestCase):
         self.annotations = Annotations(
             labels=('concept1', 'concept2', 'concept3', 'task1', 'task2'),
             cardinalities=(1, 1, 1, 1, 1),
-            metadata={
-                'concept1': {'type': 'discrete'},
-                'concept2': {'type': 'discrete'},
-                'concept3': {'type': 'discrete'},
-                'task1': {'type': 'discrete'},
-                'task2': {'type': 'discrete'},
-            }
         )
         self.annotations = self.annotations
         
@@ -198,13 +190,6 @@ class TestWeightedConceptLoss(unittest.TestCase):
         self.annotations_mixed = Annotations(
             labels=('c1', 'c2', 'c3', 't1', 't2'),
             cardinalities=(1, 3, 1, 1, 4),
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                'c3': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-                't2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = self.annotations_mixed
         
@@ -213,19 +198,21 @@ class TestWeightedConceptLoss(unittest.TestCase):
     def test_basic_forward(self):
         """Test basic forward pass with balanced weighting."""
         loss_fn = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.5,
             task_weight=0.5,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
+
         # 5 binary concepts total (3 concepts + 2 tasks)
         endogenous = torch.randn(16, 5)
         targets = torch.randint(0, 2, (16, 5)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
+
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -233,33 +220,37 @@ class TestWeightedConceptLoss(unittest.TestCase):
     def test_concept_only_weight(self):
         """Test with concept_weight=1.0, task_weight=0.0 (only concept loss)."""
         loss_fn = WeightedConceptLoss(
-            self.annotations,
             concept_weight=1.0,
             task_weight=0.0,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
+
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
         self.assertTrue(loss >= 0)
 
     def test_task_only_weight(self):
         """Test with concept_weight=0.0, task_weight=1.0 (only task loss)."""
         loss_fn = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.0,
             task_weight=1.0,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
+
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
         self.assertTrue(loss >= 0)
 
     def test_different_weights(self):
@@ -267,40 +258,41 @@ class TestWeightedConceptLoss(unittest.TestCase):
         torch.manual_seed(42)
         endogenous = torch.randn(20, 5)
         targets = torch.randint(0, 2, (20, 5)).float()
-        
+        out = ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        )
+
         loss_fn_high_concept = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.9,
             task_weight=0.1,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
+
         loss_fn_high_task = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.1,
             task_weight=0.9,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
-        loss_high_concept = loss_fn_high_concept(ModelOutput(logits=endogenous, target=targets))
-        loss_high_task = loss_fn_high_task(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss_high_concept = loss_fn_high_concept(out)
+        loss_high_task = loss_fn_high_task(out)
+
         # Losses should be different
         self.assertNotAlmostEqual(loss_high_concept.item(), loss_high_task.item(), places=3)
 
     def test_mixed_concept_types(self):
         """Test with mixed concept types (binary and categorical)."""
         loss_fn = WeightedConceptLoss(
-            self.annotations_mixed,
             concept_weight=0.6,
             task_weight=0.4,
             task_names=self.task_names_mixed,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss()
         )
-        
+
         # c1 (1) + c2 (3) + c3 (1) + t1 (1) + t2 (4) = 10 endogenous
         endogenous = torch.randn(16, 10)
         targets = torch.cat([
@@ -310,9 +302,12 @@ class TestWeightedConceptLoss(unittest.TestCase):
             torch.randint(0, 2, (16, 1)).float(),  # t1 binary
             torch.randint(0, 4, (16, 1)),  # t2 categorical
         ], dim=1)
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
-        
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations_mixed, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_mixed.to_concept_space(), axis=-1),
+        ))
+
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -320,19 +315,21 @@ class TestWeightedConceptLoss(unittest.TestCase):
     def test_gradient_flow(self):
         """Test that gradients flow properly through WeightedConceptLoss."""
         loss_fn = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.5,
             task_weight=0.5,
             task_names=self.task_names,
             binary=nn.BCEWithLogitsLoss()
         )
-        
+
         endogenous = torch.randn(8, 5, requires_grad=True)
         targets = torch.randint(0, 2, (8, 5)).float()
-        
-        loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
+
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
         loss.backward()
-        
+
         self.assertIsNotNone(endogenous.grad)
         self.assertTrue(torch.any(endogenous.grad != 0))
 
@@ -342,7 +339,6 @@ class TestWeightedConceptLoss(unittest.TestCase):
     def test_repr(self):
         """repr includes class name and fn_collection."""
         loss_fn = WeightedConceptLoss(
-            self.annotations,
             concept_weight=0.5,
             task_weight=0.5,
             task_names=self.task_names,
@@ -356,39 +352,22 @@ class TestWeightedConceptLoss(unittest.TestCase):
         """Test various weight values in valid range [0, 1]."""
         endogenous = torch.randn(10, 5)
         targets = torch.randint(0, 2, (10, 5)).float()
-        
+        out = ModelOutput(
+            logits=AnnotatedTensor(endogenous, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        )
+
         for concept_weight in [0.0, 0.25, 0.5, 0.75, 1.0]:
             task_weight = 1.0 - concept_weight
             loss_fn = WeightedConceptLoss(
-                self.annotations,
                 concept_weight=concept_weight,
                 task_weight=task_weight,
                 task_names=self.task_names,
                 binary=nn.BCEWithLogitsLoss()
             )
-            
-            loss = loss_fn(ModelOutput(logits=endogenous, target=targets))
+
+            loss = loss_fn(out)
             self.assertTrue(loss >= 0, f"Loss should be non-negative for concept_weight={concept_weight}")
-
-
-class TestLossConfiguration(unittest.TestCase):
-    """Test loss configuration and setup."""
-
-    def test_missing_required_loss_config(self):
-        """Test that missing required loss config raises error."""
-        axis = Annotations(
-            labels=('b1', 'b2'),
-            cardinalities=(1, 1),
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-            }
-        )
-        annotations = axis
-        
-        # Missing binary loss config (only provides categorical)
-        with self.assertRaises(ValueError):
-            ConceptLoss(annotations, categorical=nn.CrossEntropyLoss())
 
 
 # ======================================================================
@@ -412,11 +391,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         self.axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         self.annotations = self.axis
 
@@ -433,7 +407,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_basic_construction(self):
         """DepthWeightedConceptLoss initialises without error."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -442,7 +416,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_depth_levels_detected(self):
         """Three distinct depth levels are detected for A->B->C."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -451,7 +425,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_depth_weights(self):
         """Weights follow source_weight * depth_decay ** d."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=2.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -465,12 +439,15 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_forward_returns_scalar(self):
         """Forward returns a scalar loss."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             binary=nn.BCEWithLogitsLoss()
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
 
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -479,19 +456,23 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         """Higher source_weight produces proportionally larger loss."""
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
+        out = ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        )
 
         loss_fn_1 = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=1.0, depth_decay=1.0,
             binary=nn.BCEWithLogitsLoss()
         )
         loss_fn_2 = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=2.0, depth_decay=1.0,
             binary=nn.BCEWithLogitsLoss()
         )
-        loss1 = loss_fn_1(ModelOutput(logits=preds, target=targets))
-        loss2 = loss_fn_2(ModelOutput(logits=preds, target=targets))
+        loss1 = loss_fn_1(out)
+        loss2 = loss_fn_2(out)
         self.assertTrue(torch.allclose(loss2, 2.0 * loss1, atol=1e-5))
 
     def test_depth_decay_down_weights_deeper(self):
@@ -502,16 +483,22 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         targets = torch.randint(0, 2, (16, 3)).float()
 
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=1.0, depth_decay=0.01,  # heavily down-weight deeper
             binary=nn.BCEWithLogitsLoss()
         )
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
 
         # Compare with loss coming only from root (depth 0)
         root_ann = self.axis.subset(['A'])
-        root_loss_fn = ConceptLoss(root_ann, binary=nn.BCEWithLogitsLoss())
-        root_loss = root_loss_fn(ModelOutput(logits=preds[:, 0:1], target=targets[:, 0:1]))
+        root_loss_fn = ConceptLoss(binary=nn.BCEWithLogitsLoss())
+        root_loss = root_loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds[:, 0:1], root_ann, axis=-1),
+            target=AnnotatedTensor(targets[:, 0:1], root_ann.to_concept_space(), axis=-1),
+        ))
         # Loss should be dominated by root; difference from root should be small
         relative_diff = (loss - root_loss).abs() / root_loss
         self.assertTrue(relative_diff < 0.05)
@@ -522,13 +509,16 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_gradient_flow(self):
         """Gradients flow through every depth level."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             binary=nn.BCEWithLogitsLoss()
         )
         preds = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
 
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations.to_concept_space(), axis=-1),
+        ))
         loss.backward()
 
         self.assertIsNotNone(preds.grad)
@@ -547,11 +537,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 3, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': OneHotCategorical},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
         adj = torch.tensor([
@@ -562,7 +547,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
 
         loss_fn = DepthWeightedConceptLoss(
-            ann, graph,
+            graph,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss()
         )
@@ -573,7 +558,10 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             torch.randint(0, 3, (8, 1)).float(),
             torch.randint(0, 2, (8, 1)).float(),
         ], dim=1)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
 
     # ------------------------------------------------------------------
@@ -591,11 +579,6 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
         adj = torch.tensor([
@@ -606,7 +589,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
 
         loss_fn = DepthWeightedConceptLoss(
-            ann, graph,
+            graph,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -617,7 +600,10 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
 
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
 
     # ------------------------------------------------------------------
@@ -635,7 +621,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         graph_small = ConceptGraph(adj_small, node_names=['A', 'B'])
 
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, graph_small,
+            graph_small,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -649,7 +635,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_repr(self):
         """repr includes class name and depth/weight information."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -665,7 +651,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
     def test_submodules_visible(self):
         """Sub-ConceptLoss modules are visible as named_modules."""
         loss_fn = DepthWeightedConceptLoss(
-            self.annotations, self.graph,
+            self.graph,
             binary=nn.BCEWithLogitsLoss()
         )
         names = [name for name, _ in loss_fn.named_modules()]
@@ -688,15 +674,11 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-            }
         )
         ann = axis
 
         loss_fn = DepthWeightedConceptLoss(
-            ann, graph_xy,
+            graph_xy,
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
@@ -706,7 +688,10 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         # Forward should work
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
 
 
@@ -761,23 +746,12 @@ class TestConceptLossComposite(unittest.TestCase):
         axis_binary = Annotations(
             labels=('b1', 'b2', 'b3'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'b1': {'type': 'discrete'},
-                'b2': {'type': 'discrete'},
-                'b3': {'type': 'discrete'},
-            }
         )
         self.annotations_binary = axis_binary
 
         axis_mixed = Annotations(
             labels=('binary1', 'binary2', 'cat1', 'cat2'),
             cardinalities=[1, 1, 3, 4],
-            metadata={
-                'binary1': {'type': 'discrete'},
-                'binary2': {'type': 'discrete'},
-                'cat1': {'type': 'discrete'},
-                'cat2': {'type': 'discrete'},
-            }
         )
         self.annotations_mixed = axis_mixed
 
@@ -786,14 +760,18 @@ class TestConceptLossComposite(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_binary_list_single_term(self):
         """A single-element list behaves like a single module."""
-        loss_single = ConceptLoss(self.annotations_binary, binary=nn.BCEWithLogitsLoss())
-        loss_list = ConceptLoss(self.annotations_binary, binary=[nn.BCEWithLogitsLoss()])
+        loss_single = ConceptLoss(binary=nn.BCEWithLogitsLoss())
+        loss_list = ConceptLoss(binary=[nn.BCEWithLogitsLoss()])
 
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
+        out = ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        )
 
-        l1 = loss_single(ModelOutput(logits=preds, target=targets))
-        l2 = loss_list(ModelOutput(logits=preds, target=targets))
+        l1 = loss_single(out)
+        l2 = loss_list(out)
         self.assertTrue(torch.allclose(l1, l2))
 
     def test_binary_list_with_regularizer(self):
@@ -802,7 +780,6 @@ class TestConceptLossComposite(unittest.TestCase):
         reg = L1LogitRegularizer(scale=0.01)
 
         loss_fn = ConceptLoss(
-            self.annotations_binary,
             binary=[bce, reg],
             binary_weights=[1.0, 0.5],
         )
@@ -812,7 +789,10 @@ class TestConceptLossComposite(unittest.TestCase):
 
         # Compute expected
         expected = 1.0 * bce(preds, targets) + 0.5 * reg(preds)
-        actual = loss_fn(ModelOutput(logits=preds, target=targets))
+        actual = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        ))
         self.assertTrue(torch.allclose(expected, actual))
 
     def test_binary_list_default_weights(self):
@@ -821,7 +801,6 @@ class TestConceptLossComposite(unittest.TestCase):
         reg = L1LogitRegularizer(scale=0.01)
 
         loss_fn = ConceptLoss(
-            self.annotations_binary,
             binary=[bce, reg],
         )
 
@@ -829,14 +808,16 @@ class TestConceptLossComposite(unittest.TestCase):
         targets = torch.randint(0, 2, (8, 3)).float()
 
         expected = bce(preds, targets) + reg(preds)
-        actual = loss_fn(ModelOutput(logits=preds, target=targets))
+        actual = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        ))
         self.assertTrue(torch.allclose(expected, actual))
 
     def test_weight_count_mismatch_raises(self):
         """Mismatched weight/term count should raise ValueError."""
         with self.assertRaises(ValueError):
             ConceptLoss(
-                self.annotations_binary,
                 binary=[nn.BCEWithLogitsLoss()],
                 binary_weights=[1.0, 0.5],
             )
@@ -844,7 +825,6 @@ class TestConceptLossComposite(unittest.TestCase):
     def test_mixed_composite_binary_only(self):
         """Composite on binary with single categorical in mixed annotations."""
         loss_fn = ConceptLoss(
-            self.annotations_mixed,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
             binary_weights=[1.0, 0.5],
             categorical=nn.CrossEntropyLoss(),
@@ -858,7 +838,10 @@ class TestConceptLossComposite(unittest.TestCase):
             torch.randint(0, 4, (16, 1)),
         ], dim=1)
 
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations_mixed, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_mixed.to_concept_space(), axis=-1),
+        ))
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
@@ -869,7 +852,6 @@ class TestConceptLossComposite(unittest.TestCase):
     def test_gradient_flow_composite(self):
         """Gradients flow through all terms in a composite list."""
         loss_fn = ConceptLoss(
-            self.annotations_binary,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
             binary_weights=[1.0, 0.5],
         )
@@ -877,7 +859,10 @@ class TestConceptLossComposite(unittest.TestCase):
         preds = torch.randn(8, 3, requires_grad=True)
         targets = torch.randint(0, 2, (8, 3)).float()
 
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.annotations_binary, axis=-1),
+            target=AnnotatedTensor(targets, self.annotations_binary.to_concept_space(), axis=-1),
+        ))
         loss.backward()
 
         self.assertIsNotNone(preds.grad)
@@ -889,7 +874,6 @@ class TestConceptLossComposite(unittest.TestCase):
     def test_modules_registered(self):
         """Loss terms in lists are visible as sub-modules."""
         loss_fn = ConceptLoss(
-            self.annotations_binary,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
         )
         module_names = [name for name, _ in loss_fn.named_modules()]
@@ -900,14 +884,13 @@ class TestConceptLossComposite(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_repr_single(self):
         """Single module repr shows type=ClassName."""
-        loss = ConceptLoss(self.annotations_binary, binary=nn.BCEWithLogitsLoss())
+        loss = ConceptLoss(binary=nn.BCEWithLogitsLoss())
         r = repr(loss)
         self.assertIn('binary=BCEWithLogitsLoss', r)
 
     def test_repr_composite(self):
         """Composite repr shows weighted list."""
         loss = ConceptLoss(
-            self.annotations_binary,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
             binary_weights=[1.0, 0.5],
         )
@@ -1014,47 +997,59 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=('b1', 'b2'),
             cardinalities=[1, 1],
-            metadata={'b1': {'type': 'discrete'}, 'b2': {'type': 'discrete'}},
         )
         self.ann = axis
 
     def test_extra_kwarg_reaches_term(self):
-        loss_fn = ConceptLoss(self.ann, binary=_EmbeddingAwareLoss())
+        loss_fn = ConceptLoss(binary=_EmbeddingAwareLoss())
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+            extra={'embeddings': emb},
+        ))
         self.assertEqual(loss.shape, ())
 
     def test_extra_kwarg_ignored_when_not_in_sig(self):
-        loss_fn = ConceptLoss(self.ann, binary=nn.BCEWithLogitsLoss())
+        loss_fn = ConceptLoss(binary=nn.BCEWithLogitsLoss())
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         # Should not raise even though BCEWithLogitsLoss doesn't take 'embeddings'
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': torch.randn(4, 8)}))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+            extra={'embeddings': torch.randn(4, 8)},
+        ))
         self.assertEqual(loss.shape, ())
 
     def test_var_kwargs_term_receives_everything(self):
-        loss_fn = ConceptLoss(self.ann, binary=_VarKwargsLoss())
+        loss_fn = ConceptLoss(binary=_VarKwargsLoss())
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'extra_data': torch.ones(3)}))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+            extra={'extra_data': torch.ones(3)},
+        ))
         self.assertEqual(loss.shape, ())
 
     def test_composite_mixed_signatures(self):
         """Composite list: one term uses embeddings, the other doesn't."""
         loss_fn = ConceptLoss(
-            self.ann,
             binary=[nn.BCEWithLogitsLoss(), _EmbeddingAwareLoss()],
             binary_weights=[1.0, 0.5],
         )
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
+        logits = AnnotatedTensor(preds, self.ann, axis=-1)
+        target = AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1)
+        loss = loss_fn(ModelOutput(logits=logits, target=target, extra={'embeddings': emb}))
         self.assertEqual(loss.shape, ())
         # Verify embeddings affect the loss
-        loss_zero = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': torch.zeros(4, 8)}))
+        loss_zero = loss_fn(ModelOutput(logits=logits, target=target, extra={'embeddings': torch.zeros(4, 8)}))
         self.assertNotEqual(loss.item(), loss_zero.item())
 
 
@@ -1065,17 +1060,11 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-            },
         )
         self.ann = axis
 
     def test_extra_kwargs_forwarded(self):
         loss_fn = WeightedConceptLoss(
-            self.ann,
             concept_weight=0.5, task_weight=0.5,
             task_names=['t1'],
             binary=_EmbeddingAwareLoss(),
@@ -1083,7 +1072,11 @@ class TestWeightedConceptLossKwargsForwarding(unittest.TestCase):
         preds = torch.randn(4, 3)
         targets = torch.randint(0, 2, (4, 3)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+            extra={'embeddings': emb},
+        ))
         self.assertEqual(loss.shape, ())
 
 
@@ -1096,10 +1089,6 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B'],
             cardinalities=[1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-            },
         )
         self.ann = axis
         adj = torch.tensor([[0., 1.], [0., 0.]])
@@ -1107,13 +1096,17 @@ class TestDepthWeightedKwargsForwarding(unittest.TestCase):
 
     def test_extra_kwargs_forwarded(self):
         loss_fn = DepthWeightedConceptLoss(
-            self.ann, self.graph,
+            self.graph,
             binary=_EmbeddingAwareLoss(),
         )
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
         emb = torch.randn(4, 8)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets, extra={'embeddings': emb}))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+            extra={'embeddings': emb},
+        ))
         self.assertEqual(loss.shape, ())
 
 
@@ -1128,13 +1121,11 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
         axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
         self.ann = axis
 
     def test_categorical_composite_forward(self):
         loss_fn = ConceptLoss(
-            self.ann,
             categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
             categorical_weights=[1.0, 0.3],
         )
@@ -1143,13 +1134,15 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
             torch.randint(0, 3, (8, 1)),
             torch.randint(0, 5, (8, 1)),
         ], dim=1)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
     def test_categorical_composite_gradient(self):
         loss_fn = ConceptLoss(
-            self.ann,
             categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
         )
         preds = torch.randn(8, 8, requires_grad=True)
@@ -1157,7 +1150,10 @@ class TestConceptLossCategoricalComposite(unittest.TestCase):
             torch.randint(0, 3, (8, 1)),
             torch.randint(0, 5, (8, 1)),
         ], dim=1)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, self.ann, axis=-1),
+            target=AnnotatedTensor(targets, self.ann.to_concept_space(), axis=-1),
+        ))
         loss.backward()
         self.assertIsNotNone(preds.grad)
 
@@ -1169,12 +1165,10 @@ class TestMixedCompositeBothTypes(unittest.TestCase):
         axis = Annotations(
             labels=('b1', 'cat1'),
             cardinalities=[1, 4],
-            metadata={'b1': {'type': 'discrete'}, 'cat1': {'type': 'discrete'}},
         )
         ann = axis
 
         loss_fn = ConceptLoss(
-            ann,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
             binary_weights=[1.0, 0.5],
             categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer(scale=0.01)],
@@ -1185,7 +1179,10 @@ class TestMixedCompositeBothTypes(unittest.TestCase):
             torch.randint(0, 2, (8, 1)).float(),
             torch.randint(0, 4, (8, 1)),
         ], dim=1)
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1201,16 +1198,10 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
         axis = Annotations(
             labels=('c1', 'c2', 't1'),
             cardinalities=[1, 1, 1],
-            metadata={
-                'c1': {'type': 'discrete'},
-                'c2': {'type': 'discrete'},
-                't1': {'type': 'discrete'},
-            },
         )
         ann = axis
 
         loss_fn = WeightedConceptLoss(
-            ann,
             concept_weight=0.7,
             task_weight=0.3,
             task_names=['t1'],
@@ -1219,7 +1210,10 @@ class TestWeightedConceptLossComposite(unittest.TestCase):
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1233,24 +1227,22 @@ class TestDepthWeightedConceptLossComposite(unittest.TestCase):
         axis = Annotations(
             labels=['A', 'B', 'C'],
             cardinalities=[1, 1, 1],
-            metadata={
-                'A': {'type': 'discrete', 'distribution': Bernoulli},
-                'B': {'type': 'discrete', 'distribution': Bernoulli},
-                'C': {'type': 'discrete', 'distribution': Bernoulli},
-            },
         )
         ann = axis
         adj = torch.tensor([[0., 1., 0.], [0., 0., 1.], [0., 0., 0.]])
         graph = ConceptGraph(adj, node_names=['A', 'B', 'C'])
 
         loss_fn = DepthWeightedConceptLoss(
-            ann, graph,
+            graph,
             binary=[nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
             binary_weights=[1.0, 0.5],
         )
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
-        loss = loss_fn(ModelOutput(logits=preds, target=targets))
+        loss = loss_fn(ModelOutput(
+            logits=AnnotatedTensor(preds, ann, axis=-1),
+            target=AnnotatedTensor(targets, ann.to_concept_space(), axis=-1),
+        ))
         self.assertEqual(loss.shape, ())
         self.assertTrue(loss >= 0)
 
@@ -1267,12 +1259,11 @@ class TestPrepareCategorical(unittest.TestCase):
         axis = Annotations(
             labels=('cat1', 'cat2'),
             cardinalities=(3, 5),
-            metadata={'cat1': {'type': 'discrete'}, 'cat2': {'type': 'discrete'}},
         )
         ann = axis
-        loss_fn = ConceptLoss(ann, categorical=nn.CrossEntropyLoss())
+        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
 
-        preds = torch.randn(4, 8)  # 3 + 5
+        preds = AnnotatedTensor(torch.randn(4, 8), axis, axis=-1)  # 3 + 5
         targets = torch.cat([
             torch.randint(0, 3, (4, 1)),
             torch.randint(0, 5, (4, 1)),
@@ -1294,12 +1285,11 @@ class TestPrepareCategorical(unittest.TestCase):
         axis = Annotations(
             labels=('cat1',),
             cardinalities=(4,),
-            metadata={'cat1': {'type': 'discrete'}},
         )
         ann = axis
-        loss_fn = ConceptLoss(ann, categorical=nn.CrossEntropyLoss())
+        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
 
-        preds = torch.randn(6, 4)
+        preds = AnnotatedTensor(torch.randn(6, 4), axis, axis=-1)
         targets = torch.randint(0, 4, (6, 1))
 
         cat_logits, cat_targets, cat_mask = loss_fn._prepare_categorical(preds, targets)

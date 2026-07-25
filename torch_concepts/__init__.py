@@ -11,9 +11,9 @@ from .annotations import Annotations
 from .tensor import AnnotatedTensor
 from .nn.modules.utils import GroupConfig
 from .concept_graph import ConceptGraph
-from .nn.modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
+from .nn.modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
-from .backbone import Backbone
+from .backbone import Backbone, ImageBackbone, TextBackbone
 from . import nn, distributions
 
 def __getattr__(name: str) -> Any:
@@ -35,6 +35,8 @@ __all__ = [
 
     # Feature extraction
     "Backbone",
+    "ImageBackbone",
+    "TextBackbone",
 
     # Variables
     "Variable",

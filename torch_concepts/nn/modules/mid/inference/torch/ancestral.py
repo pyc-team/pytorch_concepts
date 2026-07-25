@@ -1,10 +1,14 @@
 """AncestralSamplingInference — forward inference that samples ancestrally."""
 from __future__ import annotations
 
-from typing import Callable, Union
+from typing import Callable, Dict, Union
 
-from ...models.bayesian_network import BayesianNetwork
+import torch
+
+from ...graph.bayesian_network import BayesianNetwork
+from ...variable import Variable
 from .forward import ForwardInference
+from .utils import sample_from
 
 
 class AncestralSamplingInference(ForwardInference):
@@ -38,6 +42,7 @@ class AncestralSamplingInference(ForwardInference):
     """
 
     name = "AncestralSamplingInference"
+    is_stochastic = True
 
     def __init__(
         self,
@@ -50,10 +55,18 @@ class AncestralSamplingInference(ForwardInference):
     ):
         super().__init__(
             pgm,
-            mode="ancestral",
             p_int=p_int,
             initial_temperature=initial_temperature,
             annealing=annealing,
             annealing_rate=annealing_rate,
             parallelize_levels=parallelize_levels,
         )
+
+    def _resolve(
+        self,
+        variable: Variable,
+        params: Dict[str, torch.Tensor],
+        temperature: torch.Tensor,
+    ) -> torch.Tensor:
+        """A reparameterised draw from the variable's relaxed distribution."""
+        return sample_from(variable, params, temperature)

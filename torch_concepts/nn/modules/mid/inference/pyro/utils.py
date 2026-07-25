@@ -108,11 +108,14 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
     """
     base = _peel(d)
 
-    # Relaxed discrete (STE): always extract probs; temperature too.
-    # The internal representation is always logits (LogitRelaxedBernoulli),
-    # but .probs is available as a property (sigmoid of stored logits).
+    # Relaxed discrete (STE): extract probs. The internal representation is
+    # always logits (LogitRelaxedBernoulli), but .probs is available as a
+    # property (sigmoid of stored logits). The relaxation ``temperature`` is
+    # deliberately not reported: it is a scalar knob of the engine (readable as
+    # ``engine.temperature``), not a per-column distribution parameter, so it has
+    # no place on the annotated event axis of the output.
     if isinstance(base, _relaxed_discrete_families()):
-        return {"probs": base.probs, "temperature": base.temperature}
+        return {"probs": base.probs}
 
     # Plain discrete: probs or logits, detected via _param.
     if isinstance(base, _DISCRETE_FAMILIES):
