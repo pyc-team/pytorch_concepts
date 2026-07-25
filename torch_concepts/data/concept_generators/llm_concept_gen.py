@@ -234,6 +234,7 @@ def default_concept_postprocessor(concepts: list[Any]) -> list[ConceptSpec]:
 
 
 def concept_specs_to_annotation(concepts: list[Any]) -> Annotations:
+    """Convert normalized LLM concept specifications to an annotation axis."""
     specs = default_concept_postprocessor(concepts)
     labels = [spec["name"] for spec in specs]
     states = [
@@ -241,15 +242,12 @@ def concept_specs_to_annotation(concepts: list[Any]) -> Annotations:
         for spec in specs
     ]
     cardinalities = [len(state_names) for state_names in states]
-    metadata = {
-        label: {"type": "discrete"}
-        for label in labels
-    }
+    types = [spec["type"] for spec in specs]
     return Annotations(
         labels=labels,
         states=states,
         cardinalities=cardinalities,
-        metadata=metadata,
+        types=types,
     )
 
 

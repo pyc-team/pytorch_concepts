@@ -318,11 +318,7 @@ class ConceptSupervisionPipeline:
         states: list[list[str]] = []
         cardinalities: list[int] = []
         types: list[str] = []
-        metadata: dict[str, dict[str, Any]] | None = None
         concept_space = False
-
-        if any(axis.metadata is not None for axis in concepts.values()):
-            metadata = {}
 
         for axis in concepts.values():
             labels.extend(axis.labels)
@@ -330,16 +326,12 @@ class ConceptSupervisionPipeline:
             cardinalities.extend(axis.cardinalities)
             types.extend(axis.types)
             concept_space = concept_space or axis.concept_space
-            if metadata is not None and axis.metadata is not None:
-                for label in axis.labels:
-                    metadata.setdefault(label, dict(axis.metadata.get(label, {})))
 
         return Annotations(
             labels=labels,
             states=states,
             cardinalities=cardinalities,
             types=types,
-            metadata=metadata,
             concept_space=concept_space,
         )
 

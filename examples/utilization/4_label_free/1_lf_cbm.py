@@ -461,7 +461,7 @@ def make_axis(names):
         labels=list(names),
         states=[["0"] for _ in names],
         cardinalities=[1] * len(names),
-        metadata={name: {"type": "discrete"} for name in names},
+        types=["binary"] * len(names),
     )
 
 

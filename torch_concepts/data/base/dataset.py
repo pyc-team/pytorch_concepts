@@ -88,6 +88,7 @@ class ConceptDataset(Dataset):
         concept_names_subset: Optional[List[str]] = None,
         reorder_by_type: bool = True,
         precision: Union[int, str] = 32,
+        name: Optional[str] = None,
         # TODO: implement handling of exogenous inputs
     ):
         Dataset.__init__(self)
@@ -679,9 +680,8 @@ class ConceptDataset(Dataset):
         """Set concept annotations for the dataset.
         
         Args:
-            concepts: Tensor of shape (n_samples, n_concepts) containing concept values
-            concept_names: List of strings naming each concept. If None, will use
-                         numbered concepts like "concept_0", "concept_1", etc.
+            concepts: Tensor of shape ``(n_samples, n_concepts)`` containing
+                concept values.
         """
         # Validate shape
         # concepts' length must match dataset's length
@@ -693,14 +693,22 @@ class ConceptDataset(Dataset):
             raise TypeError(f"Concepts must be a np.ndarray, pd.DataFrame, "
                 f"or Tensor, got {type(concepts).__name__}.")
 
-        #########################################################################
-        ###### modify this to change convention for how to store concepts  ######
-        #########################################################################
-        # convert pd.Dataframe to tensor
-        values = parse_tensor(concepts, 'concepts', self.precision)
-        columns = self._all_concept_annotation.get_slice(self._annotations.labels)
-        values = values[:, columns]
-        #########################################################################
+        selected_labels = list(self._annotations.labels)
+        if isinstance(concepts, pd.DataFrame) and all(
+            label in concepts.columns for label in selected_labels
+        ):
+            values = parse_tensor(
+                concepts.loc[:, selected_labels],
+                'concepts',
+                self.precision,
+            )
+        else:
+            values = parse_tensor(concepts, 'concepts', self.precision)
+            columns = [
+                self.concept_names_all.index(label)
+                for label in selected_labels
+            ]
+            values = values[:, columns]
 
         # Wrap the full concept tensor with a *concept-space* annotation (one
         # integer-coded column per concept, so categorical labels are class
@@ -714,11 +722,11 @@ class ConceptDataset(Dataset):
         # default ``axis=-1`` the row would keep its annotation (its last axis
         # is still the concept axis) and collation would fail on a list of
         # AnnotatedTensors.
-        concept_ann = self.annotations.to_concept_space()
-        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
+        concept_ann = self._annotations.to_concept_space()
+        if values.dim() >= 2 and values.shape[1] == concept_ann.size:
+            self.concepts = AnnotatedTensor(values, concept_ann, axis=1)
         else:
-            self.concepts = concepts
+            self.concepts = values
         self._resolve_ground_truth()
 
     def add_exogenous(self,
