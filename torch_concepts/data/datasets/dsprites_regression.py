@@ -220,19 +220,12 @@ class DSpritesRegressionDataset(ConceptDataset):
         return inputs, concepts, annotations, graph
 
     def __getitem__(self, item):
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            image = torch.tensor(self.input_data[item], dtype=torch.float32)
-            # replicated to 3 channels: pretrained image backbones expect RGB
-            x = image.unsqueeze(0).expand(3, -1, -1)  # (3, 64, 64)
-
-        c = self.concepts[item]
-
-        return {
-            'inputs': {'x': x},
-            'concepts': {'c': c},
-        }
+            return sample
+        image = torch.tensor(self.input_data[item], dtype=torch.float32)
+        sample['inputs']['x'] = image.unsqueeze(0)  # (1, 64, 64)
+        return sample
 
     @property
     def n_samples(self) -> int:

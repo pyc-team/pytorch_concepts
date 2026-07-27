@@ -29,6 +29,7 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
+from .concept_pipeline import ConceptSupervisionPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,20 @@ class ConceptDataModule(LightningDataModule):
             cache_dir=cache_dir,
             force=force,
         )
+
+    def generate_concepts(
+        self,
+        concept_pipeline: ConceptSupervisionPipeline,
+        **kwargs,
+    ):
+        """Generate and annotate concepts on the underlying dataset.
+
+        This is an explicit preprocessing step, parallel to
+        :meth:`precompute_embeddings`. All keyword arguments are forwarded to
+        :meth:`ConceptDataset.generate_concepts`, including named datasets to
+        annotate and the generated source selected as ``concepts['c']``.
+        """
+        return self.dataset.generate_concepts(concept_pipeline, **kwargs)
 
     def setup(self, stage: StageOptions = None) -> None:
         """Prepare the data splits for training, validation, or testing.

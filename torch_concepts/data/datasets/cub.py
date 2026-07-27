@@ -22,9 +22,10 @@ from typing import List, Mapping, Optional
 import zipfile
 import shutil
 
-from torch_concepts import Annotations
+from torch_concepts import AnnotatedTensor, Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
+from torch_concepts.data.utils import parse_tensor
 
 logger = logging.getLogger(__name__)
 
@@ -729,6 +730,9 @@ class CUBDataset(ConceptDataset):
         Subset of concept names to retain.  ``None`` keeps all 113.
     label_descriptions : dict, optional
         Mapping from concept name to human-readable description.
+    split : {'train', 'val', 'test'}, optional
+        Native CUB partition to keep. ``None`` keeps all partitions and
+        preserves datamodule/native-splitter behavior.
     """
 
     def __init__(
@@ -737,14 +741,23 @@ class CUBDataset(ConceptDataset):
         image_size: int = 224,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[Mapping] = None,
+        split: Optional[str] = None,
     ):
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'CUB200')
         self.root = root
         self.image_size = image_size
         self.label_descriptions = label_descriptions
+        self.split = split
+        self.task_names = list(CLASS_NAMES)
 
         filenames, concepts, annotations, graph = self.load()
+        annotations = annotations.to_concept_space()
+        if split is not None:
+            indices = self._split_indices(split)
+            filenames = [filenames[index] for index in indices]
+            concepts = concepts[indices]
+        self._class_labels = concepts[:, -1].to(torch.long).tolist()
 
         super().__init__(
             input_data=filenames,
@@ -754,6 +767,7 @@ class CUBDataset(ConceptDataset):
             concept_names_subset=concept_subset,
             name='CUBDataset',
         )
+        self.data = self._make_data()
 
     # ------------------------------------------------------------------
     # ConceptDataset interface
@@ -919,17 +933,66 @@ class CUBDataset(ConceptDataset):
     def load(self):
         return self.load_raw()
 
-    def __getitem__(self, item: int) -> dict:
-        if self.embs_precomputed:
-            x = self.input_data[item]
+    def _split_indices(self, split: str) -> List[int]:
+        """Return row indices for a native split from the processed mapping."""
+        split_name = split.lower()
+        valid_splits = {"train", "val", "test"}
+        if split_name not in valid_splits:
+            raise ValueError(
+                f"split must be one of {sorted(valid_splits)} or None; got {split!r}."
+            )
+
+        split_series = pd.read_hdf(self.processed_paths[3], key='split_mapping')
+        split_lower = split_series.str.lower()
+        return split_series[split_lower.str.startswith(split_name)].index.tolist()
+
+    def _make_data(self) -> List[dict]:
+        """Build lightweight metadata records kept for LF-CBM-style examples."""
+        return [
+            {
+                "img_path": img_path,
+                "class_label": int(self._class_labels[index]),
+            }
+            for index, img_path in enumerate(self.input_data)
+        ]
+
+    def set_concepts(self, concepts):
+        """Set CUB concept-space annotations.
+
+        CUB stores one column per concept, including the class as an integer
+        index, so the annotation must be treated as concept-space.
+        """
+        if concepts.shape[0] != self.n_samples:
+            raise RuntimeError(
+                f"Concepts has {concepts.shape[0]} samples but "
+                f"input_data has {self.n_samples}."
+            )
+        if not isinstance(concepts, (pd.DataFrame, np.ndarray, torch.Tensor)):
+            raise TypeError(
+                "Concepts must be a np.ndarray, pd.DataFrame, or Tensor, "
+                f"got {type(concepts).__name__}."
+            )
+
+        values = parse_tensor(concepts, 'concepts', self.precision)
+        columns = self._all_concept_annotation.get_slice(self._annotations.labels)
+        values = values[:, columns]
+        concept_ann = self._annotations.to_concept_space()
+        if values.dim() >= 2 and values.shape[1] == concept_ann.size:
+            self.concepts = AnnotatedTensor(values, concept_ann)
         else:
-            img_path = self.input_data[item]
-            tv = _import_torchvision()
-            x = Image.open(img_path).convert('RGB')
-            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
-            x = tv.transforms.ToTensor()(x)
-        c = self.concepts[item]
-        return {'inputs': {'x': x}, 'concepts': {'c': c}}
+            self.concepts = values
+        self._resolve_ground_truth()
+
+    def __getitem__(self, item: int) -> dict:
+        sample = super().__getitem__(item)
+        if self.embs_precomputed:
+            return sample
+        img_path = self.input_data[item]
+        tv = _import_torchvision()
+        x = Image.open(img_path).convert('RGB')
+        x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+        sample['inputs']['x'] = tv.transforms.ToTensor()(x)
+        return sample
 
     # ------------------------------------------------------------------
     # Properties — override base class which assumes input_data is a Tensor
@@ -946,4 +1009,3 @@ class CUBDataset(ConceptDataset):
     @property
     def shape(self) -> tuple:
         return (self.n_samples, *self.n_features)
-
