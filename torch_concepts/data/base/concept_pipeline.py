@@ -223,6 +223,33 @@ class ConceptSupervisionPipeline:
         dataset: Dataset,
         kwargs: dict[str, Any],
     ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
+        """Annotate one dataset using the configured routing strategy.
+
+        The method constructs each route selected by ``self.routing``, invokes
+        the corresponding annotator, runs the annotation post-processing
+        stages, and records each tensor together with its concept axis. With
+        merged routing, the optional aggregator is invoked after all annotator
+        routes have been processed.
+
+        Parameters
+        ----------
+        concepts : dict[str, Annotations]
+            Generated concept axes keyed by their unique generator names.
+        generator_names : list[str]
+            Unique names in the same order as ``self.generators``.
+        annotator_names : list[str]
+            Unique names in the same order as ``self.annotators``.
+        dataset : Dataset
+            Dataset whose samples are passed to annotators.
+        kwargs : dict[str, Any]
+            Additional keyword arguments forwarded to annotators.
+
+        Returns
+        -------
+        values, annotations : tuple[dict[str, Tensor], dict[str, Annotations]]
+            Processed annotation tensors and their corresponding concept axes,
+            keyed by route name.
+        """
         values: dict[str, Tensor] = {}
         annotations: dict[str, Annotations] = {}
         if self.routing == "merged":
@@ -313,7 +340,22 @@ class ConceptSupervisionPipeline:
 
     @staticmethod
     def _merge_concept_axes(concepts: dict[str, Annotations]) -> Annotations:
-        """Concatenate generator concept axes in generator order."""
+        """Concatenate generated concept axes into one annotation definition.
+
+        Labels, state names, cardinalities, and types retain dictionary
+        insertion order. The returned axis is marked as a concept space when
+        at least one input axis is a concept space.
+
+        Parameters
+        ----------
+        concepts : dict[str, Annotations]
+            Concept axes keyed in generator order.
+
+        Returns
+        -------
+        Annotations
+            A new annotation definition containing every input concept axis.
+        """
         labels: list[str] = []
         states: list[list[str]] = []
         cardinalities: list[int] = []
@@ -336,6 +378,19 @@ class ConceptSupervisionPipeline:
         )
 
     def _filter_concepts(self, concepts: Annotations) -> Annotations:
+        """Apply the configured generator filter to a concept axis.
+
+        Parameters
+        ----------
+        concepts : Annotations
+            Generated concept axis to filter.
+
+        Returns
+        -------
+        Annotations
+            The filtered concept axis, or the original object when generator
+            filtering is disabled.
+        """
         if self.generator_filter is None:
             return concepts
         return self.generator_filter.filter_annotations(concepts)
@@ -347,6 +402,38 @@ class ConceptSupervisionPipeline:
         dataset: Dataset,
         route_name: str,
     ) -> Tensor:
+        """Validate and post-process one annotator output tensor.
+
+        The raw tensor is first checked against the dataset and concept axis.
+        Enabled stages then run in this order: raw annotation filter,
+        calibrator, and calibrated annotation filter. Every stage receives the
+        current tensor and the unchanged concept metadata, and must return a
+        tensor with the same shape.
+
+        Parameters
+        ----------
+        values : Tensor
+            Raw annotation scores with shape ``(samples, concept_outputs)``.
+        concepts : Annotations
+            Concept axis describing the tensor's second dimension.
+        dataset : Dataset
+            Annotated dataset, used to validate the sample dimension.
+        route_name : str
+            Route identifier included in validation error messages.
+
+        Returns
+        -------
+        Tensor
+            Scores after all configured post-processing stages.
+
+        Raises
+        ------
+        TypeError
+            If the raw values or a stage result is not a tensor.
+        ValueError
+            If the raw values are incompatible with the dataset or concepts,
+            or a processing stage changes the tensor shape.
+        """
         self._validate_value(route_name, values, concepts, dataset)
         stages = (
             (
@@ -384,6 +471,34 @@ class ConceptSupervisionPipeline:
         default_dataset: Dataset,
         annotation_datasets: Mapping[str, Dataset] | None,
     ) -> tuple[dict[str, Dataset], bool]:
+        """Resolve and validate the datasets that should be annotated.
+
+        When no explicit mapping is supplied, the generation dataset is
+        returned under an empty name and output prefixing is disabled.
+        Otherwise, mapping names and dataset values are validated and retained
+        in their original order.
+
+        Parameters
+        ----------
+        default_dataset : Dataset
+            Generation dataset used as the annotation fallback.
+        annotation_datasets : mapping of str to Dataset, optional
+            Explicitly named datasets to annotate.
+
+        Returns
+        -------
+        datasets, prefix_outputs : tuple[dict[str, Dataset], bool]
+            The resolved dataset mapping and whether its names should prefix
+            output keys.
+
+        Raises
+        ------
+        TypeError
+            If the supplied value is not a mapping or a mapping value is not a
+            dataset.
+        ValueError
+            If the mapping is empty or contains an empty or non-string name.
+        """
         if annotation_datasets is None:
             return {"": default_dataset}, False
         if not isinstance(annotation_datasets, Mapping):
@@ -408,6 +523,31 @@ class ConceptSupervisionPipeline:
 
     @staticmethod
     def _as_list(value: Any, expected_type: type, name: str) -> list[Any]:
+        """Normalize one component or a component sequence to a list.
+
+        Strings and bytes are rejected even though they are sequences. Every
+        returned item is guaranteed to be an instance of ``expected_type``.
+
+        Parameters
+        ----------
+        value : Any
+            Single component or sequence of components to normalize.
+        expected_type : type
+            Required base type for every component.
+        name : str
+            Component category used in error messages.
+
+        Returns
+        -------
+        list[Any]
+            Components in their supplied order.
+
+        Raises
+        ------
+        TypeError
+            If ``value`` is neither a matching component nor a valid sequence,
+            or if any sequence item has the wrong type.
+        """
         if isinstance(value, expected_type):
             return [value]
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
@@ -423,6 +563,22 @@ class ConceptSupervisionPipeline:
 
     @staticmethod
     def _component_names(components: Sequence[Any]) -> list[str]:
+        """Create deterministic, unique names for configured components.
+
+        A component's non-empty ``name`` attribute is preferred; otherwise its
+        class name is used. Repeated base names receive ``_1``, ``_2``, and so
+        on in configuration order.
+
+        Parameters
+        ----------
+        components : sequence
+            Components for which to derive route-safe names.
+
+        Returns
+        -------
+        list[str]
+            Unique names in the same order as ``components``.
+        """
         names: list[str] = []
         used: dict[str, int] = {}
         for component in components:
@@ -434,6 +590,23 @@ class ConceptSupervisionPipeline:
 
     @staticmethod
     def _unique_name(name: str, values: dict[str, Tensor]) -> str:
+        """Return an output name that is absent from an existing result map.
+
+        The requested name is returned unchanged when available. On collision,
+        the first free numeric suffix (``_1``, ``_2``, and so on) is appended.
+
+        Parameters
+        ----------
+        name : str
+            Preferred output name.
+        values : dict[str, Tensor]
+            Existing results whose keys are already occupied.
+
+        Returns
+        -------
+        str
+            An unused output name.
+        """
         if name not in values:
             return name
         index = 1
@@ -452,6 +625,36 @@ class ConceptSupervisionPipeline:
         dataset: Dataset,
         unique: bool = True,
     ) -> None:
+        """Validate and insert a tensor and its annotation metadata together.
+
+        Keeping both mappings in one helper ensures their keys remain aligned.
+        By default, collisions are resolved with :meth:`_unique_name`; callers
+        may disable this when they have already chosen a unique name.
+
+        Parameters
+        ----------
+        values : dict[str, Tensor]
+            Result mapping updated with ``concept_values``.
+        annotations : dict[str, Annotations]
+            Metadata mapping updated with ``annotation`` under the same key.
+        requested_name : str
+            Preferred key for both output mappings.
+        concept_values : Tensor
+            Sample-level concept tensor to validate and store.
+        annotation : Annotations
+            Concept axis describing ``concept_values``.
+        dataset : Dataset
+            Dataset used to validate the tensor's sample dimension.
+        unique : bool, default=True
+            Whether to resolve a name collision automatically.
+
+        Raises
+        ------
+        TypeError
+            If ``concept_values`` is not a tensor.
+        ValueError
+            If its dimensions do not match the dataset and annotation.
+        """
         name = (
             cls._unique_name(requested_name, values)
             if unique else requested_name
@@ -467,6 +670,31 @@ class ConceptSupervisionPipeline:
         annotation: Annotations,
         dataset: Dataset,
     ) -> None:
+        """Check that a result tensor matches its dataset and concept axis.
+
+        A valid result is a two-dimensional tensor whose first dimension equals
+        the number of dataset samples and whose second dimension equals
+        ``annotation.size``.
+
+        Parameters
+        ----------
+        name : str
+            Result name included in validation errors.
+        values : Tensor
+            Tensor to validate.
+        annotation : Annotations
+            Definition of the expected output dimension.
+        dataset : Dataset
+            Definition of the expected sample dimension.
+
+        Raises
+        ------
+        TypeError
+            If ``values`` is not a tensor.
+        ValueError
+            If ``values`` is not two-dimensional or either dimension has the
+            wrong size.
+        """
         if not isinstance(values, Tensor):
             raise TypeError(
                 f"Generated concept values {name!r} must be a Tensor."
@@ -491,6 +719,23 @@ class ConceptSupervisionPipeline:
     def _common_annotation(
         annotations: dict[str, Annotations],
     ) -> Annotations:
+        """Ensure aggregate inputs share one annotation definition.
+
+        Parameters
+        ----------
+        annotations : dict[str, Annotations]
+            Concept axes associated with tensors passed to the aggregator.
+
+        Returns
+        -------
+        Annotations
+            The first annotation object when every definition is equivalent.
+
+        Raises
+        ------
+        ValueError
+            If there are no annotations or their serialized definitions differ.
+        """
         if not annotations:
             raise ValueError("Cannot aggregate an empty set of concept values.")
         iterator = iter(annotations.values())
