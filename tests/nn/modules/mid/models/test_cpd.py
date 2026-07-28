@@ -7,7 +7,7 @@ import torch.distributions as dist
 
 from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
-from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
+from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 from torch_concepts.distributions import Delta
 
 
@@ -266,9 +266,61 @@ class TestRootParams:
     def test_root_params_values_correct(self):
         v = _bernoulli_var(size=2)
         cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
-        params = cpd.root_params(batch_size=4)
+        params = cpd.root_params(leading=4)
         expected = torch.tensor([0.3, 0.7]).expand(4, 2)
         assert torch.allclose(params["probs"], expected)
+
+    def test_root_params_accepts_multiple_leading_dims(self):
+        v = _bernoulli_var(size=2)
+        prior = FixedPrior(torch.tensor([0.2, 0.8]))
+        cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
+        params = cpd.root_params(leading=(2, 3))
+        assert params["probs"].shape == (2, 3, 2)
+        assert torch.allclose(params["probs"][0, 0], torch.tensor([0.2, 0.8]))
+
+    def test_root_params_expansion_is_a_view_not_a_copy(self):
+        v = _bernoulli_var(size=3)
+        prior = FixedPrior(torch.tensor([0.1, 0.5, 0.9]))
+        cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
+        params = cpd.root_params(leading=7)
+        # a broadcast expansion has stride 0 on the expanded dim and shares the
+        # prior's storage — no per-leading-element copy is made.
+        assert params["probs"].stride(0) == 0
+        assert (
+            params["probs"].untyped_storage().data_ptr()
+            == prior.values.untyped_storage().data_ptr()
+        )
+
+    def test_root_params_broadcast_false_is_not_expanded(self):
+        # A prior shared across the batch (e.g. a fixed embedding matrix) opts
+        # out of expansion via `broadcast=False`: `root_params` must return it
+        # unchanged rather than adding leading dimensions.
+        source = torch.randn(4, 5)
+        v = EmbeddingVariable("embs", distribution=Delta, shape=(4, 5))
+        cpd = ParametricCPD(
+            variable=v,
+            parametrization={"value": TiedPrior(lambda: source, broadcast=False)},
+        )
+        params = cpd.root_params(leading=(2, 3))
+        assert params["value"].shape == (4, 5)
+        assert params["value"] is source  # no expand, no copy
+
+    def test_root_params_broadcast_is_per_parameter(self):
+        # Two parameters of the same CPD may set `broadcast` differently: only
+        # the opted-out one skips expansion.
+        n = _normal_var(size=2)
+        scale_source = torch.tensor([1.0, 2.0])
+        cpd = ParametricCPD(
+            variable=n,
+            parametrization={
+                "loc": FixedPrior(torch.tensor([0.0, 1.0])),        # broadcasts (default)
+                "scale": TiedPrior(lambda: scale_source, broadcast=False),  # opts out
+            },
+        )
+        params = cpd.root_params(leading=5)
+        assert params["loc"].shape == (5, 2)
+        assert params["scale"].shape == (2,)
+        assert params["scale"] is scale_source
 
 
 # ===========================================================================
@@ -439,7 +491,7 @@ class TestCPDIntegration:
     def test_root_params_then_select(self):
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
         cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
-        params = cpd.root_params(batch_size=4)
+        params = cpd.root_params(leading=4)
         a_params = cpd.select(params, "a")
         assert torch.allclose(a_params["probs"], torch.full((4, 1), 0.3))
 
@@ -575,7 +627,56 @@ class TestParametricFactorAggregate:
 
 
 # ===========================================================================
-# 12. LazyConstructor already-built path (factor.py line 162)
+# 12. _cat_parents() single-parent short-circuit (factor.py)
+# ===========================================================================
+
+class TestCatParentsSingleParent:
+    """`_cat_parents` — every CPD's default aggregation for a "standard" (non-PyC)
+    module — special-cases a single parent by returning it as-is instead of
+    running it through `torch.cat`, which would allocate a copy for nothing.
+    With two or more parents it still concatenates as before."""
+
+    def test_single_parent_passed_through_unchanged(self):
+        x = _delta_var(size=4)
+        c = _delta_var(name="y", size=4)
+        cpd = ParametricCPD(variable=c, parametrization=nn.Identity(), parents=[x])
+        value = torch.randn(5, 4)
+        out = cpd(parent_values={"x": value})
+        assert out["value"] is value  # no torch.cat copy for a single parent
+
+    def test_multi_parent_still_concatenated(self):
+        p1 = ConceptVariable("p1", distribution=dist.Bernoulli, size=2)
+        p2 = ConceptVariable("p2", distribution=dist.Bernoulli, size=3)
+        c = _delta_var(name="y", size=5)
+        cpd = ParametricCPD(variable=c, parametrization=nn.Identity(), parents=[p1, p2])
+        v1, v2 = torch.randn(4, 2), torch.randn(4, 3)
+        out = cpd(parent_values={"p1": v1, "p2": v2})
+        assert out["value"] is not v1 and out["value"] is not v2
+        assert torch.equal(out["value"], torch.cat([v1, v2], dim=-1))
+
+    def test_broadcast_false_root_view_survives_into_child(self):
+        """End-to-end: a `broadcast=False` root prior's un-expanded value reaches
+        a child CPD's forward as the exact same tensor object — the combination
+        of `root_params` (TestRootParams) and this single-parent short-circuit
+        keeps a shared prior (e.g. a concept-embedding matrix) from ever being
+        copied on the way to its child."""
+        source = torch.randn(7, 32)
+        embs = EmbeddingVariable("embs", distribution=Delta, shape=(7, 32))
+        root_cpd = ParametricCPD(
+            variable=embs,
+            parametrization={"value": TiedPrior(lambda: source, broadcast=False)},
+        )
+        root_out = root_cpd.root_params(leading=(2, 3))
+        assert root_out["value"] is source  # opted out of expansion
+
+        mixed = EmbeddingVariable("mixed", distribution=Delta, shape=(7, 32))
+        child_cpd = ParametricCPD(variable=mixed, parametrization=nn.Identity(), parents=[embs])
+        child_out = child_cpd(parent_values={"embs": root_out["value"]})
+        assert child_out["value"] is source  # still the same tensor, no copy anywhere
+
+
+# ===========================================================================
+# 13. LazyConstructor already-built path (factor.py line 162)
 # ===========================================================================
 
 class TestLazyConstructorAlreadyBuilt:

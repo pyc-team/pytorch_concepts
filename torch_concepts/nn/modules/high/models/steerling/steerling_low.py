@@ -478,7 +478,7 @@ class SteerlingLowLevelModel(nn.Module):
         Mirrors the upstream Steerling reference path
         (``InterpretableCausalDiffusionLM.forward``) by decomposing the
         reconstructed latent as ``h_bar = k_hat + u_hat + epsilon``, where
-        ``epsilon`` is computed by a :class:`~torch_concepts.nn.ResidualCorrectionOp`
+        ``epsilon`` is computed by a :class:`SteerlingResidualCorrection`
         configured at construction from the ``use_unknown`` and
         ``use_epsilon_correction`` concept-config flags.
 
