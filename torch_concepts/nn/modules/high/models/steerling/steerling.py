@@ -150,7 +150,9 @@ class SteerlingModel(SteerlingLowLevelModel):
         # ── High-level BaseModel API mirror ───────────────────────────────
         # SteerlingModel builds a bipartite concept→token graph, 
         # a backbone, and concept annotations built internally from the concept heads.
+        # NOTE: these are not used for now, but are retained for the high-level BaseModel API mirror.
         self.concept_annotations = self._build_annotations()
+        self.task_names = ["new_token"]
         self.graph = self._build_graph()
 
         self.use_unknown = self.concept_cfg["use_unknown"]
@@ -185,13 +187,13 @@ class SteerlingModel(SteerlingLowLevelModel):
         # FIXME: placeholder prior for `input` until PyC supports a Categorical over the vocabulary.
         # (see above)
         input_cpd = ParametricCPD(variable=input, parents=[], parametrization=FixedPrior(torch.zeros(1)))
-        # NOTE: `input` carries token ids shaped ``(B, T, 1)``; the backbone expects ``(B, T)``.
-        # So the the aggregate squeezes the event axis so the backbone runs on the intact ``(B, T)`` sequence 
-        # and emits ``(B, T, D)``.
         h_cpd = ParametricCPD(
             variable=h,
             parents=[input],
             parametrization=self.backbone,
+            # NOTE: `input` carries token ids shaped ``(B, T, 1)``; the backbone expects ``(B, T)``.
+            # So the the aggregate squeezes the event axis so the backbone runs on the intact ``(B, T)`` sequence 
+            # and emits ``(B, T, D)``.
             aggregate=lambda parent_values: next(iter(parent_values.values())).squeeze(-1),
         )
         k_cpd = ParametricCPD(
@@ -211,10 +213,6 @@ class SteerlingModel(SteerlingLowLevelModel):
         )
 
         if self.use_unknown:
-            # NOTE: the low-level model detaches `h` for the unknown head so its
-            # loss can't back-prop into the transformer. SteerlingModel is a
-            # test-time (eval / no-grad) model, so the detach is a no-op here and
-            # is omitted; re-introduce it via a wrapper if training is added.
             u_cpd = ParametricCPD(
                 variable=u, 
                 parents=[h], 
@@ -329,10 +327,14 @@ class SteerlingModel(SteerlingLowLevelModel):
         Returns:
             ConceptGraph: the concept→token bipartite adjacency.
         """
-        labels = list(self.known_names) + list(self.unknown_names) + ["new_token"]
+        labels = list(self.concept_names)
+        missing = [t for t in self.task_names if t not in labels]
+        assert not missing, (
+            f"All task_names must be annotation labels; {missing} are not in {labels}."
+        )
         adjacency = pd.DataFrame(0, index=labels, columns=labels)
-        adjacency.loc[:, "new_token"] = 1       # concepts -> new_token
-        adjacency.loc["new_token", "new_token"] = 0  # token does not self-loop
+        adjacency.loc[:, self.task_names] = 1            # concepts -> tasks
+        adjacency.loc[self.task_names, self.task_names] = 0  # tasks do not self-loop
         return ConceptGraph(
             torch.FloatTensor(adjacency.values),
             node_names=labels,
