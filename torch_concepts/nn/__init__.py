@@ -60,7 +60,6 @@ from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
-from .modules.high.models.steerling import SteerlingModel
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -175,7 +174,6 @@ __all__ = [
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
-    "SteerlingModel",
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
