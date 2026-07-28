@@ -1244,6 +1244,18 @@ class TestBuildRelaxedDistribution:
         s.sum().backward()
         assert probs.grad is not None
 
+    def test_categorical_plate_splits_per_member(self):
+        """A k-member categorical plate is k independent relaxed simplices, not
+        one over the flattened ``k * member_size`` classes."""
+        v = self._var(dist.OneHotCategorical, size=3, members=["m1", "m2"])
+        d = build_relaxed_distribution(v, {"logits": torch.zeros(1, 6)}, self._T)
+        s = d.rsample()
+        assert s.shape == (1, 6)
+        # Each member's block is its own simplex (sums to 1); a single 6-way
+        # distribution would make the *whole* row sum to 1 instead.
+        assert torch.allclose(s[..., :3].sum(-1), torch.ones(1), atol=1e-4)
+        assert torch.allclose(s[..., 3:].sum(-1), torch.ones(1), atol=1e-4)
+
 
 # ===========================================================================
 # 20. propagated_value — relaxed families resolve via their DistributionSpec

@@ -100,17 +100,23 @@ class ForwardInference(TorchBaseInference, ABC):
     """Abstract base class for torch based, forward-pass inference engines.
 
     Concrete subclasses (:class:`DeterministicInference`,
-    :class:`AncestralSamplingInference`) implement :meth:`_propagate` to decide
-    how each variable is resolved — deterministically (MAP estimate) or by
-    ancestral sampling — and set :attr:`is_stochastic` accordingly. All shared
-    logic (topological traversal, evidence clamping, teacher forcing,
-    temperature schedule) lives here.
+    :class:`AncestralSamplingInference`,
+    :class:`~.map_forward.MAPForwardInference`) implement :meth:`_resolve` to
+    decide how each variable is realised — by propagating its canonical
+    parameter, by ancestral sampling, or by taking the CPD's mode — and declare
+    their behaviour with the class attributes below. All shared logic
+    (topological traversal, evidence clamping, teacher forcing, temperature
+    schedule) lives here.
 
     Subclasses declare their behaviour with two class attributes:
 
-    - :attr:`is_stochastic` — whether :meth:`_propagate` draws samples. Controls
-      whether realisations are reported in ``out.samples`` and whether
-      :meth:`step` advances the temperature schedule.
+    - :attr:`is_stochastic` — whether :meth:`_resolve` produces a *realisation*
+      rather than a propagated parameter. Controls whether realisations are
+      reported in ``out.samples``, the reported :attr:`mode`, and whether
+      :meth:`temperature_step` advances the temperature schedule. Set by the
+      sampling engines and by :class:`~.map_forward.MAPForwardInference`, whose
+      hard modes are realisations too (it overrides :attr:`mode` and ignores the
+      temperature).
     - :attr:`name` — the engine name used in messages and ``repr``.
 
     Parameters
@@ -428,8 +434,8 @@ class ForwardInference(TorchBaseInference, ABC):
         self.temperature_step()  
 
         # Assemble once. ``params`` covers the queried names; ``samples`` covers
-        # every variable the pass actually drew, queried or not — an ancestor
-        # sampled only to reach the query is still a draw the caller may want.
+        # every variable the pass actually realised, queried or not — an ancestor
+        # resolved only to reach the query is still a value the caller may want.
         return InferenceOutput(
             params=self._assemble_params(computed, query_names),
             samples=(
@@ -450,8 +456,9 @@ class ForwardInference(TorchBaseInference, ABC):
         """Turn a CPD's parameters into a flat ``(batch, size)`` realisation.
 
         The one behavioural difference between the forward engines: a point
-        estimate (:class:`DeterministicInference`) or a reparameterised draw
-        (:class:`AncestralSamplingInference`).
+        estimate (:class:`DeterministicInference`), a reparameterised draw
+        (:class:`AncestralSamplingInference`), or the CPD's mode
+        (:class:`~.map_forward.MAPForwardInference`).
         """
 
     def _propagate(

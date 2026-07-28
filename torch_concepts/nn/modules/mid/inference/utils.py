@@ -8,7 +8,7 @@ the discrete-state count an enumeration-based engine needs.
 from __future__ import annotations
 
 import math
-from typing import Callable, Dict, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import torch
 import torch.distributions as dist
@@ -182,10 +182,83 @@ def leading_shape(
     )
 
 
+#: Hard counterpart of each relaxed family. The estimators draw *exact*
+#: samples so that equality matching works, even from a variable declared with
+#: a Concrete/relaxed family for gradient flow.
+EXACT_FAMILY: Dict[type, type] = {
+    dist.RelaxedBernoulli: dist.Bernoulli,
+    dist.RelaxedOneHotCategorical: dist.OneHotCategorical,
+}
+
+
+def _splits_per_member(spec, params: Dict[str, torch.Tensor], variable: Variable) -> bool:
+    """Whether ``variable``'s parameters can be folded into one row per member.
+
+    True when every supplied parameter is one scalar per event element, so
+    ``(*batch, k * member_size)`` reshapes cleanly to ``(*batch, k,
+    member_size)``. It is False for a parameter whose size is a *function* of
+    the width rather than proportional to it — ``MultivariateNormal``'s
+    ``scale_tril`` holds ``size * (size + 1) / 2`` Cholesky entries, and a plate
+    of those needs one factor per member, not a reshape. Such a plate is left
+    building a single joint distribution, as it always has.
+    """
+    return all(
+        name in spec.param_sizes and spec.param_sizes[name](variable.size) == variable.size
+        for name in params
+    )
+
+
+def build_plate(
+    variable: Variable,
+    spec,
+    params: Dict[str, torch.Tensor],
+    make: Callable[[Dict[str, torch.Tensor]], dist.Distribution],
+) -> dist.Distribution:
+    """Build ``make(params)``, splitting a plate whose event spans the width.
+
+    ``make`` maps a (possibly folded) parameter dict to a distribution over its
+    trailing axis. A family whose event is univariate — Bernoulli, Normal, the
+    ``wrap_independent`` families — already gives one scalar per member, so it
+    is built as-is (the caller wraps it in ``Independent`` if it needs to). A
+    family whose event spans the *whole* width (``OneHotCategorical`` and its
+    relaxed twin) is wrong on a plate: ``k`` members of ``member_size`` classes
+    are ``k`` independent distributions, not one over ``k * member_size``
+    classes. So its params are folded to ``(*batch, k, member_size)``, built in
+    one call, wrapped ``Independent`` over the member axis, and the event
+    reshaped back to the flat ``(*batch, size)`` that every caller passes values
+    in and reads samples out with.
+
+    This is the single place the member split lives, so the exact
+    (:func:`build_distribution`) and relaxed (``build_relaxed_distribution``)
+    builders cannot disagree about it.
+    """
+    if (
+        len(variable.members) > 1
+        and not spec.wrap_independent
+        and _splits_per_member(spec, params, variable)
+    ):
+        k, m = len(variable.members), variable.member_size
+        folded = {name: v.reshape(*v.shape[:-1], k, m) for name, v in params.items()}
+        return dist.TransformedDistribution(
+            dist.Independent(make(folded), 1),
+            dist.transforms.ReshapeTransform((k, m), (variable.size,)),
+        )
+    return make(params)
+
+
 def build_distribution(
-    variable: Variable, params: Dict[str, torch.Tensor]
+    variable: Variable,
+    params: Dict[str, torch.Tensor],
+    family: Optional[type] = None,
 ) -> dist.Distribution:
     """Build the exact distribution declared by ``variable``.
+
+    ``family`` overrides which distribution class is built — how an estimator
+    asks for a *hard* draw from a variable declared with a relaxed family (see
+    :data:`EXACT_FAMILY`). ``variable.dist_kwargs`` (a Concrete family's
+    temperature) belongs to the declared family, so it is dropped when the
+    family is overridden. Everything else — the plate split below included —
+    is shared, which is the point: the layout rules live in one place.
 
     Parameters arrive flat as ``(*batch, size)`` (the CPD's untouched output), so
     univariate-event families (Bernoulli, Normal) are wrapped in ``Independent``
@@ -195,15 +268,19 @@ def build_distribution(
     variable's event shape is restored on the *realization* by
     :func:`reshape_value_to_event`, not on the distribution parameters.
     """
-    # NOTE: a plate of *categorical* members builds one OneHotCategorical over the
-    # plate's whole flattened width (len(members) * member_size classes) rather
-    # than one distribution per member. Tracked separately; out of scope here.
-    D = variable.distribution
-    d = D(**params, **variable.dist_kwargs)
-    # ``wrap_independent`` marks the families whose event is univariate (a
-    # Delta point mass, by contrast, already has ``batch_shape == ()``).
+    D = family if family is not None else variable.distribution
+    dist_kwargs = {} if family is not None else variable.dist_kwargs
     spec = spec_for(D, f"Variable {variable.name!r}")
-    return dist.Independent(d, 1) if spec.wrap_independent else d
+
+    # ``wrap_independent`` marks the families whose event is univariate (a
+    # Delta point mass, by contrast, already has ``batch_shape == ()``). For
+    # those, a plate already works: one scalar per column, k of them.
+    if spec.wrap_independent:
+        return dist.Independent(D(**params, **dist_kwargs), 1)
+
+    return build_plate(
+        variable, spec, params, lambda p: D(**p, **dist_kwargs)
+    )
 
 
 
