@@ -26,21 +26,21 @@ if os.environ.get("TORCH_CONCEPTS_ENABLE_TORCH_COMPILE", "0") != "1":
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 from .steerling_utils import (
-    KNOWN_CONCEPTS_URL,
-    top_concepts
+    top_concepts,
 )
 from .steerling_configs import (
     DEFAULT_MODEL_ID,
 )
 from .steerling_low import SteerlingLowLevelModel
 from .steerling import SteerlingModel
+from .steerling_low_proto import SteerlingLowLevelModelPrototypes
 
 __all__ = [
     # Utils / hub
     "DEFAULT_MODEL_ID",
-    "KNOWN_CONCEPTS_URL",
     "top_concepts",
     "SteerlingLowLevelModel",
+    "SteerlingLowLevelModelPrototypes",
     # out-of-the-box model
     "SteerlingModel",
 ]
