@@ -327,7 +327,10 @@ class SteerlingModel(SteerlingLowLevelModel):
         Returns:
             ConceptGraph: the concept→token bipartite adjacency.
         """
-        labels = list(self.concept_names)
+        # NOTE: `self.concept_annotations.labels`, not `self.concept_names` — the
+        # latter is a `SteerlingLowLevelModel` property naming only the known
+        # (supervised) concepts, whereas the graph spans known + unknown + task.
+        labels = list(self.concept_annotations.labels)
         missing = [t for t in self.task_names if t not in labels]
         assert not missing, (
             f"All task_names must be annotation labels; {missing} are not in {labels}."
