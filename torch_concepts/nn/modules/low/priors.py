@@ -35,9 +35,9 @@ class LearnablePrior(nn.Module):
         size the target distribution expects (e.g. ``1`` for a Bernoulli
         ``logits``, ``k`` for a ``k``-way OneHotCategorical ``logits``).
     broadcast : bool, default True
-        Whether ``root_params`` broadcasts this prior to the batch (adds a leading
-        ``batch`` dim). Set ``False`` for a prior shared across the batch (e.g. a
-        fixed matrix) that should stay unbatched and broadcast downstream instead.
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
     """
 
     def __init__(self, size: Union[int, Tuple[int, ...]], broadcast: bool = True) -> None:
@@ -65,9 +65,9 @@ class FixedPrior(nn.Module):
         The fixed parameter values (cloned into a buffer). Their shape must
         match the per-parameter shape the target distribution expects.
     broadcast : bool, default True
-        Whether ``root_params`` broadcasts this prior to the batch (adds a leading
-        ``batch`` dim). Set ``False`` for a prior shared across the batch (e.g. a
-        fixed matrix) that should stay unbatched and broadcast downstream instead.
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
     """
 
     def __init__(self, values: torch.Tensor, broadcast: bool = True) -> None:
@@ -94,9 +94,9 @@ class TiedPrior(nn.Module):
     get_values : Callable[[], torch.Tensor]
         Returns the prior's values, typically a view of existing weights.
     broadcast : bool, default True
-        Whether ``root_params`` broadcasts this prior to the batch (adds a leading
-        ``batch`` dim). Set ``False`` for a prior shared across the batch (e.g. a
-        fixed matrix) that should stay unbatched and broadcast downstream instead.
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
     """
 
     def __init__(self, get_values: Callable[[], torch.Tensor], broadcast: bool = True) -> None:

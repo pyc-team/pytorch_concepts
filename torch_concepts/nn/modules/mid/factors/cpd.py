@@ -365,7 +365,10 @@ class ParametricCPD(ParametricFactor):
         A root CPD's parametrization produces a single batch-less prior; this
         runs it and expands each parameter to ``(*leading, *param_shape)`` so the
         engine doesn't have to. ``leading`` may be a plain batch size or any
-        leading shape, e.g. ``(batch1, batch2)``. Only meaningful for root CPDs.
+        leading shape, e.g. ``(batch1, batch2)``. A prior module may opt out by
+        setting ``broadcast=False`` (e.g. a matrix shared across the batch that
+        should stay unbatched and broadcast downstream). Only meaningful for
+        root CPDs.
 
         The expansion is a broadcast view, not a copy.
         """
@@ -374,6 +377,8 @@ class ParametricCPD(ParametricFactor):
         leading = tuple(leading)
         return {
             key: value.expand(*leading, *value.shape)
+            if getattr(self.parametrization[key], "broadcast", True)
+            else value
             for key, value in self(parent_values={}).items()
         }
 

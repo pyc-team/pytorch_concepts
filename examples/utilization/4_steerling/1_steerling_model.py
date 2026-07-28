@@ -38,11 +38,12 @@ with torch.no_grad():
     print(f"Tokens: {input_ids.shape}")
     out = model(input_ids=input_ids)
 
-# The default query returns known concepts + next token, read from out.params
-# by variable name. (The latents h/k_hat/epsilon/h_bar are computed internally
-# but not returned unless queried — see below.)
-concept_logits = out.params["concepts"]["logits"]      # (1, T, n_known)
-token_logits   = out.params["new_token"]["logits"]     # (1, T, vocab)
+# The default query returns known concepts + next token. Both report logits, so
+# they share one annotated tensor that is sliced by variable name. (The latents
+# h/k_hat/epsilon/h_bar are computed internally but not returned unless
+# queried — see below.)
+concept_logits = out.logits["concepts"]      # (1, T, n_known)
+token_logits   = out.logits["new_token"]     # (1, T, vocab)
 print(f"Known concept logits:  {tuple(concept_logits.shape)}")
 print(f"Next-token logits:     {tuple(token_logits.shape)}")
 
@@ -52,9 +53,11 @@ pd.set_option("display.width", 120)
 print("\nTop-5 known concepts at last prompt token:")
 print(top_concepts(concept_logits[0, -1:], topk=5).to_string(index=False))
 
-# Latents are not in the default output — query them explicitly by name.
+# Latents are not in the default output — query them explicitly by name. They
+# are Delta variables, so they report `value` rather than `logits`.
 with torch.no_grad():
-    h_bar = model(input_ids=input_ids, query=["h_bar"]).params["h_bar"]["value"]
+    h_bar = model(input_ids=input_ids, query=["h_bar"])
+    h_bar = h_bar.value["h_bar"]
 print(f"\nReconstructed latent h_bar (queried explicitly): {tuple(h_bar.shape)}")
 
 # ── 3. Full masked diffusion generation ───────────────────────────

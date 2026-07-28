@@ -27,15 +27,19 @@ def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
     No flattening or reshaping is performed: every parent value keeps its full
     event shape and the tensors are concatenated along ``dim=-1``. 
+    A single parent is returned as-is.
 
     NOTE: this deliberately raises when the values have mismatched non-concatenation
     dimensions (e.g. a matrix-valued parent alongside a vector-valued one).
+
+    NOTE: in the case of a single input, returning as-is avoids a copy.
+    A parametrization layer module must then not modify its input in place.
     """
     vals = [
         v.float() if not v.is_floating_point() else v
         for v in inputs.values()
     ]
-    return torch.cat(vals, dim=-1)
+    return vals[0] if len(vals) == 1 else torch.cat(vals, dim=-1)
 
 
 def _module_input_names(mod: nn.Module) -> Set[str]:

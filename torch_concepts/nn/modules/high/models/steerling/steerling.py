@@ -27,7 +27,7 @@ from ....mid.factors.cpd import ParametricCPD
 from ....mid.inference.base import BaseInference
 from ....mid.inference.torch.deterministic import DeterministicInference
 from ....low.priors import FixedPrior, TiedPrior
-from .....modules.outputs import ModelOutput, logits_from_params
+from .....modules.outputs import ModelOutput
 
 from .steerling_low import SteerlingLowLevelModel
 from .steerling_utils import (
@@ -75,17 +75,20 @@ class SteerlingModel(SteerlingLowLevelModel):
         model = SteerlingModel().to("cuda")
         model.eval()
 
-        # End-to-end: default query returns known concepts + next token, read
-        # from out.params by variable name.
+        # End-to-end: the default query returns known concepts + next token.
+        # Every queried variable that reports logits shares one annotated
+        # tensor, sliced by variable name.
         out = model(input_ids=input_ids)
-        concept_logits = out.params["concepts"]["logits"]      # (1, T, n_known)
-        token_logits   = out.params["new_token"]["logits"]     # (1, T, vocab)
+        concept_logits = out.logits["concepts"]      # (1, T, n_known)
+        token_logits   = out.logits["new_token"]     # (1, T, vocab)
 
         # Query a single named concept (its logits)
-        logits = model(input_ids=input_ids, query=["food"]).params["food"]["logits"]  # (1, T, 1)
+        logits = model(input_ids=input_ids, query=["food"]).logits["food"]  # (1, T, 1)
 
-        # Concept-based hidden-state reconstruction (query the latent explicitly)
-        h_bar = model(input_ids=input_ids, query=["h_bar"]).params["h_bar"]["value"]  # (1, T, D)
+        # Concept-based hidden-state reconstruction (query the latent explicitly).
+        # The latents are Delta variables, so they report `value`, not `logits`.
+        out = model(input_ids=input_ids, query=["h_bar"])
+        h_bar = out.value["h_bar"]  # (1, T, D)
 
         # Generation
         model.generate("As an Italian living abroad I miss", n_new_tokens=20)
@@ -370,8 +373,9 @@ class SteerlingModel(SteerlingLowLevelModel):
                 ``input_ids``.
 
         Returns:
-            ModelOutput: per-variable ``params`` (plus ``samples``,
-            ``probabilities``, ``logits``), token-aligned ``(B, T, ...)``.
+            ModelOutput: quantity-keyed ``params`` (``out.logits``,
+            ``out.value``, ...), each an annotated tensor sliceable by variable
+            name and token-aligned ``(B, T, ...)``.
         """
         if query is None:
             query = self._default_query()
@@ -391,14 +395,12 @@ class SteerlingModel(SteerlingLowLevelModel):
         )
 
         result = self.inference.query(query, evidence=evidence)
-        out = ModelOutput(
+        return ModelOutput(
             params=result.params,
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
         )
-        out.logits = logits_from_params(result.params)
-        return out
 
     # ------------------------------------------------------------------
     # Convenience methods
@@ -450,7 +452,7 @@ class SteerlingModel(SteerlingLowLevelModel):
             # 1. Query token (and optionally concept) parameters through the PGM
             query = ["new_token"] + (["concepts"] if topk_concepts is not None else [])
             out = self.forward(query=query, input_ids=input_ids)
-            logits = out.params["new_token"]["logits"].clone()        # (1, T, vocab)
+            logits = out.logits["new_token"].clone()                  # (1, T, vocab)
             logits[..., banned_ids] = float("-inf")                   # never emit mask / pad
             token_probs = torch.softmax(logits, dim=-1)
 
@@ -471,8 +473,8 @@ class SteerlingModel(SteerlingLowLevelModel):
                 decoded = tokenizer.decode([chosen_token])
                 print(f"  step {step + 1}: position {seq_idx} → {decoded!r}")
                 if topk_concepts is not None:
-                    concept_scores = torch.sigmoid(out.params["concepts"]["logits"][0, seq_idx])
-                    concepts = top_concepts(concept_scores, topk=topk_concepts)
+                    # `top_concepts` takes raw logits and applies the sigmoid itself.
+                    concepts = top_concepts(out.logits["concepts"][0, seq_idx], topk=topk_concepts)
                     print(concepts.to_string(index=False))
 
         generated_ids  = input_ids[0, prompt_len:].tolist()

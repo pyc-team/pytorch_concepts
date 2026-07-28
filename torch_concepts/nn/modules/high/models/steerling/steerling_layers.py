@@ -269,16 +269,12 @@ class SteerlingConceptEmbeddingMixer(nn.Module):
 
         Args:
             concepts: Concept **weights** (activation already applied) with shape
-                ``(B, T, C)`` (or ``(B, C)``).
+                ``(*leading, C)`` for any number of leading dimensions.
             embeddings: Dense ``(C, D)`` or packed factorized ``(C + D, R)`` tensor.
 
         Returns:
-            Reconstructed latent features with shape ``(B, T, D)`` (or ``(B, D)``).
+            Reconstructed latent features with shape ``(*leading, D)``.
         """
-        squeeze = concepts.dim() == 2
-        if squeeze:
-            concepts = concepts.unsqueeze(1)
-
         factorize = self.head.factorize
         if factorize:
             coef = embeddings[: self.n_concepts]    # (C, R)
@@ -294,14 +290,14 @@ class SteerlingConceptEmbeddingMixer(nn.Module):
         k = self._feature_k()
         if k is not None and k < C:
             # Sparse path: keep only the top-k weights and gather their embeddings.
-            w_sel, topi = torch.topk(weights, k, dim=-1)   # (B, T, k)
+            w_sel, topi = torch.topk(weights, k, dim=-1)   # (*leading, k)
             if factorize:
-                coef_sel = coef[topi]                       # (B, T, k, R)
-                wc = torch.einsum("btk,btkr->btr", w_sel, coef_sel)
-                features = wc @ basis.T                     # (B, T, D)
+                coef_sel = coef[topi]                       # (*leading, k, R)
+                wc = torch.einsum("...k,...kr->...r", w_sel, coef_sel)
+                features = wc @ basis.T                     # (*leading, D)
             else:
-                E_sel = E[topi]                             # (B, T, k, D)
-                features = torch.einsum("btk,btkd->btd", w_sel, E_sel)
+                E_sel = E[topi]                             # (*leading, k, D)
+                features = torch.einsum("...k,...kd->...d", w_sel, E_sel)
         else:
             # No top-k: dense weighted sum over all concepts.
             if factorize:
@@ -309,7 +305,7 @@ class SteerlingConceptEmbeddingMixer(nn.Module):
             else:
                 features = weights @ E
 
-        return features.squeeze(1) if squeeze else features
+        return features
 
 
 
