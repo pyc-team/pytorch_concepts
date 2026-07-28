@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
+from steerling import ConceptCatalog
 from typing import Dict
 
 import pandas as pd
@@ -184,50 +184,43 @@ def _load_lm_head_weights(
 # Concept labels
 # ------------------------------------------------------------------
 
-KNOWN_CONCEPTS_URL = (
-    "https://raw.githubusercontent.com/guidelabs/steerling/"
-    "main/assets/concepts/known_concepts.csv"
-)
-
-_concept_names_cache: Dict[str, list] = {}
+_known_concept_names_cache: list | None = None
 
 
-def load_steerling_concept_names(
-    url: str = KNOWN_CONCEPTS_URL,
-) -> list:
-    """Return an ordered list of known-concept names.
+def load_steerling_concept_names() -> list:
+    """Return an ordered list of unique known-concept labels.
 
-    The list is ordered by ``concept_idx`` so that ``names[i]`` corresponds
-    to concept index ``i``, as expected by
-    :class:`~torch_concepts.distributions.ConceptVariable`.
-
-    Args:
-        url: URL of the known-concepts CSV. Defaults to the official
-            ``guidelabs/steerling`` GitHub asset.
+    The catalog's known-concept names are auto-generated labels (not hand-picked
+    unique identifiers) and are not guaranteed unique — distinct concepts can
+    share a name, disambiguated only by ``concept_id`` (see
+    ``steerling.ConceptCatalog``; verified against the real catalog: ~1,900 of
+    the 33,732 known-concept names collide with at least one other concept).
+    Each label is therefore
+    ``"<concept_name>_<concept_id>"``, giving
+    :class:`~torch_concepts.distributions.ConceptVariable` a unique identifier
+    per concept. The list is ordered by ``concept_id`` so that ``names[i]``
+    corresponds to concept index ``i`` (verified to match the known-head's
+    logit/embedding row order — see ``steerling.SteerlingGenerator.concept_top_tokens``,
+    which indexes the same embedding table directly by ``concept_id``).
 
     Returns:
-        Ordered list of concept name strings, cached in-process.
-        Also written to ``~/.cache/steerling/known_concepts.csv`` on first
-        download so it persists across runs.
+        Ordered list of ``"<name>_<id>"`` strings, cached in-process. The
+        underlying catalog is loaded via ``steerling.ConceptCatalog`` (cached
+        on disk by ``huggingface_hub``).
     """
-    if url in _concept_names_cache:
-        return _concept_names_cache[url]
+    global _known_concept_names_cache
+    if _known_concept_names_cache is not None:
+        return _known_concept_names_cache
 
-    cache_dir = Path.home() / ".cache" / "steerling"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "known_concepts.csv"
+    logger.info("Loading known concept labels via steerling.ConceptCatalog")
+    known = ConceptCatalog.load().to_df()
+    known = known[known["head"] == "known"].sort_index()
 
-    if cache_path.exists():
-        logger.info("Loading concept labels from cache: %s", cache_path)
-        df = pd.read_csv(cache_path, index_col="concept_idx")
-    else:
-        logger.info("Downloading concept labels from %s", url)
-        df = pd.read_csv(url, index_col="concept_idx")
-        df.to_csv(cache_path)
-        logger.info("Cached concept labels to %s", cache_path)
-
-    names = list(df.sort_index()["concept_name"])
-    _concept_names_cache[url] = names
+    names = [
+        f"{name}_{concept_id}"
+        for name, concept_id in zip(known["concept_name"], known["concept_id"])
+    ]
+    _known_concept_names_cache = names
     return names
 
 
