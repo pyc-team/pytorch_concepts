@@ -21,7 +21,7 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
 # Priors (root-CPD parametrizations)
-from .modules.low.priors import LearnablePrior, FixedPrior
+from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
 # Scale activation (continuous-CPD parametrizations)
 from .modules.low.scales import TrilActivation
@@ -60,6 +60,7 @@ from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.steerling import SteerlingModel
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -124,6 +125,7 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+    "TiedPrior",
 
     # Scale activation
     "TrilActivation",
@@ -172,7 +174,7 @@ __all__ = [
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
-
+    "SteerlingModel",
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",

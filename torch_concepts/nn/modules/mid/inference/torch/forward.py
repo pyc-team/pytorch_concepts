@@ -243,11 +243,13 @@ class ForwardInference(TorchBaseInference, ABC):
         CPDs expect as input) and reshaped to ``(*leading, *variable.shape)``.
         A numel mismatch raises instead of silently broadcasting.
         """
-        try:
-            dtype = next(self.pgm.parameters()).dtype
-        except StopIteration:
-            dtype = torch.get_default_dtype()
-        return reshape_value_to_event(variable, value.to(dtype))
+        if value.is_floating_point():
+            try:
+                dtype = next(self.pgm.parameters()).dtype
+            except StopIteration:
+                dtype = torch.get_default_dtype()
+            value = value.to(dtype)
+        return reshape_value_to_event(variable, value)
 
     def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.

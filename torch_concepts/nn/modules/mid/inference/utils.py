@@ -99,10 +99,16 @@ def reshape_value_to_event(
     ``leading`` may be any number of batch-like dimensions: the trailing block
     is identified by :func:`leading_shape`, so a value arriving flat as
     ``(*leading, size)`` (what a CPD produces) and one already in event layout
-    (what a user passes as evidence) both land on the same result.
+    (what a user passes as evidence) both land on the same result. A value
+    already shaped exactly ``(*leading, *event)`` — including a variable with
+    no event shape — is returned unchanged rather than reshaped.
     """
-    leading = leading_shape(variable.shape, variable.size, value, variable.name)
-    return value.reshape(*leading, *variable.shape)
+    event = tuple(variable.shape)
+    if not event:
+        return value
+    leading = leading_shape(event, variable.size, value, variable.name)
+    target = (*leading, *event)
+    return value if tuple(value.shape) == target else value.reshape(*target)
 
 
 def flatten_event(variable: Variable, value: torch.Tensor) -> torch.Tensor:

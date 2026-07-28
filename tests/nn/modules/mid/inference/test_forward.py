@@ -43,6 +43,13 @@ def _make_chain_model():
     return BayesianNetwork(variables=[x, a, b], factors=[cpd_x, cpd_a, cpd_b])
 
 
+def _make_no_param_model():
+    """x (delta root, size=4), backed entirely by a fixed (non-learnable) prior."""
+    x = ConceptVariable("x", distribution=Delta, size=4)
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+    return BayesianNetwork(variables=[x], factors=[cpd_x])
+
+
 def _make_plate_model():
     """x (delta) -> g (plate: [m1, m2], bernoulli) -> y (bernoulli)."""
     x = ConceptVariable("x", distribution=Delta, size=4)
@@ -202,6 +209,40 @@ class TestEvidenceClamping:
         B = 2
         out = eng.query(query=["a"], evidence={"a": torch.ones(B, 2)})
         assert out is not None
+
+
+# ===========================================================================
+# 3b. _format_evidence — dtype casting and StopIteration fallback
+# ===========================================================================
+
+class TestFormatEvidence:
+    def test_floating_evidence_cast_to_param_dtype(self):
+        """Float64 evidence is cast to the PGM parameters' dtype (float32)."""
+        m = _make_simple_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        x = eng.pgm.resolve("x")
+        value = torch.randn(3, 4, dtype=torch.float64)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.float32
+
+    def test_non_floating_evidence_dtype_preserved(self):
+        """Integer evidence (e.g. token ids) is left untouched, only reshaped."""
+        m = _make_simple_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        x = eng.pgm.resolve("x")
+        value = torch.randint(0, 4, (3, 4), dtype=torch.long)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.long
+        assert torch.equal(out, value)
+
+    def test_no_parameters_falls_back_to_default_dtype(self):
+        """With no learnable parameters, dtype falls back to the global default."""
+        m = _make_no_param_model()
+        eng = DeterministicInference(m, activate_before_propagation=False)
+        x = eng.pgm.resolve("x")
+        value = torch.randn(2, 4, dtype=torch.float64)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.get_default_dtype()
 
 
 # ===========================================================================
@@ -1060,7 +1101,10 @@ class TestBaseInferenceDirect:
 # 12. make_temperature_schedule and build_distribution utility tests
 # ===========================================================================
 
-from torch_concepts.nn.modules.mid.inference.utils import make_temperature_schedule
+from torch_concepts.nn.modules.mid.inference.utils import (
+    make_temperature_schedule,
+    reshape_value_to_event,
+)
 from torch_concepts.nn.modules.mid.inference.torch.utils import (
     build_relaxed_distribution,
     propagated_value,
@@ -1098,6 +1142,53 @@ class TestMakeTemperatureSchedule:
         schedule = make_temperature_schedule(0.5, "constant", 0.0)
         assert schedule(0) == pytest.approx(0.5)
         assert schedule(100) == pytest.approx(0.5)
+
+
+class _ShapeStub:
+    """Duck-typed stand-in exposing only `.shape`, for testing reshape_value_to_event in isolation."""
+
+    def __init__(self, shape):
+        self.shape = shape
+
+
+class TestReshapeValueToEvent:
+    def test_empty_event_passthrough(self):
+        """A variable with no event shape returns the value untouched."""
+        value = torch.randn(3, 5)
+        out = reshape_value_to_event(_ShapeStub(()), value)
+        assert out is value
+
+    def test_flat_input_reshaped_to_event(self):
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 6)
+        out = reshape_value_to_event(v, value)
+        assert out.shape == (4, 2, 3)
+
+    def test_already_event_shaped_passthrough(self):
+        """Input already laid out as (*batch, *event) is returned unchanged."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 2, 3)
+        out = reshape_value_to_event(v, value)
+        assert out is value
+
+    def test_multiple_leading_batch_dims_flat(self):
+        """A flat (B, T, size) input is expanded to (B, T, *event)."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 5, 6)
+        out = reshape_value_to_event(v, value)
+        assert out.shape == (4, 5, 2, 3)
+
+    def test_multiple_leading_batch_dims_already_event_shaped(self):
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 5, 2, 3)
+        out = reshape_value_to_event(v, value)
+        assert out is value
+
+    def test_single_dim_event_flat_batch(self):
+        v = ConceptVariable("c", distribution=Delta, size=4)
+        value = torch.randn(3, 4)
+        out = reshape_value_to_event(v, value)
+        assert out.shape == (3, 4)
 
 
 # ===========================================================================
