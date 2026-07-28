@@ -332,11 +332,19 @@ class SteerlingModel(SteerlingLowLevelModel):
         assert not missing, (
             f"All task_names must be annotation labels; {missing} are not in {labels}."
         )
-        adjacency = pd.DataFrame(0, index=labels, columns=labels)
-        adjacency.loc[:, self.task_names] = 1            # concepts -> tasks
-        adjacency.loc[self.task_names, self.task_names] = 0  # tasks do not self-loop
-        return ConceptGraph(
-            torch.FloatTensor(adjacency.values),
+        task_set = set(self.task_names)
+        concept_idx = [i for i, name in enumerate(labels) if name not in task_set]
+        task_idx = [i for i, name in enumerate(labels) if name in task_set]
+
+        source = torch.repeat_interleave(torch.tensor(concept_idx), len(task_idx))
+        target = torch.tensor(task_idx).repeat(len(concept_idx))
+        edge_index = torch.stack([source, target])
+        edge_weight = torch.ones(edge_index.shape[1])
+
+        return ConceptGraph.from_sparse(
+            edge_index,
+            edge_weight,
+            n_nodes=len(labels),
             node_names=labels,
         )
 
