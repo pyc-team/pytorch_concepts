@@ -81,6 +81,7 @@ from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
+from .modules.mid.inference.torch.map_forward import MAPForwardInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
@@ -191,6 +192,7 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
+    "MAPForwardInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",

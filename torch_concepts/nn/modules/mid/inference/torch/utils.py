@@ -7,6 +7,7 @@ deterministic-value dispatcher, and a sampler — all using only
 Entry points:
 - :func:`build_relaxed_distribution` — reparameterisable surrogate distribution.
 - :func:`propagated_value` — canonical deterministic value from a param dict.
+- :func:`mode_value` — hard, most-likely value from a param dict.
 - :func:`sample_from` — reparameterised sample.
 """
 from __future__ import annotations
@@ -106,6 +107,34 @@ def propagated_value(
         f"{distribution.__name__}: cannot propagate a value from parameters "
         f"{sorted(params)}; expected {spec.primary_param!r} or 'logits'."
     )
+
+
+def mode_value(variable: Variable, params: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Return the family's *mode* — its most likely value — for a parameter dict.
+
+    The hard counterpart of :func:`propagated_value`, in the same flat
+    ``(*leading, size)`` layout: ``0.``/``1.`` bits for a Bernoulli, a one-hot
+    row for a categorical, ``loc`` for a Normal, ``value`` for a Delta.
+
+    The parameter is activated first, which makes each rule
+    parametrization-agnostic — ``sigmoid(logits) > 0.5`` is ``logits > 0``, and
+    ``argmax`` is invariant under ``softmax``. Families whose ``primary_param``
+    already is the mode (e.g., normal distribution) declare no rule and 
+    come back untouched (their activation is the identity, so activating moves nothing).
+
+    The value is split into one row per member before the rule is applied, so a
+    ``k``-member categorical plate takes ``k`` argmaxes rather than one over the
+    flattened ``k * member_size`` columns. Every family that declares a rule has
+    one scalar per event element, so ``member_size`` is exactly that family's
+    class count — the split is the same for a plate and for a lone variable
+    (which is one member wide), and needs no special case.
+    """
+    spec = spec_for(variable.distribution, f"Variable {variable.name!r}")
+    value = propagated_value(variable.distribution, params, activate=True)
+    if spec.mode is None:
+        return value  # ``loc`` / ``value``: the primary parameter is the mode
+    per_member = value.reshape(*value.shape[:-1], -1, variable.member_size)
+    return spec.mode(per_member).reshape(value.shape)
 
 
 def sample_from(

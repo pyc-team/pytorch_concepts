@@ -13,6 +13,7 @@ Field                        Answers the question
 ``primary_param``            which parameter carries the canonical value used
                              for deterministic propagation?
 ``activations``              how is a raw parameter mapped into its domain?
+``mode``                     what is its hard, most-likely value?
 ``is_discrete``              may it be a query/evidence variable of the
                              sampling estimators?
 ``wrap_independent``         does its event need reinterpreting as one event
@@ -74,6 +75,20 @@ def _categorical_states(size: int) -> Optional[int]:
     return size
 
 
+def _threshold(x: torch.Tensor) -> torch.Tensor:
+    """Mode of a Bernoulli bit: set where the probability exceeds a half.
+
+    Strict ``>``, so an exact 0.5 resolves to 0 — the same "lowest state wins"
+    tie-break :func:`_argmax_one_hot` inherits from ``argmax``.
+    """
+    return (x > 0.5).to(x.dtype)
+
+
+def _argmax_one_hot(x: torch.Tensor) -> torch.Tensor:
+    """Mode of a categorical row: indicator of its top class (ties -> lowest)."""
+    return torch.nn.functional.one_hot(x.argmax(-1), x.shape[-1]).to(x.dtype)
+
+
 def _relaxed_bernoulli(params, temperature, validate_args):
     d = dist.RelaxedBernoulli(temperature=temperature, **params, validate_args=validate_args)
     return dist.Independent(d, 1, validate_args=validate_args)
@@ -112,6 +127,20 @@ class DistributionSpec:
     activations : mapping
         Parameter name -> activation mapping a raw network output into the
         parameter's natural domain (e.g. ``logits`` -> ``sigmoid``).
+    mode : callable, optional
+        Maps an *activated* parameter to the family's hard mode, operating on
+        the last axis and preserving its width — a Bernoulli's ``probs`` to
+        ``0.``/``1.`` bits, a categorical's row to a one-hot. ``None`` means the
+        family's ``primary_param`` already *is* the mode (a Normal's ``loc``, a
+        Delta's ``value``), so it is propagated unchanged. Because the parameter
+        is activated first the rule is parametrization-agnostic:
+        ``sigmoid(logits) > 0.5`` is ``logits > 0``, and ``argmax`` is invariant
+        under ``softmax``. Used by
+        :class:`~torch_concepts.nn.MAPForwardInference` through
+        :func:`~torch_concepts.nn.modules.mid.inference.torch.utils.mode_value`;
+        ``torch.distributions``' own ``.mode`` is unusable here (the relaxed
+        families, ``Delta`` and a categorical plate's ``TransformedDistribution``
+        all raise, and ``Categorical.mode`` returns a class index).
     is_discrete : bool
         Whether values are discrete, so exact equality matching is meaningful
         and the variable may be a query/evidence variable of the sampling
@@ -145,6 +174,7 @@ class DistributionSpec:
     default_params: Tuple[str, ...]
     primary_param: str
     activations: Mapping[str, Callable[[torch.Tensor], torch.Tensor]]
+    mode: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
     is_discrete: bool = False
     wrap_independent: bool = False
     state_count: Optional[Callable[[int], Optional[int]]] = None
@@ -190,6 +220,7 @@ SPECS: Dict[type, DistributionSpec] = {
         default_params=("probs",),
         primary_param="probs",
         activations={"probs": _identity, "logits": torch.sigmoid},
+        mode=_threshold,
         is_discrete=True,
         wrap_independent=True,
         state_count=_binary_states,
@@ -202,6 +233,7 @@ SPECS: Dict[type, DistributionSpec] = {
         default_params=("probs",),
         primary_param="probs",
         activations={"probs": _identity, "logits": torch.sigmoid},
+        mode=_threshold,
         is_discrete=True,
         wrap_independent=True,
         state_count=_binary_states,
@@ -213,6 +245,7 @@ SPECS: Dict[type, DistributionSpec] = {
         default_params=("probs",),
         primary_param="probs",
         activations={"probs": _identity, "logits": _softmax},
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         relaxed=_relaxed_one_hot,
@@ -224,6 +257,7 @@ SPECS: Dict[type, DistributionSpec] = {
         default_params=("probs",),
         primary_param="probs",
         activations={"probs": _identity, "logits": _softmax},
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         relaxed=_relaxed_one_hot,
@@ -234,6 +268,11 @@ SPECS: Dict[type, DistributionSpec] = {
         default_params=("probs",),
         primary_param="probs",
         activations={"probs": _identity, "logits": _softmax},
+        # A plain Categorical's *value* is encoded as a one-hot of width
+        # ``size`` here, not as a class index — the same encoding
+        # ``BeliefPropagation._encode_states`` uses — so that it matches the
+        # ``(*leading, size)`` layout every cached value and child CPD expects.
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         no_relaxed_reason=(
