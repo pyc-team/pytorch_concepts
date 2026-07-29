@@ -11,6 +11,7 @@ Low-level modules that compute predictions from concepts and auxiliary represent
 
    LinearConceptToConcept
    MixConceptExogegnousToConcept
+   MixMemoryConceptExogenousToConcept
    HyperlinearConceptExogenousToConcept
    CallableConceptToConcept
    RuleMemory
@@ -22,6 +23,11 @@ Low-level modules that compute predictions from concepts and auxiliary represent
 
 .. autoclass:: MixConceptExogegnousToConcept
    :members:
+
+.. autoclass:: MixMemoryConceptExogenousToConcept
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 .. autoclass:: HyperlinearConceptExogenousToConcept
    :members:
