@@ -1298,3 +1298,7 @@ class TestPrepareCategorical(unittest.TestCase):
         self.assertEqual(cat_mask.shape, (6, 4))
         # Single concept at max card — no padding, mask all True
         self.assertTrue(cat_mask.all())
+
+
+if __name__ == '__main__':
+    unittest.main()
