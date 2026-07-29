@@ -137,11 +137,9 @@ __all__ = [
 
     # Predictor classes
     "LinearConceptToConcept",
-    "MixConceptExogegnousToConcept",
     "RuleMemory",
     "RuleTaskPredictor",
     "RuleReconstructionPredictor",
-    "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",

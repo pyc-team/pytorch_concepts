@@ -337,12 +337,7 @@ class ToyDataset(ConceptDataset):
 
         input_data = torch.load(self.processed_paths[0], weights_only=False)
         concepts = torch.load(self.processed_paths[1], weights_only=False)
-        try:
-            annotations = torch.load(self.processed_paths[2], weights_only=False)
-        except (AttributeError, ModuleNotFoundError) as exc:
-            logger.warning("Regenerating legacy toy annotations at %s: %s", self.root_dir, exc)
-            self.build()
-            annotations = torch.load(self.processed_paths[2], weights_only=False)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
         graph = pd.read_hdf(self.processed_paths[3], "graph")
 
         return input_data, concepts, annotations, graph

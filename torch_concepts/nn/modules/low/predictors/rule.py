@@ -1,6 +1,6 @@
 import torch
 
-from ..base.layer import BasePredictor
+from ..base.layer import BaseConceptLayer
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
 from typing import List
 
@@ -36,7 +36,7 @@ class RuleMemory(torch.nn.Module):
         return pred
 
 
-class RuleTaskPredictor(BasePredictor):
+class RuleTaskPredictor(BaseConceptLayer):
     """Compute the ordinary CMR task probability from concepts, selector and roles.
 
     References:
@@ -52,7 +52,7 @@ class RuleTaskPredictor(BasePredictor):
         return pred
 
 
-class RuleReconstructionPredictor(BasePredictor):
+class RuleReconstructionPredictor(BaseConceptLayer):
     """Compute the reconstruction-aware CMR task probability.
 
     For each rule, this predictor multiplies its task satisfaction probability

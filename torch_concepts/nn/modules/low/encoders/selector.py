@@ -9,10 +9,10 @@ import torch
 import torch.nn.functional as F
 
 
-from ..base.layer import BaseEncoder
+from ..base.layer import BaseConceptLayer
 
 
-class CategoricalSelector(BaseEncoder):
+class CategoricalSelector(BaseConceptLayer):
     """
     Categorical selector that outputs concept-wise assignment probabilities.
 
@@ -60,9 +60,10 @@ class CategoricalSelector(BaseEncoder):
             **kwargs: Additional keyword arguments for linear layers in the selector.
         """
         super().__init__(
-            in_latent=in_latent,
+            in_embeddings=in_latent,
             out_concepts=out_concepts,
         )
+        self.in_latent = in_latent
         if selector_hidden_layers < 0:
             raise ValueError("selector_hidden_layers must be >= 0")
 
