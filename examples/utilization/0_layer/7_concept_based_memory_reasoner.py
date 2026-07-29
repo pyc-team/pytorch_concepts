@@ -14,7 +14,7 @@ from torch_concepts.nn import (
     RuleMemory,
     RuleReconstructionPredictor,
     RuleTaskPredictor,
-    CategoricalSelectorLatentToExogenous,
+    CategoricalSelector,
     LinearEmbeddingToConcept,
 )
 
@@ -43,7 +43,7 @@ def main():
         torch.nn.Linear(n_features, latent_dims),
         torch.nn.LeakyReLU(),
     )
-    selector_encoder = CategoricalSelectorLatentToExogenous(
+    selector_encoder = CategoricalSelector(
         in_latent=latent_dims,
         out_concepts=n_tasks,
         out_exogenous=nb_rules,

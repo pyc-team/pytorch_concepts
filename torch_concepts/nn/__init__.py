@@ -8,7 +8,7 @@ This module provides neural network components for building concept-based archit
 from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer, BaseEncoder, BasePredictor,
+    BaseConceptLayer
 )
 from torch_concepts.nn.modules.low.base.intervention import (
     BaseConceptInterventionStrategy,
@@ -24,28 +24,20 @@ from .modules.low.sequential import Sequential
 from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
-from .modules.low.encoders.selector import (
-    CategoricalSelectorLatentToExogenous,
-    SelectorLatentToExogenous,
-)
-
-# Predictors
-from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.exogenous import (
-    MixConceptExogegnousToConcept,
-    RuleMemory,
-    RuleTaskPredictor,
-    RuleReconstructionPredictor,
-)
-from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
+from .modules.low.encoders.selector import CategoricalSelector
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.rule import (
+    RuleMemory,
+    RuleTaskPredictor,
+    RuleReconstructionPredictor,
+)
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
 
 # Dense layers
@@ -57,7 +49,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer, CMRReconstructionLoss, CMRSwitchedTaskLoss, CMRBlendedLoss, MaskedLoss
+    L1LogitRegularizer, CMRBlendedLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -159,8 +151,7 @@ __all__ = [
     "ResidualMLP",
     "MLP",
 
-    "CategoricalSelectorLatentToExogenous",
-    "SelectorLatentToExogenous",
+    "CategoricalSelector",
     "Sequential",
     "LinearEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
@@ -169,9 +160,6 @@ __all__ = [
     "WANDAGraphLearner",
 
     # Loss functions
-    "MaskedLoss",
-    "CMRReconstructionLoss",
-    "CMRSwitchedTaskLoss",
     "CMRBlendedLoss",
     "ConceptLoss",
     "WeightedConceptLoss",

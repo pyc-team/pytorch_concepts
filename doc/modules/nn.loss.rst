@@ -12,12 +12,5 @@ class below document their parameters and behaviour.
 
    ConceptLoss
    WeightedConceptLoss
-
-**Graph-Based Losses**
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
    DepthWeightedConceptLoss
    L1LogitRegularizer

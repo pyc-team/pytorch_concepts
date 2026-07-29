@@ -9,7 +9,7 @@ Tests loss functions for concept-based learning:
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer, MaskedLoss
+from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
 from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import Annotations

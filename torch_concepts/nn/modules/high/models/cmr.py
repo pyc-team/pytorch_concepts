@@ -6,8 +6,8 @@ from torch.distributions import Bernoulli, OneHotCategorical
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.encoders.linear import LinearEmbeddingToConcept
-from ...low.encoders.selector import CategoricalSelectorLatentToExogenous
-from ...low.predictors.exogenous import RuleMemory, RuleTaskPredictor, RuleReconstructionPredictor
+from ...low.encoders.selector import CategoricalSelector
+from ...low.predictors.rule import RuleMemory, RuleTaskPredictor, RuleReconstructionPredictor
 from ...low.priors import LearnablePrior
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ...mid.factors.cpd import ParametricCPD
@@ -92,7 +92,7 @@ class ConceptMemoryReasoner(BipartiteModel):
         n_concepts = sum(c.size for c in concepts)
 
         selector = EmbeddingVariable("rule_selector", distribution=OneHotCategorical, shape=(len(self.task_names), self.n_rules))
-        selector_cpd = ParametricCPD(selector, parents=[latent_var], parametrization={"probs": CategoricalSelectorLatentToExogenous(in_latent=self.latent_size, out_concepts=len(self.task_names), out_exogenous=self.n_rules, selector_hidden_layers=self.selector_hidden_layers)})
+        selector_cpd = ParametricCPD(selector, parents=[latent_var], parametrization={"probs": CategoricalSelector(in_latent=self.latent_size, out_concepts=len(self.task_names), out_exogenous=self.n_rules, selector_hidden_layers=self.selector_hidden_layers)})
 
         roles = EmbeddingVariable("rule_roles", distribution=OneHotCategorical, shape=(len(self.task_names), self.n_rules, n_concepts, 3))
         roles_cpd = ParametricCPD(roles, parents=[], parametrization={"probs": RuleMemory(len(self.task_names), self.n_rules, n_concepts, self.memory_latent_size, self.memory_decoder_hidden_layers, hard_at_eval=self.hard_roles_at_eval)})

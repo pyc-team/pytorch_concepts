@@ -3,7 +3,7 @@ import unittest
 import torch
 import torch.nn as nn
 from torch_concepts.nn.modules.low.dense_layers import SelectorEmbeddingEncoder
-from torch_concepts.nn.modules.low.encoders.selector import CategoricalSelectorLatentToExogenous
+from torch_concepts.nn.modules.low.encoders.selector import CategoricalSelector
 
 
 class TestSelectorEmbeddingEncoder(unittest.TestCase):
@@ -120,12 +120,12 @@ class TestSelectorEmbeddingEncoder(unittest.TestCase):
             self.assertEqual(output.shape, (batch_size, 3, 4))
 
 
-class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
-    """Test CategoricalSelectorLatentToExogenous."""
+class TestCategoricalSelector(unittest.TestCase):
+    """Test CategoricalSelector."""
 
     def test_initialization(self):
         """Test selector initialization."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=64,
             out_concepts=5,
             out_exogenous=8,
@@ -138,7 +138,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_forward_shape(self):
         """Test forward pass output shape."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=64,
             out_concepts=4,
             out_exogenous=6,
@@ -149,7 +149,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_output_is_normalized_over_exogenous_dim(self):
         """Test output probabilities sum to 1 over exogenous dimension."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=32,
             out_concepts=3,
             out_exogenous=5,
@@ -162,7 +162,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Test gradient flow through selector."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=32,
             out_concepts=3,
             out_exogenous=4,
@@ -175,13 +175,13 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_hidden_layers_configuration(self):
         """Test configurable hidden layers in selector network."""
-        selector_zero = CategoricalSelectorLatentToExogenous(
+        selector_zero = CategoricalSelector(
             in_latent=32,
             out_concepts=3,
             out_exogenous=4,
             selector_hidden_layers=0,
         )
-        selector_two = CategoricalSelectorLatentToExogenous(
+        selector_two = CategoricalSelector(
             in_latent=32,
             out_concepts=3,
             out_exogenous=4,
@@ -197,7 +197,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
     def test_selector_hidden_layers_validation(self):
         """Test hidden layer argument validation."""
         with self.assertRaises(ValueError):
-            CategoricalSelectorLatentToExogenous(
+            CategoricalSelector(
                 in_latent=32,
                 out_concepts=3,
                 out_exogenous=4,
@@ -206,7 +206,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_selector_network(self):
         """Test selector network structure."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=64,
             out_concepts=4,
             out_exogenous=6,
@@ -215,7 +215,7 @@ class TestCategoricalSelectorLatentToExogenous(unittest.TestCase):
 
     def test_batch_processing(self):
         """Test different batch sizes."""
-        selector = CategoricalSelectorLatentToExogenous(
+        selector = CategoricalSelector(
             in_latent=32,
             out_concepts=3,
             out_exogenous=4,

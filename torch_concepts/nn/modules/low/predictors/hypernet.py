@@ -146,30 +146,3 @@ class HyperlinearConceptEmbeddingToConcept(BaseConceptLayer):
         """
         self.in_concepts = mask.int().sum().item()
         self.hypernet[-1] = prune_linear_layer(self.hypernet[-1], mask, dim=1)
-
-
-class HyperlinearConceptExogenousToConcept(HyperlinearConceptEmbeddingToConcept):
-    """Backward-compatible exogenous-named interface for the hypernetwork.
-
-    Exogenous inputs and task embeddings have the same tensor contract here:
-    ``(batch, output_concepts, feature_width)``.
-    """
-
-    def __init__(
-        self,
-        in_concepts: Union[int, Annotations],
-        in_exogenous: int,
-        hidden_size: int = 32,
-        **kwargs,
-    ):
-        super().__init__(
-            in_concepts=in_concepts,
-            in_embeddings=in_exogenous,
-            hidden_size=hidden_size,
-            **kwargs,
-        )
-        self.in_exogenous = in_exogenous
-        self.in_exogenous_shape = in_exogenous
-
-    def forward(self, concepts: torch.Tensor, exogenous: torch.Tensor) -> torch.Tensor:
-        return super().forward(concepts=concepts, embeddings=exogenous)
