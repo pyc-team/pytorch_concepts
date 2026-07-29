@@ -12,7 +12,6 @@ class below document their parameters and behaviour.
 
    ConceptLoss
    WeightedConceptLoss
-   CMRLoss
 
 **Graph-Based Losses**
 

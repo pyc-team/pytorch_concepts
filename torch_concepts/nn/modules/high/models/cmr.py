@@ -1,288 +1,110 @@
-"""Concept-based Memory Reasoner (CMR)
+"""Concept-based Memory Reasoner (CMR)."""
+from typing import List, Optional, Union
+import torch
+from torch import nn
+from torch.distributions import Bernoulli, OneHotCategorical
+from .....annotations import Annotations
+from .....distributions import Delta
+from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.encoders.selector import CategoricalSelectorLatentToExogenous
+from ...low.predictors.exogenous import RuleMemory, RuleTaskPredictor, RuleReconstructionPredictor
+from ...low.priors import LearnablePrior
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.inference.base import BaseInference
+from ...mid.inference.torch.deterministic import DeterministicInference
+from ...mid.variable import EmbeddingVariable
+from ...outputs import ModelOutput
+from ..base.bipartite import BipartiteModel
 
-    References: 
+class ConceptMemoryReasoner(BipartiteModel):
+    """A neurosymbolic concept-based models that performs gradient-based rule learning and instance-wise rule selection.
+
+    The model keeps the standard bipartite concept-task structure but introduces
+    three latent objects inside the PGM:
+
+    - rule_selector: per-task categorical rule weights predicted from the
+      latent representation;
+    - rule_roles: decoded concept role probabilities from the
+      learned memory, representing propositional logic rules;
+    - tasks_with_rec: an auxiliary reconstruction output based on the roles that can be used for regularization.
+
+    Args:
+        input_size: Number of input features.
+        annotations: Dataset annotations containing binary concepts and tasks.
+        task_names: Name or names of the task labels.
+        n_rules: Number of rules stored per task.
+        memory_latent_size: Size of each learned task memory embedding.
+        memory_decoder_hidden_layers: Number of hidden decoder layers in ``RuleMemory``.
+        selector_hidden_layers: Number of hidden layers in the rule selector.
+        rec_weight: Non-negative exponent applied to each rule reconstruction probability.
+        hard_roles_at_eval: If true, use the argmax one-hot role assignment in evaluation mode.
+
+    References:
         Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024.
         https://arxiv.org/abs/2407.15527
-"""
-
-from typing import List, Optional, Union
-
-import torch
-
-from .....annotations import Annotations
-
-from ...low.base.inference import BaseInference
-from ...low.encoders.linear import LinearLatentToConcept
-from ...low.encoders.selector import CategoricalSelectorLatentToExogenous
-from ...low.predictors.exogenous import MixMemoryConceptExogenousToConcept
-from ...low.lazy import LazyConstructor
-
-from ...mid.inference.deterministic import DeterministicInference
-from ...mid.constructors.bipartite import BipartiteModel
-
-from ..base.bipartite import BaseBipartiteModel
-
-
-class ConceptMemoryReasoner(BaseBipartiteModel):
-    """Concept Memory Reasoner with configurable training mode.
-    
-    A unified CMR class that works as a pure PyTorch module by default,
-    or as a Lightning module when lightning=True.
-    
-    Parameters
-    ----------
-    input_size : int
-        Dimensionality of input features (after backbone if used).
-    annotations : Annotations
-        Concept annotations with labels, cardinalities, and distributions.
-    task_names : Union[List[str], str]
-        Names of task variables (subset of annotation labels).
-    n_rules : int, optional
-        Number of candidate rules per task. Defaults to 10.
-    memory_latent_size : int, optional
-        Latent size of the task-specific rule memory. Defaults to 100.
-    memory_decoder_hidden_layers : int, optional
-        Number of hidden layers in the rule memory decoder. Defaults to 1.
-    selector_hidden_layers : int, optional
-        Number of hidden layers in the rule selector MLP. Defaults to 1.
-    rec_weight : float, optional
-        Reconstruction-weight exponent used by CMR reconstruction-aware
-        task prediction. Defaults to 0.1.
-    eps : float, optional
-        Numerical scaling factor used in the memory decoder softmax.
-        Defaults to 1e-3.
-    lightning : bool, default False
-        If True, adds Lightning training capabilities.
-        If False (default), works as pure PyTorch module.
-    inference : BaseInference, optional
-        Inference engine class for evaluation. Defaults to DeterministicInference.
-    train_inference : BaseInference, optional
-        Inference engine class for training. Only used when lightning=True.
-        Defaults to DeterministicInference.
-    variable_distributions : Mapping, optional
-        Distribution classes for each concept if not in annotations.
-    **kwargs
-        Additional arguments passed to BaseBipartiteModel, including:
-        
-        - **backbone** : Feature extraction module (e.g., ResNet)
-        - **latent_encoder** : Custom encoder for latent space
-        - **latent_encoder_kwargs** : Arguments for latent encoder
-        
-        Lightning Training (when lightning=True):
-        
-        - **loss** : Loss function (nn.Module)
-        - **metrics** : ConceptMetrics or dict of MetricCollections
-        - **optim_class** : Optimizer class (e.g., torch.optim.Adam)
-        - **optim_kwargs** : Optimizer arguments (e.g., {'lr': 0.001})
-        - **scheduler_class** : LR scheduler class
-        - **scheduler_kwargs** : Scheduler arguments
-    
-    Examples
-    --------
-    >>> # Pure PyTorch module (default)
-    >>> model = ConceptMemoryReasoner(
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task'],
-    ...     n_rules=10,
-    ...     rec_weight=0.1,
-    ... )
-    >>> out = model(x, query=['c1', 'task'])  # Direct forward pass
-    
-    >>> # Lightning training enabled
-    >>> model = ConceptMemoryReasoner(
-    ...     lightning=True,
-    ...     input_size=8,
-    ...     annotations=ann,
-    ...     task_names=['task'],
-    ...     n_rules=10,
-    ...     rec_weight=0.1,
-    ...     loss=my_loss,
-    ...     optim_class=torch.optim.Adam,
-    ...     optim_kwargs={'lr': 0.001}
-    ... )
     """
-    
-    def __init__(
-        self,
-        input_size: int,
-        annotations: Annotations,
-        task_names: Union[List[str], str],
-        n_rules: int = 10,
-        memory_latent_size: int = 100,
-        memory_decoder_hidden_layers: int = 1,
-        selector_hidden_layers: int = 1,
-        rec_weight: float = 0.1,
-        eps: float = 1e-3,
-        inference: Optional[BaseInference] = DeterministicInference,
-        inference_kwargs: Optional[dict] = None,
-        train_inference: Optional[BaseInference] = DeterministicInference,
-        train_inference_kwargs: Optional[dict] = None,
-        lightning: bool = False,
-        **kwargs
-    ):
-        super().__init__(
-            input_size=input_size,
-            annotations=annotations,
-            task_names=task_names,
-            lightning=lightning,
-            **kwargs
-        )
-        
-        # Extract concept cardinalities (excluding tasks)
-        concept_idxs = [self.concept_names.index(name) for name in self.concept_names
-                        if name not in self.task_names]
-        cardinalities = [self.concept_annotations.cardinalities[i] for i in concept_idxs]
-        assert all(cardinality == 1 for cardinality in cardinalities), (
-            "ConceptMemoryReasoner currently requires all concepts "
-            f"to have cardinality 1, got {cardinalities}."
-        )
-
+    supported_concept_types = frozenset({"binary"})
+    param_for_discrete_var = "probs"
+    variable_distributions = {"binary": Bernoulli}
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
+    def __init__(self, input_size: int, annotations: Annotations, task_names: Union[List[str], str], n_rules: int = 10, memory_latent_size: int = 100, memory_decoder_hidden_layers: int = 1, selector_hidden_layers: int = 1, rec_weight: float = 0.1, hard_roles_at_eval: bool = True, inference: Optional[BaseInference] = DeterministicInference, inference_kwargs: Optional[dict] = None, train_inference: Optional[BaseInference] = None, train_inference_kwargs: Optional[dict] = None, lightning: bool = False, plate: Optional[bool] = None, **kwargs):
+        super().__init__(input_size=input_size, annotations=annotations, task_names=task_names, lightning=lightning, plate=plate, **kwargs)
+        if any(self.concept_annotations.concept(n).cardinality != 1 for n in self.intermediate_concept_names):
+            raise ValueError("ConceptMemoryReasoner requires binary scalar concepts.")
+        self.n_rules, self.memory_latent_size = n_rules, memory_latent_size
+        self.memory_decoder_hidden_layers, self.selector_hidden_layers = memory_decoder_hidden_layers, selector_hidden_layers
         self.rec_weight = rec_weight
+        self.hard_roles_at_eval = hard_roles_at_eval
+        self.pgm = self._build_model()
+        self.setup_inference(inference, inference_kwargs, train_inference, train_inference_kwargs)
 
-        # Build bipartite model architecture with CMR components
-        self.model = BipartiteModel(
-            task_names=task_names,
-            input_size=self.latent_size,
-            annotations=annotations,
-            encoder=LazyConstructor(LinearLatentToConcept),
-            internal_exogenous=LazyConstructor(
-                CategoricalSelectorLatentToExogenous,
-                out_exogenous=n_rules,
-                selector_hidden_layers=selector_hidden_layers,
-            ),
-            predictor=LazyConstructor(
-                MixMemoryConceptExogenousToConcept,
-                memory_latent_size=memory_latent_size,
-                memory_decoder_hidden_layers=memory_decoder_hidden_layers,
-                eps=eps,
-            ),
-            use_source_exogenous=False,
-        )
+    def default_query(self, ground_truth):
+        """Train both CMR task paths in one inference query."""
+        query = super().default_query(ground_truth)
+        query["tasks_with_rec"] = None
+        return query
 
-        self.eval_inference = inference(
-            self.model.probabilistic_model, 
-            **(inference_kwargs or {})
-        )
-        self.train_inference = train_inference(
-            self.model.probabilistic_model, 
-            **(train_inference_kwargs or {})
-        )
+    def forward(self, query, evidence=None, input=None, **inference_kwargs):
+        out = super().forward(query=query, evidence=evidence, input=input, **inference_kwargs)
+        probs = out.probs
+        if probs is not None and "tasks_with_rec" in probs.annotation.label_to_index:
+            rec = probs["tasks_with_rec"]
+            keep = [name for name in self.concept_names if name in probs.annotation.label_to_index]
+            ordinary = probs[self.task_names]
+            out.params["probs"] = probs[keep]
+            extra = dict(out.extra) if out.extra else {}
+            extra["task_input"] = ordinary
+            extra["input_with_rec"] = rec
+            out.extra = extra
+        return out
 
-    def forward(self, query, x=None, evidence=None, *inference_args, **inference_kwargs):
-        """Forward pass for CMR.
+    def _build_model(self) -> BayesianNetwork:
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+        input_cpd = ParametricCPD(input_var, parents=[], parametrization={"value": LearnablePrior(input_var.shape)})
 
-        Returns standard predictions by default. When invoked by the generic
-        learner path (which provides ``ground_truth``), returns both no-rec and
-        with-rec predictions so ``filter_output_for_loss`` can build explicit
-        CMR loss kwargs`.
-        """
-        include_rec = inference_kwargs.pop('include_rec', False)
-        rec_weight = inference_kwargs.pop('rec_weight', self.rec_weight)
-        # CMR predictor already produces task probabilities. Requesting raw CPD outputs avoids an extra sigmoid in inference for Bernoulli variables.
-        inference_kwargs['return_logits'] = True
+        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+        latent_cpd = ParametricCPD(latent_var, parents=[input_var], parametrization={"value": self.backbone})
 
-        # BaseLearner passes ground_truth in inference kwargs. Use that signal to produce both branches for CMRLoss.
-        # TODO: this is a bit ad-hoc - consider a more explicit, stable way to signal this mode (e.g. a flag).
-        learner_mode = 'ground_truth' in inference_kwargs
+        concepts = self.build_concept_variables(self.intermediate_concept_names, "concepts")
+        concept_cpds = ParametricCPD(concepts, parents=[latent_var], parametrization=[{"probs": nn.Sequential(LinearEmbeddingToConcept(self.latent_size, c.size), nn.Sigmoid())} for c in concepts])
+        n_concepts = sum(c.size for c in concepts)
 
-        if learner_mode:
-            no_rec = super().forward(
-                query=query,
-                x=x,
-                include_rec=False,
-                evidence=evidence,
-                *inference_args,
-                rec_weight=rec_weight,
-                **inference_kwargs,
-            )
+        selector = EmbeddingVariable("rule_selector", distribution=OneHotCategorical, shape=(len(self.task_names), self.n_rules))
+        selector_cpd = ParametricCPD(selector, parents=[latent_var], parametrization={"probs": CategoricalSelectorLatentToExogenous(in_latent=self.latent_size, out_concepts=len(self.task_names), out_exogenous=self.n_rules, selector_hidden_layers=self.selector_hidden_layers)})
 
-            with_rec = super().forward(
-                query=query,
-                x=x,
-                include_rec=True,
-                evidence=evidence,
-                *inference_args,
-                rec_weight=rec_weight,
-                **inference_kwargs,
-            )
-            assert not torch.equal(no_rec, with_rec), (
-                "Expected 'no_rec' and 'with_rec' predictions to be different tensors, "
-                "but they are identical. Check that 'include_rec' is properly handled in forward pass."
-            )
-            return {'no_rec': no_rec, 'with_rec': with_rec}
+        roles = EmbeddingVariable("rule_roles", distribution=OneHotCategorical, shape=(len(self.task_names), self.n_rules, n_concepts, 3))
+        roles_cpd = ParametricCPD(roles, parents=[], parametrization={"probs": RuleMemory(len(self.task_names), self.n_rules, n_concepts, self.memory_latent_size, self.memory_decoder_hidden_layers, hard_at_eval=self.hard_roles_at_eval)})
 
-        return super().forward(
-            query=query,
-            x=x,
-            evidence=evidence,
-            *inference_args,
-            include_rec=include_rec,
-            rec_weight=rec_weight,
-            **inference_kwargs,
-        )
+        def aggregate(values):
+            return {"concepts": torch.cat([values[parent] for parent in list(concepts)], dim=-1), "selector": values[selector], "roles": values[roles]}
 
-    def filter_output_for_loss(self, forward_out, target):
-        """Build explicit CMR loss kwargs for :class:`CMRLoss`.
+        tasks = self.build_concept_variables(self.task_names, "tasks")
+        assert len(tasks) == 1, "CMR requires homogeneous binary task variables."
+        task_cpd = ParametricCPD(tasks[0], parents=[*concepts, selector, roles], parametrization={"probs": RuleTaskPredictor(out_concepts=tasks[0].size, in_concepts=n_concepts)}, aggregate=aggregate)
 
-        Parameters
-        ----------
-        forward_out : dict
-            Dictionary with keys ``no_rec`` and ``with_rec`` containing full
-            model predictions (concepts + tasks).
-        target : torch.Tensor
-            Ground-truth tensor aligned with ``self.concept_names``.
+        rec_tasks = EmbeddingVariable("tasks_with_rec", distribution=Bernoulli, shape=tasks[0].shape)
+        rec_cpd = ParametricCPD(rec_tasks, parents=[*concepts, selector, roles], parametrization={"probs": RuleReconstructionPredictor(out_concepts=tasks[0].size, in_concepts=n_concepts, rec_weight=self.rec_weight)}, aggregate=aggregate)
 
-        Returns
-        -------
-        dict
-            Explicit tensors required by ``CMRLoss``.
-        """
-        if not isinstance(forward_out, dict):
-            raise ValueError(
-                "ConceptMemoryReasoner.filter_output_for_loss expects a dict "
-                "with 'no_rec' and 'with_rec' predictions."
-            )
-
-        if 'no_rec' not in forward_out or 'with_rec' not in forward_out:
-            raise ValueError(
-                "ConceptMemoryReasoner.filter_output_for_loss requires both "
-                "'no_rec' and 'with_rec' entries in forward_out."
-            )
-
-        no_rec = forward_out['no_rec']
-        with_rec = forward_out['with_rec']
-
-        # assert that no_rec and with_rec are different tensors (eps)
-        assert not torch.equal(no_rec, with_rec), (
-            "Expected 'no_rec' and 'with_rec' predictions to be different tensors, "
-            "but they are identical. Check that 'include_rec' is properly handled in forward pass."
-        )
-
-        task_indices = [
-            i for i, name in enumerate(self.concept_names)
-            if name in self.task_names
-        ]
-        concept_indices = [
-            i for i, name in enumerate(self.concept_names)
-            if name not in self.task_names
-        ]
-
-        # return {
-        #     'concept_input': no_rec[:, concept_indices],
-        #     'concept_target': target[:, concept_indices],
-        #     'task_input': no_rec[:, task_indices],
-        #     'task_input_with_rec': with_rec[:, task_indices],
-        #     'task_target': target[:, task_indices],
-        # }
-        return {
-            'input': no_rec,
-            'target': target,
-            'input_with_rec': with_rec,
-        }
-
-    def filter_output_for_metrics(self, forward_out, target):
-        """Use no-rec predictions for metric computation in learner mode."""
-        if isinstance(forward_out, dict):
-            return {'preds': forward_out['no_rec'], 'target': target}
-        return {'preds': forward_out, 'target': target}
+        return BayesianNetwork(variables=[input_var, latent_var, *concepts, selector, roles, *tasks, rec_tasks], factors=[input_cpd, latent_cpd, *concept_cpds, selector_cpd, roles_cpd, task_cpd, rec_cpd])

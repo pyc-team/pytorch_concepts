@@ -706,112 +706,110 @@ class CMRReconstructionLoss(MaskedLoss):
         super().__init__(torch.nn.BCELoss(reduction='none'), reduction, targets_to_mask, concepts_to_keep)
 
     def forward(self, input_with_rec: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Compute masked BCE.
+        """Compute positive-only BCE on the task slice used for reconstruction."""
+        if target.shape != input_with_rec.shape and self.concepts_to_keep is not None:
+            keep = self.concepts_to_keep.to(device=target.device).bool()
+            if target.shape[-1] == keep.numel() and input_with_rec.shape[-1] == int(keep.sum().item()):
+                target = target[..., keep]
+        if input_with_rec.shape != target.shape:
+            raise ValueError("input_with_rec and the selected target must have the same shape.")
+        positive_mask = (target == 1)
+        if not positive_mask.any():
+            return input_with_rec.sum() * 0.0
+        loss = self.loss_fn(input_with_rec, target)
+        return loss[positive_mask].mean() if self.reduction == "mean" else loss[positive_mask].sum()
 
-        Args:
-            input_with_rec: Task probabilities with reconstruction term.
-            target: Binary targets with entries in ``{0, 1}``.
 
-        Returns:
-            Masked BCE scalar (for ``'mean'``/``'sum'`` reductions).
-        """
-        return super().forward(input=input_with_rec, target=target)
+class CMRSwitchedTaskLoss(nn.Module):
+    """Task loss for CMR that switches prediction path based on the binary label.
 
-
-class CMRLoss(nn.Module):
+    For task targets equal to 0, this term supervises the ordinary task path
+    ``input``. For task targets equal to 1, it supervises the reconstruction-
+    aware task path ``input_with_rec``. The auxiliary prediction is supplied
+    through ``ModelOutput.extra['input_with_rec']`` and received here through
+    ConceptLoss signature matching.
     """
-    Loss for Concept-based Memory Reasoner (CMR).
 
-    Implements the objective used in CMR examples:
-    - concept loss on concept logits
-    - task loss without reconstruction term
-    - task loss with reconstruction term
-    - blended task objective that applies reconstruction-aware loss on
-      positive targets and standard loss on negative targets
-
-    Args:
-        concept_weight: Weight applied to concept loss.
-        task_weight: Weight applied to blended task loss.
-    """
-    def __init__(
-        self,
-        concept_weight: float = 1.0,
-        task_weight: float = 1.0,
-    ):
+    def __init__(self, reduction: str = 'mean', concepts_to_keep: torch.Tensor = None):
         super().__init__()
-        self.concept_loss_fn = nn.BCEWithLogitsLoss()
-        self.task_loss_fn = nn.BCELoss(reduction='none')
-        self.concept_weight = concept_weight
-        self.task_weight = task_weight
+        if reduction not in {'mean', 'sum'}:
+            raise ValueError("Reduction must be 'mean' or 'sum'.")
+        if concepts_to_keep is not None and not isinstance(concepts_to_keep, torch.Tensor):
+            raise TypeError("concepts_to_keep must be a torch.Tensor or None.")
+        if concepts_to_keep is not None and concepts_to_keep.dim() != 1:
+            raise ValueError("concepts_to_keep must be a 1D tensor.")
+        self.reduction = reduction
+        self.loss_fn = nn.BCELoss(reduction='none')
+        self.register_buffer('concepts_to_keep', concepts_to_keep)
 
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}("
-            f"concept_loss_fn={self.concept_loss_fn.__class__.__name__}, "
-            f"task_loss_fn={self.task_loss_fn.__class__.__name__}, "
-            f"concept_weight={self.concept_weight}, "
-            f"task_weight={self.task_weight})"
-        )
+    def _slice_columns(self, tensor: torch.Tensor, keep: torch.Tensor) -> torch.Tensor:
+        if tensor.shape[-1] == keep.numel():
+            return tensor[..., keep]
+        if tensor.shape[-1] == int(keep.sum().item()):
+            return tensor
+        raise ValueError("Tensor shape is incompatible with concepts_to_keep.")
 
-    def _compute_explicit(
-        self,
-        concept_input: torch.Tensor,
-        concept_target: torch.Tensor,
-        task_input: torch.Tensor,
-        task_input_with_rec: torch.Tensor,
-        task_target: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute CMR objective.
+    def forward(self, input: torch.Tensor, target: torch.Tensor, input_with_rec: torch.Tensor) -> torch.Tensor:
+        if self.concepts_to_keep is not None:
+            keep = self.concepts_to_keep.to(device=target.device).bool()
+            input = self._slice_columns(input, keep)
+            target = self._slice_columns(target, keep)
+            input_with_rec = self._slice_columns(input_with_rec, keep)
 
-        Args:
-            concept_input: Concept logits.
-            concept_target: Concept targets.
-            task_input: Task probabilities without reconstruction term.
-            task_input_with_rec: Task probabilities with reconstruction term.
-            task_target: Task targets.
+        if input.shape != target.shape or input_with_rec.shape != target.shape:
+            raise ValueError("input, input_with_rec, and target must have the same shape after masking.")
 
-        Returns:
-            Scalar CMR loss.
-        """
-        concept_target = concept_target.float()
-        task_target = task_target.float()
+        normal_loss = self.loss_fn(input, target)
+        rec_loss = self.loss_fn(input_with_rec, target)
+        switched = (1.0 - target) * normal_loss + target * rec_loss
+        if self.reduction == 'sum':
+            return switched.sum()
+        return switched.mean()
 
-        concept_loss = self.concept_loss_fn(concept_input, concept_target)
 
-        task_loss_no_rec = self.task_loss_fn(task_input, task_target)
-        task_loss_rec = self.task_loss_fn(task_input_with_rec, task_target)
+class CMRBlendedLoss(TypeAwareLoss):
+    """CMR objective that switches task path based on the binary label.
 
-        if task_loss_no_rec.shape != task_target.shape or task_loss_rec.shape != task_target.shape:
-            raise ValueError(
-                "task_loss_fn must return elementwise losses with the same "
-                "shape as task_target (use reduction='none')."
+    Negative examples (``y=0``) supervise the ordinary task path ``y_pred``.
+    Positive examples (``y=1``) supervise the reconstruction-aware task path
+    ``y_pred_with_rec``.
+    Concept supervision remains standard BCE on the intermediate concepts.
+
+    The reconstruction-aware task prediction is expected in
+    ``output.extra["input_with_rec"]``.
+    """
+
+    def __init__(self, task_names, concept_weight: float = 1.0, task_weight: float = 1.0):
+        super().__init__()
+        self.task_names = list(task_names)
+        self.concept_weight = float(concept_weight)
+        self.task_weight = float(task_weight)
+
+    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+        target = target if target is not None else output.target
+        if target is None:
+            raise ValueError("CMRBlendedLoss requires a concept-space target.")
+        if output.probs is None:
+            raise ValueError("CMRBlendedLoss requires Bernoulli probability outputs.")
+        if not output.extra or "task_input" not in output.extra or "input_with_rec" not in output.extra:
+            raise ValueError("CMRBlendedLoss requires output.extra['task_input'] and output.extra['input_with_rec'].")
+
+        task_target = target[self.task_names].to(output.probs.dtype)
+        task_pred = output.extra["task_input"].to(output.probs.dtype)
+        rec_pred = output.extra["input_with_rec"].to(task_pred.dtype)
+        if task_pred.shape != rec_pred.shape or task_pred.shape != task_target.shape:
+            raise ValueError("CMR task predictions and targets must have identical shapes.")
+
+        concept_names = [name for name in target.annotation.labels if name not in self.task_names]
+        if concept_names:
+            concept_loss = nn.functional.binary_cross_entropy(
+                output.probs[concept_names], target[concept_names].to(output.probs.dtype)
             )
+        else:
+            concept_loss = task_pred.new_zeros(())
 
-        blended_task_loss = (task_target * task_loss_rec + (1 - task_target) * task_loss_no_rec).mean()
-
-        return self.concept_weight * concept_loss + self.task_weight * blended_task_loss
-
-    def forward(self, **kwargs) -> torch.Tensor:
-        """Compute CMR loss from explicit CMR tensors only."""
-        explicit_keys = {
-            'concept_input',
-            'concept_target',
-            'task_input',
-            'task_input_with_rec',
-            'task_target',
-        }
-
-        if explicit_keys.issubset(kwargs.keys()):
-            return self._compute_explicit(
-                concept_input=kwargs['concept_input'],
-                concept_target=kwargs['concept_target'],
-                task_input=kwargs['task_input'],
-                task_input_with_rec=kwargs['task_input_with_rec'],
-                task_target=kwargs['task_target'],
-            )
-
-        raise ValueError(
-            "CMRLoss.forward requires explicit CMR tensors: "
-            "concept_input, concept_target, task_input, task_input_with_rec, task_target."
-        )
+        normal_bce = nn.functional.binary_cross_entropy(task_pred, task_target, reduction="none")
+        rec_bce = nn.functional.binary_cross_entropy(rec_pred, task_target, reduction="none")
+        switched = (1.0 - task_target) * normal_bce + task_target * rec_bce
+        task_loss = switched.mean()
+        return self.concept_weight * concept_loss + self.task_weight * task_loss

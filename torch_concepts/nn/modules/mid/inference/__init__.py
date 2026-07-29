@@ -1,6 +1,15 @@
-"""Inference engines for PGM-based models (internal).
+"""Inference engines for PGM-based models."""
 
-Backends live in the :mod:`.torch` (pure-PyTorch) and :mod:`.pyro` subpackages.
-The public API is re-exported from :mod:`torch_concepts.nn`.
-"""
-__all__: list[str] = []
+from .base import BaseInference
+from .torch.forward import ForwardInference
+from .torch.deterministic import DeterministicInference
+from .torch.independent import IndependentInference
+from .torch.ancestral import AncestralSamplingInference
+
+__all__ = [
+    "BaseInference",
+    "ForwardInference",
+    "DeterministicInference",
+    "IndependentInference",
+    "AncestralSamplingInference",
+]

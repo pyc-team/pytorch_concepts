@@ -2,10 +2,8 @@
 import unittest
 import torch
 import torch.nn as nn
-from torch_concepts.nn.modules.low.dense_layers import (
-    CategoricalSelectorLatentToExogenous,
-    SelectorEmbeddingEncoder,
-)
+from torch_concepts.nn.modules.low.dense_layers import SelectorEmbeddingEncoder
+from torch_concepts.nn.modules.low.encoders.selector import CategoricalSelectorLatentToExogenous
 
 
 class TestSelectorEmbeddingEncoder(unittest.TestCase):

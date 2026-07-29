@@ -20,22 +20,11 @@ ground-truth concepts during training only, via ``p_int=1.0`` on the training
 engine, while evaluation keeps the default ``p_int=0.0``.
 """
 
-from torch_concepts.nn.modules.loss import ConceptLoss, MaskedLoss, CMRReconstructionLoss
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP
+from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP, ConceptMemoryReasoner, CMRBlendedLoss, ConceptLoss
 from torch_concepts.nn import DeterministicInference, IndependentInference
 from torch_concepts.data import ToyDataset
-from torch_concepts.nn import (
-    CMRLoss,
-    ConceptBottleneckModel,
-    ConceptEmbeddingModel,
-    ConceptMemoryReasoner,
-)
-from torch_concepts.nn.modules.mid.inference import (
-    DeterministicInference,
-    IndependentInference
-)
 from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
@@ -46,7 +35,7 @@ from pytorch_lightning import Trainer
 
 
 def evaluate(model, datamodule, n_concepts, query):
-    """Evaluate model on test set and return concept/task accuracy."""
+    """Evaluate model on a data split and return concept/task accuracy."""
     concept_acc_fn = BinaryAccuracy()
     task_acc_fn = BinaryAccuracy()
 
@@ -60,10 +49,12 @@ def evaluate(model, datamodule, n_concepts, query):
         for batch in test_loader:
             # model.eval() automatically selects eval_inference
             out = model(input=batch['inputs']['x'], query=query)
-            c_logits = out.logits[:, :n_concepts]
-            y_logits = out.logits[:, n_concepts:]
-            c_pred = torch.sigmoid(c_logits)
-            y_pred = torch.sigmoid(y_logits)
+            predictions = out.logits if out.logits is not None else out.probs
+            c_pred = predictions[:, :n_concepts]
+            y_pred = predictions[:, n_concepts:]
+            if out.logits is not None:
+                c_pred = torch.sigmoid(c_pred)
+                y_pred = torch.sigmoid(y_pred)
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]
@@ -116,102 +107,103 @@ def main():
 
     # Define variable distributions as Bernoulli
     variable_distributions = {name: Bernoulli for name in concept_names}
-    loss = torch.nn.BCEWithLogitsLoss()
+    loss = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(), binary_param="logits")
     optim = torch.optim.AdamW
     optim_kwargs = {'lr': 0.1}
 
-    # # =========================================================================
-    # # STANDARD TRAINING (same inference for train and eval)
-    # # =========================================================================
-    # print("\n" + "=" * 60)
-    # print("Example 1: Standard Training (DeterministicInference)")
-    # print("=" * 60)
+    # =========================================================================
+    # STANDARD TRAINING (same inference for train and eval)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 1: Standard Training (DeterministicInference)")
+    print("=" * 60)
 
-    # model_standard = ConceptBottleneckModel(
-    #     input_size=n_features,
-    #     annotations=annotations,
-    #     variable_distributions=variable_distributions,
-    #     task_names=['xor'],
-    #     latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-    #     # Inference engines (both default to DeterministicInference)
-    #     inference=DeterministicInference,
-    #     train_inference=DeterministicInference,
-    #     # Lightning kwargs
-    #     lightning=True,
-    #     loss=loss,
-    #     optim_class=optim,
-    #     optim_kwargs=optim_kwargs
-    # )
-    # print(f"Model type: {type(model_standard).__name__}")
-    # print(f"Inference (eval): {model_standard.eval_inference.__class__.__name__}")
-    # print(f"Training inference: {model_standard.train_inference.__class__.__name__}")
+    model_standard = ConceptBottleneckModel(
+        input_size=n_features,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        # Inference engines (both default to DeterministicInference)
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        # Lightning kwargs
+        lightning=True,
+        loss=loss,
+        optim_class=optim,
+        optim_kwargs=optim_kwargs
+    )
+    print(f"Model type: {type(model_standard).__name__}")
+    print(f"Inference (eval): {model_standard.eval_inference.__class__.__name__}")
+    print(f"Training inference: {model_standard.train_inference.__class__.__name__}")
 
-    # trainer_standard = Trainer(max_epochs=100)
-    # trainer_standard.fit(model_standard, datamodule=datamodule)
-    # evaluate(model_standard, datamodule, n_concepts, query)
+    trainer_standard = Trainer(max_epochs=100)
+    trainer_standard.fit(model_standard, datamodule=datamodule)
+    evaluate(model_standard, datamodule, n_concepts, query)
 
-    # # =========================================================================
-    # # DIFFERENT TRAINING MODE: INDEPENDENT TRAINING
-    # # =========================================================================
-    # print("\n" + "=" * 60)
-    # print("Example 2: Independent Training with Different Inference Engines")
-    # print("=" * 60)
-    # print("Uses IndependentInference for training")
-    # print("Uses DeterministicInference for evaluation")
+    # =========================================================================
+    # DIFFERENT TRAINING MODE: INDEPENDENT TRAINING
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 2: Independent Training via teacher forcing (p_int)")
+    print("=" * 60)
+    print("Train: DeterministicInference with p_int=1.0 (teacher-force GT concepts)")
+    print("Eval:  DeterministicInference with p_int=0.0 (no teacher forcing)")
 
-    # model_sampling = ConceptBottleneckModel(
-    #     input_size=n_features,
-    #     annotations=annotations,
-    #     variable_distributions=variable_distributions,
-    #     task_names=['xor'],
-    #     latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-    #     # Different inference for train vs eval
-    #     inference=DeterministicInference,        # Eval: deterministic
-    #     train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
-    #     # Lightning kwargs
-    #     lightning=True,
-    #     loss=loss,
-    #     optim_class=optim,
-    #     optim_kwargs=optim_kwargs
-    # )
-    # print(f"Model type: {type(model_sampling).__name__}")
-    # print(f"Eval inference: {model_sampling.eval_inference.__class__.__name__}")
-    # print(f"Training inference: {model_sampling.train_inference.__class__.__name__}")
+    model_sampling = ConceptBottleneckModel(
+        input_size=n_features,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        inference=DeterministicInference,
+        train_inference=IndependentInference,
+        # Lightning kwargs
+        lightning=True,
+        loss=loss,
+        optim_class=optim,
+        optim_kwargs=optim_kwargs
+    )
+    print(f"Model type: {type(model_sampling).__name__}")
+    print(f"Eval inference: {model_sampling.eval_inference.__class__.__name__} (p_int={model_sampling.eval_inference.p_int})")
+    print(f"Training inference: {model_sampling.train_inference.__class__.__name__} (p_int={model_sampling.train_inference.p_int})")
 
-    # trainer_sampling = Trainer(max_epochs=100)
-    # trainer_sampling.fit(model_sampling, datamodule=datamodule)
-    # evaluate(model_sampling, datamodule, n_concepts, query)
+    trainer_sampling = Trainer(max_epochs=100)
+    trainer_sampling.fit(model_sampling, datamodule=datamodule)
+    evaluate(model_sampling, datamodule, n_concepts, query)
 
-    # # =========================================================================
-    # # CEM WITH INDEPENDENT TRAINING (handles exogenous variables)
-    # # =========================================================================
-    # print("\n" + "=" * 60)
-    # print("Example 3: CEM with Independent Training")
-    # print("=" * 60)
-    # print("Tests exogenous variable handling in IndependentInference")
+    # =========================================================================
+    # CEM WITH INDEPENDENT TRAINING (handles exogenous variables)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 3: CEM with Independent Training (teacher forcing)")
+    print("=" * 60)
+    print("Tests exogenous variable handling with p_int=1.0 teacher forcing")
 
-    # model_cem = ConceptEmbeddingModel(
-    #     input_size=n_features,
-    #     annotations=annotations,
-    #     variable_distributions=variable_distributions,
-    #     task_names=['xor'],
-    #     embedding_size=4,
-    #     latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
-    #     # Different inference for train vs eval
-    #     inference=DeterministicInference,        # Eval: deterministic
-    #     train_inference=IndependentInference, # Train: independent (uses GT concepts as evidence)
-    #     lightning=True,
-    #     loss=loss,
-    #     optim_class=optim,
-    #     optim_kwargs=optim_kwargs
-    # )
-    # print(f"Model type: {type(model_cem).__name__}")
-    # print(f"Eval inference: {model_cem.eval_inference.__class__.__name__}")
-    # print(f"Training inference: {model_cem.train_inference.__class__.__name__}")
+    model_cem = ConceptEmbeddingModel(
+        input_size=n_features,
+        annotations=annotations,
+        variable_distributions=variable_distributions,
+        task_names=['xor'],
+        embedding_size=4,
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        inference=DeterministicInference,
+        train_inference=IndependentInference,
+        lightning=True,
+        loss=loss,
+        optim_class=optim,
+        optim_kwargs=optim_kwargs
+    )
+    print(f"Model type: {type(model_cem).__name__}")
+    print(f"Eval inference: {model_cem.eval_inference.__class__.__name__} (p_int={model_cem.eval_inference.p_int})")
+    print(f"Training inference: {model_cem.train_inference.__class__.__name__} (p_int={model_cem.train_inference.p_int})")
 
-    # trainer_cem = Trainer(max_epochs=100)
-    # trainer_cem.fit(model_cem, datamodule=datamodule)
-    # evaluate(model_cem, datamodule, n_concepts, query)
+    trainer_cem = Trainer(max_epochs=100)
+    trainer_cem.fit(model_cem, datamodule=datamodule)
+    evaluate(model_cem, datamodule, n_concepts, query)
 
     # =========================================================================
     # CMR WITH JOINT TRAINING
@@ -221,36 +213,26 @@ def main():
     print("=" * 60)
     print("Uses DeterministicInference for both training and evaluation")
 
-    concept_mask = torch.zeros(len(concept_names), dtype=torch.bool)  # No masking, all concepts contribute to loss
-    concept_mask[:n_concepts] = 1
-    task_mask = (~concept_mask).float()
-
-    cmr_loss = CMRLoss()
-    cmr_loss = ConceptLoss(
-        annotations=annotations,
-        binary=[MaskedLoss(loss_fn=torch.nn.BCEWithLogitsLoss(reduction='none'), targets_to_mask='none', concepts_to_keep=concept_mask),
-                MaskedLoss(loss_fn=torch.nn.BCELoss(reduction='none'), targets_to_mask='positive', concepts_to_keep=task_mask), 
-                CMRReconstructionLoss(targets_to_mask='negative', concepts_to_keep=task_mask)],
-        binary_weights=[1.0, 1.0, 1.0],
-    )
+    cmr_loss = CMRBlendedLoss(task_names=['xor'])
     optim_kwargs_cmr = {'lr': 0.01}
 
     model_cmr = ConceptMemoryReasoner(
         input_size=n_features,
         annotations=annotations,
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
         variable_distributions=variable_distributions,
         task_names=['xor'],
         n_rules=10,
         memory_latent_size=100,
         memory_decoder_hidden_layers=1,
         selector_hidden_layers=1,
-        rec_weight=0.1,
-        eps=1e-3,
-        latent_encoder_kwargs={'hidden_size': 16, 'n_layers': 1},
+        hard_roles_at_eval=True,
         inference=DeterministicInference,
         train_inference=DeterministicInference,
         lightning=True,
         loss=cmr_loss,
+        rec_weight=0,
         optim_class=optim,
         optim_kwargs=optim_kwargs_cmr,
     )

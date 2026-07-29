@@ -64,12 +64,15 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         out_concepts: Union[int, Annotations],
         in_concepts: Union[int, Annotations] = None,
         in_embeddings: Union[int, Annotations] = None,
+        in_exogenous: Union[int, Annotations] = None,
         *args,
         **kwargs,
     ):
         super().__init__()
         self.in_concepts = in_concepts
         self.in_embeddings = in_embeddings
+        self.in_latent = in_embeddings
+        self.in_exogenous = in_exogenous
         self.out_concepts = out_concepts
 
         self.in_concepts_shape = None
@@ -79,6 +82,10 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self.in_embeddings_shape = None
         if in_embeddings is not None:
             self.in_embeddings_shape = in_embeddings if isinstance(in_embeddings, int) else in_embeddings.size
+
+        self.in_exogenous_shape = None
+        if in_exogenous is not None:
+            self.in_exogenous_shape = in_exogenous if isinstance(in_exogenous, int) else in_exogenous.size
 
         self.out_concepts_shape = out_concepts if isinstance(out_concepts, int) else out_concepts.size
 
@@ -123,3 +130,41 @@ class BaseConceptLayer(ABC, torch.nn.Module):
             NotImplementedError: Must be implemented by subclasses that support pruning.
         """
         raise NotImplementedError(f"Pruning is not yet supported for {self.__class__.__name__}.")
+
+
+class BaseEncoder(BaseConceptLayer):
+    """Compatibility base class for layers encoding latent values to concepts."""
+
+    def __init__(
+        self,
+        out_concepts: Union[int, Annotations],
+        in_latent: Union[int, Annotations] = None,
+        in_exogenous: Union[int, Annotations] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            out_concepts=out_concepts,
+            in_embeddings=in_latent,
+            in_exogenous=in_exogenous,
+            **kwargs,
+        )
+
+
+class BasePredictor(BaseConceptLayer):
+    """Compatibility base class for concept-to-concept predictor layers."""
+
+    def __init__(
+        self,
+        out_concepts: Union[int, Annotations],
+        in_concepts: Union[int, Annotations] = None,
+        in_latent: Union[int, Annotations] = None,
+        in_exogenous: Union[int, Annotations] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            out_concepts=out_concepts,
+            in_concepts=in_concepts,
+            in_embeddings=in_latent,
+            in_exogenous=in_exogenous,
+            **kwargs,
+        )

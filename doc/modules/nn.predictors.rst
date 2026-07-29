@@ -1,14 +1,9 @@
 Concept Predictors
-=======================
+==================
 
-This module provides predictor implementations that map from concepts to target predictions.
+Low-level modules that compute predictions from concepts and auxiliary representations.
 
 .. currentmodule:: torch_concepts.nn
-
-Summary
--------
-
-**Predictor Classes**
 
 .. autosummary::
    :toctree: generated
@@ -16,35 +11,29 @@ Summary
 
    LinearConceptToConcept
    MixConceptExogegnousToConcept
-   MixMemoryConceptExogenousToConcept
    HyperlinearConceptExogenousToConcept
    CallableConceptToConcept
-
-
-Class Documentation
--------------------
+   RuleMemory
+   RuleTaskPredictor
+   RuleReconstructionPredictor
 
 .. autoclass:: LinearConceptToConcept
    :members:
-   :undoc-members:
-   :show-inheritance:
 
 .. autoclass:: MixConceptExogegnousToConcept
    :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: MixMemoryConceptExogenousToConcept
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 .. autoclass:: HyperlinearConceptExogenousToConcept
    :members:
-   :undoc-members:
-   :show-inheritance:
 
 .. autoclass:: CallableConceptToConcept
    :members:
-   :undoc-members:
-   :show-inheritance:
+
+.. autoclass:: RuleMemory
+   :members:
+
+.. autoclass:: RuleTaskPredictor
+   :members:
+
+.. autoclass:: RuleReconstructionPredictor
+   :members:

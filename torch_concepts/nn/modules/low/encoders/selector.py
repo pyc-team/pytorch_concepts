@@ -104,8 +104,7 @@ class CategoricalSelectorLatentToExogenous(BaseEncoder):
                          (batch_size, out_concepts, out_exogenous).
         """
         mixing_coeff = self.selector(latent)
-        mixing_probs = torch.softmax(mixing_coeff, dim=-1)  # [Batch x Task x Memory]
-        return mixing_probs
+        return torch.softmax(mixing_coeff, dim=-1)  # [Batch x Task x Memory]
 
 
 class SelectorLatentToExogenous(BaseEncoder):

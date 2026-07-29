@@ -8,7 +8,7 @@ This module provides neural network components for building concept-based archit
 from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer
+    BaseConceptLayer, BaseEncoder, BasePredictor,
 )
 from torch_concepts.nn.modules.low.base.intervention import (
     BaseConceptInterventionStrategy,
@@ -24,9 +24,6 @@ from .modules.low.sequential import Sequential
 from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
-from .modules.low.encoders.linear import LinearLatentToConcept, LinearExogenousToConcept
-from .modules.low.encoders.exogenous import LinearLatentToExogenous
-from .modules.low.encoders.stochastic import StochasticLatentToConcept
 from .modules.low.encoders.selector import (
     CategoricalSelectorLatentToExogenous,
     SelectorLatentToExogenous,
@@ -36,7 +33,9 @@ from .modules.low.encoders.selector import (
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.exogenous import (
     MixConceptExogegnousToConcept,
-    MixMemoryConceptExogenousToConcept,
+    RuleMemory,
+    RuleTaskPredictor,
+    RuleReconstructionPredictor,
 )
 from .modules.low.predictors.hypernet import HyperlinearConceptExogenousToConcept
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
@@ -58,7 +57,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer, CMRLoss, MaskedLoss
+    L1LogitRegularizer, CMRReconstructionLoss, CMRSwitchedTaskLoss, CMRBlendedLoss, MaskedLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -147,7 +146,9 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "MixConceptExogegnousToConcept",
-    "MixMemoryConceptExogenousToConcept",
+    "RuleMemory",
+    "RuleTaskPredictor",
+    "RuleReconstructionPredictor",
     "HyperlinearConceptExogenousToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
@@ -168,8 +169,10 @@ __all__ = [
     "WANDAGraphLearner",
 
     # Loss functions
-    "CMRLoss",
     "MaskedLoss",
+    "CMRReconstructionLoss",
+    "CMRSwitchedTaskLoss",
+    "CMRBlendedLoss",
     "ConceptLoss",
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
