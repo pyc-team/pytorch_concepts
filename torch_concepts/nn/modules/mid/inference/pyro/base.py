@@ -89,6 +89,16 @@ class PyroBaseInference(BaseInference):
         # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
         # (*batch,) and the ``pyro.plate("batch", ...)`` dim lines up. The
         # variable's declared shape is restored on the sampled realization.
+        # A CPD for a matrix-valued variable (e.g. an ``(n_states, emb)`` concept
+        # embedding from ``LinearEmbeddingEncoder``) emits the full event shape,
+        # which would leave the event dims in ``batch_shape`` and collide with the
+        # batch plate — so flatten those back onto the single size axis here.
+        n_event = len(variable.shape)
+        if n_event > 1:
+            params = {
+                key: value.reshape(*value.shape[:value.dim() - n_event], variable.size)
+                for key, value in params.items()
+            }
         _, pyro_dist, _ = _import_pyro()
         D = variable.distribution
         if issubclass(D, td.Bernoulli):

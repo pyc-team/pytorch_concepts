@@ -223,7 +223,7 @@ class ConceptEmbeddingModel(BipartiteModel):
         # embedding. The mixer indexes concepts positionally, so its axis must
         # follow the concatenation (group-member) order, not the annotation order.
         ordered_names = [m for cvar in concepts for m in cvar.members]
-        mix_axis = self.axis_concepts.subset(ordered_names)
+        reordered_axis = self.axis_concepts.subset(ordered_names)
 
         # by default, the concatenation of concepts and embeddings is done along the last axis, 
         # but the mixer expects the embeddings to be the second-last axis (the last axis is the concept states). 
@@ -241,7 +241,7 @@ class ConceptEmbeddingModel(BipartiteModel):
                 self._flexible_parametrization(
                     variable=tvar,
                     first=MixConceptEmbeddingToConcept(
-                        in_concepts=mix_axis,
+                        in_concepts=reordered_axis,
                         in_embeddings=self.embedding_size,
                         out_concepts=tvar.size,
                     ),

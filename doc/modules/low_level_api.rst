@@ -52,6 +52,7 @@ Predictors
    CallableConceptToConcept
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
+   MixConceptEmbeddingToEmbedding
 
 Dense Layers
 ------------

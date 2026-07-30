@@ -122,6 +122,12 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
         key = _discrete_prob_key(base)
         return {key: getattr(base, key)}
 
+    # Delta: a deterministic node (an embedding, a concept bottleneck context).
+    # Latent sites carry Pyro's Delta and observed ones PyC's, which name the
+    # point mass differently (``v`` / ``_value``) but agree on ``mean``.
+    if type(base).__name__ == "Delta":
+        return {"value": base.mean}
+
     # All other families: fixed param names.
     names: Optional[Tuple[str, ...]] = None
     for k, v in _PARAM_NAMES.items():
