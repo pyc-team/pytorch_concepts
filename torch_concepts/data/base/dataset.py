@@ -529,30 +529,35 @@ class ConceptDataset(Dataset):
             node_names=self.concept_names
         )
         
-    def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor]):
-        """Set concept annotations for the dataset.
-        
+    def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor, AnnotatedTensor]):
+        """Set concept annotations for the dataset, aligned to :attr:`concept_names`.
+
         Args:
-            concepts: Tensor of shape (n_samples, n_concepts) containing concept values
-            concept_names: List of strings naming each concept. If None, will use
-                         numbered concepts like "concept_0", "concept_1", etc.
+            concepts: Concept values of shape (n_samples, n_concepts). An
+                ``AnnotatedTensor`` or a ``pd.DataFrame`` names its own columns
+                and is matched by name, so passing one back in is a no-op. A
+                bare array has no names and is taken to follow
+                :attr:`concept_names_all`, the declared annotation order.
         """
         # Validate shape
         # concepts' length must match dataset's length
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
                 f"input_data has {self.n_samples}.")
-        
-        # eventually extract subset
-        if isinstance(concepts, pd.DataFrame):
-            concepts = concepts.loc[:, self.concept_names]
-        elif isinstance(concepts, np.ndarray) or isinstance(concepts, Tensor):
-            rows = [self.concept_names_all.index(name) for name in self.concept_names]
-            concepts = concepts[:, rows]
+
+        # Align the columns (and pick out a subset, if one was requested).
+        if isinstance(concepts, (AnnotatedTensor, pd.DataFrame)):
+            # By name: correct whatever order they arrive in, and idempotent.
+            concepts = concepts[self.concept_names]
+            concepts = getattr(concepts, 'tensor', concepts)
+        elif isinstance(concepts, (np.ndarray, Tensor)):
+            # By position: the only reading available for unlabelled columns.
+            concepts = concepts[:, [self.concept_names_all.index(n)
+                                    for n in self.concept_names]]
         else:
             raise TypeError(f"Concepts must be a np.ndarray, pd.DataFrame, "
-                f"or Tensor, got {type(concepts).__name__}.")
-        
+                f"AnnotatedTensor, or Tensor, got {type(concepts).__name__}.")
+
         #########################################################################
         ###### modify this to change convention for how to store concepts  ######
         #########################################################################

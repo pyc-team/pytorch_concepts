@@ -199,13 +199,13 @@ def concat_datasets(*datasets):
 
     merged = copy.copy(reference)  # shallow: annotations and graph are shared
     merged.input_data = torch.cat([d.input_data for d in datasets])
-    # Rebuilt rather than routed through ``set_concepts``: the stored tensors are
-    # already in ``concept_names`` order, which that method would re-permute.
-    merged.concepts = AnnotatedTensor(
+    # Annotated, so ``set_concepts`` matches the columns by name instead of
+    # re-permuting stored data.
+    merged.set_concepts(AnnotatedTensor(
         torch.cat([d.concepts.tensor for d in datasets]),
         reference.concepts.annotation,
         axis=1,
-    )
+    ))
     return merged
 
 def colorize(images, colors):
