@@ -32,7 +32,7 @@ from .dataset import ConceptDataset
 
 logger = logging.getLogger(__name__)
 
-from ..splitters import RandomSplitter, NativeSplitter
+from ..splitters import RandomSplitter, NativeSplitter, FixedIndicesSplitter
 
 StageOptions = Literal['fit', 'validate', 'test', 'predict']
 
@@ -64,8 +64,11 @@ class ConceptDataModule(LightningDataModule):
         If set, subsample the dataset down to ``max_samples`` rows (chosen
         uniformly at random, seeded by ``seed``) at construction — everything
         downstream (embedding precomputation, splitting, loaders) sees only
-        the subset. Useful for quick runs and examples. Default is None (use
-        all samples).
+        the subset. A :class:`FixedIndicesSplitter`'s indices are remapped onto
+        the surviving rows, so an explicit split keeps its meaning; a
+        :class:`NativeSplitter`, which reads its indices from disk at ``fit``
+        time, cannot be remapped and is rejected. Useful for quick runs and
+        examples. Default is None (use all samples).
     scalers : Mapping or None, optional
         Unfitted scaler prototypes for data normalization, keyed by
         ``'input'`` and/or ``'concepts'``. :meth:`setup` fits them on the
@@ -161,6 +164,7 @@ class ConceptDataModule(LightningDataModule):
         super(ConceptDataModule, self).__init__()
         # Subsample the dataset down to `max_samples` rows (all downstream
         # steps — embedding precompute, splitting, loaders — see the subset).
+        # TODO: should this only affect Training or the whole dataset splits?
         if max_samples is not None:
             if isinstance(splitter, NativeSplitter):
                 raise ValueError(
@@ -174,6 +178,19 @@ class ConceptDataModule(LightningDataModule):
                 idx = torch.randperm(n, generator=generator)[:max_samples]
                 dataset.input_data = dataset.input_data[idx]
                 dataset.concepts = dataset.concepts[idx]
+                if isinstance(splitter, FixedIndicesSplitter):
+                    # Its indices name original rows, which subsampling drops and
+                    # renumbers: keep the survivors and move them to their new
+                    # positions, so the split keeps its meaning on the subset.
+                    position = {old: new for new, old in enumerate(idx.tolist())}
+                    splitter.set_indices(**{
+                        split: [position[i] for i in (indices or []) if i in position]
+                        for split, indices in (
+                            ('train', splitter.train_idxs),
+                            ('val', splitter.val_idxs),
+                            ('test', splitter.test_idxs),
+                        )
+                    })
         self.dataset = dataset
 
         # data loaders

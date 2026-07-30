@@ -4,6 +4,7 @@ Data utility functions for tensor manipulation and transformation.
 This module provides utility functions for data processing, including tensor
 conversion, image colorization, and affine transformations.
 """
+import copy
 import os
 import numpy as np
 import pandas as pd
@@ -12,6 +13,8 @@ from typing import Sequence, Union
 import torch
 import random
 from torch import Tensor
+
+from ..tensor import AnnotatedTensor
 
 # Re-export for backward compatibility – the canonical definition lives in
 # torch_concepts.utils so that nn modules can import it without pulling in
@@ -130,6 +133,81 @@ def resolve_size(size: Union[int, float], n_samples: int) -> int:
     else:
         raise TypeError(f"Size must be int or float, got {type(size).__name__}")
         
+def concat_datasets(*datasets):
+    """Concatenate concept datasets row-wise into a single one.
+
+    All datasets must annotate the same concepts in the same order — typically
+    several configurations of the *same* dataset that differ only in how they
+    were generated (e.g. train and test populations built under different
+    generative parameters, so a splitter can hand one population to each split).
+    Row order is preserved dataset by dataset, which is what an index-based
+    splitter needs to tell the populations apart.
+
+    Args:
+        *datasets: Two or more ``ConceptDataset`` instances.
+
+    Returns:
+        ConceptDataset: A new dataset object holding the concatenated rows. It
+        shares its metadata (annotations, graph, scalers) with the first input;
+        only ``input_data`` and ``concepts`` are new tensors.
+
+    Raises:
+        ValueError: If fewer than two datasets are given, or if their concept
+            annotations, input feature shapes or precisions disagree.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.data import ToyDataset
+        >>> from torch_concepts.data.utils import concat_datasets
+        >>>
+        >>> a = ToyDataset(dataset='xor', n_gen=100, seed=0)
+        >>> b = ToyDataset(dataset='xor', n_gen=50, seed=1)
+        >>> concat_datasets(a, b).n_samples
+        150
+    """
+    if len(datasets) < 2:
+        raise ValueError(
+            f"concat_datasets: needs at least two datasets, got {len(datasets)}."
+        )
+    reference = datasets[0]
+    # The rows are stacked into one annotated tensor, so everything describing a
+    # row -- the concept axis, the feature shape, the dtype -- has to line up.
+    # ``states`` is checked too: same labels with different state names would
+    # silently mean different things in the merged concept columns.
+    signature = lambda d: (
+        list(d.annotations.labels),
+        list(d.annotations.cardinalities),
+        list(d.annotations.types),
+        [list(s) for s in d.annotations.states],
+        tuple(d.n_features),
+        d.precision,
+    )
+    fields = ('concept labels', 'cardinalities', 'concept types', 'concept states',
+              'input feature shape', 'precision')
+    for other in datasets[1:]:
+        for field, expected, got in zip(fields, signature(reference), signature(other)):
+            if expected != got:
+                raise ValueError(
+                    f"concat_datasets: every dataset must agree on its {field}; "
+                    f"{reference.name} has {expected}, {other.name} has {got}."
+                )
+    if any(d.embs_precomputed != reference.embs_precomputed for d in datasets[1:]):
+        raise ValueError(
+            "concat_datasets: cannot mix datasets whose inputs are precomputed "
+            "embeddings with datasets holding raw inputs."
+        )
+
+    merged = copy.copy(reference)  # shallow: annotations and graph are shared
+    merged.input_data = torch.cat([d.input_data for d in datasets])
+    # Rebuilt rather than routed through ``set_concepts``: the stored tensors are
+    # already in ``concept_names`` order, which that method would re-permute.
+    merged.concepts = AnnotatedTensor(
+        torch.cat([d.concepts.tensor for d in datasets]),
+        reference.concepts.annotation,
+        axis=1,
+    )
+    return merged
+
 def colorize(images, colors):
     """
     Colorize grayscale images based on specified colors.
