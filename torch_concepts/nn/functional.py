@@ -12,6 +12,7 @@ from torch.nn import Linear
 import warnings
 import numbers
 import torch
+import torch.nn.functional as F
 import numpy as np
 import scipy
 from scipy.optimize import Bounds, NonlinearConstraint
@@ -1464,3 +1465,563 @@ def minimize_constr(
     result["x"] = result["x"].view_as(x0)
 
     return result
+
+
+# Standard Interpretable Model metrics and losses
+
+def shared_concept_semantics_loss(
+    input: torch.Tensor,
+    target: torch.Tensor,
+    chunk_size: int = 1000,
+    reduction: str = "mean"
+) -> torch.Tensor:
+    """Enforces that predictions respect the ordering in the target.
+
+    For each concept dimension, if target[i] < target[j], then we enforce
+    input[i] < input[j].
+
+    Args:
+        input: [batch, num_concepts] tensor - predicted concepts
+        target: [batch, num_concepts] tensor - target concepts (defines ordering)
+        chunk_size: Process concepts in chunks to balance speed vs memory
+        reduction: "mean" (default), "sum", or "none"
+
+    Returns:
+        Scalar loss if reduction in ("mean", "sum"), else [batch] tensor
+    """
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    batch_size = input.size(0)
+    num_concepts = input.size(1)
+
+    total_loss = 0.0
+    num_pairs = batch_size * (batch_size - 1)
+
+    # Process concepts in chunks to balance memory and speed
+    for chunk_start in range(0, num_concepts, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, num_concepts)
+
+        # Extract chunk: [batch, chunk_size]
+        pred_chunk = input[:, chunk_start:chunk_end]
+        target_chunk = target[:, chunk_start:chunk_end]
+
+        # Vectorized computation for this chunk
+        # [batch, 1, chunk_size] - [1, batch, chunk_size] = [batch, batch, chunk_size]
+        diff_pred = pred_chunk.unsqueeze(0) - pred_chunk.unsqueeze(1)
+        diff_target = target_chunk.unsqueeze(0) - target_chunk.unsqueeze(1)
+
+        # Enforce: if target[j] > target[i], then pred[j] > pred[i]
+        order_mask = (diff_target > 0).float()
+
+        # Penalize when diff_pred <= 0 where we expect diff_pred > 0
+        violation = F.softplus(-diff_pred) * order_mask
+
+        total_loss += violation.sum()
+
+    # Normalize by number of pairs and concepts
+    loss = total_loss / (num_pairs * num_concepts) if num_pairs > 0 else torch.tensor(0.0)
+
+    if reduction == "mean":
+        return loss
+    elif reduction == "sum":
+        return loss * num_pairs * num_concepts
+    else:  # "none"
+        # For "none", we'd need to track per-sample losses, which requires refactoring
+        # For now, just return the loss as-is
+        return loss
+
+def shared_concept_semantics_score(
+    preds: torch.Tensor,
+    target: torch.Tensor,
+    reduction: str = "mean"
+) -> float | torch.Tensor:
+    """Compute fraction of correctly ordered pairs based on target's ordering.
+
+    Args:
+        preds: [batch, num_concepts] tensor - predicted concepts
+        target: [batch, num_concepts] tensor - target concepts (defines ordering)
+        reduction: "mean" (default), "sum", or "none"
+
+    Returns:
+        Scalar float if reduction in ("mean", "sum"), else [num_concepts] tensor
+    """
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    batch_size = preds.size(0)
+    num_concepts = preds.size(1)
+
+    # For each concept, sort predictions according to target's order
+    # Get sorted indices for each concept dimension
+    sorted_indices = torch.argsort(target, dim=0)  # [batch, num_concepts]
+
+    # Gather predictions in the sorted order for each concept
+    # This is equivalent to: pred_sorted[i, c] = preds[sorted_indices[i, c], c]
+    pred_sorted = torch.gather(preds, 0, sorted_indices)  # [batch, num_concepts]
+
+    # Check consecutive differences for all concepts at once
+    diff_pred = torch.diff(pred_sorted, dim=0)  # [batch-1, num_concepts]
+
+    # Count how many pairs are correctly ordered (diff > 0) per concept
+    correct_per_concept = (diff_pred > 0).sum(dim=0)  # [num_concepts]
+    pairs_per_concept = batch_size - 1
+
+    # Compute metric per concept
+    metric_per_concept = correct_per_concept.float() / pairs_per_concept if pairs_per_concept > 0 else torch.ones(num_concepts)
+
+    if reduction == "mean":
+        return metric_per_concept.mean().item()
+    elif reduction == "sum":
+        return metric_per_concept.sum().item()
+    else:  # "none"
+        return metric_per_concept
+
+
+def _effective_rank_energy(s: torch.Tensor, fraction: float = 0.99) -> int:
+    """Smallest k such that the top-k singular values capture ``fraction``
+    of the squared Frobenius norm.
+
+    More principled than an ``rtol`` cutoff when the spectrum decays
+    smoothly (no clean cliff to find). Equivalent to the "99% energy"
+    convention used in classical PCA dimensionality selection.
+
+    Args:
+        s: 1-D tensor of singular values (sorted descending).
+        fraction: Energy fraction in ``(0, 1]``.
+
+    Returns:
+        Effective rank in ``[1, len(s)]`` (or ``0`` if ``s`` is empty).
+    """
+    if s.numel() == 0:
+        return 0
+    s32 = s.float()
+    energy = (s32 ** 2).cumsum(0)
+    target = float(fraction) * float(energy[-1])
+    # First index whose cumulative energy reaches the target.
+    k = int((energy < target).sum().item()) + 1
+    return min(k, int(s.numel()))
+
+
+def prediction_concept_dependency_score(
+    preds_jacobian, concept_jacobian,
+    *,
+    method: str = "rtol",
+    rtol: float | None = None,
+    fraction: float = 0.99,
+    reduction: str = "mean",
+):
+    """Prediction-concept dependency: how much of preds_jacobian is captured by concept_jacobian?
+
+    Measures if concept_jacobian's row span contains preds_jacobian's row span.
+    Uses m² = 1 - ||Q_cᵀ Q_h||²_F / rank(Q_h) where Q_h, Q_c are orthonormal bases.
+
+    * m = 0: preds_jacobian fully contained in concept_jacobian
+    * m = 1: orthogonal subspaces
+
+    Args:
+        preds_jacobian: Shape [batch, num_outputs, input_dim]
+        concept_jacobian: Shape [batch, num_outputs, input_dim]
+        method: "rtol" or "energy" for rank truncation
+        rtol: Relative tolerance for "rtol" method
+        fraction: Energy fraction for "energy" method
+        reduction: "mean" (default), "sum", or "none" for per-sample metrics
+
+    Returns:
+        Tuple (metric, s_h, s_c):
+            - metric: scalar if reduction in ("mean", "sum"), else shape [batch]
+            - s_h: list of singular value tensors for preds_jacobian
+            - s_c: list of singular value tensors for concept_jacobian
+    """
+    if method not in ("rtol", "energy"):
+        raise ValueError(f"method must be 'rtol' or 'energy', got {method!r}.")
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    batch_size = preds_jacobian.shape[0]
+
+    def _basis(g):
+        # g has shape [num_outputs, input_dim] (single sample)
+        g_2d = g.float().reshape(-1, g.shape[-1])
+        u, s, _ = torch.linalg.svd(g_2d.T, full_matrices=False)
+        if s.numel() == 0:
+            d = g_2d.shape[-1]
+            return torch.zeros(d, 0, dtype=g_2d.dtype, device=g_2d.device), 0, s
+        if method == "energy":
+            r = _effective_rank_energy(s, fraction)
+        else:
+            tol = rtol if rtol is not None else (
+                max(g_2d.shape) * torch.finfo(g_2d.dtype).eps
+            )
+            cutoff = float(s.max()) * tol
+            r = int((s > cutoff).sum().item())
+        return u[:, :r], r, s
+
+    metrics = []
+    s_h_list = []
+    s_c_list = []
+
+    for i in range(batch_size):
+        q_h, r_h, s_h = _basis(preds_jacobian[i])
+        q_c, _, s_c = _basis(concept_jacobian[i])
+
+        s_h_list.append(s_h)
+        s_c_list.append(s_c)
+
+        if r_h == 0:
+            # Degenerate: preds_jacobian has no signal → trivially contained.
+            metrics.append(torch.zeros((), dtype=q_h.dtype, device=q_h.device))
+        else:
+            overlap_sq = (q_c.T @ q_h).square().sum()                  # ||Q_cᵀ Q_h||²_F
+            m_sq = (1.0 - overlap_sq / float(r_h)).clamp(min=0.0)      # guard against tiny <0
+            metrics.append(m_sq.sqrt())
+
+    metric_tensor = torch.stack(metrics)
+
+    if reduction == "mean":
+        return metric_tensor.mean()
+    elif reduction == "sum":
+        return metric_tensor.sum()
+    else:  # "none"
+        return metric_tensor
+
+def compute_full_jacobian(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    Compute full Jacobian matrix efficiently.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+
+    Returns:
+        jacobian: [batch, output_dim, input_dim]
+                  jacobian[b, i, j] = ∂y_i/∂x_j for batch sample b
+
+    Performance: Very fast for output_dim ~ 10-100
+    """
+    batch_size = y.shape[0]
+    output_dim = y.shape[1] if y.ndim > 1 else 1
+    input_dim = x.shape[1] if x.ndim > 1 else 1
+
+    jacobian = []
+    for i in range(output_dim):
+        y_i = y[:, i] if output_dim > 1 else y.squeeze(-1)
+
+        grad_i = torch.autograd.grad(
+            outputs=y_i,
+            inputs=x,
+            grad_outputs=torch.ones_like(y_i),
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True
+        )[0]
+
+        if grad_i is None:
+            grad_i = torch.zeros(batch_size, input_dim, device=x.device)
+
+        jacobian.append(grad_i)
+
+    return torch.stack(jacobian, dim=1)  # [batch, output_dim, input_dim]
+
+
+def compute_full_hessian(y: torch.Tensor, x: torch.Tensor, jacobian: torch.Tensor = None) -> torch.Tensor:
+    """
+    Compute full Hessian matrices for all outputs.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+        jacobian: [batch, output_dim, input_dim] (optional, computed if not provided)
+
+    Returns:
+        hessian: [batch, output_dim, input_dim, input_dim]
+                 hessian[b, i, j, k] = ∂²y_i/∂x_j∂x_k for batch sample b
+
+    Performance: Feasible for input_dim ~ 10-50, output_dim ~ 10-50
+    """
+    if jacobian is None:
+        jacobian = compute_full_jacobian(y, x)
+
+    batch_size = y.shape[0]
+    output_dim = jacobian.shape[1]
+    input_dim = jacobian.shape[2]
+
+    hessian = []
+    for i in range(output_dim):
+        hess_i = []
+        for j in range(input_dim):
+            grad_ij = jacobian[:, i, j]  # [batch]
+
+            grad2_ij = torch.autograd.grad(
+                outputs=grad_ij,
+                inputs=x,
+                grad_outputs=torch.ones_like(grad_ij),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            if grad2_ij is None:
+                grad2_ij = torch.zeros(batch_size, input_dim, device=x.device)
+
+            hess_i.append(grad2_ij)
+
+        hessian.append(torch.stack(hess_i, dim=1))  # [batch, input_dim, input_dim]
+
+    return torch.stack(hessian, dim=1)  # [batch, output_dim, input_dim, input_dim]
+
+
+def compute_derivative_order_n(
+    y: torch.Tensor,
+    x: torch.Tensor,
+    order: int,
+    previous_derivatives: List[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Compute n-th order derivatives recursively.
+
+    Args:
+        y: [batch, output_dim]
+        x: [batch, input_dim]
+        order: Derivative order (1, 2, 3, ...)
+        previous_derivatives: List of [jacobian, hessian, ...] if already computed
+
+    Returns:
+        For order=1: [batch, output_dim, input_dim]
+        For order=2: [batch, output_dim, input_dim, input_dim]
+        For order=3: [batch, output_dim, input_dim, input_dim, input_dim]
+        etc.
+
+    Note: Higher orders (3+) are expensive. Use sparingly.
+    """
+    if order < 1:
+        raise ValueError(f"Order must be >= 1, got {order}")
+
+    if order == 1:
+        return compute_full_jacobian(y, x)
+
+    if order == 2:
+        jacobian = previous_derivatives[0] if previous_derivatives else None
+        return compute_full_hessian(y, x, jacobian)
+
+    # For order >= 3, compute recursively
+    if previous_derivatives is None or len(previous_derivatives) < order - 1:
+        # Need to compute lower order derivatives first
+        derivatives = []
+        for o in range(1, order):
+            deriv = compute_derivative_order_n(y, x, o, derivatives)
+            derivatives.append(deriv)
+        prev_deriv = derivatives[-1]
+    else:
+        prev_deriv = previous_derivatives[order - 2]
+
+    # Compute next order from previous order
+    batch_size = y.shape[0]
+    output_dim = y.shape[1] if y.ndim > 1 else 1
+    input_dim = x.shape[1] if x.ndim > 1 else 1
+
+    # prev_deriv shape: [batch, output_dim, input_dim, input_dim, ..., input_dim] (order-1 input_dim's)
+    # We need to differentiate each element w.r.t. x again
+
+    # Flatten all but last dimension for easier iteration
+    prev_shape = prev_deriv.shape
+    num_prev_dims = len(prev_shape) - 2  # Exclude batch and output_dim
+
+    next_deriv = []
+    for i in range(output_dim):
+        # Get all derivatives for output i
+        deriv_i = prev_deriv[:, i]  # [batch, input_dim, ..., input_dim]
+
+        # Flatten to [batch, -1]
+        deriv_i_flat = deriv_i.reshape(batch_size, -1)
+
+        # Compute gradient for each flattened element
+        grads = []
+        for k in range(deriv_i_flat.shape[1]):
+            elem_k = deriv_i_flat[:, k]  # [batch]
+
+            grad_k = torch.autograd.grad(
+                outputs=elem_k,
+                inputs=x,
+                grad_outputs=torch.ones_like(elem_k),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            if grad_k is None:
+                grad_k = torch.zeros(batch_size, input_dim, device=x.device)
+
+            grads.append(grad_k)
+
+        # Stack and reshape: [batch, prev_size, input_dim]
+        grads_stacked = torch.stack(grads, dim=1)  # [batch, prev_size, input_dim]
+
+        # Reshape to [batch, input_dim, ..., input_dim, input_dim] (order input_dim's)
+        new_shape = [batch_size] + [input_dim] * order
+        grads_reshaped = grads_stacked.reshape(new_shape)
+
+        next_deriv.append(grads_reshaped)
+
+    # Stack over output dimension
+    return torch.stack(next_deriv, dim=1)
+
+
+def bounded_reasoning_loss(
+    y_pred: torch.Tensor,
+    x: torch.Tensor,
+    pde: Callable,
+    reduction: str = "mean"
+) -> torch.Tensor:
+    """
+    Compute PDE-based constraint loss for neural networks.
+
+    The PDE function receives pre-computed derivatives and returns a residual
+    that should be zero when the PDE is satisfied.
+
+    Args:
+        y_pred: [batch, output_dim] - Model predictions
+        x: [batch, input_dim] - Input (must have requires_grad=True)
+        pde: Callable that takes (y, x, derivatives) and returns residual
+             Signature: pde(y, x, J, H, ...) where:
+             - y: [batch, output_dim]
+             - x: [batch, input_dim]
+             - J: [batch, output_dim, input_dim] (Jacobian, 1st order)
+             - H: [batch, output_dim, input_dim, input_dim] (Hessian, 2nd order)
+             - etc. for higher orders
+        reduction: "mean", "sum", or "none"
+
+    Returns:
+        loss: Scalar or [batch] tensor of PDE residual squared
+
+    Examples:
+        # Example 1: Smoothness constraint - limit Hessian norm
+        def smooth_pde(y, x, J, H):
+            # H is [batch, output_dim, input_dim, input_dim]
+            # Return scalar residual per batch sample
+            return (H ** 2).sum(dim=(1,2,3))  # [batch]
+
+        # Example 2: Lipschitz constraint - limit Jacobian spectral norm
+        def lipschitz_pde(y, x, J):
+            # J is [batch, output_dim, input_dim]
+            batch_residuals = []
+            for b in range(J.shape[0]):
+                spectral_norm = torch.linalg.matrix_norm(J[b], ord=2)
+                batch_residuals.append(spectral_norm)
+            return torch.stack(batch_residuals)  # [batch]
+
+        # Example 3: Element-wise gradient constraint
+        def gradient_constraint_pde(y, x, J):
+            # Limit magnitude of all partial derivatives
+            return (J ** 2).sum(dim=(1,2))  # [batch]
+    """
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError(f"reduction must be 'mean', 'sum', or 'none', got {reduction!r}.")
+
+    # Determine required derivative order from PDE function signature
+    import inspect
+    sig = inspect.signature(pde)
+    num_params = len(sig.parameters)
+
+    # num_params: 2 = (y, x) -> no derivatives
+    # num_params: 3 = (y, x, J) -> 1st order (Jacobian)
+    # num_params: 4 = (y, x, J, H) -> 2nd order (Hessian)
+    # etc.
+    max_order = num_params - 2
+
+    if max_order < 0:
+        raise ValueError("PDE function must have at least 2 parameters: (y, x)")
+
+    # Compute all required derivatives
+    derivatives = []
+    for order in range(1, max_order + 1):
+        deriv = compute_derivative_order_n(y_pred, x, order, derivatives)
+        derivatives.append(deriv)
+
+    # Call PDE function
+    args = [y_pred, x] + derivatives
+    residual = pde(*args)
+
+    # Residual should be [batch] or scalar
+    if residual.ndim == 0:
+        residual = residual.unsqueeze(0).expand(y_pred.shape[0])
+
+    # Compute loss
+    loss_per_sample = residual ** 2
+
+    if reduction == "mean":
+        return loss_per_sample.mean()
+    elif reduction == "sum":
+        return loss_per_sample.sum()
+    else:  # "none"
+        return loss_per_sample
+
+
+# ============================================================================
+# Helper functions for common PDE patterns
+# ============================================================================
+
+def linear_pde(strength: float = 1.0) -> Callable:
+    """
+    Create a PDE that enforces linearity: ∂²y_i/∂x_j∂x_k = 0 for all i,j,k.
+    Forces the function to be linear (affine).
+
+    Args:
+        strength: Scaling factor for the constraint
+
+    Returns:
+        PDE function that penalizes non-zero Hessian
+
+    Note: Hessian has shape [batch, output_dim, input_dim, input_dim] because:
+          - For each of output_dim outputs y_i
+          - We have a [input_dim, input_dim] matrix of second derivatives ∂²y_i/∂x_j∂x_k
+          - All batch samples: [batch, output_dim, input_dim, input_dim]
+    """
+    def pde(y, x, J, H):
+        # H: [batch, output_dim, input_dim, input_dim]
+        # Penalize any non-zero second derivatives → forces linearity
+        return strength * (H ** 2).sum(dim=(1,2,3))  # [batch]
+
+    return pde
+
+
+def quadratic_pde(strength: float = 1.0) -> Callable:
+    """
+    Create a PDE that allows quadratic functions: ∂³y_i/∂x_j∂x_k∂x_l = 0.
+    Forces the function to be at most quadratic.
+
+    Args:
+        strength: Scaling factor for the constraint
+
+    Returns:
+        PDE function that penalizes non-zero 3rd derivatives
+    """
+    def pde(y, x, J, H, T):
+        # T: [batch, output_dim, input_dim, input_dim, input_dim] - 3rd order tensor
+        # Penalize any non-zero third derivatives → allows up to quadratic
+        return strength * (T ** 2).sum(dim=(1,2,3,4))  # [batch]
+
+    return pde
+
+
+def lipschitz_pde(max_norm: float = 1.0) -> Callable:
+    """
+    Create a PDE that enforces Lipschitz continuity via Jacobian norm.
+    Limits how fast the function can change: ||∇f|| ≤ max_norm.
+
+    Args:
+        max_norm: Maximum allowed spectral norm of Jacobian
+
+    Returns:
+        PDE function that penalizes when ||J|| > max_norm
+    """
+    def pde(y, x, J):
+        # J: [batch, output_dim, input_dim]
+        batch_residuals = []
+        for b in range(J.shape[0]):
+            spectral_norm = torch.linalg.matrix_norm(J[b], ord=2)
+            residual = torch.relu(spectral_norm - max_norm)  # Only penalize if > max_norm
+            batch_residuals.append(residual)
+        return torch.stack(batch_residuals)  # [batch]
+
+    return pde
