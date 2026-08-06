@@ -285,7 +285,7 @@ pass, Lightning training, concept queries — is inherited.
                               LinearEmbeddingToConcept(in_embeddings=self.embedding_size, out_concepts=1),
                               nn.Flatten(start_dim=-2),
                           ),
-                          second="auto",
+                          second=concept_head(),
                       ),
                   )
                   for cvar, evar in zip(concepts, embeddings)
@@ -315,7 +315,7 @@ pass, Lightning training, concept queries — is inherited.
                               in_embeddings=self.embedding_size,
                               out_concepts=tvar.size,
                           ),
-                          second="auto",
+                          second=task_head(tvar),
                       )
                       for tvar in tasks
                   ],

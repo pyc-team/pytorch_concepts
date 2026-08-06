@@ -1,0 +1,84 @@
+# =============================================================
+# Concept Bottleneck Generative Model (VAE variant).
+#
+# Generative direction z -> concepts -> input, trained as a VAE
+# through a variational guide q(z | input).
+#
+# Unlike the discriminative models there are no tasks: every
+# concept is supervised, so `task_names` must NOT be set.
+#
+# `input_size` is injected by update_config_from_data, and
+# `annotations` / `graph` / `backbone` / `loss` / `metrics` are
+# passed by run_experiment.py — none of them belong here.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+model_cls:
+  _target_: "torch_concepts.nn.ConceptBottleneckGenerativeModel"
+
+  latent_size: 32      # dim(z)
+  embedding_size: 16   # m, width of one concept context
+  plate: false         # one variable per concept (the reference layout)
+
+  # Bernoulli over pixel intensities: the standard VAE reconstruction
+  # likelihood, equivalent to a binary cross-entropy on [0, 1] images.
+  observation:
+    _target_: hydra.utils.get_class
+    path: torch.distributions.Bernoulli
+
+  # Base families, restoring CBGM's own class defaults over the relaxed ones
+  # `_commons` sets for the discriminative models. The Pyro engine applies its
+  # own straight-through relaxation when it samples these, so declaring them
+  # relaxed here would only change what the concept CPDs report.
+  variable_distributions:
+    binary:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.Bernoulli
+    categorical:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.OneHotCategorical
+    continuous:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.Normal
+  variable_dist_kwargs:
+    binary: null
+    categorical: null
+    continuous: null
+
+  # Variational inference for BOTH train and eval: the guide q(z | input)
+  # is what makes a reconstruction possible. Ancestral sampling (which
+  # draws z from the prior instead) is swapped in by the analysis script.
+  inference:
+    _target_: "torch_concepts.nn.VariationalInference"
+    _partial_: true
+  train_inference: ${model.model_cls.inference}
+
+  # Bottleneck (k concept contexts + 1 unsupervised) -> pixels, through
+  # transposed convolutions rather than a dense head: a flat decoder to
+  # CelebA's 12,288 pixels is ~6M parameters against ~0.6M here.
+  # The depth comes from the dataset (it must divide the image side);
+  # `base_size` is then derived, so this needs no per-dataset override.
+  #
+  # Raw: the model composes the observation parameter's activation on top
+  # (a sigmoid, for a Bernoulli's `probs`), so this stack must NOT squash
+  # its own output or it would be activated twice.
+  decoder:
+    _target_: "torch_concepts.nn.ConvDecoder"
+    in_features: ${math:"(${data_dims.n_concepts} + 1) * ${model.model_cls.embedding_size}"}
+    out_shape: ${model.model_cls.input_size}
+    hidden_channels: ${dataset.decoder_channels}
+
+# The encoder side of the guide. attach_latent_encoder composes this with
+# the dataset's backbone into one extractor and stamps `out_features` on
+# it; CBGM then uses that extractor as its guide's shared trunk, so the
+# backbone runs once per step and `loc`/`scale` are two linear readouts.
+# `output_size` must be reachable from the backbone's width.
+latent_encoder:
+  _target_: torch_concepts.nn.MLP
+  hidden_size: 256
+  output_size: 128
+  n_layers: 1
+  activation: leaky_relu
+  dropout: 0.

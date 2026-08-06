@@ -85,13 +85,15 @@ class CelebADataModule(ConceptDataModule):
         batch_size: int = 512,
         concept_subset: list | None = None,
         label_descriptions: dict | None = None,
+        image_size: int | None = None,
         workers: int = 0,
         **kwargs
     ):
         dataset = CelebADataset(
             root=root,
             concept_subset=concept_subset,
-            label_descriptions=label_descriptions
+            label_descriptions=label_descriptions,
+            image_size=image_size,
         )
         
         super().__init__(

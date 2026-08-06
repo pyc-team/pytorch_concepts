@@ -196,24 +196,26 @@ class ConceptEmbeddingModel(BipartiteModel):
             ],
         )
         # embeddings → concepts: decode one score per state embedding (per group).
-        # `second='auto'` throughout: these encoders/predictors are built with a
-        # fixed output width, so a continuous variable's scale head is an
-        # independent copy of `first` (a no-op for the discrete ones).
+        def concept_head():
+            return Sequential(
+                LinearEmbeddingToConcept(
+                    in_embeddings=self.embedding_size,
+                    out_concepts=1,
+                ),
+                # Collapse the (n_concepts, 1) score dims -> n_concepts
+                nn.Flatten(start_dim=-2),
+            )
+
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
                 parents=[evar],
                 parametrization=self._flexible_parametrization(
                     variable=cvar,
-                    first=Sequential(
-                        LinearEmbeddingToConcept(
-                            in_embeddings=self.embedding_size,
-                            out_concepts=1,
-                        ),
-                        # Collapse the (n_concepts, 1) score dims -> n_concepts
-                        nn.Flatten(start_dim=-2),
-                    ),
-                    second='auto',
+                    # Two independent heads: `second` is only consulted for a
+                    # continuous concept, which needs its own scale head.
+                    first=concept_head(),
+                    second=concept_head(),
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -234,18 +236,21 @@ class ConceptEmbeddingModel(BipartiteModel):
                 "embeddings": torch.cat(list(embeddings.values()), dim=-2),
             }
 
+        def task_head(tvar):
+            return MixConceptEmbeddingToConcept(
+                in_concepts=reordered_axis,
+                in_embeddings=self.embedding_size,
+                out_concepts=tvar.size,
+            )
+
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts, *embeddings],
             parametrization=[
                 self._flexible_parametrization(
                     variable=tvar,
-                    first=MixConceptEmbeddingToConcept(
-                        in_concepts=reordered_axis,
-                        in_embeddings=self.embedding_size,
-                        out_concepts=tvar.size,
-                    ),
-                    second='auto',
+                    first=task_head(tvar),
+                    second=task_head(tvar),
                 )
                 for tvar in tasks
             ],

@@ -16,7 +16,7 @@ from torch.distributions import Bernoulli, Normal
 from torch_concepts import seed_everything, ConceptVariable, EmbeddingVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork, LearnablePrior,
+    ParametricCPD, BayesianNetwork, DefaultActivation, LearnablePrior,
     DeterministicInference, AncestralSamplingInference,
     RejectionSampling, ImportanceSampling, MutilatedNetworkProposal,
 )
@@ -37,15 +37,15 @@ def build_verification_model():
         ParametricCPD(x, parametrization=LearnablePrior(X)),
         ParametricCPD(
             concepts, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, concepts.size), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, concepts.size), DefaultActivation("probs", Bernoulli)),
         ),
         ParametricCPD(
             y, parents=[concepts],
-            parametrization=nn.Sequential(nn.Linear(concepts.size, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(concepts.size, 1), DefaultActivation("probs", Bernoulli)),
         ),
         ParametricCPD(
             y1, parents=[concepts.member("c1")],
-            parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(1, 1), DefaultActivation("probs", Bernoulli)),
         ),
     ]
     return BayesianNetwork(variables=[x, concepts, y, y1], factors=factors)
@@ -62,11 +62,11 @@ def build_plate_model(n):
         ParametricCPD(x, parametrization=LearnablePrior(X)),
         ParametricCPD(
             concepts, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, n), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, n), DefaultActivation("probs", Bernoulli)),
         ),
         ParametricCPD(
             y, parents=[concepts],
-            parametrization=nn.Sequential(nn.Linear(n, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(n, 1), DefaultActivation("probs", Bernoulli)),
         ),
     ]
     return BayesianNetwork(variables=[x, concepts, y], factors=factors)
@@ -81,14 +81,14 @@ def build_separate_model(n):
     factors += [
         ParametricCPD(
             c, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, 1), DefaultActivation("probs", Bernoulli)),
         )
         for c in cs
     ]
     factors.append(
         ParametricCPD(
             y, parents=cs,
-            parametrization=nn.Sequential(nn.Linear(n, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(n, 1), DefaultActivation("probs", Bernoulli)),
         )
     )
     return BayesianNetwork(variables=[x, *cs, y], factors=factors)
@@ -204,10 +204,10 @@ def verify():
             ParametricCPD(x2, parametrization=LearnablePrior(X)),
             ParametricCPD(lat, parents=[x2], parametrization={
                 "loc": nn.Linear(X, lat.size),
-                "scale": nn.Sequential(nn.Linear(X, lat.size), nn.Softplus()),
+                "scale": nn.Sequential(nn.Linear(X, lat.size), DefaultActivation("scale", Normal)),
             }),
             ParametricCPD(z, parents=[lat.member("m1")],
-                          parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())),
+                          parametrization=nn.Sequential(nn.Linear(1, 1), DefaultActivation("probs", Bernoulli))),
         ],
     )
     neng = DeterministicInference(npgm)

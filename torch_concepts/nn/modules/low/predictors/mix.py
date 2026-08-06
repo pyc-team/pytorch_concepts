@@ -168,12 +168,12 @@ class MixConceptEmbeddingToEmbedding(MixConceptEmbedding):
     """Concept bottleneck layer of a Concept Bottleneck Generative Model.
 
     Mixes each concept's state embeddings by its predicted probability — the
-    CEM mixture, :math:`w_i = \\hat{c}_i w^+_i + (1 - \\hat{c}_i) w^-_i` — and
-    stacks the *unsupervised* context :math:`w_{k+1}` on top of the result.
-    Unlike :class:`MixConceptEmbeddingToConcept` there is no predictor head:
-    the layer emits the bottleneck :math:`w = [w_1, \\dots, w_k, w_{k+1}]`
-    itself, which the post-concept-bottleneck network (a generative model's
-    decoder) consumes.
+    CEM mixture, :math:`w_i = \\hat{c}_i w^+_i + (1 - \\hat{c}_i) w^-_i`. Unlike
+    :class:`MixConceptEmbeddingToConcept` there is no predictor head: the layer
+    emits the mixed contexts :math:`[w_1, \\dots, w_k]` themselves. The caller
+    concatenates the *unsupervised* context :math:`w_{k+1}` to obtain the full
+    bottleneck :math:`w`, which the post-concept-bottleneck network (a
+    generative model's decoder) consumes.
 
     The pre-defined concepts are not assumed to be complete in a generative
     setting, so the unsupervised context carries whatever they do not cover; an
@@ -184,7 +184,9 @@ class MixConceptEmbeddingToEmbedding(MixConceptEmbedding):
     Attributes:
         in_concepts (Annotations): Input concept annotations.
         in_embeddings (int): Number of embedding features per state.
-        out_concepts (int): Bottleneck width, ``in_embeddings * (k + 1)``.
+        out_concepts (int): Width of the bottleneck the caller assembles,
+            ``in_embeddings * (k + 1)`` — this layer contributes the first
+            ``in_embeddings * k`` of it.
 
     Args:
         in_concepts: Annotations of the ``k`` supervised concepts.
@@ -200,9 +202,13 @@ class MixConceptEmbeddingToEmbedding(MixConceptEmbedding):
         >>>
         >>> concepts = torch.rand(4, 12)          # (batch, 10 + 2 state scores)
         >>> embeddings = torch.randn(4, 12, 16)   # (batch, states, m)
-        >>> unknown = torch.randn(4, 1, 16)       # (batch, 1, m)
         >>>
-        >>> layer(concepts=concepts, embeddings=embeddings, unknown=unknown).shape
+        >>> mixed = layer(concepts=concepts, embeddings=embeddings)
+        >>> mixed.shape
+        torch.Size([4, 2, 16])
+        >>>
+        >>> unknown = torch.randn(4, 1, 16)       # (batch, 1, m)
+        >>> torch.cat([mixed, unknown], dim=-2).shape   # the full bottleneck
         torch.Size([4, 3, 16])
 
     Note:
@@ -241,7 +247,9 @@ class MixConceptEmbeddingToEmbedding(MixConceptEmbedding):
             embeddings: State embeddings of shape ``(batch_size, n_states, in_embeddings)``.
 
         Returns:
-            torch.Tensor: Bottleneck of shape ``(batch_size, k + 1, in_embeddings)``
+            torch.Tensor: Mixed concept contexts of shape
+            ``(batch_size, k, in_embeddings)``. Concatenate the unsupervised
+            context along ``dim=-2`` for the full bottleneck.
         """
         return self._mix(concepts, embeddings)  # (batch, k, in_embeddings)
 

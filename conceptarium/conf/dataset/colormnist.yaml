@@ -1,0 +1,36 @@
+# =============================================================
+# Colored MNIST: 3x28x28 RGB digits, concepts {parity, color, digit}.
+#
+# Replaces the stale TODO_colormnist.yaml, which targeted a
+# `conceptarium.data.datamodules.colormnist` module that does not
+# exist and used a `coloring` schema the datamodule never had.
+#
+# NOTE: ConceptDataset reorders concepts by type, so the actual
+# order is ['parity', 'color', 'digit'] regardless of what is
+# requested here. Always read `dm.concept_names`.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+name: colormnist
+
+datamodule:
+  _target_: torch_concepts.data.datamodules.colormnist.ColorMNISTDataModule
+  colors: ['red', 'green']
+  coloring: 'random'
+
+default_task_names: [digit]
+
+# Transposed-conv decoder depth for a generative model. 28 = 7 * 2**2, so two
+# upsampling stages; ConvDecoder derives base_size=7 from that.
+decoder_channels: [64, 32]
+
+# Pretrained feature extractor for the guide q(z | input). Frozen, and
+# small: it is only the encoder side — the decoder is learned from
+# scratch. Must NOT be precomputed into embeddings (see conf/cbgm.yaml),
+# since the raw pixels are the reconstruction target.
+backbone:
+  _target_: torch_concepts.backbone.ImageBackbone
+  name: resnet18
+  freeze: True

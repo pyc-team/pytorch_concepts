@@ -39,7 +39,7 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import Bernoulli, Normal, kl_divergence
 
-from torch_concepts import seed_everything, ImageBackbone
+from torch_concepts import seed_everything
 from torch_concepts.data import ColorMNISTDataModule
 from torch_concepts.nn import ConceptBottleneckGenerativeModel, MLP
 from torch_concepts.nn.functional import concept_orthogonality
@@ -85,24 +85,22 @@ def main():
     dataset = datamodule.dataset
     concept_names = dataset.concept_names
 
-    backbone = ImageBackbone("resnet18")
+    # The PGM keeps every variable on a single feature axis, so the image is a
+    # flat vector of Bernoulli pixels rather than a (3, 28, 28) tensor.
+    n_pixels = math.prod(dataset.n_features)
     context_size = (len(concept_names) + 1) * EMBEDDING_SIZE
 
     model = ConceptBottleneckGenerativeModel(
-        input_size=dataset.n_features,
+        input_size=n_pixels,
         annotations=dataset.annotations,
-        backbone=backbone,
-        encoder=MLP(
-            backbone.out_features, 
-            LATENT_SIZE, 
-            n_layers=1
-        ),
+        encoder=MLP(n_pixels, 256, LATENT_SIZE),
         latent_size=LATENT_SIZE,
         embedding_size=EMBEDDING_SIZE,
-        decoder=torch.nn.Sequential(
-            MLP(context_size, 64, math.prod(dataset.n_features), n_layers=2, activation="leaky_relu"),
-            torch.nn.Unflatten(-1, dataset.n_features)
-        )
+        observation=Bernoulli,
+        # Raw: the model composes the observation parameter's activation on top
+        # (here a sigmoid, for a Bernoulli's `probs`), so the MLP must not
+        # squash its own output or it would be activated twice.
+        decoder=MLP(context_size, 256, n_pixels, n_layers=2, activation="leaky_relu"),
     )
     print(model)
 
@@ -115,21 +113,24 @@ def main():
     for epoch in range(30):
         totals = torch.zeros(4)
         for batch in loader:
-            x = batch["inputs"]["x"]
+            x = batch["inputs"]["x"].flatten(1)
             c = batch["concepts"]["c"]
             out = model(query=query, input=x)
 
             # Reconstruction and the Gaussian KL of the guide vs the N(0, I) prior.
-            recon = F.mse_loss(
-                out.loc["input"], x.flatten(1), reduction="none"
+            recon = F.binary_cross_entropy(
+                out.probs["input"], x, reduction="none"
             ).sum(-1).mean()
             kl = kl_divergence(
                 Normal(out.guide_params["loc"]["z"], out.guide_params["scale"]["z"]),
                 Normal(out.loc["z"], out.scale["z"]),
             ).sum(-1).mean()
             concept = concept_loss(out, c, concept_names)
+            # The bottleneck is the mixed concept contexts followed by the
+            # unsupervised one; the PGM keeps them as two variables.
             orthogonality = concept_orthogonality(
-                out.value["context"], len(concept_names)
+                torch.cat([out.value["mixing"], out.value["unknown"]], dim=-1),
+                len(concept_names),
             )
 
             loss = recon + kl + ALPHA * concept + BETA * orthogonality

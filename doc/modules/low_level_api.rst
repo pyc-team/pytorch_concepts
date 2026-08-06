@@ -76,6 +76,15 @@ Priors
    LearnablePrior
    FixedPrior
 
+Activations
+-----------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   TrilActivation
+
 Graph Learners
 --------------
 

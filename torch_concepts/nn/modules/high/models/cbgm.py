@@ -24,6 +24,7 @@ References
 Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
 https://openreview.net/forum?id=L9U5MJJleF
 """
+import copy
 from typing import Optional, Type
 
 import torch
@@ -44,7 +45,7 @@ from ...mid.inference.pyro.variational import VariationalInference
 from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.factors.cpd import ParametricCPD
 from ...mid.variable import EmbeddingVariable
-from ...mid.distributions import DEFAULT_DIST_KWARGS, spec_for
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.graph import DirectedGraphModel
 
 
@@ -69,8 +70,10 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         ``latent_size`` values: the mean of ``q(z | input)``.
     decoder : nn.Module
         The post-concept-bottleneck network, mapping the flattened bottleneck
-        (``embedding_size * (n_concepts + 1)``) to ``input_size`` values, already
-        in the observation parameter's domain.
+        (``embedding_size * (n_concepts + 1)``) to ``input_size`` **raw** values.
+        The observation parameter's activation is composed on top by the model
+        (a sigmoid for a ``Bernoulli``'s ``probs``), so a decoder that squashes
+        its own output would be activated twice.
     latent_size : int, default 64
         Dimensionality of ``z``.
     embedding_size : int, default 16
@@ -103,9 +106,18 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
       :class:`~torch_concepts.nn.LinearEmbeddingEncoder` does not.
     * The reference concept head is a per-concept ``Linear(bins * m, bins)``;
       the reused CEM head is a ``Linear(m, 1)`` shared across states.
+    * The reference gives a binary concept ``bins = 2`` — two state embeddings
+      and a 2-way one-hot. A cardinality-1 concept here gets *one* embedding,
+      which
+      :class:`~torch_concepts.nn.MixConceptEmbeddingToEmbedding` splits in two
+      with a learned ``Linear(m, 2m) + LeakyReLU``. Declare such concepts as
+      2-way ``categorical`` to match the reference exactly.
     * Under Pyro, concepts sample through a straight-through relaxation rather
       than a plain softmax — Appendix A of the paper endorses Gumbel-Softmax
-      here, and the engine's temperature schedule controls it.
+      here, and the engine's temperature schedule controls it. The mixture
+      therefore reads a hard one-hot (with gradients) where the reference reads
+      the continuous softmax, so an intervention selects a state instead of
+      forming the convex combination of Section 3.1.
 
     Examples
     --------
@@ -118,7 +130,9 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     ...                   types=['categorical', 'categorical'])
     >>> model = ConceptBottleneckGenerativeModel(
     ...     input_size=784, annotations=ann,
-    ...     encoder=MLP(784, 128, 32), decoder=MLP(3 * 8, 128, 784),
+    ...     encoder=MLP(784, 128, 32),
+    ...     # Raw: the Bernoulli's `probs` sigmoid is composed on top for you.
+    ...     decoder=MLP(3 * 8, 128, 784),
     ...     latent_size=32, embedding_size=8, observation=Bernoulli,
     ... )  # doctest: +SKIP
     >>> out = model(query=list(model.pgm.variables), input=torch.rand(4, 784))  # doctest: +SKIP
@@ -197,37 +211,60 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         )
 
     # ------------------------------------------------------------------
+    # Training hooks
+    # ------------------------------------------------------------------
+
+    def default_query(self, c):
+        """Query **every** variable, with the concepts teacher-forced.
+
+        Overrides the base learner's concept-only query
+        (:meth:`~torch_concepts.nn.modules.high.base.learner.BaseLearner.default_query`).
+        :class:`~torch_concepts.nn.VariationalInference` requires all variables
+        in the query — observed ones with values, latents absent or ``None`` —
+        and the generative loss terms need the ones it would otherwise leave out:
+        ``input`` for the reconstruction and ``mixing``/``unknown`` for the
+        orthogonality penalty.
+        """
+        return {
+            **{name: None for name in self.pgm.variables},
+            **self.fully_observed_query(c),
+        }
+
+    # ------------------------------------------------------------------
     # Model assembly
     # ------------------------------------------------------------------
 
-    def _concept_activation(self, variable) -> nn.Module:
-        """Map a concept head's raw output into its parameter's domain.
-
-        TODO: fix distribution specs to simplify this step.
-        """
-        activation = spec_for(variable.distribution).activations.get("logits")
-        if activation is None:
-            return nn.Identity()
-        if activation is torch.sigmoid:
-            return nn.Sigmoid()
-        return nn.Sequential(
-            nn.Unflatten(-1, (len(variable.members), variable.member_size)),
-            nn.Softmax(dim=-1),
-            nn.Flatten(start_dim=-2),
-        )
-
     def _build_guide(self) -> ParametricCPD:
-        """The variational posterior ``q(z | input)``, a Normal CPD on ``z``."""
+        """The variational posterior ``q(z | input)``, a Normal CPD on ``z``.
+
+        The feature extractor is the CPD's **trunk**, not part of either
+        parameter's head: ``loc`` and ``scale`` are two small linear readouts of
+        the same features, so the backbone runs once per step. Sharing is safe
+        here because both heads are independently learnable ``Linear`` layers —
+        put the *scoring* layer in a trunk instead and the scale would collapse
+        to a fixed function of the location.
+        """
+        z = self.pgm.variables["z"]
+        observed = self.pgm.variables["input"]
+
+        # Width of the trunk's output: the encoder's if it declares one (MLP,
+        # nn.Linear), else the backbone's — `encoder` defaults to nn.Identity.
+        width = (getattr(self.encoder, "out_features", None)
+                 or getattr(self.backbone, "out_features", None))
+        if width is None:
+            raise ValueError(
+                f"{type(self).__name__}: cannot size the guide's readout — neither "
+                "`encoder` nor `backbone` declares `out_features`. Set that attribute "
+                "on one of them, or pass an encoder that does (e.g. MLP, nn.Linear)."
+            )
         return ParametricCPD(
-            variable=self.pgm.variables["z"],
-            parents=[self.pgm.variables["input"]],
+            variable=z,
+            parents=[observed],
+            trunk=nn.Sequential(self.backbone, self.encoder),
             parametrization=self._flexible_parametrization(
-                variable=self.pgm.variables["z"],
-                first=nn.Sequential(
-                    self.backbone, 
-                    self.encoder
-                ),
-                second='auto',
+                variable=z,
+                first=nn.Linear(width, z.size),
+                second=nn.Linear(width, z.size),
             ),
         )
 
@@ -293,22 +330,25 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             ],
         )
         # embeddings -> concepts: decode one score per state embedding (per group).
+        def concept_head():
+            """One raw score per state embedding: ``(B, C, m) -> (B, C)``."""
+            return pyc.nn.Sequential(
+                LinearEmbeddingToConcept(
+                    in_embeddings=self.embedding_size, # (B, C, emb_dim)
+                    out_concepts=1, # (B, C, 1)
+                ),
+                # Collapse the (n_states, 1) score dims -> n_states
+                nn.Flatten(start_dim=-2), # (B, C, 1) -> (B, C)
+            )
+
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
                 parents=[evar],
                 parametrization=self._flexible_parametrization(
                     variable=cvar,
-                    first=pyc.nn.Sequential(
-                        LinearEmbeddingToConcept(
-                            in_embeddings=self.embedding_size, # (B, C, emb_dim)
-                            out_concepts=1, # (B, C, 1)
-                        ),
-                        # Collapse the (n_states, 1) score dims -> n_states
-                        nn.Flatten(start_dim=-2), # (B, C, 1) -> (B, C)
-                        self._concept_activation(cvar),
-                    ),
-                    second='auto',
+                    first=concept_head(),
+                    second=concept_head(),
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -334,13 +374,21 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         def cat_embeddings(embeddings):
             return torch.cat(list(embeddings.values()), dim=-2)
         
+        def decoder_head(decoder):
+            return pyc.nn.Sequential(nn.Flatten(start_dim=-2), decoder)
+
+        # A continuous observation needs `loc` and `scale` from *independent*
+        # nets — sharing them through a trunk would make the scale a function of
+        # the location. So the scale gets its own copy of the decoder, which is
+        # only allocated when the observation family actually has a scale.
+        needs_scale = "loc" in observed.param_sizes
         decoder_cpd = ParametricCPD(
             variable=observed,
             parents=[mixing, unknown],
             parametrization=self._flexible_parametrization(
                 variable=observed,
-                first=pyc.nn.Sequential(nn.Flatten(start_dim=-2), self.decoder),
-                second='auto',
+                first=decoder_head(self.decoder),
+                second=decoder_head(copy.deepcopy(self.decoder)) if needs_scale else None,
             ),
             aggregate=cat_embeddings,
         )

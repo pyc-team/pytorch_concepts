@@ -332,6 +332,11 @@ class BaseLearner(pl.LightningModule):
         evidence = self.default_evidence(inputs)
         out = self.forward(query=query, evidence=evidence)
 
+        # Publish the observed values so a loss term can score them. A generative
+        # term (e.g. ReconstructionLoss) needs the *observed* variable, which is
+        # in the evidence rather than in the concept target.
+        out.extra = {**(out.extra or {}), "evidence": evidence}
+
         target = self.prepare_target(c_loss)
 
         # --- Compute loss (scaled space) ---

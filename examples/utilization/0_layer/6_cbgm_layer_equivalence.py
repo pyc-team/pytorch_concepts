@@ -133,17 +133,18 @@ def main():
         in_concepts=annotations, in_embeddings=EMB_SIZE
     )
     # PyC keeps the states on their own axis: (batch, sum(bins), emb_size).
-    pyc_bottleneck = layer(
+    # The layer mixes; the unsupervised context is concatenated by the caller
+    # (in ``ConceptBottleneckGenerativeModel`` that happens in the decoder CPD).
+    mixed = layer(
         concepts=torch.cat(probs, dim=-1),
         embeddings=torch.cat(
             [c.unflatten(-1, (-1, EMB_SIZE)) for c in contexts[:-1]], dim=-2
         ),
-        unknown=contexts[-1].unflatten(-1, (1, EMB_SIZE)),
     )
-    print(f"bottleneck {tuple(pyc_bottleneck.shape)} "
-          f"= (batch, n_concepts + 1, emb_size)")
+    print(f"mixed contexts {tuple(mixed.shape)} = (batch, n_concepts, emb_size)")
 
-    flat = pyc_bottleneck.flatten(start_dim=-2)
+    flat = torch.cat([mixed.flatten(start_dim=-2), contexts[-1]], dim=-1)
+    print(f"bottleneck {tuple(flat.shape)} = (batch, (n_concepts + 1) * emb_size)")
     assert torch.equal(flat[:, : N_CONCEPTS * EMB_SIZE], ref_concept_latent), \
         "mixed concept contexts differ from the reference"
     print("OK  mixed concept contexts are bit-identical")

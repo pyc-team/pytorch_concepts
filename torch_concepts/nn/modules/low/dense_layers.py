@@ -149,6 +149,11 @@ class MLP(nn.Module):
         else:
             self.register_parameter('readout', None)
 
+        # Declared like ``nn.Linear``/``Backbone`` do, so anything that sizes a
+        # downstream layer from its input can read it off an MLP too (a CPD
+        # trunk, ``BaseModel._setup_backbone``, ``LazyConstructor``).
+        self.out_features = output_size if output_size is not None else hidden_size
+
     def reset_parameters(self) -> None:
         """Reset all layer parameters to initial random values."""
         for module in self.mlp._modules.values():

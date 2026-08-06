@@ -380,6 +380,7 @@ class ForwardInference(TorchBaseInference, ABC):
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
         layer_kwargs: Optional[Dict[str, Dict]] = None,
+        n_samples: Optional[int] = None,
     ) -> InferenceOutput:
         """Run a forward pass in topological order, looping over variables.
 
@@ -399,13 +400,20 @@ class ForwardInference(TorchBaseInference, ABC):
         Every tensor may carry any number of leading (batch-like) dimensions —
         ``(*leading, *event)`` — and the results come back with that same leading
         shape. The event always lives on the last axis.
+
+        ``n_samples`` sets the batch size for an **unconditional** pass, where
+        neither the evidence nor the query carries a tensor to read one from —
+        i.e. every root is drawn from its own prior. Ignored otherwise, since the
+        supplied tensors already fix the leading shape. This is how a generative
+        model is sampled: query the variables of interest, supply no evidence,
+        and ask for ``n_samples`` draws.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         layer_kwargs = layer_kwargs or {}
 
         query_names = list(query)
-        leading = self._query_leading_shape(query, evidence)
+        leading = self._query_leading_shape(query, evidence, default=n_samples)
 
         # Whole-variable evidence clamps-and-skips its CPD; member evidence is
         # threaded to ``clamp_members`` (a no-op for the empty dict).

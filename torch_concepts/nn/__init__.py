@@ -23,8 +23,9 @@ from .modules.low.sequential import Sequential
 # Priors (root-CPD parametrizations)
 from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
-# Scale activation (continuous-CPD parametrizations)
+# Activations (raw layer output -> distribution-parameter domain)
 from .modules.low.scales import TrilActivation
+from .modules.mid.activations import DefaultActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
@@ -40,6 +41,7 @@ from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.conv import ConvDecoder
 from .modules.low.sequential import Sequential
 
 # Graph learner
@@ -47,7 +49,8 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer
+    L1LogitRegularizer, CompositeLoss, ReconstructionLoss, KLDivergenceLoss, \
+    OrthogonalityLoss, NLLProbLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -129,8 +132,9 @@ __all__ = [
     "FixedPrior",
     "TiedPrior",
 
-    # Scale activation
+    # Activations
     "TrilActivation",
+    "DefaultActivation",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
@@ -152,6 +156,7 @@ __all__ = [
     "Sequential",
     "LinearEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
+    "ConvDecoder",
 
     # COSMO
     "WANDAGraphLearner",
@@ -161,6 +166,11 @@ __all__ = [
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
+    "CompositeLoss",
+    "ReconstructionLoss",
+    "KLDivergenceLoss",
+    "OrthogonalityLoss",
+    "NLLProbLoss",
 
     # Metrics
     "ConceptMetrics",

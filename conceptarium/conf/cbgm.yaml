@@ -1,0 +1,53 @@
+# =============================================================
+# Train a Concept Bottleneck Generative Model.
+#
+#   cd conceptarium
+#   python run_experiment.py --config-name cbgm dataset=colormnist \
+#       trainer.accelerator=gpu trainer.devices=1
+#   python run_experiment.py --config-name cbgm dataset=celeba_generative \
+#       trainer.accelerator=gpu trainer.devices=1
+#
+# Then produce the generation / steering / counterfactual figures:
+#   python run_generative_analysis.py
+#
+# Requires `pyro-ppl` (VariationalInference), which is not in the
+# conceptarium environment files.
+# =============================================================
+defaults:
+  - _default
+  - override /model: cbgm
+  - override /loss: cbgm
+  - override /dataset: colormnist
+  - _self_
+
+hydra:
+  job:
+    name: cbgm
+
+seed: 42
+
+# MUST stay false: precomputing embeddings replaces the pixels in the
+# dataset with backbone features, which destroys the reconstruction
+# target. The backbone still runs live, once per step, as the guide's
+# shared trunk.
+precompute_embeddings: False
+force_precompute: False
+
+dataset:
+  datamodule:
+    batch_size: 256
+
+trainer:
+  max_epochs: 30
+  monitor: "val_loss"
+  patience: 10
+  accelerator: "auto"
+  logger: null       # null / wandb
+  log_model: false
+
+matmul_precision: medium
+
+# false so the run is written to runs.csv; run_generative_analysis.py
+# discovers the trained model through that registry.
+debug: false
+notes: cbgm

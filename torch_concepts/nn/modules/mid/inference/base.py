@@ -149,21 +149,29 @@ class BaseInference(nn.Module):
         self,
         query: Dict[str, Optional[torch.Tensor]],
         evidence: Dict[str, torch.Tensor],
+        default: Optional[int] = None,
     ) -> torch.Size:
-        """It determines the single leading (batch-like) shape that applies to an entire query call, 
+        """It determines the single leading (batch-like) shape that applies to an entire query call,
         by picking one representative tensor.
 
-        If there's any evidence, just take the first (name, value) pair from the dict 
-        and return its leading shape immediately. If there was no evidence, 
+        If there's any evidence, just take the first (name, value) pair from the dict
+        and return its leading shape immediately. If there was no evidence,
         fall through to the query dict and look for the first entry with a non-None tensor value.
-        If neither evidence nor query contains any actual tensor, default to torch.Size([1]).
+        If neither evidence nor query contains any actual tensor, fall back to
+        ``default`` observations (``torch.Size([default])``), or to
+        ``torch.Size([1])`` when no default is given.
+
+        The ``default`` is how an unconditional draw asks for a batch: with no
+        tensor anywhere there is nothing to read a batch size from, so a pure
+        ancestral sample from the priors would otherwise always be a single
+        observation.
         """
         for name, value in evidence.items():
             return self._leading_shape(name, value)
         for name, value in query.items():
             if value is not None:
                 return self._leading_shape(name, value)
-        return torch.Size([1])
+        return torch.Size([1 if default is None else int(default)])
 
     @staticmethod
     def _collapse_leading(

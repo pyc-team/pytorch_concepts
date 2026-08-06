@@ -1,0 +1,39 @@
+# =============================================================
+# ELBO for a concept bottleneck generative model.
+#
+# Four independent, reusable terms summed by CompositeLoss:
+#
+#   reconstruction  -log p(input | bottleneck)
+#   KL              KL( q(z|input) || p(z) )
+#   concept         supervision on the bottleneck's concepts
+#   orthogonality   pushes the unsupervised context away from the
+#                   supervised ones, so concepts stay steerable
+#
+# The weights follow the reference implementation: ALPHA=5 on the
+# concept term, BETA=1 on the orthogonality one.
+#
+# CBGM sets `param_for_discrete_var = "probs"`, so the concept
+# term must read `probs` — hence NLLProbLoss / BCELoss rather than
+# CrossEntropyLoss / BCEWithLogitsLoss, which expect logits.
+# =============================================================
+_target_: "torch_concepts.nn.CompositeLoss"
+
+weights: [1.0, 1.0, 5.0, 1.0]
+
+terms:
+  - _target_: "torch_concepts.nn.ReconstructionLoss"
+    variable: input
+
+  - _target_: "torch_concepts.nn.KLDivergenceLoss"
+    latents: [z]
+
+  - _target_: "torch_concepts.nn.ConceptLoss"
+    binary_param: probs
+    categorical_param: probs
+    binary:
+      _target_: "torch.nn.BCELoss"
+    categorical:
+      _target_: "torch_concepts.nn.NLLProbLoss"
+
+  - _target_: "torch_concepts.nn.OrthogonalityLoss"
+    variables: [mixing, unknown]

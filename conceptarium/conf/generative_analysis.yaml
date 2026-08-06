@@ -1,0 +1,41 @@
+# =============================================================
+# Post-hoc analysis of a trained generative concept model.
+#
+#   cd conceptarium
+#   python run_generative_analysis.py                 # newest cbgm run
+#   python run_generative_analysis.py job_dir=outputs/multirun/.../0
+#
+# Produces, next to the job directory:
+#   generation.png       samples with z drawn from the prior
+#   steering.png         one row per concept, swept across its states
+#   counterfactual.png   original / reconstruction / intervened
+#   generative_metrics.csv
+# =============================================================
+hydra:
+  mode: RUN
+  job:
+    name: generative_analysis
+    chdir: false
+  run:
+    dir: "outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+
+# Explicit Hydra job directory to analyse. When null, the newest registry row
+# matching `filters` is used. Note the registry deliberately omits `notes`, so
+# filter on config keys instead.
+job_dir: null
+csv_path: runs.csv
+filters:
+  status: success
+  model.model_cls._target_: torch_concepts.nn.ConceptBottleneckGenerativeModel
+
+seed: 42
+accelerator: auto        # auto | cpu | cuda
+
+# Number of images per figure row.
+n_samples: 8
+# Concepts to steer. null = every concept in the model.
+steer_concepts: null
+# Concept to intervene on for the counterfactual figure, and the state to
+# force it to. null picks the first concept and its last state.
+counterfactual_concept: null
+counterfactual_state: null
