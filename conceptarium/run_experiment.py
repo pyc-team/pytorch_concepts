@@ -17,7 +17,8 @@ from conceptarium.trainer import Trainer
 from conceptarium.hydra import parse_hyperparams
 from conceptarium.registry import register_run
 from conceptarium.resolvers import register_custom_resolvers
-from conceptarium.utils import setup_run_env, clean_empty_configs, update_config_from_data, instantiate_loss
+from conceptarium.utils import setup_run_env, maybe_precompute_embeddings, \
+    attach_latent_encoder, resolve_graph, update_config_from_data
 
 @hydra.main(config_path="conf", config_name="sweep", version_base="1.3")
 def main(cfg: DictConfig) -> None:
@@ -26,42 +27,48 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------------
     status = "failed"
     cfg = setup_run_env(cfg)
-    cfg = clean_empty_configs(cfg)
 
     # ----------------------------------
-    # Dataset
-    # 
+    # Datamodule
     # 1. Instantiate the datamodule
-    # 2. Setup the data (preprocess with backbone, split, fit scalers)
-    # 3. Update config based on data
+    # 2. Eventually instantiate the backbone
+    # 3. Eventually pre-compute embeddings with backbone
+    # 4. Setup the data (split and fit scalers)
+    # 5. Update config based on data
     # ----------------------------------
     logger.info("----------------------INIT DATA--------------------------------------")
-    datamodule = instantiate(cfg.dataset, _convert_="all")
-    datamodule.setup('fit', verbose=True)
+    datamodule = instantiate(cfg.dataset.datamodule, _convert_="all")
+    logger.info(f"Datamodule: {datamodule!r}")
+    backbone = instantiate(cfg.dataset.backbone, _convert_="all")
+    logger.info(f"Backbone: {backbone}")
+    datamodule, backbone = maybe_precompute_embeddings(cfg, datamodule, backbone)
+    datamodule.setup('fit')
     cfg = update_config_from_data(cfg, datamodule)
 
     # ----------------------------------
     # Model
     # 1. Instantiate the loss function
     # 2. Instantiate the metrics
-    # 3. Instantiate the model
+    # 3. Eventually attach the latent encoder to the backbone
+    # 4. Instantiate the model
     # ----------------------------------
     logger.info("----------------------INIT MODEL-------------------------------------")
+    loss = instantiate(cfg.loss, _convert_="all")
+    logger.info(f"Loss: {loss}")
 
-    loss = instantiate_loss(cfg, datamodule.annotations)
-    logger.info(loss)
-
-    metrics = instantiate(cfg.metrics, annotations=datamodule.annotations, _convert_="all")
-    logger.info(metrics)
-
-    model = instantiate(
-        cfg.model, 
-        annotations=datamodule.annotations, 
-        graph=datamodule.graph, 
-        loss=loss, 
-        metrics=metrics, 
-        _convert_="all"
+    metrics = instantiate(cfg.metrics, _convert_="all", _partial_=True)(
+        annotations=datamodule.annotations
     )
+    logger.info(f"Metrics: {metrics}")
+
+    model = instantiate(cfg.model.model_cls, _convert_="all", _partial_=True)(
+        annotations=datamodule.annotations,
+        graph=resolve_graph(datamodule.graph, datamodule.annotations, cfg.dataset.default_task_names),
+        backbone=attach_latent_encoder(cfg, backbone),
+        loss=loss,
+        metrics=metrics
+    )
+    logger.info(f"Model: {model}")
     
     logger.info("----------------------BEGIN TRAINING---------------------------------")
     try:

@@ -1,9 +1,17 @@
-batch_size: 512
+datamodule:
+  batch_size: 512
 
-seed: ${seed}              # train/val/test split seed
-generation_seed: ${dataset.seed}    # dataset generation seed
+  seed: ${seed}              # train/val/test split seed
 
-val_size: 0.1
-test_size: 0.2
+  val_size: 0.1
+  test_size: 0.2
 
-concept_subset: null # if null, use all concepts
+  max_samples: null # if null, use all samples
+  concept_subset: null # if null, use all concepts
+
+  # Scalers fitted on the train split only. 
+  # 'concepts' for *continuous* concepts
+  # 'inputs' for precomputed embeddings or flat tabular features.
+  scalers: null
+
+backbone: null

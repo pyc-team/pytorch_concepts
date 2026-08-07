@@ -7,7 +7,9 @@ validation, properties, and methods.
 import unittest
 import warnings
 import pytest
+import torch
 from torch_concepts.annotations import Annotations, Concept
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class TestAnnotationsBasics(unittest.TestCase):
@@ -141,61 +143,11 @@ class TestAnnotationsBasics(unittest.TestCase):
         axis_flat = Annotations(labels=['a', 'b', 'c'])
         self.assertEqual(axis_flat.get_total_cardinality(), 3)
 
-    def test_metadata(self):
-        """Test metadata handling."""
-        metadata = {
-            'color': {'type': 'discrete', 'group': 'appearance'},
-            'shape': {'type': 'discrete', 'group': 'geometry'}
-        }
-        axis = Annotations(
-            labels=['color', 'shape'],
-            cardinalities=[3, 2],
-            metadata=metadata
-        )
-
-        self.assertEqual(axis.metadata['color']['type'], 'discrete')
-        self.assertEqual(axis.metadata['shape']['group'], 'geometry')
-
-    def test_metadata_missing_label(self):
-        """Test error when metadata is missing a label."""
-        metadata = {'color': {'type': 'discrete'}}
-
-        with self.assertRaises(ValueError) as context:
-            Annotations(
-                labels=['color', 'shape'],
-                cardinalities=[3, 2],
-                metadata=metadata
-            )
-        self.assertIn("Metadata missing", str(context.exception))
-
-    def test_groupby_metadata(self):
-        """Test groupby_metadata method."""
-        metadata = {
-            'color': {'type': 'discrete', 'group': 'appearance'},
-            'shape': {'type': 'discrete', 'group': 'geometry'},
-            'size': {'type': 'continuous', 'group': 'geometry'}
-        }
-        axis = Annotations(
-            labels=['color', 'shape', 'size'],
-            metadata=metadata
-        )
-
-        # Group by 'group' key
-        groups = axis.groupby_metadata('group', layout='labels')
-        self.assertEqual(set(groups['appearance']), {'color'})
-        self.assertEqual(set(groups['geometry']), {'shape', 'size'})
-
-        # Group by indices
-        groups_idx = axis.groupby_metadata('group', layout='indices')
-        self.assertEqual(groups_idx['appearance'], [0])
-        self.assertEqual(set(groups_idx['geometry']), {1, 2})
-
     def test_to_dict_and_from_dict(self):
         """Test serialization and deserialization."""
         axis = Annotations(
             labels=['color', 'shape'],
             states=[['red', 'green', 'blue'], ['circle', 'square', 'triangle']],
-            metadata={'color': {'type': 'discrete'}, 'shape': {'type': 'discrete'}}
         )
 
         # Serialize
@@ -273,15 +225,6 @@ class TestAnnotationsEdgeCases(unittest.TestCase):
         except ValueError:
             pass  # Expected if duplicates not allowed
 
-    def test_empty_metadata(self):
-        """Test with empty metadata dict."""
-        axis = Annotations(
-            labels=['a', 'b'],
-            metadata={}
-        )
-        # Should work or raise error
-        self.assertEqual(len(axis.labels), 2)
-
     def test_special_characters_in_labels(self):
         """Test labels with special characters."""
         axis = Annotations(labels=['label-1', 'label_2', 'label.3', 'label@4'])
@@ -297,105 +240,6 @@ class TestAnnotationsEdgeCases(unittest.TestCase):
         long_label = 'a' * 1000
         axis = Annotations(labels=[long_label, 'short'])
         self.assertEqual(axis[0], long_label)
-
-
-class TestAnnotationsMetadata:
-    """Tests for Annotations metadata functionality."""
-
-    def test_has_metadata_returns_false_when_none(self):
-        """Test has_metadata returns False when metadata is None."""
-        axis = Annotations(labels=['a', 'b', 'c'])
-        assert not axis.has_metadata('distribution')
-
-    def test_has_metadata_returns_true_when_all_have_key(self):
-        """Test has_metadata returns True when all labels have the key."""
-        axis = Annotations(
-            labels=['a', 'b'],
-            metadata={
-                'a': {'distribution': 'Bernoulli'},
-                'b': {'distribution': 'Bernoulli'}
-            }
-        )
-        assert axis.has_metadata('distribution')
-
-    def test_has_metadata_returns_false_when_some_missing(self):
-        """Test has_metadata returns False when some labels lack the key."""
-        axis = Annotations(
-            labels=['a', 'b', 'c'],
-            metadata={
-                'a': {'distribution': 'Bernoulli'},
-                'b': {'distribution': 'Bernoulli'},
-                'c': {}  # Missing 'distribution'
-            }
-        )
-        assert not axis.has_metadata('distribution')
-
-    def test_groupby_metadata_with_labels_layout(self):
-        """Test groupby_metadata with labels layout."""
-        axis = Annotations(
-            labels=['red', 'green', 'blue', 'circle', 'square'],
-            metadata={
-                'red': {'type': 'color'},
-                'green': {'type': 'color'},
-                'blue': {'type': 'color'},
-                'circle': {'type': 'shape'},
-                'square': {'type': 'shape'}
-            }
-        )
-
-        groups = axis.groupby_metadata('type', layout='labels')
-        assert 'color' in groups
-        assert 'shape' in groups
-        assert set(groups['color']) == {'red', 'green', 'blue'}
-        assert set(groups['shape']) == {'circle', 'square'}
-
-    def test_groupby_metadata_with_indices_layout(self):
-        """Test groupby_metadata with indices layout."""
-        axis = Annotations(
-            labels=['a', 'b', 'c'],
-            metadata={
-                'a': {'group': 'first'},
-                'b': {'group': 'second'},
-                'c': {'group': 'first'}
-            }
-        )
-
-        groups = axis.groupby_metadata('group', layout='indices')
-        assert groups['first'] == [0, 2]
-        assert groups['second'] == [1]
-
-    def test_groupby_metadata_invalid_layout(self):
-        """Test groupby_metadata raises error on invalid layout."""
-        axis = Annotations(
-            labels=['a', 'b'],
-            metadata={'a': {'type': 'x'}, 'b': {'type': 'x'}}
-        )
-
-        with pytest.raises(ValueError, match="Unknown layout"):
-            axis.groupby_metadata('type', layout='invalid')
-
-    def test_groupby_metadata_returns_empty_when_none(self):
-        """Test groupby_metadata returns empty dict when metadata is None."""
-        axis = Annotations(labels=['a', 'b'])
-        groups = axis.groupby_metadata('type')
-        assert groups == {}
-
-    def test_groupby_metadata_skips_missing_keys(self):
-        """Test groupby_metadata skips labels without the requested key."""
-        axis = Annotations(
-            labels=['a', 'b', 'c'],
-            metadata={
-                'a': {'type': 'x'},
-                'b': {},  # Missing 'type'
-                'c': {'type': 'y'}
-            }
-        )
-
-        groups = axis.groupby_metadata('type', layout='labels')
-        assert 'x' in groups
-        assert 'y' in groups
-        assert 'b' not in groups.get('x', [])
-        assert 'b' not in groups.get('y', [])
 
 
 class TestAnnotationsCardinalities:
@@ -495,25 +339,6 @@ class TestAnnotationsValidation:
                 cardinalities=[2, 2]  # Mismatch: should be [2, 3]
             )
 
-    def test_metadata_not_dict_raises_error(self):
-        """Test that non-dict metadata raises ValueError."""
-        with pytest.raises(ValueError, match="metadata must be a dictionary"):
-            Annotations(
-                labels=['a', 'b'],
-                metadata=['not', 'a', 'dict']
-            )
-
-    def test_metadata_missing_label_raises_error(self):
-        """Test that metadata missing a label raises ValueError."""
-        with pytest.raises(ValueError, match="Metadata missing for label"):
-            Annotations(
-                labels=['a', 'b', 'c'],
-                metadata={
-                    'a': {},
-                    'b': {}
-                    # Missing 'c'
-                }
-            )
 
     def test_get_index_invalid_label_raises_error(self):
         """Test that get_index with invalid label raises ValueError."""
@@ -559,15 +384,11 @@ class TestAnnotationsSerialization:
         assert d['cardinalities'] == [1, 1]
         assert d['is_nested'] == False
 
-    def test_to_dict_nested_with_metadata(self):
-        """Test to_dict for nested axis with metadata."""
+    def test_to_dict_nested(self):
+        """Test to_dict for nested axis."""
         axis = Annotations(
             labels=['color', 'size'],
             states=[['red', 'blue'], ['small', 'large']],
-            metadata={
-                'color': {'type': 'visual'},
-                'size': {'type': 'physical'}
-            }
         )
 
         d = axis.to_dict()
@@ -575,10 +396,6 @@ class TestAnnotationsSerialization:
         assert d['states'] == [['red', 'blue'], ['small', 'large']]
         assert d['cardinalities'] == [2, 2]
         assert d['is_nested'] == True
-        assert d['metadata'] == {
-            'color': {'type': 'visual'},
-            'size': {'type': 'physical'}
-        }
 
     def test_from_dict_simple(self):
         """Test from_dict for simple axis."""
@@ -666,14 +483,6 @@ class TestAnnotationsImmutability:
         with pytest.raises(AttributeError, match="write-once"):
             axis.cardinalities = [4, 5]
 
-    def test_metadata_can_be_set(self):
-        """Test that metadata can be set (special case)."""
-        axis = Annotations(labels=['a', 'b'])
-
-        # Metadata can be set even after init
-        axis.metadata = {'a': {}, 'b': {}}
-        assert axis.metadata is not None
-
 
 class TestAnnotationsExtended:
     """Extended tests for Annotations class to improve coverage."""
@@ -687,77 +496,6 @@ class TestAnnotationsExtended:
                 cardinalities=[2, 2]  # Should be [2, 3] based on states
             )
 
-    def test_metadata_validation_non_dict(self):
-        """Test that non-dict metadata raises error."""
-        with pytest.raises(ValueError, match="metadata must be a dictionary"):
-            Annotations(
-                labels=['a', 'b'],
-                metadata="invalid"  # Should be dict
-            )
-
-    def test_metadata_validation_missing_label(self):
-        """Test that metadata missing a label raises error."""
-        with pytest.raises(ValueError, match="Metadata missing for label"):
-            Annotations(
-                labels=['a', 'b', 'c'],
-                metadata={'a': {}, 'b': {}}  # Missing 'c'
-            )
-
-    def test_has_metadata_with_key(self):
-        """Test has_metadata method with specific key."""
-        axis = Annotations(
-            labels=['a', 'b'],
-            metadata={'a': {'type': 'binary'}, 'b': {'type': 'binary'}}
-        )
-        assert axis.has_metadata('type') is True
-        assert axis.has_metadata('missing_key') is False
-
-    def test_has_metadata_none(self):
-        """Test has_metadata when metadata is None."""
-        axis = Annotations(labels=['a', 'b'])
-        assert axis.has_metadata('any_key') is False
-
-    def test_groupby_metadata_labels_layout(self):
-        """Test groupby_metadata with labels layout."""
-        axis = Annotations(
-            labels=['a', 'b', 'c', 'd'],
-            metadata={
-                'a': {'group': 'A'},
-                'b': {'group': 'A'},
-                'c': {'group': 'B'},
-                'd': {'group': 'B'}
-            }
-        )
-        result = axis.groupby_metadata('group', layout='labels')
-        assert result == {'A': ['a', 'b'], 'B': ['c', 'd']}
-
-    def test_groupby_metadata_indices_layout(self):
-        """Test groupby_metadata with indices layout."""
-        axis = Annotations(
-            labels=['a', 'b', 'c'],
-            metadata={
-                'a': {'group': 'X'},
-                'b': {'group': 'Y'},
-                'c': {'group': 'X'}
-            }
-        )
-        result = axis.groupby_metadata('group', layout='indices')
-        assert result == {'X': [0, 2], 'Y': [1]}
-
-    def test_groupby_metadata_invalid_layout(self):
-        """Test groupby_metadata with invalid layout raises error."""
-        axis = Annotations(
-            labels=['a', 'b'],
-            metadata={'a': {'g': '1'}, 'b': {'g': '2'}}
-        )
-        with pytest.raises(ValueError, match="Unknown layout"):
-            axis.groupby_metadata('g', layout='invalid')
-
-    def test_groupby_metadata_none(self):
-        """Test groupby_metadata when metadata is None."""
-        axis = Annotations(labels=['a', 'b'])
-        result = axis.groupby_metadata('any_key')
-        assert result == {}
 
     def test_get_index_not_found(self):
         """Test get_index with non-existent label."""
@@ -795,7 +533,6 @@ class TestAnnotationsExtended:
         axis = Annotations(
             labels=['a', 'b'],
             states=[['0', '1'], ['x', 'y', 'z']],
-            metadata={'a': {'type': 'binary'}, 'b': {'type': 'categorical'}}
         )
         result = axis.to_dict()
 
@@ -803,14 +540,12 @@ class TestAnnotationsExtended:
         assert result['states'] == [['0', '1'], ['x', 'y', 'z']]
         assert result['cardinalities'] == [2, 3]
         assert result['is_nested'] is True
-        assert result['metadata'] == {'a': {'type': 'binary'}, 'b': {'type': 'categorical'}}
 
     def test_from_dict_reconstruction(self):
         """Test from_dict reconstructs Annotations correctly."""
         original = Annotations(
             labels=['x', 'y'],
             cardinalities=[2, 3],
-            metadata={'x': {'info': 'test'}, 'y': {'info': 'test2'}}
         )
 
         data = original.to_dict()
@@ -819,7 +554,6 @@ class TestAnnotationsExtended:
         assert reconstructed.labels == original.labels
         assert reconstructed.cardinalities == original.cardinalities
         assert reconstructed.is_nested == original.is_nested
-        assert reconstructed.metadata == original.metadata
 
     def test_subset_basic(self):
         """Test subset method with valid labels."""
@@ -832,18 +566,6 @@ class TestAnnotationsExtended:
 
         assert subset.labels == ['b', 'd']
         assert subset.cardinalities == [2, 1]
-
-    def test_subset_with_metadata(self):
-        """Test subset preserves metadata."""
-        axis = Annotations(
-            labels=['a', 'b', 'c'],
-            metadata={'a': {'x': 1}, 'b': {'x': 2}, 'c': {'x': 3}}
-        )
-
-        subset = axis.subset(['a', 'c'])
-
-        assert subset.labels == ['a', 'c']
-        assert subset.metadata == {'a': {'x': 1}, 'c': {'x': 3}}
 
     def test_subset_missing_labels(self):
         """Test subset with non-existent labels raises error."""
@@ -878,24 +600,6 @@ class TestAnnotationsExtended:
 
         assert union.labels == ['a', 'b', 'c', 'd']
 
-    def test_union_with_metadata_merge(self):
-        """Test union_with merges metadata with left-win."""
-        axis1 = Annotations(
-            labels=['a', 'b'],
-            metadata={'a': {'x': 1}, 'b': {'x': 2}}
-        )
-        axis2 = Annotations(
-            labels=['b', 'c'],
-            metadata={'b': {'x': 999}, 'c': {'x': 3}}
-        )
-
-        union = axis1.union_with(axis2)
-
-        # Left-win: 'b' should keep metadata from axis1
-        assert union.metadata['a'] == {'x': 1}
-        assert union.metadata['b'] == {'x': 2}
-        assert union.metadata['c'] == {'x': 3}
-
     def test_write_once_labels_attribute(self):
         """Test that labels attribute is write-once."""
         axis = Annotations(labels=['a', 'b'])
@@ -909,15 +613,6 @@ class TestAnnotationsExtended:
 
         with pytest.raises(AttributeError, match="write-once and already set"):
             axis.states = [['0', '1'], ['0', '1', '2']]
-
-    def test_metadata_can_be_modified(self):
-        """Test that metadata can be modified after creation."""
-        axis = Annotations(labels=['a', 'b'])
-
-        # Metadata is not write-once, so this should work
-        axis.metadata = {'a': {'test': 1}, 'b': {'test': 2}}
-        assert axis.metadata is not None
-
 
 class TestAnnotationsComprehensive:
     """Comprehensive tests for the Annotations class."""
@@ -942,11 +637,6 @@ class TestAnnotationsComprehensive:
         annotations = Annotations(
             labels=['x', 'y', 'z'],
             cardinalities=[1, 2, 1],
-            metadata={
-                'x': {'type': 'binary'},
-                'y': {'type': 'categorical'},
-                'z': {'type': 'binary'}
-            }
         )
 
         # Serialize
@@ -988,6 +678,28 @@ class TestAnnotationsCachedUtilities(unittest.TestCase):
             cardinalities=[3, 4],
             types=['categorical', 'categorical'],
         )
+
+    # =========================================================================
+    # size tests (cached, so it must not leak between instances)
+    # =========================================================================
+
+    def test_size_is_sum_of_cardinalities(self):
+        """size sums the cardinalities, and repeats agree (it is cached)."""
+        self.assertEqual(self.mixed_axis.size, 7)
+        self.assertEqual(self.mixed_axis.size, 7)
+        self.assertEqual(self.binary_axis.size, 3)
+        self.assertEqual(self.categorical_axis.size, 7)
+
+    def test_size_cache_is_per_instance(self):
+        """A derived annotation computes its own size, not the parent's."""
+        parent_size = self.mixed_axis.size  # populate the parent's cache first
+        sub = self.mixed_axis.subset(['color', 'temperature'])
+        self.assertEqual(sub.size, 4)  # 3 + 1
+        self.assertEqual(self.mixed_axis.size, parent_size)
+
+        concept_space = self.mixed_axis.to_concept_space()
+        self.assertEqual(concept_space.size, 4)  # one column per concept
+        self.assertEqual(self.mixed_axis.size, parent_size)
 
     # =========================================================================
     # cumulative_cardinalities tests
@@ -1251,7 +963,6 @@ class TestAnnotationsCachedUtilities(unittest.TestCase):
         axis = Annotations(
             labels=['only_one'],
             cardinalities=[5],
-            metadata={'only_one': {'type': 'discrete'}}
         )
 
         self.assertEqual(axis.cumulative_cardinalities, [0, 5])
@@ -1264,7 +975,6 @@ class TestAnnotationsCachedUtilities(unittest.TestCase):
         axis = Annotations(
             labels=['big_concept'],
             cardinalities=[1000],
-            metadata={'big_concept': {'type': 'discrete'}}
         )
 
         self.assertEqual(axis.cumulative_cardinalities, [0, 1000])
@@ -1275,12 +985,10 @@ class TestAnnotationsCachedUtilities(unittest.TestCase):
         n = 50
         labels = [f'c{i}' for i in range(n)]
         cardinalities = [(i % 5) + 1 for i in range(n)]  # 1-5 cardinality
-        metadata = {label: {'type': 'discrete'} for label in labels}
 
         axis = Annotations(
             labels=labels,
             cardinalities=cardinalities,
-            metadata=metadata
         )
 
         cum = axis.cumulative_cardinalities
@@ -1407,6 +1115,17 @@ class TestAnnotationsExtraCoverage(unittest.TestCase):
         self.assertTrue(cs.concept_space)
         self.assertEqual(cs.cardinalities, [1, 1])
 
+    def test_to_concept_space_is_memoised(self):
+        """Repeated calls return the *same* instance.
+
+        This is what keeps a target annotation (rebuilt via ``to_concept_space()``
+        every forward in ``prepare_target``) stable across training steps, so its
+        own slice/subset caches stay warm instead of resetting each time.
+        """
+        axis = Annotations(labels=['c1', 'c2'], cardinalities=[3, 2], types=['categorical', 'categorical'])
+        first = axis.to_concept_space()
+        self.assertIs(axis.to_concept_space(), first)
+
     # ------------------------------------------------------------------
     # Annotations.union_with
     # ------------------------------------------------------------------
@@ -1483,9 +1202,15 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.AnnotatedTensor = AnnotatedTensor
         self.t = AnnotatedTensor(_torch.rand(4, 3), self.ann)
 
-    def test_init_1d_tensor_raises(self):
+    def test_init_1d_tensor_raises_for_axis_1(self):
+        # axis=1 needs 2+ dims for that axis to exist at all.
         with self.assertRaises(ValueError):
-            self.AnnotatedTensor(self.torch.rand(3), self.ann)
+            self.AnnotatedTensor(self.torch.rand(3), self.ann, axis=1)
+
+    def test_init_1d_tensor_allowed_on_last_axis(self):
+        # The default axis=-1 annotates the last axis, which a 1-D tensor has.
+        t = self.AnnotatedTensor(self.torch.rand(3), self.ann)
+        self.assertEqual(t.annotation.labels, ['a', 'b', 'c'])
 
     def test_init_mismatched_size_raises(self):
         with self.assertRaises(ValueError):
@@ -1504,11 +1229,17 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.assertIsInstance(result, self.AnnotatedTensor)
         self.assertEqual(result.annotation.labels, ['a', 'b'])
 
-    def test_getitem_fallback_index(self):
-        # Integer row indexing — axis-1 unchanged → still annotated
+    def test_getitem_fallback_index_keeps_annotation_on_last_axis(self):
+        # Under the default axis=-1, indexing a row of (4, 3) leaves a (3,)
+        # whose last axis is still the annotated one, so the labels survive.
         result = self.t[0]
-        # shape is (3,) → < 2 dims, so annotation is dropped
-        self.assertIsInstance(result, self.torch.Tensor)
+        self.assertIsInstance(result, self.AnnotatedTensor)
+        self.assertEqual(result.annotation.labels, ['a', 'b', 'c'])
+
+    def test_getitem_fallback_index_drops_annotation_for_axis_1(self):
+        # With axis=1 the same index drops to 1-D, so axis 1 no longer exists.
+        t = self.AnnotatedTensor(self.torch.rand(4, 3), self.ann, axis=1)
+        self.assertNotIsInstance(t[0], self.AnnotatedTensor)
 
     def test_union_with_type_error(self):
         with self.assertRaises(TypeError):
@@ -1532,7 +1263,7 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         self.assertIn('d', merged.annotation.labels)
         self.assertEqual(merged.annotation.labels.count('b'), 1)
 
-    def test_split_by_type_no_arg_returns_dict(self):
+    def test_type_accessor_returns_subtensor(self):
         torch = self.torch
         ann = Annotations(
             labels=['x', 'y'],
@@ -1541,10 +1272,10 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         )
         from torch_concepts.tensor import AnnotatedTensor as AT
         t = AT(torch.rand(3, 2), ann)
-        result = t.split_by_type()
-        self.assertIsInstance(result, dict)
+        self.assertIsInstance(t.binary(), AT)
+        self.assertEqual(t.binary().annotation.labels, ['x', 'y'])
 
-    def test_split_by_type_specific_type(self):
+    def test_type_accessor_returns_none_when_absent(self):
         torch = self.torch
         ann = Annotations(
             labels=['x', 'y'],
@@ -1553,8 +1284,9 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         )
         from torch_concepts.tensor import AnnotatedTensor as AT
         t = AT(torch.rand(3, 2), ann)
-        result = t.split_by_type('binary')
-        self.assertIsInstance(result, AT)
+        # No categorical / continuous concepts present.
+        self.assertIsNone(t.categorical())
+        self.assertIsNone(t.continuous())
 
     def test_torch_function_passthrough(self):
         torch = self.torch
@@ -1581,3 +1313,392 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnnotatedTensorLastAxis(unittest.TestCase):
+    """``axis=-1`` annotates the last axis, so a tensor may carry any number of
+    leading dimensions. For a 2-D tensor it coincides with the default axis 1."""
+
+    def setUp(self):
+        self.ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 2, 1])
+
+    def test_matches_axis_1_for_a_2d_tensor(self):
+        data = torch.arange(24.0).reshape(6, 4)
+        default = AnnotatedTensor(data, self.ann)
+        last = AnnotatedTensor(data, self.ann, axis=-1)
+        self.assertTrue(torch.equal(default['b'].tensor, last['b'].tensor))
+
+    def test_slices_the_last_axis_with_leading_dims(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        self.assertEqual(tuple(t['b'].tensor.shape), (2, 3, 2, 2))
+        self.assertTrue(torch.equal(t['b'].tensor, t.tensor[..., 1:3]))
+
+    def test_rejects_a_size_mismatch_on_the_last_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 3, 5), self.ann, axis=-1)
+
+    def test_rejects_an_unsupported_axis(self):
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 4), self.ann, axis=0)
+
+    def test_contiguous_labels_slice_without_copying(self):
+        t = AnnotatedTensor(torch.arange(48.0).reshape(2, 3, 2, 4), self.ann, axis=-1)
+        storage = t.tensor.untyped_storage().data_ptr()
+        # A single label and an adjacent run both become plain slices (views).
+        self.assertEqual(t['b'].tensor.untyped_storage().data_ptr(), storage)
+        self.assertEqual(t['a', 'b'].tensor.untyped_storage().data_ptr(), storage)
+
+    def test_label_membership(self):
+        t = AnnotatedTensor(torch.zeros(2, 3, 4), self.ann, axis=-1)
+        self.assertIn('b', t)
+        self.assertNotIn('zzz', t)
+
+    def test_group_resolves_to_its_labels(self):
+        ann = Annotations(labels=['m1', 'm2'], cardinalities=[1, 1])
+        ann.register_group('g', ['m1', 'm2'])
+        t = AnnotatedTensor(torch.arange(12.0).reshape(2, 3, 2), ann, axis=-1)
+        # 'g' is not a label, but it names the group both labels came from.
+        self.assertIn('g', t)
+        self.assertTrue(torch.equal(t['g'].tensor, t.tensor))
+        self.assertEqual(t['g'].annotation.labels, ['m1', 'm2'])
+
+    def test_union_with_concatenates_on_the_last_axis(self):
+        left = AnnotatedTensor(
+            torch.zeros(2, 3, 2), Annotations(labels=['a'], cardinalities=[2]), axis=-1
+        )
+        right = AnnotatedTensor(
+            torch.ones(2, 3, 1), Annotations(labels=['b'], cardinalities=[1]), axis=-1
+        )
+        merged = left.union_with(right)
+        self.assertEqual(tuple(merged.tensor.shape), (2, 3, 3))
+        self.assertEqual(merged.annotation.labels, ['a', 'b'])
+
+    def test_requires_explicit_axis_for_more_than_2d(self):
+        # The default is only well-defined where axis 1 and -1 coincide (<=2-D).
+        # A 3-D+ tensor must name the axis, so concepts can never silently land
+        # on the embedding axis of a (batch, concept, embedding) tensor.
+        with self.assertRaises(ValueError):
+            AnnotatedTensor(torch.zeros(2, 3, 4), self.ann)
+
+    def test_explicit_axis_allows_more_than_2d(self):
+        for axis in (1, -1):
+            t = AnnotatedTensor(torch.zeros(2, 4, 4), self.ann, axis=axis)
+            self.assertEqual(t.axis, axis)
+
+    def test_axis_1_slices_the_concept_axis_of_a_3d_tensor(self):
+        # (batch, concepts, embedding): axis=1 addresses the concept axis while
+        # the trailing embedding axis rides along untouched.
+        ann = Annotations(labels=['p', 'q'])
+        t = AnnotatedTensor(torch.randn(8, 2, 5), ann, axis=1)
+        self.assertEqual(tuple(t['q'].tensor.shape), (8, 1, 5))
+        self.assertTrue(torch.equal(t['q'].tensor, t.tensor[:, 1:2]))
+
+    def test_annotation_survives_unsqueeze_and_expand(self):
+        # Adding a leading dim keeps the last (annotated) axis, so the labels
+        # survive — the mechanism the multiple-leading-dims examples rely on.
+        t = AnnotatedTensor(torch.randn(5, 4), self.ann, axis=-1)
+        u = t.unsqueeze(0)
+        self.assertIsInstance(u, AnnotatedTensor)
+        self.assertEqual(u.annotation.labels, ['a', 'b', 'c'])
+        e = u.expand(3, 5, 4)
+        self.assertIsInstance(e, AnnotatedTensor)
+        self.assertEqual(tuple(e['b'].tensor.shape), (3, 5, 2))
+
+    def test_reshape_expanding_leading_keeps_annotation(self):
+        # (batch, K) -> (*leading, K): the ``_restore_leading`` round trip used by
+        # the estimator/Pyro engines. Raising the rank keeps the last axis, so
+        # the annotation must survive.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        r = AnnotatedTensor(torch.randn(6, 3), ann, axis=-1).reshape(2, 3, 3)
+        self.assertIsInstance(r, AnnotatedTensor)
+        self.assertEqual(r.annotation.labels, ['a', 'b', 'c'])
+
+    def test_reduction_dropping_an_axis_on_3d_drops_annotation(self):
+        # The mislabel hazard: on a 3-D source a reduction can slide a different,
+        # equal-sized axis into the annotated slot. A size-only match would keep
+        # a wrongly-labelled tensor, so a drop in rank must drop the annotation.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        # axis=1: sum(dim=1) removes the concept axis; the last (size-3) axis
+        # would slide into position 1.
+        self.assertNotIsInstance(
+            AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=1).sum(dim=1),
+            AnnotatedTensor,
+        )
+        # axis=-1: sum(dim=-1) removes the concept axis; the middle (size-3) axis
+        # would slide to the end.
+        self.assertNotIsInstance(
+            AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=-1).sum(dim=-1),
+            AnnotatedTensor,
+        )
+
+    def test_moving_the_annotated_axis_drops_annotation(self):
+        # A move that shifts the annotated axis out of its slot returns a plain
+        # tensor (re-annotate explicitly if it still applies).
+        ann = Annotations(labels=['a', 'b', 'c'])
+        t = AnnotatedTensor(torch.randn(7, 3, 3), ann, axis=-1)
+        for moved in (t.transpose(1, 2), t.permute(0, 2, 1),
+                      t.movedim(-1, 0), t.swapaxes(1, 2)):
+            self.assertNotIsInstance(moved, AnnotatedTensor)
+        self.assertNotIsInstance(t.mT, AnnotatedTensor)  # property, already plain
+
+    def test_permuting_only_leading_axes_keeps_annotation(self):
+        # A move that leaves the annotated (last) axis in place keeps the labels.
+        ann = Annotations(labels=['a', 'b', 'c'])
+        t = AnnotatedTensor(torch.randn(2, 5, 3), ann, axis=-1)
+        moved = t.transpose(0, 1)  # swaps the two leading axes; last axis intact
+        self.assertIsInstance(moved, AnnotatedTensor)
+        self.assertEqual(moved.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(tuple(moved.tensor.shape), (5, 2, 3))
+        self.assertTrue(torch.equal(moved.tensor, t.tensor.transpose(0, 1)))
+
+
+class TestDerivedCaches(unittest.TestCase):
+    """subset / label-slicing are memoised on the annotation.
+
+    The structural fields they read are write-once, but ``groups`` is not, so
+    every cache that carries a group into a derived annotation must be dropped
+    when ``groups`` is reassigned.
+    """
+
+    def _annotation(self):
+        ann = Annotations(
+            labels=['a', 'b', 'c'],
+            cardinalities=[1, 1, 1],
+            types=['binary'] * 3,
+        )
+        ann.register_group('plate', ['a', 'b'])
+        return ann
+
+    # ------------------------------------------------------------- subset --
+
+    def test_subset_is_memoised_and_correct(self):
+        ann = self._annotation()
+        first = ann.subset(['b', 'a'])
+        self.assertEqual(first.labels, ['b', 'a'])
+        self.assertIs(ann.subset(['b', 'a']), first)
+        # a different request is a different entry, not the cached one
+        self.assertEqual(ann.subset(['a', 'b']).labels, ['a', 'b'])
+        self.assertEqual(ann.subset(['c']).labels, ['c'])
+
+    def test_subset_still_rejects_unknown_labels(self):
+        ann = self._annotation()
+        with self.assertRaises(ValueError):
+            ann.subset(['nope'])
+
+    def test_subset_invalidated_on_groups_reassignment(self):
+        ann = self._annotation()
+        first = ann.subset(['a', 'b'])
+        self.assertEqual(first.label_groups, {'plate': ['a', 'b']})
+        ann.groups = {'plate': ['a']}  # reassign -> drops the subset cache
+        second = ann.subset(['a', 'b'])
+        self.assertIsNot(second, first)
+        self.assertEqual(second.label_groups, {'plate': ['a']})
+
+    # ------------------------------------------- AnnotatedTensor slicing --
+
+    def test_label_and_group_slicing_are_cached_but_track_the_data(self):
+        ann = self._annotation()
+        data = torch.arange(3).float().expand(4, 3)
+        t = AnnotatedTensor(data, ann, axis=-1)
+
+        # repeated access resolves to the same columns every time
+        for _ in range(3):
+            self.assertEqual(t['a'].annotation.labels, ['a'])
+            self.assertTrue(torch.equal(t['a'].tensor, data[:, 0:1]))
+            self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+            self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
+            self.assertEqual(t['c', 'a'].annotation.labels, ['c', 'a'])
+
+        # a second tensor sharing the annotation reuses the resolution but
+        # must slice *its own* data
+        other = AnnotatedTensor(torch.ones(4, 3), ann, axis=-1)
+        self.assertTrue(torch.equal(other['plate'].tensor, torch.ones(4, 2)))
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
+
+    def test_group_slicing_invalidated_on_groups_reassignment(self):
+        ann = self._annotation()
+        data = torch.arange(3).float().expand(4, 3)
+        t = AnnotatedTensor(data, ann, axis=-1)
+        self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+
+        # 'plate' now covers all three labels
+        ann.groups = {'plate': ['a', 'b', 'c']}
+        self.assertEqual(t['plate'].annotation.labels, ['a', 'b', 'c'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data))
+
+    def test_unknown_key_still_raises_after_caching(self):
+        ann = self._annotation()
+        t = AnnotatedTensor(torch.randn(4, 3), ann, axis=-1)
+        t['a']  # populate the cache first
+        with self.assertRaises(ValueError):
+            t['not_a_label']
+
+    # -------------------------------------------------------------- resolve --
+
+    def test_resolve_matches_manual_and_is_memoised(self):
+        ann = self._annotation()
+        selector, sub_ann = ann.resolve(('c', 'a'))
+        self.assertEqual(selector, ann.get_slice(['c', 'a']))
+        self.assertIs(sub_ann, ann.subset(['c', 'a']))
+        # a second call with the same key hits the memo (same objects back)
+        selector2, sub_ann2 = ann.resolve(('c', 'a'))
+        self.assertEqual(selector, selector2)
+        self.assertIs(sub_ann2, sub_ann)
+
+    def test_resolve_cache_key_by_type_is_a_short_string_not_the_label_tuple(self):
+        """``resolve(labels, cache_key=<type>)`` never keys the cache by the
+        (potentially huge) label tuple -- it keys it by the short type string."""
+        ann = self._annotation()
+        ann.resolve(ann.labels, cache_key='binary')
+        cache_keys = ann.__dict__['_slice_cache'].keys()
+        self.assertIn('binary', cache_keys)
+        self.assertNotIn(tuple(ann.labels), cache_keys)
+
+    def test_type_accessors_are_cached_and_share_the_resolve_cache(self):
+        ann = self._annotation()
+        data = torch.arange(3).float().expand(4, 3)
+        t = AnnotatedTensor(data, ann, axis=-1)
+        first = t.binary()
+        self.assertIs(t.binary().annotation, first.annotation)
+        self.assertIn('binary', ann.__dict__['_slice_cache'])
+
+
+class TestRegisterPlateLabel(unittest.TestCase):
+    """A group owner is an *alias* over labels, registered explicitly instead of
+    reconstructed from per-label metadata."""
+
+    def _tensor(self):
+        ann = Annotations(
+            labels=['A', 'B', 'C', 'D'],
+            cardinalities=[1, 1, 1, 1],
+            types=['binary'] * 4,
+        )
+        data = torch.arange(4).float().expand(5, 4)
+        return AnnotatedTensor(data, ann, axis=-1), data
+
+    def test_owner_expands_to_its_members(self):
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['A', 'B', 'C'])
+        self.assertEqual(t['plate'].annotation.labels, ['A', 'B', 'C'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:3]))
+        # members stay individually addressable
+        self.assertTrue(torch.equal(t['B'].tensor, data[:, 1:2]))
+
+    def test_owner_adds_no_column(self):
+        t, _ = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertEqual(t.annotation.labels, ['A', 'B', 'C', 'D'])
+        self.assertEqual(t.annotation.size, 4)
+        self.assertNotIn('plate', t.annotation.label_to_index)
+
+    def test_registration_order_is_the_slice_order(self):
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['C', 'A'])
+        self.assertEqual(t['plate'].annotation.labels, ['C', 'A'])
+        self.assertTrue(torch.equal(t['plate'].tensor,
+                                    torch.cat([data[:, 2:3], data[:, 0:1]], dim=-1)))
+
+    def test_owner_is_addressable_and_mixes_with_labels(self):
+        t, _ = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertIn('plate', t)
+        self.assertEqual(t['D', 'plate'].annotation.labels, ['D', 'A', 'B'])
+
+    def test_registration_survives_derived_tensors(self):
+        """It lives on the shared annotation, so operations that build a new
+        AnnotatedTensor keep it."""
+        t, data = self._tensor()
+        t.register_plate_label('plate', ['A', 'B'])
+        for derived in (t * 2, t[:3], t.unsqueeze(0), t.to(torch.float64)):
+            self.assertEqual(derived['plate'].annotation.labels, ['A', 'B'])
+        # even one built separately from the same annotation
+        other = AnnotatedTensor(torch.ones(2, 4), t.annotation, axis=-1)
+        self.assertTrue(torch.equal(other['plate'].tensor, torch.ones(2, 2)))
+
+    def test_registering_after_slicing_invalidates_the_cache(self):
+        t, data = self._tensor()
+        t['A']  # populate the slice cache first
+        t.register_plate_label('plate', ['A', 'B'])
+        self.assertEqual(t['plate'].annotation.labels, ['A', 'B'])
+        # re-registering the same owner over different members takes effect
+        t.register_plate_label('plate', ['C', 'D'])
+        self.assertEqual(t['plate'].annotation.labels, ['C', 'D'])
+        self.assertTrue(torch.equal(t['plate'].tensor, data[:, 2:4]))
+
+    def test_rejects_unknown_members(self):
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('plate', ['A', 'nope'])
+
+    def test_rejects_empty_members(self):
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('plate', [])
+
+    def test_rejects_an_owner_that_is_already_a_label(self):
+        """A label always wins the lookup, so such a registration is dead code
+        and is refused rather than silently ignored."""
+        t, _ = self._tensor()
+        with self.assertRaises(ValueError):
+            t.register_plate_label('A', ['B', 'C'])
+
+
+class TestGroupPropagation(unittest.TestCase):
+    """Groups survive every operation that derives a new annotation, so an
+    owner stays addressable after slicing, merging or a round trip."""
+
+    def _annotation(self):
+        ann = Annotations(labels=['A', 'B', 'C', 'D'], cardinalities=[1] * 4,
+                          types=['binary'] * 4)
+        ann.register_group('plate', ['A', 'B', 'C'])
+        return ann
+
+    def test_subset_keeps_the_owner_addressable(self):
+        ann = self._annotation()
+        t = AnnotatedTensor(torch.arange(4).float().expand(3, 4), ann, axis=-1)
+        sub = t['plate']
+        self.assertEqual(sub.annotation.groups, {'plate': ['A', 'B', 'C']})
+        # the owner still resolves on the slice, so chained access works
+        self.assertEqual(sub['plate'].annotation.labels, ['A', 'B', 'C'])
+
+    def test_subset_keeps_only_surviving_members(self):
+        ann = self._annotation()
+        self.assertEqual(ann.subset(['A', 'D']).groups, {'plate': ['A']})
+
+    def test_group_dropped_when_no_member_survives(self):
+        ann = self._annotation()
+        self.assertIsNone(ann.subset(['D']).groups)
+
+    def test_subset_preserves_registration_order(self):
+        ann = Annotations(labels=['A', 'B', 'C'], cardinalities=[1] * 3,
+                          types=['binary'] * 3)
+        ann.register_group('plate', ['C', 'A', 'B'])
+        self.assertEqual(ann.subset(['A', 'B', 'C']).groups, {'plate': ['C', 'A', 'B']})
+
+    def test_round_trips_through_to_dict(self):
+        ann = self._annotation()
+        self.assertEqual(ann.to_dict()['groups'], {'plate': ['A', 'B', 'C']})
+        self.assertEqual(Annotations.from_dict(ann.to_dict()).groups,
+                         {'plate': ['A', 'B', 'C']})
+
+    def test_to_concept_space_keeps_groups(self):
+        ann = self._annotation()
+        self.assertEqual(ann.to_concept_space().groups, {'plate': ['A', 'B', 'C']})
+
+    def test_union_keeps_groups_from_both_sides(self):
+        left = self._annotation()
+        right = Annotations(labels=['E', 'F'], cardinalities=[1, 1],
+                            types=['binary'] * 2)
+        right.register_group('other', ['E', 'F'])
+        merged = left.union_with(right)
+        self.assertEqual(merged.groups,
+                         {'other': ['E', 'F'], 'plate': ['A', 'B', 'C']})
+
+    def test_union_drops_a_group_whose_owner_becomes_a_label(self):
+        """A label always wins the lookup, so an alias that would be shadowed is
+        dropped rather than kept as dead state."""
+        left = self._annotation()
+        right = Annotations(labels=['plate'], cardinalities=[1], types=['binary'])
+        merged = left.union_with(right)
+        self.assertIsNone(merged.groups)
+        self.assertIn('plate', merged.label_to_index)

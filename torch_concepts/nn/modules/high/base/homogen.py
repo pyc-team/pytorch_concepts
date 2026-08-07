@@ -40,9 +40,9 @@ from ...low.dense_layers import LinearEmbeddingEncoder
 from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ..base.graph import DirectedGraphModel
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.bayesian_network import BayesianNetwork
+from ...mid.variable import EmbeddingVariable
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.graph.bayesian_network import BayesianNetwork
 
 
 class HomogenGraphModel(DirectedGraphModel, ABC):
@@ -51,7 +51,12 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
     Subclasses implement :meth:`build_encoder` and :meth:`build_predictor` and,
     optionally, set the embedding switches / :attr:`embedding_size`. The concrete
     model's ``__init__`` then mirrors CBM/CEM: build ``self.pgm`` via
-    :meth:`_build_individual_model` and call ``setup_inference``.
+    :meth:`_build_model` and call ``setup_inference``.
+
+    Graph models are **individual-only** (``plate=False``): a general DAG has no
+    homogeneous levels to group — each node carries its own parent set — so every
+    concept is represented by its own variable and the plate factories are not
+    used. ``plate=True`` is rejected.
     """
 
     #: Root concepts are decoded from a per-concept embedding (not the raw latent).
@@ -60,6 +65,15 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
     internal_embeddings: bool = False
     #: Per-concept embedding width (set by subclasses that use embeddings).
     embedding_size: Optional[int] = None
+
+    def __init__(self, *args, plate: bool = False, **kwargs):
+        # A general DAG has no homogeneous levels to plate; every concept is its
+        # own variable. Reject a plate request rather than silently ignoring it.
+        if plate:
+            raise ValueError(
+                f"{type(self).__name__} supports only plate=False."
+            )
+        super().__init__(*args, plate=False, **kwargs)
 
     # ------------------------------------------------------------------
     # Hooks for subclasses
@@ -109,12 +123,12 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
         ``input`` enters the PGM as evidence and the backbone runs *inside* the
         PGM as the ``latent | input`` CPD.
         """
-        input_var = EmbeddingVariable("input", distribution=Delta, size=self.input_size)
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
         latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
             input_var,
             parents=[],
-            parametrization=LearnablePrior(self.input_size),
+            parametrization=LearnablePrior(input_var.shape),
         )
         latent_cpd = ParametricCPD(
             latent_var,
@@ -126,7 +140,7 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
     # ------------------------------------------------------------------
     # Building path
     # ------------------------------------------------------------------
-    def _build_individual_model(self) -> BayesianNetwork:
+    def _build_model(self) -> BayesianNetwork:
         """Build one concept variable per node, wired along the DAG via the hooks.
 
         Root concepts are encoded from the latent (or a per-concept embedding when
@@ -153,12 +167,9 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
             concept = axis.concept(name)
             parents = list(self.graph.get_predecessors(name))
             is_root = not parents
-            concept_var = ConceptVariable(
-                names=name,
-                distribution=self.distribution_of(name),
-                dist_kwargs=self.dist_kwargs_of(name),
-                size=concept.cardinality
-            )
+            # Individual-only: one variable per node (the shared single-variable
+            # builder; graph models never use the plate-grouping factory).
+            concept_var = self._make_concept_variable(name)
 
             # Optional per-concept embedding (produced from the latent).
             embedding = None
@@ -188,8 +199,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                                 out_concepts=1
                             ),
                             nn.Flatten(start_dim=1),
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                 )
             elif is_root:
@@ -201,8 +212,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                         first=self.build_encoder(
                             in_embeddings=self.latent_size,
                             out_concepts=concept.cardinality
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                 )
             else:
@@ -217,8 +228,8 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
                             in_concepts=in_concepts,
                             in_embeddings=self.embedding_size if embedding is not None else None,
                             out_concepts=concept.cardinality
-                        ), 
-                        second=None
+                        ),
+                        second='auto',
                     ),
                     aggregate=mix_parents if embedding is not None else None,
                 )

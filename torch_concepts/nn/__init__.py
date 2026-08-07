@@ -21,10 +21,14 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
 # Priors (root-CPD parametrizations)
-from .modules.low.priors import LearnablePrior, FixedPrior
+from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
+
+# Scale activation (continuous-CPD parametrizations)
+from .modules.low.scales import TrilActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import (
     CAVEmbeddingToConcept,
     ConceptActivationVectors,
@@ -71,11 +75,14 @@ from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
 # Models (mid-level)
-from .modules.mid.models.factor import ParametricFactor
-from .modules.mid.models.cpd import ParametricCPD
-from .modules.mid.models.probabilistic_model import ProbabilisticModel
-from .modules.mid.models.bayesian_network import BayesianNetwork
-from .modules.mid.models.variable import Variable, ConceptVariable, EmbeddingVariable
+from .modules.mid.factors.factor import ParametricFactor
+from .modules.mid.factors.cpd import ParametricCPD
+from .modules.mid.factors.potential import ParametricPotential
+from .modules.mid.graph.probabilistic_model import ProbabilisticModel
+from .modules.mid.graph.bayesian_network import BayesianNetwork
+from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.chain_graph import ChainGraph
+from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
 # base
@@ -87,10 +94,12 @@ from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
+from .modules.mid.inference.torch.map_forward import MAPForwardInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
 from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
+from .modules.mid.inference.torch.belief_propagation import BeliefPropagation
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 from .modules.mid.inference.pyro.importance import PyroImportanceSampling
@@ -129,9 +138,16 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+    "TiedPrior",
+
+    # Scale activation
+    "TrilActivation",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "ConceptWhitening",
+    "WhitenedEmbeddingToConcept",
+    "CAVEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
@@ -181,12 +197,14 @@ __all__ = [
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
-
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
+    "ParametricPotential",
     "ProbabilisticModel",
     "BayesianNetwork",
+    "MarkovNetwork",
+    "ChainGraph",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",
@@ -197,11 +215,13 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
+    "MAPForwardInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",
     "BaseProposal",
     "MutilatedNetworkProposal",
+    "BeliefPropagation",
     "PyroBaseInference",
     "VariationalInference",
     "PyroImportanceSampling",

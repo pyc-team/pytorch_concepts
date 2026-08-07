@@ -55,6 +55,8 @@ Inference
    DeterministicInference
    IndependentInference
    AncestralSamplingInference
+   MAPForwardInference
+   BeliefPropagation
    RejectionSampling
    ImportanceSampling
    VariationalInference

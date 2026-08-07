@@ -102,8 +102,7 @@ def main():
 
         # per-group concept loss + task cross-entropy
         c_pred = AnnotatedTensor(c_pred, annotation=concept_annotations)
-        splitted = c_pred.split_by_type()
-        binary, categorical = splitted['binary'], splitted['categorical']
+        binary, categorical = c_pred.binary(), c_pred.categorical()
         bin_g = concept_annotations.type_groups['binary']
         cat_g = concept_annotations.type_groups['categorical']
         cat_ann = categorical.annotation

@@ -6,7 +6,7 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import ModelOutput
+from .outputs import CONTINUOUS_QUANTITIES, ModelOutput
 from .utils import GroupConfig, check_collection
 
 
@@ -20,8 +20,11 @@ def clone_metric(metric):
 class ConceptMetrics(nn.Module):
     """Type-aware metric manager for concept-based models.
 
-    Automatically routes predictions to the correct metrics based on concept
-    type (binary / categorical) as defined in the annotations. Supports
+    Routes predictions to the correct metrics based on concept type
+    (binary / categorical / continuous), read at update time from the
+    annotated model output. The concept structure (names, types,
+    cardinalities) comes from ``annotations`` at construction, so every
+    ``torchmetrics.Metric`` submodule exists from the start. Supports
     summary metrics (aggregated per type) and per-concept metrics, with
     independent state for each data split (train / val / test).
 
@@ -30,14 +33,14 @@ class ConceptMetrics(nn.Module):
             cardinalities, and types (``'binary'``, ``'categorical'``, or ``'continuous'``).
         binary: Metric specs for binary concepts (cardinality 1).
         categorical: Metric specs for categorical concepts (cardinality > 1).
-        continuous: Metric specs for continuous concepts (not yet supported).
+        continuous: Metric specs for continuous concepts, scored on ``loc``.
         summary (bool): Compute summary metrics aggregated across all
             concepts of each type.  Default ``True``.
         per_concept (bool | list[str]): ``False`` (default) disables
             per-concept tracking; ``True`` tracks every concept; a list
             of names tracks only those concepts.
 
-    Each metric spec can be:
+    Each metric spec is a dict ``{name: spec}`` where ``spec`` is:
 
     * A pre-instantiated ``torchmetrics.Metric``.
     * A ``(MetricClass, kwargs)`` tuple — ``num_classes`` is injected
@@ -51,11 +54,11 @@ class ConceptMetrics(nn.Module):
             binary={"accuracy": BinaryAccuracy()},
             categorical={"accuracy": (MulticlassAccuracy, {"average": "micro"})},
         )
-        metrics.update(preds, target)
+        metrics.update(model_output)
         results = metrics.compute()   # {"SUMMARY-binary_accuracy": ..., ...}
         metrics.reset()
     """
-    
+
     def __init__(
         self,
         annotations: Annotations,
@@ -70,34 +73,26 @@ class ConceptMetrics(nn.Module):
 
         self.summary = summary
         self.per_concept = per_concept
-        
-        # Extract and validate annotations
+
         self.concept_annotations = annotations
-        self.concept_names = annotations.labels
+        self.concept_names = list(annotations.labels)
         self.n_concepts = len(self.concept_names)
         self.cardinalities = annotations.cardinalities
-        self.metadata = annotations.metadata
         self.types = list(annotations.types)
 
         # Use cached type_groups from Annotations
         self.groups = annotations.type_groups
-        
-        # Validate that continuous concepts are not used
-        if self.groups['continuous']['labels']:
-            raise NotImplementedError(
-                f"Continuous concepts are not yet supported. "
-                f"Found continuous concepts: {self.groups['continuous']['labels']}."
-            )
-        
+
         # Validate and filter metrics configuration
         fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
         self.fn_collection = check_collection(annotations, fn_collection, 'metrics')
-        
+
         # Pre-compute max cardinality for categorical concepts
+        self.max_card = None
         if self.fn_collection.get('categorical'):
-            self.max_card = max([self.cardinalities[i] 
+            self.max_card = max([self.cardinalities[i]
                                 for i in self.groups['categorical']['concept_idx']])
-        
+
         # Determine which concepts to track for per-concept metrics
         if self.per_concept:
             if isinstance(self.per_concept, bool):
@@ -115,31 +110,31 @@ class ConceptMetrics(nn.Module):
                 )
         else:
             self._concepts_to_trace = []
-        
+
         # Setup separate MetricCollections per type and per concept
         pfx = f"{prefix}/" if prefix else ""
         self._prefix = pfx
         summary_b, summary_c, summary_cont, per_concept_dict = self._setup_metrics()
-        
+
         # Summary collections: one MetricCollection per concept type
         self.binary = MetricCollection(
             metrics=summary_b, prefix=f"{pfx}SUMMARY-binary_"
         ) if summary_b else MetricCollection({})
-        
+
         self.categorical = MetricCollection(
             metrics=summary_c, prefix=f"{pfx}SUMMARY-categorical_"
         ) if summary_c else MetricCollection({})
-        
+
         self.continuous = MetricCollection(
             metrics=summary_cont, prefix=f"{pfx}SUMMARY-continuous_"
         ) if summary_cont else MetricCollection({})
-        
+
         # Per-concept collections: one MetricCollection per tracked concept
         self._per_concept = nn.ModuleDict({
             name: MetricCollection(metrics=metrics, prefix=f"{pfx}{name}_")
             for name, metrics in per_concept_dict.items()
         })
-    
+
     def __repr__(self) -> str:
         metric_info = {
             k: [
@@ -154,7 +149,7 @@ class ConceptMetrics(nn.Module):
         return (f"{self.__class__.__name__}(n_concepts={self.n_concepts}, "
                 f"metrics={{{metrics_str}}}, summary={self.summary}, "
                 f"per_concept={self.per_concept})")
-    
+
     @property
     def collection(self):
         """Return all non-empty sub-collections as a dict."""
@@ -169,10 +164,10 @@ class ConceptMetrics(nn.Module):
             if len(coll):
                 result[name] = coll
         return result
-    
+
     def clone(self, prefix=None):
         """Create an independent copy with fresh state and optional new prefix.
-        
+
         Args:
             prefix: New prefix for metric keys. If None, keeps the original.
         """
@@ -190,18 +185,18 @@ class ConceptMetrics(nn.Module):
                 coll.prefix = f"{pfx}{name}_"
         cloned.reset()
         return cloned
-    
+
     def _instantiate_metric(self, metric_spec, concept_specific_kwargs=None):
         """Instantiate a metric from either an instance or a class+kwargs tuple/list.
-        
+
         Args:
             metric_spec: Either a Metric instance, a tuple/list (MetricClass, kwargs_dict),
                 or a MetricClass (will be instantiated with concept_specific_kwargs only).
             concept_specific_kwargs (dict): Concept-specific parameters to merge with user kwargs.
-            
+
         Returns:
             Metric: Instantiated metric.
-            
+
         Raises:
             ValueError: If user provides 'num_classes' in kwargs (it's set automatically).
         """
@@ -210,23 +205,23 @@ class ConceptMetrics(nn.Module):
         elif isinstance(metric_spec, (tuple, list)) and len(metric_spec) == 2:
             # (MetricClass, user_kwargs)
             metric_class, user_kwargs = metric_spec
-            
+
             # Check if user provided num_classes when it will be set automatically
             if 'num_classes' in user_kwargs and concept_specific_kwargs and 'num_classes' in concept_specific_kwargs:
                 raise ValueError(
                     f"'num_classes' should not be provided in metric kwargs. "
                     f"ConceptMetrics automatically sets 'num_classes' based on concept cardinality."
                 )
-            
+
             merged_kwargs = {**(concept_specific_kwargs or {}), **user_kwargs}
             return metric_class(**merged_kwargs)
         else:
             # Just a class, use concept_specific_kwargs only
             return metric_spec(**(concept_specific_kwargs or {}))
-    
+
     def _setup_metrics(self):
         """Instantiate metrics, separated into summary and per-concept groups.
-        
+
         Returns:
             Tuple of (summary_binary, summary_categorical, summary_continuous,
             per_concept) where per_concept maps concept name to metric dict.
@@ -235,29 +230,29 @@ class ConceptMetrics(nn.Module):
         summary_categorical = {}
         summary_continuous = {}
         per_concept = {}
-        
+
         # Summary metrics (keyed by metric name; prefix added by MetricCollection)
         if self.summary:
             if self.fn_collection.get('binary'):
                 for name, spec in self.fn_collection['binary'].items():
                     summary_binary[name] = self._instantiate_metric(spec)
-            
+
             if self.fn_collection.get('categorical'):
                 for name, spec in self.fn_collection['categorical'].items():
                     summary_categorical[name] = self._instantiate_metric(
                         spec, concept_specific_kwargs={'num_classes': self.max_card}
                     )
-            
+
             if self.fn_collection.get('continuous'):
                 for name, spec in self.fn_collection['continuous'].items():
                     summary_continuous[name] = self._instantiate_metric(spec)
-        
+
         # Per-concept metrics (one dict per concept)
         for concept_name in self._concepts_to_trace:
             c_idx = self.concept_names.index(concept_name)
             c_type = self.types[c_idx]
             card = self.cardinalities[c_idx]
-            
+
             concept_metrics = {}
             if c_type == 'binary':
                 for name, spec in self.fn_collection.get('binary', {}).items():
@@ -270,20 +265,50 @@ class ConceptMetrics(nn.Module):
             elif c_type == 'continuous':
                 for name, spec in self.fn_collection.get('continuous', {}).items():
                     concept_metrics[name] = self._instantiate_metric(spec)
-            
+
             if concept_metrics:
                 per_concept[concept_name] = concept_metrics
-        
+
         return summary_binary, summary_categorical, summary_continuous, per_concept
-    
-    def _prepare_categorical(self, preds, target):
-        """Pad and stack categorical logits/targets for summary metrics."""
-        cat_concept_idx = self.groups['categorical']['concept_idx']
-        split_tuple = torch.split(
-            preds[:, self.groups['categorical']['logits_idx']],
-            [self.cardinalities[i] for i in cat_concept_idx],
-            dim=1
+
+    @staticmethod
+    def _concept_prediction(out, name, concept_type):
+        """Prediction columns for one concept, taken from the quantity its type
+        reports: ``loc`` or ``value`` for continuous, otherwise the discrete param (logits/probs).
+
+        Addressed quantity-first (``params[quantity][name]``) rather than
+        variable-first: a concept may legitimately be *named* like a distribution
+        parameter — dSprites has one called ``scale`` — and ``params[name]`` would
+        then resolve to the quantity, not to that concept's columns.
+        """
+        quantities = (
+            CONTINUOUS_QUANTITIES if concept_type == 'continuous' else ('logits', 'probs')
         )
+        for quantity in quantities:
+            tensor = out.params.get(quantity)
+            if tensor is not None and name in tensor.annotation.label_to_index:
+                # Hand torchmetrics a plain tensor; the annotation is no longer
+                # needed and would make each internal torch.* op pay the
+                # __torch_function__ cost.
+                return tensor[name].tensor
+        raise KeyError(
+            f"ConceptMetrics: no {' or '.join(quantities)} reported for {concept_type} "
+            f"concept {name!r}; the output carries {tuple(out.params)}."
+        )
+
+    def _prepare_categorical(self, cat_logits, cat_target):
+        """Pad and stack categorical logits/targets for the summary metric.
+
+        ``cat_logits`` (logit-space) and ``cat_target`` (concept-space) are the
+        categorical slices from :meth:`AnnotatedTensor.categorical`, already in
+        the same concept order; per-concept widths come from ``cat_logits``'s own
+        annotation.
+        """
+        # Unwrap to plain tensors up front: past this point the annotation has
+        # served its purpose (concept ordering), and every torch.* op below on an
+        # AnnotatedTensor would otherwise re-enter its __torch_function__ hook.
+        cards = list(cat_logits.annotation.cardinalities)
+        split_tuple = torch.split(cat_logits.tensor, cards, dim=1)
         padded_logits = [
             nn.functional.pad(
                 logits,
@@ -292,56 +317,73 @@ class ConceptMetrics(nn.Module):
             ) for logits in split_tuple
         ]
         cat_pred = torch.cat(padded_logits, dim=0)
-        cat_target = target[:, cat_concept_idx].T.reshape(-1).long()
+        cat_target = cat_target.tensor.T.reshape(-1).long()
         return cat_pred, cat_target
-    
+
     def update(self, preds, target: torch.Tensor = None):
         """Update metrics by routing predictions to the correct type collection.
-        
+
         Summary metrics receive aggregated data for all concepts of a type.
         Per-concept metrics receive individual concept data.
-        
-        Args:
-            preds: Model predictions (logits) as a ``torch.Tensor`` of shape
-                ``(batch, logits_dim)``, or a ``ModelOutput`` whose ``.logits``
-                and ``.target`` fields will be used.
-            target: Ground truth values. Shape ``(batch, n_concepts)``.
-                Required when *preds* is a plain tensor; ignored when *preds*
-                is a ``ModelOutput``.
-        """
-        if isinstance(preds, ModelOutput):
-            target = preds.target
-            preds = preds.logits
-        if preds.shape[0] == 0:
-            return
-        
-        # Summary metrics — one MetricCollection.update() call per type
-        if self.summary:
-            if self.groups['binary']['labels'] and len(self.binary):
-                binary_pred = preds[:, self.groups['binary']['logits_idx']]
-                binary_target = target[:, self.groups['binary']['concept_idx']].float()
-                self.binary.update(binary_pred, binary_target)
-            
-            if self.groups['categorical']['labels'] and len(self.categorical):
-                cat_pred, cat_target = self._prepare_categorical(preds, target)
-                self.categorical.update(cat_pred, cat_target)
-            
-            if self.groups['continuous']['labels'] and len(self.continuous):
-                raise NotImplementedError("Continuous concepts not yet implemented.")
-        
-        # Per-concept metrics — one MetricCollection.update() call per concept
-        for concept_name, collection in self._per_concept.items():
-            logits_slice = self.concept_annotations.get_slice(concept_name)
-            c_idx = self.concept_annotations.get_index(concept_name)
-            c_type = self.types[c_idx]
 
+        Args:
+            preds: A ``ModelOutput`` or a single :class:`AnnotatedTensor` of
+                discrete predictions.
+            target: Annotated concept-space ground truth. Defaults to
+                ``preds.target`` when *preds* is a ``ModelOutput``; required
+                otherwise.
+        """
+        # A ModelOutput carries one AnnotatedTensor per quantity (logits/probs for
+        # discrete concepts, loc/scale for continuous); each type is scored on the
+        # quantity that represents it. A bare tensor is taken as the discrete params.
+        if isinstance(preds, ModelOutput):
+            out = preds
+            target = target if target is not None else out.target
+        else:
+            out = ModelOutput()
+            out.logits = preds
+
+        discrete = out.logits if out.logits is not None else out.probs
+        # `loc` for a Normal, `value` for a Delta (a deterministic point estimate) —
+        # mirrors the discrete fallback above; unlike *_param on ConceptLoss, there
+        # is no per-instance config here, so both quantities are always tried.
+        continuous = out.loc if out.loc is not None else out.value
+        any_pred = discrete if discrete is not None else continuous
+        if any_pred is None or any_pred.shape[0] == 0:
+            return
+        binary = discrete.binary() if discrete is not None else None
+        categorical = discrete.categorical() if discrete is not None else None
+
+        # Summary metrics — one MetricCollection.update() per type, each scored on
+        # the quantity it reports and aligned to the target by concept name.
+        if self.summary:
+            # Predictions/targets are unwrapped to plain tensors before every
+            # torchmetrics update: the annotation is only used to align preds to
+            # the target by concept name, and passing an AnnotatedTensor into
+            # torchmetrics makes each internal torch.* op re-enter the
+            # __torch_function__ unwrap hook (the dominant per-update cost).
+            if binary is not None and len(self.binary):
+                self.binary.update(binary.tensor, target[binary.annotation.labels].tensor.float())
+            if categorical is not None and len(self.categorical):
+                cat_pred, cat_target = self._prepare_categorical(
+                    categorical, target[categorical.annotation.labels])
+                self.categorical.update(cat_pred, cat_target)
+            if continuous is not None and len(self.continuous):
+                self.continuous.update(
+                    continuous.tensor, target[continuous.annotation.labels].tensor)
+
+        # Per-concept metrics — read each concept from its type's quantity.
+        for concept_name, collection in self._per_concept.items():
+            c_type = self.types[self.concept_names.index(concept_name)]
+            c_pred = self._concept_prediction(out, concept_name, c_type)
+            c_target = target[concept_name].tensor
             if c_type == 'binary':
-                collection.update(preds[:, logits_slice], target[:, c_idx:c_idx+1].float())
+                collection.update(c_pred, c_target.float())
             elif c_type == 'categorical':
-                collection.update(preds[:, logits_slice], target[:, c_idx].long())
-            elif c_type == 'continuous':
-                collection.update(preds[:, logits_slice], target[:, c_idx:c_idx+1])
-    
+                collection.update(c_pred, c_target.reshape(-1).long())
+            else:  # continuous
+                collection.update(c_pred, c_target)
+
     def compute(self):
         """Compute all metrics and return as a flat dict."""
         results = {}
@@ -354,7 +396,7 @@ class ConceptMetrics(nn.Module):
         for collection in self._per_concept.values():
             results.update(collection.compute())
         return results
-    
+
     def reset(self):
         """Reset all metric state."""
         self.binary.reset()

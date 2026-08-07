@@ -17,9 +17,6 @@ from . import splitters
 # Utilities
 from . import utils
 
-# Backbone utilities
-from . import backbone
-
 # IO utilities
 from . import io
 
@@ -29,6 +26,8 @@ from .datasets.toy import ToyDataset, CompletenessDataset
 from .datasets.categorical_toy_dag import ToyDAGDataset
 from .datasets.celeba import CelebADataset
 from .datasets.pendulum import PendulumDataset
+from .datasets.mnist import MNISTEvenOddDataset, MNISTAdditionDataset
+from .datasets.colormnist import ColorMNISTDataset
 from .datasets.mnist_arithmetic import MNISTArithmeticDataset
 from .datasets.dsprites_regression import DSpritesRegressionDataset
 from .datasets.awa2 import AWA2Dataset
@@ -40,6 +39,7 @@ from .datamodules.categorical_toy_dag import ToyDAGDataModule
 from .datamodules.completeness import CompletenessDataModule
 from .datamodules.celeba import CelebADataModule
 from .datamodules.pendulum import PendulumDataModule
+from .datamodules.colormnist import ColorMNISTDataModule
 from .datamodules.mnist_arithmetic import MNISTArithmeticDataModule
 from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
@@ -55,7 +55,6 @@ __all__ = [
     "splitters",
 
     "utils",
-    "backbone",
     "io",
 
     # Datasets
@@ -65,6 +64,9 @@ __all__ = [
     "ToyDAGDataset",
     "CelebADataset",
     "PendulumDataset",
+    "MNISTEvenOddDataset",
+    "MNISTAdditionDataset",
+    "ColorMNISTDataset",
     "MNISTArithmeticDataset",
     "DSpritesRegressionDataset",
     "AWA2Dataset",
@@ -76,6 +78,7 @@ __all__ = [
     "CompletenessDataModule",
     "CelebADataModule",
     "PendulumDataModule",
+    "ColorMNISTDataModule",
     "MNISTArithmeticDataModule",
     "DSpritesRegressionDataModule",
     "AWA2DataModule",

@@ -3,11 +3,14 @@ defaults:
   - _commons_bnlearn
   - _self_
 
-_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
-
 name: andes
 
-default_task_names: [SNode_151]
+datamodule:
+  _target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
 
-autoencoder_kwargs:
-  latent_dim: 1024
+  name: andes
+
+  autoencoder_kwargs:
+    latent_dim: 1024
+
+default_task_names: [SNode_151]

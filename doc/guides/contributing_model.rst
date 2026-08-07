@@ -72,63 +72,91 @@ pass, Lightning training, concept queries — is inherited.
    - ``self.task_names`` — task label names.
    - ``self.distribution_of(name)`` — returns the distribution class for a concept.
    - ``self.dist_kwargs_of(name)`` — returns distribution kwargs for a concept.
+   - ``self.build_concept_variables(names, plate_name)`` — the shared factory every
+     shipped model uses to turn a list of concept names into ``ConceptVariable`` objects:
+     homogeneous concepts (same type *and* cardinality) are grouped into the minimum
+     number of plates — even a lone concept becomes a single-member plate — while a
+     heterogeneous level splits into one plate per ``(type, cardinality)`` family.
+     Pass ``plate=False`` to the model constructor to instead get one individual
+     variable per concept.
+   - ``self.build_concept_embedding_variables(names, embedding_size, plate_name)`` —
+     the matching factory for per-concept state embeddings. Called with the *same*
+     ``names`` as ``build_concept_variables``, it returns a list that lines up
+     element-by-element: group *i*'s embedding matrix feeds group *i*'s concepts.
 
    **Building the PGM**
 
-   Every PGM starts with the same ``input → latent`` block. Call the inherited helper
-   ``_input_latent_block()`` to get it for free::
+   Every PGM starts with the same ``input → latent`` block. This is **not** inherited —
+   every shipped model (CBM, CEM) defines its own copy — so write it once in your class::
 
-       input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
+       def _input_latent_block(self):
+           input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+           latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+           input_cpd = ParametricCPD(
+               input_var, parents=[], parametrization=LearnablePrior(input_var.shape),
+           )
+           latent_cpd = ParametricCPD(
+               latent_var, parents=[input_var], parametrization=self.backbone,
+           )
+           return input_var, latent_var, input_cpd, latent_cpd
 
    This returns four objects:
 
-   - ``EmbeddingVariable("input", distribution=Delta, size=self.input_size)`` — receives
+   - ``EmbeddingVariable("input", distribution=Delta, shape=self.input_size)`` — receives
      raw data as evidence.
    - ``EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)`` — the
      backbone output.
    - A :class:`~torch_concepts.nn.ParametricCPD` for ``input`` (a :class:`~torch_concepts.nn.LearnablePrior`).
    - A :class:`~torch_concepts.nn.ParametricCPD` for ``latent | input`` (``self.backbone``).
 
-   After that, you add your concept and task variables and their CPDs.
+   After that, build your concept and task variables with the shared factories above
+   and wire their CPDs — this single method (conventionally named ``_build_model``,
+   called once from ``__init__``) is the entire "build" step; there is no separate
+   constructor/lazy-build phase.
 
    **Complete worked example**
 
-   The model below is a minimal but real bipartite model that encodes concepts with a
-   linear layer and predicts tasks by mixing concept activations with concept embeddings
-   (the CEM predictor head). It is self-contained and can serve as a copy-paste starting
-   point.
+   The model below is a minimal but real bipartite model that gives each concept a
+   per-state embedding and predicts tasks by mixing concept activations with those
+   embeddings (the CEM predictor head). It mirrors
+   :class:`~torch_concepts.nn.ConceptEmbeddingModel`'s own ``_build_model`` — study
+   ``torch_concepts/nn/modules/high/models/cem.py`` directly for the shipped version —
+   and, unlike a version that hand-builds a single ``ConceptVariable`` for every
+   concept, it handles a **heterogeneous** annotation (mixed types/cardinalities)
+   correctly because it goes through the shared plate factories.  It is self-contained
+   and can serve as a copy-paste starting point.
 
    .. code-block:: python
 
       # torch_concepts/nn/modules/high/models/my_model.py
       from typing import List, Optional, Union
 
+      import torch
       import torch.nn as nn
       from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
       from torch_concepts.annotations import Annotations
       from torch_concepts.distributions import Delta
+      from torch_concepts.nn.modules.low.dense_layers import LinearEmbeddingEncoder
       from torch_concepts.nn.modules.low.encoders.linear import LinearEmbeddingToConcept
       from torch_concepts.nn.modules.low.predictors.mix import MixConceptEmbeddingToConcept
-      from torch_concepts.nn.modules.low.dense_layers import LinearEmbeddingEncoder
       from torch_concepts.nn.modules.low.priors import LearnablePrior
       from torch_concepts.nn.modules.low.sequential import Sequential
       from torch_concepts.nn.modules.mid.inference.base import BaseInference
       from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
-      from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
-      from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-      from torch_concepts.nn.modules.mid.models.variable import (
-          ConceptVariable, EmbeddingVariable, _DEFAULT_DIST_KWARGS,
-      )
+      from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
+      from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+      from torch_concepts.nn.modules.mid.variable import EmbeddingVariable
+      from torch_concepts.nn.modules.mid.distributions import DEFAULT_DIST_KWARGS
       from torch_concepts.nn.modules.high.base.bipartite import BipartiteModel
 
 
       class MyConceptModel(BipartiteModel):
-          """Bipartite concept model: linear encoder, mix-embedding task predictor.
+          """Bipartite concept model: per-concept embeddings, mix-embedding task predictor.
 
-          Concepts are encoded from the latent representation with a linear layer.
-          Tasks are predicted by mixing concept activations with per-concept embeddings
-          (one embedding per concept state), following the CEM predictor head.
+          Each concept gets a per-state embedding, decoded from the latent
+          representation. Tasks are predicted by mixing concept activations with
+          those embeddings, following the CEM predictor head.
 
           Parameters
           ----------
@@ -150,6 +178,10 @@ pass, Lightning training, concept queries — is inherited.
               Keyword arguments for the training engine.
           lightning : bool, default False
               Set True to enable PyTorch Lightning training.
+          plate : bool or None, default None
+              Per-level plate preference. ``None``/``True`` group homogeneous
+              concepts into the minimum number of plates; ``False`` uses one
+              individual variable per concept.
           **kwargs
               Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``).
           """
@@ -162,7 +194,7 @@ pass, Lightning training, concept queries — is inherited.
               'categorical': OneHotCategorical,
               'continuous': Normal,
           }
-          variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+          variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
           def __init__(
               self,
@@ -175,20 +207,23 @@ pass, Lightning training, concept queries — is inherited.
               train_inference: Optional[BaseInference] = None,
               train_inference_kwargs: Optional[dict] = None,
               lightning: bool = False,
+              plate: Optional[bool] = None,
               **kwargs,
           ):
-              # Step 1 — base class sets up backbone, annotations, sizes.
+              # Step 1 — base class sets up backbone, annotations, sizes, and the
+              # bipartite concept -> task graph.
               super().__init__(
                   input_size=input_size,
                   annotations=annotations,
                   task_names=task_names,
                   lightning=lightning,
+                  plate=plate,
                   **kwargs,
               )
               self.embedding_size = embedding_size
 
-              # Step 2 — build the Bayesian network.
-              self.pgm = self._build_pgm()
+              # Step 2 — the single builder that assembles the Bayesian network.
+              self.pgm = self._build_model()
 
               # Step 3 — wire the inference engines.
               self.setup_inference(
@@ -198,88 +233,98 @@ pass, Lightning training, concept queries — is inherited.
                   train_inference_kwargs,
               )
 
-          def _build_pgm(self) -> BayesianNetwork:
-              """Assemble the PGM: input -> latent -> embeddings -> concepts -> tasks."""
-              axis = self.concept_annotations
-              n_concepts = len(self.intermediate_concept_names)
-              n_tasks = len(self.task_names)
+          def _input_latent_block(self):
+              """Raw input -> latent block (copy-pasted per model, see above)."""
+              input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+              latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+              input_cpd = ParametricCPD(
+                  input_var, parents=[], parametrization=LearnablePrior(input_var.shape),
+              )
+              latent_cpd = ParametricCPD(
+                  latent_var, parents=[input_var], parametrization=self.backbone,
+              )
+              return input_var, latent_var, input_cpd, latent_cpd
 
-              concept0 = axis.concept(self.intermediate_concept_names[0])
-              task0    = axis.concept(self.task_names[0])
-              concept_card = concept0.cardinality
-              task_card    = task0.cardinality
+          def _build_model(self) -> BayesianNetwork:
+              """Assemble the PGM: input -> latent -> embeddings -> concepts -> tasks.
 
-              # --- input / latent block (always the same) ---
+              Concepts and their state embeddings share the same minimum-plate
+              grouping, so the two lists line up element-by-element: group i's
+              embedding matrix produces group i's concept scores.
+              """
               input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
-              # --- per-concept state embeddings ---
-              # Shape: (n_concepts * concept_card, embedding_size).
-              embedding = EmbeddingVariable(
-                  "embeddings",
-                  distribution=Delta,
-                  shape=(n_concepts * concept_card, self.embedding_size),
+              concepts = self.build_concept_variables(self.intermediate_concept_names, plate_name="concepts")
+              embeddings = self.build_concept_embedding_variables(
+                  self.intermediate_concept_names, self.embedding_size, plate_name="embeddings"
               )
+              tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
+
+              # latent -> embeddings: one batched encoder per group.
               emb_cpd = ParametricCPD(
-                  variable=embedding,
+                  variable=embeddings,
                   parents=[latent_var],
-                  parametrization={
-                      "value": LinearEmbeddingEncoder(
+                  parametrization=[
+                      {"value": LinearEmbeddingEncoder(
                           in_features=self.latent_size,
                           out_features=self.embedding_size,
-                          n_embeddings=n_concepts * concept_card,
-                      )
-                  },
+                          n_embeddings=e.shape[0],
+                      )}
+                      for e in embeddings
+                  ],
               )
 
-              # --- concept variable (plate: all concepts share one variable) ---
-              concepts = ConceptVariable(
-                  names="concepts",
-                  members=self.intermediate_concept_names,
-                  distribution=self.distribution_of(concept0.name),
-                  dist_kwargs=self.dist_kwargs_of(concept0.name),
-                  size=concept_card,
-              )
-              concept_cpd = ParametricCPD(
-                  variable=concepts,
-                  parents=[embedding],
-                  parametrization=self._flexible_parametrization(
-                      variable=concepts,
-                      first=Sequential(
-                          LinearEmbeddingToConcept(
-                              in_embeddings=self.embedding_size,
-                              out_concepts=1,
+              # embeddings -> concepts: one score per state embedding, per group.
+              concept_cpd = [
+                  ParametricCPD(
+                      variable=cvar,
+                      parents=[evar],
+                      parametrization=self._flexible_parametrization(
+                          variable=cvar,
+                          first=Sequential(
+                              LinearEmbeddingToConcept(in_embeddings=self.embedding_size, out_concepts=1),
+                              nn.Flatten(start_dim=-2),
                           ),
-                          nn.Flatten(start_dim=1),
+                          second="auto",
                       ),
-                  ),
-              )
+                  )
+                  for cvar, evar in zip(concepts, embeddings)
+              ]
 
-              # --- task variable ---
-              tasks = ConceptVariable(
-                  names="tasks",
-                  members=self.task_names,
-                  distribution=self.distribution_of(task0.name),
-                  dist_kwargs=self.dist_kwargs_of(task0.name),
-                  size=task_card,
-              )
+              # concepts + embeddings -> tasks: mix each concept's activation with its
+              # embedding. Concepts concatenate along the last axis, embeddings along
+              # the second-to-last (state) axis, so a custom `aggregate` keeps the two
+              # apart before the mixer sees them.
+              ordered_names = [m for cvar in concepts for m in cvar.members]
+              mix_axis = self.concept_annotations.subset(ordered_names)
+
+              def mix_parents(concepts, embeddings):
+                  return {
+                      "concepts": torch.cat(list(concepts.values()), dim=-1),
+                      "embeddings": torch.cat(list(embeddings.values()), dim=-2),
+                  }
+
               task_cpd = ParametricCPD(
                   variable=tasks,
-                  parents=[concepts, embedding],
-                  parametrization=self._flexible_parametrization(
-                      variable=tasks,
-                      first=MixConceptEmbeddingToConcept(
-                          in_concepts=self.concept_annotations.subset(
-                              self.intermediate_concept_names
+                  parents=[*concepts, *embeddings],
+                  parametrization=[
+                      self._flexible_parametrization(
+                          variable=tvar,
+                          first=MixConceptEmbeddingToConcept(
+                              in_concepts=mix_axis,
+                              in_embeddings=self.embedding_size,
+                              out_concepts=tvar.size,
                           ),
-                          in_embeddings=self.embedding_size,
-                          out_concepts=n_tasks * task_card,
-                      ),
-                  ),
+                          second="auto",
+                      )
+                      for tvar in tasks
+                  ],
+                  aggregate=mix_parents,
               )
 
               return BayesianNetwork(
-                  variables=[input_var, latent_var, embedding, concepts, tasks],
-                  factors=[input_cpd, latent_cpd, emb_cpd, concept_cpd, task_cpd],
+                  variables=[input_var, latent_var, *embeddings, *concepts, *tasks],
+                  factors=[input_cpd, latent_cpd, *emb_cpd, *concept_cpd, *task_cpd],
               )
 
    **Instantiating and calling the model**
@@ -415,16 +460,23 @@ pass, Lightning training, concept queries — is inherited.
 
    **4. API reference page**
 
-   Add an ``autoclass`` directive for your model to
+   Add your model's name to the ``Models`` autosummary table in
    ``doc/modules/high_level_api.rst`` so the class docstring appears in the
    rendered documentation:
 
    .. code-block:: rst
 
-      .. autoclass:: torch_concepts.nn.MyConceptModel
-         :members:
-         :undoc-members:
-         :show-inheritance:
+      .. autosummary::
+         :toctree: generated
+         :nosignatures:
+
+         ConceptBottleneckModel
+         ConceptEmbeddingModel
+         GraphConceptBottleneckModel
+         CausallyReliableConceptBottleneckModel
+         BlackBox
+         BlackBoxTaskOnly
+         MyConceptModel
 
    **5. Tests**
 

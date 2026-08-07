@@ -1,182 +1,202 @@
 """
-Concept-activation-vector (CAV) encoders for Post-hoc Concept Bottleneck
-Models.
+Concept Activation Vectors (CAV) encoder.
 
-Post-hoc CBMs (Yuksekgonul et al., ICLR 2023,
-https://arxiv.org/abs/2205.15480) build their bottleneck from a *pretrained*
-backbone: each concept ``i`` is a vector ``v_i`` (and intercept ``b_i``) in
-the backbone's embedding space — typically fitted post-hoc with an SVM or a
-logistic-regression probe on a concept dataset — and the concept score of an
-input embedding ``f(x)`` is its (normalised) signed distance to the concept
-hyperplane::
+A Concept Activation Vector (Kim et al., 2018) is a unit vector in the
+activation space of a trained network that points towards a user-defined
+concept. It is obtained post hoc: activations of concept-positive and
+concept-negative examples are separated with a binary linear classifier, and
+the CAV is the unit normal to its decision boundary.
 
-    s_i(x) = (<f(x), v_i> + b_i) / ||v_i||
+:class:`CAVEmbeddingToConcept` fits one CAV per concept and then acts as a
+frozen concept encoder: its forward pass returns the signed distance of an
+embedding to each concept boundary (positive means the concept is present).
 
-The scores are *raw real values* (not probabilities): the downstream
-interpretable predictor consumes them as-is.
-
-This module provides:
-
-* :class:`ConceptActivationVectors` — the shared, optionally trainable table
-  of concept vectors and intercepts;
-* :class:`CAVEmbeddingToConcept` — the encoder layer producing the concept
-  scores from an embedding.
+The TCAV testing machinery (the directional-derivative sensitivity of a
+downstream head along the CAVs, reduced to the TCAV score) is stateless and
+lives in :mod:`torch_concepts.nn.functional` as
+:func:`~torch_concepts.nn.functional.tcav_score`.
 """
-import math
-from typing import List, Optional
+from typing import Union
 
+import numpy as np
 import torch
-import torch.nn as nn
+from sklearn.linear_model import LogisticRegression
 
+from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
-
-
-class ConceptActivationVectors(nn.Module):
-    """
-    Learnable (or frozen) table of concept activation vectors.
-
-    Holds one concept vector ``v_i`` of size ``embedding_size`` and one
-    intercept ``b_i`` per concept. Vectors fitted externally (e.g. per-concept
-    SVM / logistic-regression probes on a pretrained backbone's embeddings, as
-    in the original PCBM pipeline) can be passed in and frozen; when omitted,
-    the table is randomly initialised and can be trained end-to-end (training
-    the scores with a BCE-with-logits loss makes each row exactly a
-    logistic-regression probe).
-
-    Args:
-        n_concepts: Number of concepts.
-        embedding_size: Dimensionality of the backbone embedding space.
-        vectors: Optional pre-fitted concept vectors of shape
-            ``(n_concepts, embedding_size)``.
-        intercepts: Optional pre-fitted intercepts of shape ``(n_concepts,)``.
-            Defaults to zeros.
-        trainable: Whether the vectors/intercepts receive gradients.
-            Default False (the post-hoc setting: the concept bank is given).
-
-    References:
-        Yuksekgonul et al. "Post-hoc Concept Bottleneck Models", ICLR 2023.
-        https://arxiv.org/abs/2205.15480
-    """
-
-    def __init__(
-        self,
-        n_concepts: int,
-        embedding_size: int,
-        vectors: Optional[torch.Tensor] = None,
-        intercepts: Optional[torch.Tensor] = None,
-        trainable: bool = False,
-    ):
-        super().__init__()
-        self.n_concepts = n_concepts
-        self.embedding_size = embedding_size
-
-        if vectors is None:
-            vectors = torch.randn(n_concepts, embedding_size)
-            vectors = vectors / math.sqrt(embedding_size)
-        else:
-            vectors = torch.as_tensor(vectors, dtype=torch.get_default_dtype())
-            if vectors.shape != (n_concepts, embedding_size):
-                raise ValueError(
-                    f"Expected concept vectors of shape "
-                    f"({n_concepts}, {embedding_size}), got "
-                    f"{tuple(vectors.shape)}."
-                )
-        if intercepts is None:
-            intercepts = torch.zeros(n_concepts)
-        else:
-            intercepts = torch.as_tensor(
-                intercepts, dtype=torch.get_default_dtype()
-            ).reshape(-1)
-            if intercepts.shape != (n_concepts,):
-                raise ValueError(
-                    f"Expected concept intercepts of shape ({n_concepts},), "
-                    f"got {tuple(intercepts.shape)}."
-                )
-
-        self.vectors = nn.Parameter(vectors.clone(), requires_grad=trainable)
-        self.intercepts = nn.Parameter(
-            intercepts.clone(), requires_grad=trainable
-        )
-
-    def scores(
-        self,
-        embeddings: torch.Tensor,
-        concept_idx: Optional[List[int]] = None,
-    ) -> torch.Tensor:
-        """Concept scores of ``embeddings``: normalised signed distances.
-
-        Args:
-            embeddings: Backbone embeddings of shape (batch, embedding_size).
-            concept_idx: Optional indices restricting which concepts to score.
-
-        Returns:
-            torch.Tensor: Scores of shape (batch, n_selected_concepts).
-        """
-        vectors, intercepts = self.vectors, self.intercepts
-        if concept_idx is not None:
-            vectors = vectors[concept_idx]
-            intercepts = intercepts[concept_idx]
-        norms = vectors.norm(p=2, dim=1).clamp_min(1e-12)
-        return (embeddings @ vectors.T + intercepts) / norms
 
 
 class CAVEmbeddingToConcept(BaseConceptLayer):
     """
-    Encoder producing concept scores from a shared CAV table.
+    Concept encoder based on Concept Activation Vectors (Kim et al., 2018).
 
-    A thin layer around :class:`ConceptActivationVectors`: given the backbone
-    embedding, returns the raw concept scores of the (optionally selected)
-    concepts. In a Post-hoc CBM this parametrizes the ``value`` of the
-    deterministic (Delta) concept-score variables.
+    The layer is constructed unfitted and trained post hoc with :meth:`fit`,
+    which fits one logistic-regression probe per concept on frozen
+    activations and stores the unit-normalized probe weights as CAVs. The
+    CAVs are buffers, not parameters: they are invisible to optimizers and
+    are never updated by the main loss, but they move with ``.to(device)``
+    and survive ``state_dict`` round-trips.
+
+    The forward pass returns the signed distance of each embedding to each
+    concept's decision boundary, ``x @ cav_j + bias_j``: its sign equals the
+    probe's prediction (positive means concept present) and its gradient
+    w.r.t. the input is exactly the unit CAV, matching the directional
+    derivative used by TCAV.
+
+    Attributes:
+        cavs (torch.Tensor): Buffer of shape (out_concepts, in_embeddings)
+            holding the unit-norm CAVs (zeros before :meth:`fit`).
+        bias (torch.Tensor): Buffer of shape (out_concepts,) holding the
+            probe intercepts rescaled by the same normalization.
 
     Args:
-        cavs: The shared :class:`ConceptActivationVectors` table.
-        concept_idx: Optional indices selecting which concepts this layer
-            scores (used by the per-concept building path). ``None`` (default)
-            scores every concept in the table.
+        in_embeddings: Number of input embedding features.
+        out_concepts: Number of output concept representations.
+        **fit_kwargs: Additional keyword arguments for
+            :class:`sklearn.linear_model.LogisticRegression`
+            (``max_iter`` defaults to 1000).
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import (
-        ...     CAVEmbeddingToConcept, ConceptActivationVectors,
-        ... )
+        >>> from torch_concepts.nn import CAVEmbeddingToConcept
         >>>
-        >>> cavs = ConceptActivationVectors(n_concepts=4, embedding_size=16)
-        >>> encoder = CAVEmbeddingToConcept(cavs)
-        >>> scores = encoder(torch.randn(8, 16))
-        >>> print(scores.shape)
-        torch.Size([8, 4])
+        >>> _ = torch.manual_seed(0)
+        >>> encoder = CAVEmbeddingToConcept(in_embeddings=16, out_concepts=2)
+        >>> embeddings = torch.randn(64, 16)
+        >>> labels = (embeddings[:, :2] > 0).float()
+        >>> accuracy = encoder.fit(embeddings, labels)
+        >>> concepts = encoder(embeddings)
+        >>> print(concepts.shape)
+        torch.Size([64, 2])
 
     References:
-        Yuksekgonul et al. "Post-hoc Concept Bottleneck Models", ICLR 2023.
-        https://arxiv.org/abs/2205.15480
+        Kim et al. "Interpretability Beyond Feature Attribution: Quantitative
+        Testing with Concept Activation Vectors (TCAV)", ICML 2018.
+        https://proceedings.mlr.press/v80/kim18d
     """
 
     def __init__(
         self,
-        cavs: ConceptActivationVectors,
-        concept_idx: Optional[List[int]] = None,
+        in_embeddings: Union[int, Annotations],
+        out_concepts: Union[int, Annotations],
+        **fit_kwargs,
     ):
-        n_selected = (
-            cavs.n_concepts if concept_idx is None else len(concept_idx)
-        )
+        """
+        Initialize the encoder.
+
+        Args:
+            in_embeddings: Number of input embedding features.
+            out_concepts: Number of output concept representations.
+            **fit_kwargs: Additional keyword arguments for
+                :class:`sklearn.linear_model.LogisticRegression`
+                (``max_iter`` defaults to 1000).
+        """
         super().__init__(
-            out_concepts=n_selected,
-            in_embeddings=cavs.embedding_size,
+            in_embeddings=in_embeddings,
+            out_concepts=out_concepts,
         )
-        self.cavs = cavs
-        self.concept_idx = (
-            list(concept_idx) if concept_idx is not None else None
-        )
+        self.fit_kwargs = {"max_iter": 1000, **fit_kwargs}
+        n, d = self.out_concepts_shape, self.in_embeddings_shape
+        self.register_buffer("cavs", torch.zeros(n, d))
+        self.register_buffer("bias", torch.zeros(n))
+        self.register_buffer("fitted", torch.tensor(False))
+
+    @torch.no_grad()
+    def fit(
+        self,
+        embeddings: torch.Tensor,
+        concept_labels: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Fit one CAV per concept on frozen activations.
+
+        Each concept's binary labels are separated with a logistic-regression
+        probe; the CAV is the probe's weight vector normalized to unit norm
+        (pointing towards the concept-positive side), and the bias is the
+        intercept rescaled by the same factor.
+
+        Every label column is an independent one-vs-rest probe, so
+        categorical concepts are supported by passing their one-hot state
+        columns (k columns for a k-state concept — e.g. construct the layer
+        with an :class:`~torch_concepts.Annotations` whose cardinalities
+        sum to the label width, and one CAV is fit per state).
+
+        Args:
+            embeddings: Activations of shape (..., in_embeddings).
+            concept_labels: Binary concept labels of shape
+                (..., out_concepts), one column per concept (or per
+                categorical state).
+
+        Returns:
+            torch.Tensor: Per-concept probe training accuracy of shape
+            (out_concepts,) — the paper's check that the concept is
+            linearly separable at this layer.
+        """
+        if embeddings.shape[-1] != self.in_embeddings_shape:
+            raise ValueError(
+                f"embeddings have {embeddings.shape[-1]} features, expected "
+                f"in_embeddings={self.in_embeddings_shape}."
+            )
+        if concept_labels.shape[-1] != self.out_concepts_shape:
+            raise ValueError(
+                f"concept_labels have {concept_labels.shape[-1]} columns, "
+                f"expected out_concepts={self.out_concepts_shape}."
+            )
+        x = embeddings.reshape(-1, self.in_embeddings_shape)
+        y = concept_labels.reshape(-1, self.out_concepts_shape)
+        if x.size(0) != y.size(0):
+            raise ValueError(
+                f"embeddings and concept_labels disagree on the number of "
+                f"samples: {x.size(0)} vs {y.size(0)}."
+            )
+        # .float(): numpy cannot represent bfloat16; fp32/fp64 pass through
+        to_np = lambda t: t.detach().cpu().numpy() \
+            if t.dtype != torch.bfloat16 else t.detach().cpu().float().numpy()
+        x_np, y_np = to_np(x), to_np(y)
+
+        accuracies = torch.zeros(self.out_concepts_shape)
+        for j in range(self.out_concepts_shape):
+            if len(np.unique(y_np[:, j])) > 2:
+                raise ValueError(
+                    f"Concept column {j} has more than 2 distinct values; "
+                    f"CAV probes are binary. Encode categorical concepts as "
+                    f"one-hot state columns (see fit's docstring)."
+                )
+            try:
+                probe = LogisticRegression(**self.fit_kwargs).fit(
+                    x_np, y_np[:, j]
+                )
+            except ValueError as err:
+                raise ValueError(
+                    f"Fitting the probe for concept column {j} failed: {err}"
+                ) from err
+            weight = torch.from_numpy(probe.coef_[0])
+            intercept = float(probe.intercept_[0])
+            norm = weight.norm()
+            self.cavs[j] = (weight / norm).to(self.cavs)
+            self.bias[j] = intercept / norm
+            accuracies[j] = probe.score(x_np, y_np[:, j])
+        self.fitted.fill_(True)
+        return accuracies.to(self.bias)
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         """
-        Compute concept scores from backbone embeddings.
+        Encode embeddings into signed distances to the concept boundaries.
 
         Args:
-            embeddings: Backbone embeddings of shape (batch, embedding_size).
+            embeddings: Input embeddings of shape (..., in_embeddings).
 
         Returns:
-            torch.Tensor: Raw concept scores of shape (batch, m).
+            torch.Tensor: Concept scores of shape (..., out_concepts);
+            positive values mean the concept is predicted present.
         """
-        return self.cavs.scores(embeddings, self.concept_idx)
+        if not self.fitted:
+            raise RuntimeError(
+                "CAVEmbeddingToConcept has not been fitted; call fit() on "
+                "concept-labeled activations first."
+            )
+        # .to(embeddings): buffers are fp32; keeps AMP fp16/bf16 activations
+        return (
+            embeddings @ self.cavs.t().to(embeddings)
+            + self.bias.to(embeddings)
+        )
