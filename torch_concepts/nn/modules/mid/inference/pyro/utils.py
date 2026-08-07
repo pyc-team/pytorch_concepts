@@ -39,10 +39,17 @@ _DISCRETE_FAMILIES: Tuple[type, ...] = (
 def _relaxed_discrete_families() -> Tuple[type, ...]:
     # Reached only during inference, after a Pyro engine was constructed, so
     # Pyro is guaranteed importable here.
+    #
+    # The base (non-straight-through) classes on purpose: the ``*StraightThrough``
+    # variants subclass them, so this covers an engine sampling either way
+    # (``hard=True``/``False``). Listing only the straight-through ones would let
+    # a soft engine's concept sites fall through to the generic branch and report
+    # no ``probs`` at all — which surfaces far downstream as a metric or concept
+    # loss that cannot find its parameter.
     import pyro.distributions as pyro_dist
     return (
-        pyro_dist.RelaxedBernoulliStraightThrough,
-        pyro_dist.RelaxedOneHotCategoricalStraightThrough,
+        pyro_dist.RelaxedBernoulli,
+        pyro_dist.RelaxedOneHotCategorical,
     )
 
 
