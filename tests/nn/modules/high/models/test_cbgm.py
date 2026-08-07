@@ -339,3 +339,79 @@ class TestContinuousConcepts:
         assert not torch.allclose(params["scale"], F.softplus(params["loc"]))
         for head in ("loc", "scale"):
             assert sum(p.numel() for p in cpd.parametrization[head].parameters()) > 0
+
+
+class TestSoftMixing:
+    """``soft_mixing`` samples the concepts instead of teacher-forcing them.
+
+    Under a hard 0/1 mixing score the unselected state embedding receives
+    *exactly* zero reconstruction gradient — it is trained only by the concept
+    head, so an intervention that selects it hands the decoder an input it never
+    learned to decode. That is what makes a hard-mixed model unsteerable, and
+    what these tests pin.
+    """
+
+    def _model(self, annotations, soft_mixing):
+        n_contexts = len(annotations.labels) + 1
+        return ConceptBottleneckGenerativeModel(
+            input_size=INPUT_SIZE,
+            annotations=annotations,
+            encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
+            decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
+            latent_size=LATENT_SIZE,
+            embedding_size=EMBEDDING_SIZE,
+            observation=Normal,
+            scale_init=0.3,
+            scale_learnable=False,
+            soft_mixing=soft_mixing,
+            plate=False,
+        )
+
+    @staticmethod
+    def _state_embedding_weight(model, name="a_embedding"):
+        parametrization = model.pgm.factors[name].parametrization["value"]
+        return next(p for _, p in parametrization.named_parameters() if p.dim() == 2)
+
+    def _reconstruction_grads(self, soft_mixing):
+        """(‖grad w+‖, ‖grad w-‖) from reconstruction alone, all labels positive."""
+        annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
+        torch.manual_seed(0)
+        model = self._model(annotations, soft_mixing=soft_mixing)
+        weight = self._state_embedding_weight(model)
+
+        x = torch.rand(8, INPUT_SIZE)
+        query = model.default_query(torch.ones(8, 1))
+        model.zero_grad()
+        out = model(query=query, input=x)
+        out.extra = {"evidence": {"input": x}}
+        ReconstructionLoss(variable="input")(out).backward()
+
+        rows = weight.shape[0] // 2
+        return weight.grad[:rows].norm(), weight.grad[rows:].norm()
+
+    def test_hard_mixing_starves_the_unselected_state(self):
+        positive, negative = self._reconstruction_grads(soft_mixing=False)
+        assert positive > 0
+        assert negative == 0.0
+
+    def test_soft_mixing_trains_both_states(self):
+        positive, negative = self._reconstruction_grads(soft_mixing=True)
+        assert positive > 0
+        assert negative > 0
+
+    def test_soft_mixing_leaves_the_concepts_unforced(self):
+        annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
+        ground_truth = torch.ones(4, 1)
+        assert self._model(annotations, True).default_query(ground_truth)["a"] is None
+        forced = self._model(annotations, False).default_query(ground_truth)["a"]
+        assert torch.equal(forced, ground_truth)
+
+    def test_soft_mixing_switches_the_engines_to_soft_draws(self):
+        annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
+        assert self._model(annotations, True).train_inference.hard is False
+        assert self._model(annotations, False).train_inference.hard is True
+
+    def test_fixed_scale_head_has_no_parameters(self):
+        annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
+        head = self._model(annotations, True).pgm.factors["input"].parametrization["scale"]
+        assert sum(p.numel() for p in head.parameters()) == 0

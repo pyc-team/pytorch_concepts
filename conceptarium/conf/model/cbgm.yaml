@@ -25,18 +25,39 @@ model_cls:
   # Gaussian likelihood over pixel intensities. `loc` is the decoder's raw
   # output (identity-activated, so it must NOT squash its own output —
   # unbounded is correct here, the network learns to land in [0, 1]).
-  # `scale` is ONE learnable global sigma (`global_scale: true`), not a
-  # second copy of the decoder.
+  # `scale` is ONE global sigma, not a second copy of the decoder.
+  #
+  # It is FIXED, not learned. The Gaussian NLL's gradient carries a 1/sigma^2
+  # factor, so a learned sigma — which settles at the residual RMS and keeps
+  # shrinking as the fit improves — silently inflates reconstruction against the
+  # KL and anneals beta to ~0: sharp reconstructions, garbage samples from the
+  # prior. Pinning it makes that trade-off a hyper-parameter you set here and
+  # tune against `kl` in conf/cbgm.yaml.
+  #
+  # Measured on colormnist (D=2352) at init, encoder-gradient recon:KL —
+  #   sigma 0.1 -> 204:1   0.2 -> 51:1   0.3 -> 23:1   0.5 -> 8:1   1.0 -> 2:1
+  # Lower sigma = sharper but blurrier-prior; raise `kl` to compensate.
   observation:
     _target_: hydra.utils.get_class
     path: torch.distributions.Normal
   global_scale: true
-  scale_init: 0.1   # small: up-weights reconstruction vs KL for [0, 1] images
+  scale_init: 0.3
+  scale_learnable: false
+
+  # Sample the concepts instead of teacher-forcing them, so the bottleneck mixes
+  # by a score in (0, 1). Under a hard 0/1 score the unselected state embedding
+  # receives EXACTLY zero reconstruction gradient, so an intervention that
+  # selects it feeds the decoder an input it was never trained on — which is why
+  # a hard-mixed model does not steer. Also switches both inference engines to
+  # soft discrete draws, so train and test see the same kind of code.
+  soft_mixing: true
 
   # Base families, restoring CBGM's own class defaults over the relaxed ones
-  # `_commons` sets for the discriminative models. The Pyro engine applies its
-  # own straight-through relaxation when it samples these, so declaring them
-  # relaxed here would only change what the concept CPDs report.
+  # `_commons` sets for the discriminative models. Keep them plain: the engine
+  # relaxes them itself when it samples (Concrete under `soft_mixing`, its
+  # straight-through variant otherwise), and torch's Relaxed* families are
+  # TransformedDistributions rather than subclasses of Bernoulli /
+  # OneHotCategorical, so naming them here would miss that dispatch entirely.
   variable_distributions:
     binary:
       _target_: hydra.utils.get_class

@@ -45,7 +45,12 @@ seed: 42
 # `loss.weights` list -- e.g. `-m alpha=1,5,10 kl=0.5,1`. Order is fixed
 # by conf/loss/cbgm.yaml's `terms`; the numbers match its defaults.
 recon: 1.0    # -log p(input | bottleneck)
-kl: 1.0       # KL( q(z|input) || p(z) )
+# Not 1.0: with a Gaussian likelihood the reconstruction gradient carries a
+# 1/sigma^2 factor, so at the model config's fixed sigma=0.3 it outweighs the KL
+# ~23:1 on the encoder. beta=1 is only the true ELBO when sigma is the real
+# noise level; here it left q(z|x) free to drift off the prior, which is what
+# made prior samples decode to noise. ~23 equalises them at init -- sweep it.
+kl: 10.0      # KL( q(z|input) || p(z) )
 alpha: 5.0    # concept supervision  (reference ALPHA)
 beta: 1.0     # orthogonality        (reference BETA)
 

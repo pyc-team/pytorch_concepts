@@ -55,6 +55,10 @@ class VariationalInference(PyroBaseInference):
     initial_temperature, annealing, annealing_rate
         Temperature schedule for the relaxed-discrete sites; see
         :func:`~torch_concepts.nn.modules.mid.inference.base.make_temperature_schedule`.
+    hard : bool, default True
+        Whether an unobserved discrete site propagates its exact mode (a
+        straight-through bit / one-hot row) or the soft relaxed draw; see
+        :meth:`PyroBaseInference._pyro_relaxed_distribution`.
     """
 
     name = "VariationalInference"
@@ -68,8 +72,9 @@ class VariationalInference(PyroBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        hard: bool = True,
     ):
-        super().__init__(pgm)
+        super().__init__(pgm, hard=hard)
         self._require_directed()
 
         # Detect PGM device before building guides.

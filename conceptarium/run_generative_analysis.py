@@ -314,11 +314,14 @@ def main(cfg: DictConfig) -> None:
     # Decoding engine: ancestral sampling resolves every root through its own
     # prior, so an unconditioned query really does draw z ~ p(z). p_int=1.0
     # makes a query value a hard do-intervention, which is what steers.
-    # hard=True: an un-intervened concept must still resolve to a genuine state
-    # assignment, not a soft blend of every state's embedding — the bottleneck
-    # mixes state embeddings by the concept score, so a soft draw would decode
-    # a code no training sample (teacher-forced, hence hard) ever produced.
-    engine = AncestralSamplingInference(model.pgm, p_int=1.0, hard=True)
+    # `hard` must match how the model was TRAINED: the bottleneck mixes state
+    # embeddings by the concept score, so decoding a blend the training path
+    # never produced (or a hard assignment when training only ever saw blends)
+    # is equally out of distribution. Defaults to the model's own soft_mixing.
+    hard = cfg.get("hard_sampling")
+    if hard is None:
+        hard = not getattr(model, "soft_mixing", False)
+    engine = AncestralSamplingInference(model.pgm, p_int=1.0, hard=bool(hard))
 
     out_dir = Path(job_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -33,6 +33,10 @@ accelerator: auto        # auto | cpu | cuda
 
 # Number of images per figure row.
 n_samples: 8
+# Quantise sampled concepts to a hard state before decoding. null follows the
+# model's own `soft_mixing` (soft if it was trained soft), which is what keeps
+# the decoder on the distribution it was trained on. true/false to force it.
+hard_sampling: null
 # Concepts to steer. null = every concept in the model.
 steer_concepts: null
 # Concept to intervene on for the counterfactual figure, and the state to

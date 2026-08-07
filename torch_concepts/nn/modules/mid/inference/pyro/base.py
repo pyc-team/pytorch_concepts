@@ -59,12 +59,17 @@ class PyroBaseInference(BaseInference):
         :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`).
         Pyro's model/guide traces walk the topological order, so a general
         (undirected or mixed) ``ProbabilisticModel`` is not supported here.
+    hard : bool, default True
+        Whether an unobserved discrete site is quantized to an exact bit /
+        one-hot row by a straight-through estimator, or left as the soft relaxed
+        draw. See :meth:`_pyro_relaxed_distribution`.
     """
 
     name = "PyroBaseInference"
 
-    def __init__(self, pgm: BayesianNetwork):
+    def __init__(self, pgm: BayesianNetwork, hard: bool = True):
         super().__init__(pgm)
+        self.hard = bool(hard)
 
     # ------------------------------------------------------------------
     # Distribution helpers
@@ -74,6 +79,7 @@ class PyroBaseInference(BaseInference):
         variable,
         params: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
+        hard: bool = True,
     ) -> pyro_dist.Distribution:
         """Build a Pyro-compatible relaxed distribution for ``pyro.sample`` sites.
 
@@ -82,8 +88,13 @@ class PyroBaseInference(BaseInference):
         sites. Plain ``torch.distributions`` objects are not callable and would
         raise ``TypeError: 'X' object is not callable`` at runtime.
 
-        Uses Pyro's own straight-through estimators (which register correctly
-        with Pyro's effect-handler stack) for the discrete families.
+        With ``hard`` (the default) the discrete families use Pyro's own
+        straight-through estimators, which register correctly with Pyro's
+        effect-handler stack and yield an exact bit / one-hot row. With
+        ``hard=False`` the plain relaxed (Concrete) distribution is used instead,
+        so the *sampled* value stays soft — needed when a descendant mixes by
+        that value and a hard draw would zero the gradient to every state it did
+        not select.
         """
         # Parameters are flat (*batch, size); the single size axis is reinterpreted
         # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
@@ -102,11 +113,13 @@ class PyroBaseInference(BaseInference):
         _, pyro_dist, _ = _import_pyro()
         D = variable.distribution
         if issubclass(D, td.Bernoulli):
-            d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
-            return d.to_event(1)
+            relaxed = (pyro_dist.RelaxedBernoulliStraightThrough if hard
+                       else pyro_dist.RelaxedBernoulli)
+            return relaxed(temperature=temperature, **params).to_event(1)
         if issubclass(D, td.OneHotCategorical):
-            d = pyro_dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, **params)
-            return d
+            relaxed = (pyro_dist.RelaxedOneHotCategoricalStraightThrough if hard
+                       else pyro_dist.RelaxedOneHotCategorical)
+            return relaxed(temperature=temperature, **params)
         if issubclass(D, td.Normal):
             d = pyro_dist.Normal(**params)
             return d.to_event(1)
@@ -182,7 +195,7 @@ class PyroBaseInference(BaseInference):
                     d = (
                         build_distribution(var, params)
                         if obs is not None
-                        else self._pyro_relaxed_distribution(var, params, temperature)
+                        else self._pyro_relaxed_distribution(var, params, temperature, self.hard)
                     )
                     sample = pyro.sample(var.name, d, obs=obs)
                     # Cache the realization in the variable's event shape; downstream
@@ -233,5 +246,5 @@ class PyroBaseInference(BaseInference):
                     # The CPD resolves member-handle parents from ``data``.
                     params = cpd(parent_values=data, **layer_kwargs.get(name, {}))
 
-                q = self._pyro_relaxed_distribution(cpd.variable, params, temperature)
+                q = self._pyro_relaxed_distribution(cpd.variable, params, temperature, self.hard)
                 pyro.sample(name, q)

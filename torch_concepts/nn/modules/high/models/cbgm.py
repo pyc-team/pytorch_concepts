@@ -87,9 +87,27 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         (:class:`~torch_concepts.nn.GlobalScale`). ``False``: ``scale`` gets its
         own copy of ``decoder``.
     scale_init : float, default 1.0
-        Standard deviation ``scale`` starts at when ``global_scale=True``. For
-        images in ``[0, 1]`` a smaller value (e.g. ``0.1``) up-weights the
-        reconstruction term relative to the KL.
+        The ``global_scale`` standard deviation — its starting point when
+        ``scale_learnable``, its fixed value otherwise. It sets the weight of the
+        reconstruction term: the Gaussian NLL's gradient carries a
+        ``1 / scale**2`` factor, so halving it quadruples reconstruction relative
+        to the KL. For images in ``[0, 1]``, values below ~0.3 make the KL
+        negligible unless its loss weight is raised to compensate.
+    scale_learnable : bool, default True
+        Whether ``global_scale`` is trained. A learned scale settles at the
+        residual RMS, which shrinks as the fit improves and therefore keeps
+        *raising* the effective reconstruction weight — annealing the KL away.
+        Set ``False`` to pin the trade-off at ``scale_init``.
+    soft_mixing : bool, default False
+        If ``True``, concepts are sampled from their relaxed posteriors instead
+        of being teacher-forced, so the bottleneck mixes by a score in
+        ``(0, 1)``. This is what lets **both** of a concept's state embeddings
+        receive reconstruction gradient: under a hard score the unselected state
+        gets exactly zero, is trained only by the concept head, and is therefore
+        an untrained input to the decoder when an intervention selects it — which
+        is what makes a hard-mixed model unsteerable. Also flips the inference
+        engines to soft discrete draws, unless ``hard=`` is passed explicitly in
+        ``inference_kwargs``.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -119,12 +137,15 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
       ``bins=2``: two state embeddings ``w+``, ``w-`` read jointly by a
       ``Linear(2m, 1)``
       (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_head`).
-    * Under Pyro, concepts sample through a straight-through relaxation rather
-      than a plain softmax — Appendix A of the paper endorses Gumbel-Softmax
-      here, and the engine's temperature schedule controls it. The mixture
-      therefore reads a hard one-hot (with gradients) where the reference reads
-      the continuous softmax, so an intervention selects a state instead of
-      forming the convex combination of Section 3.1.
+    * By default the mixture is **teacher-forced** on the ground-truth labels,
+      where the reference mixes by the predicted score. That grounds the concept
+      channel, but it also means an intervention *selects* a state rather than
+      forming the convex combination of Section 3.1 — and the unselected state
+      embedding never sees reconstruction gradient. ``soft_mixing=True`` restores
+      the reference's behaviour: concepts are sampled through the relaxation
+      (Gumbel-Softmax, endorsed by Appendix A of the paper, with the engine's
+      temperature schedule controlling it) and the mixture reads a score in
+      ``(0, 1)``.
 
     Examples
     --------
@@ -175,6 +196,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         observation: Type = Normal,
         global_scale: bool = True,
         scale_init: float = 1.0,
+        scale_learnable: bool = True,
+        soft_mixing: bool = False,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -195,13 +218,22 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         self.observation = observation
         self.global_scale = global_scale
         self.scale_init = scale_init
+        self.scale_learnable = scale_learnable
+        self.soft_mixing = soft_mixing
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
 
         self.pgm = self._build_model()
 
-        # The guide q(z | input)
+        # The guide q(z | input), plus — only when `soft_mixing` asks for it —
+        # the soft discrete draws it needs to actually be soft. Injected only in
+        # that case: engines that cannot sample softly (DeterministicInference,
+        # MAPForwardInference) take no `hard` argument, so passing it always
+        # would break every engine but the sampling ones. An explicit `hard=` in
+        # ``inference_kwargs`` still wins.
         guide = {"latents": {"z": self._build_guide()}}
+        if soft_mixing:
+            guide["hard"] = False
         self.setup_inference(
             inference,
             {**guide, **(inference_kwargs or {})},
@@ -237,11 +269,16 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         and the generative loss terms need the ones it would otherwise leave out:
         ``input`` for the reconstruction and ``mixing``/``unknown`` for the
         orthogonality penalty.
+
+        Under ``soft_mixing`` the concepts are left unobserved so the engine
+        samples them from their own relaxed posteriors: the mixture then reads a
+        score in ``(0, 1)`` rather than a hard label, which is what lets *both*
+        of a concept's state embeddings receive reconstruction gradient. Their
+        supervision is unaffected — the concept loss scores the reported
+        ``probs`` against the ground truth either way.
         """
-        return {
-            **{name: None for name in self.pgm.variables},
-            **self.fully_observed_query(c),
-        }
+        forced = {} if self.soft_mixing else self.fully_observed_query(c)
+        return {**{name: None for name in self.pgm.variables}, **forced}
 
     # ------------------------------------------------------------------
     # Model assembly
@@ -397,7 +434,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         if "loc" not in observed.param_sizes:
             scale_head = None
         elif self.global_scale:
-            scale_head = GlobalScale(observed.size, init=self.scale_init)
+            scale_head = GlobalScale(observed.size, init=self.scale_init,
+                                     learnable=self.scale_learnable)
         else:
             scale_head = decoder_head(copy.deepcopy(self.decoder))
         decoder_cpd = ParametricCPD(

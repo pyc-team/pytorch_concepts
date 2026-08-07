@@ -91,6 +91,21 @@ class TestGlobalScale:
             scale = GlobalScale(size=16, init=init)
             assert F.softplus(scale.raw).item() == pytest.approx(init, abs=1e-6)
 
+    def test_not_learnable_has_no_parameters(self):
+        """A pinned scale is a hyper-parameter, not something to train."""
+        scale = GlobalScale(size=784, init=0.3, learnable=False)
+        assert sum(p.numel() for p in scale.parameters()) == 0
+        assert F.softplus(scale.raw).item() == pytest.approx(0.3, abs=1e-6)
+        # ...and still produces the same output as its learnable twin.
+        assert torch.allclose(scale(torch.randn(3, 4)),
+                              GlobalScale(size=784, init=0.3)(torch.randn(3, 4)))
+
+    def test_fixed_raw_is_a_non_persistent_buffer(self):
+        """Follows .to(device) without landing in state_dict -- config sets it."""
+        scale = GlobalScale(size=8, init=0.3, learnable=False)
+        assert "raw" in dict(scale.named_buffers())
+        assert "raw" not in scale.state_dict()
+
     def test_output_shape_and_uniformity(self):
         scale = GlobalScale(size=784)
         out = scale(torch.randn(5, 4, 16))  # only shape[0] is read
