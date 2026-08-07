@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import math
 import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,7 @@ import torch.nn as nn
 from ..distributions import spec_for
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
-from .utils import flatten_event, leading_shape
+from .utils import flatten_event, leading_shape, make_temperature_schedule
 from ...outputs import InferenceOutput, ParamDict
 from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
@@ -38,6 +38,13 @@ class BaseInference(nn.Module):
         ``nn.Module.__setattr__`` registers it as a submodule, the engine shares
         parameters with the model rather than copying them, so one optimizer
         over ``pgm.parameters()`` trains the graph however many engines wrap it.
+    initial_temperature, annealing, annealing_rate, final_temperature
+        Schedule for the relaxed-discrete distributions' temperature; see
+        :func:`~torch_concepts.nn.modules.mid.inference.utils.make_temperature_schedule`.
+        Lives here rather than per-engine: annealing is a property of the run,
+        not of a backend, and a training loop should be able to advance it
+        without knowing which engine it holds (see :meth:`temperature_step`).
+        Engines that never sample keep it and never read it.
 
     Warns
     -----
@@ -48,11 +55,34 @@ class BaseInference(nn.Module):
     
     name: str = "BaseInference"
 
-    def __init__(self, pgm: ProbabilisticModel):
+    def __init__(
+        self,
+        pgm: ProbabilisticModel,
+        initial_temperature: float = 1.0,
+        annealing: Union[str, Callable[[int], float]] = "constant",
+        annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
+    ):
         super().__init__()
         # NOTE: nn.Module.__setattr__ auto-registers ``pgm`` as a submodule, so
         # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
+
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
+        self.final_temperature = float(final_temperature)
+        self._schedule = make_temperature_schedule(
+            initial_temperature, annealing, annealing_rate, final_temperature
+        )
+        self._step: int = 0
+        # A buffer, so it follows `.to(device)` and — being persistent — travels
+        # in `state_dict`: evaluation after a reload must decode at the
+        # temperature training reached, not at the initial one.
+        self.register_buffer(
+            "_temperature", torch.tensor(float(self._schedule(self._step)))
+        )
 
         # Both keyed by a query signature and reused across queries: the label
         # chunks a query expands to (see _output_labels) and the Annotations
@@ -81,6 +111,36 @@ class BaseInference(nn.Module):
                 UserWarning,
                 stacklevel=2,
             )
+
+    # ------------------------------------------------------------------
+    # Relaxation temperature
+    # ------------------------------------------------------------------
+    # Shared by every engine, because every engine that realises a discrete
+    # variable relaxes it, and the schedule is a property of the *run* rather
+    # than of any one backend. Engines that never sample simply never read it.
+
+    @property
+    def temperature(self) -> torch.Tensor:
+        """Current relaxation temperature of the discrete distributions."""
+        return self._temperature
+
+    def temperature_step(self) -> None:
+        """Advance the schedule by one training step.
+
+        A no-op outside training, so evaluation reads the temperature training
+        reached rather than annealing past it — a model tested at a relaxation
+        it never trained at samples codes its decoder has never seen.
+
+        Updates the buffer **in place**, so callers must not run this between a
+        forward pass and its ``backward``: the temperature is part of the graph
+        autograd is about to walk. Once per optimiser step, after backward, is
+        the contract (see
+        :meth:`~torch_concepts.nn.modules.high.base.learner.BaseLearner.on_train_batch_end`).
+        """
+        if not self.training:
+            return
+        self._step += 1
+        self._temperature.fill_(float(self._schedule(self._step)))
 
     def _require_directed(self) -> None:
         """Guard for engines that need a topological order.

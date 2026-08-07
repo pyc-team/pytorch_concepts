@@ -781,8 +781,9 @@ class TestImportanceSamplingQuery:
             m, proposal=proposal, n_samples=50,
             initial_temperature=2.0, annealing="exponential", annealing_rate=0.5,
         )
+        eng.train()
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t1 != t0
 
@@ -790,8 +791,9 @@ class TestImportanceSamplingQuery:
         m = _make_bernoulli_model()
         proposal = MutilatedNetworkProposal(m)
         eng = ImportanceSampling(m, proposal=proposal, n_samples=50)
+        eng.train()
         assert eng._step == 0
-        eng.step()
+        eng.temperature_step()
         assert eng._step == 1
 
     def test_query_evidence_none_treated_as_empty(self):
@@ -1137,6 +1139,20 @@ class TestMakeTemperatureSchedule:
         assert callable(schedule)
         assert schedule(0) == pytest.approx(1.0)
         assert schedule(10) < 1.0
+
+    @pytest.mark.parametrize("annealing, rate", [("exponential", 0.5), ("linear", 0.5)])
+    def test_decay_settles_on_the_final_temperature(self, annealing, rate):
+        """Both decays reach a floor and stay there, rather than sliding to zero."""
+        schedule = make_temperature_schedule(2.0, annealing, rate, final_temperature=0.1)
+        assert schedule(0) == pytest.approx(2.0)
+        assert 0.1 < schedule(2) < 2.0                 # still decaying
+        assert schedule(500) == pytest.approx(0.1)     # settled
+        assert schedule(10_000) == pytest.approx(0.1)  # and stays
+
+    def test_a_callable_schedule_is_not_floored(self):
+        """A user-supplied schedule owns its own floor."""
+        schedule = make_temperature_schedule(1.0, lambda s: 1e-9, 0.0, final_temperature=0.5)
+        assert schedule(3) == pytest.approx(1e-9)
 
     def test_constant_schedule(self):
         schedule = make_temperature_schedule(0.5, "constant", 0.0)

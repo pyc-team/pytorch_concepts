@@ -10,7 +10,7 @@ import torch
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...variable import Variable
-from ..utils import make_temperature_schedule, reshape_value_to_event
+from ..utils import reshape_value_to_event
 from ....outputs import InferenceOutput
 from .base import TorchBaseInference
 
@@ -170,10 +170,17 @@ class ForwardInference(TorchBaseInference, ABC):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
         parallelize_levels: bool = False,
         activate_before_propagation: bool = True,
     ):
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+        )
         self._require_directed()
         if not 0.0 <= float(p_int) <= 1.0:
             raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
@@ -186,16 +193,6 @@ class ForwardInference(TorchBaseInference, ABC):
         # When True, variables in the same topological level (conditionally
         # independent given the previous levels) are evaluated concurrently.
         self.parallelize_levels = bool(parallelize_levels)
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-        self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
-        self._step = 0
-        self.register_buffer(
-            "_temperature",
-            torch.tensor(float(self._schedule(self._step))),
-        )
         # Memoized required-variable sets, keyed by the (query, evidence) name
         # signature. The DAG is immutable, so a given signature always yields
         # the same set — for a training loop the signature is constant.
@@ -208,6 +205,7 @@ class ForwardInference(TorchBaseInference, ABC):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
             parallelize_levels=self.parallelize_levels,
             activate_before_propagation=self.activate_before_propagation,
         )
@@ -220,22 +218,6 @@ class ForwardInference(TorchBaseInference, ABC):
         its class, not by a constructor flag.
         """
         return "ancestral" if self.is_stochastic else "deterministic"
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def temperature_step(self) -> None:
-        """Advance the temperature schedule (no-op for deterministic engines).
-
-        Rebinds the ``_temperature`` buffer to a fresh scalar rather than
-        filling it in place.
-        """
-        if self.is_stochastic and self.training:
-            self._step += 1
-            self._temperature = self._temperature.new_full(
-                (), float(self._schedule(self._step))
-            )
 
     # ------------------------------------------------------------------
     # Per-variable and per-level prediction
@@ -437,9 +419,6 @@ class ForwardInference(TorchBaseInference, ABC):
                 if params is None:
                     continue  # fully-observed variable: clamped, no params emitted
                 computed[name] = params
-
-        # advance the temperature schedule if stochastic and training mode.
-        self.temperature_step()  
 
         # Assemble once. ``params`` covers the queried names; ``samples`` covers
         # every variable the pass actually realised, queried or not — an ancestor

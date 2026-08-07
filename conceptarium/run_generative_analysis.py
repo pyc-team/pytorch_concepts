@@ -1,25 +1,23 @@
-"""Generate, steer and counterfactually edit a trained generative concept model.
+"""Reconstruct, generate from and steer a trained generative concept model.
 
 Post-hoc counterpart to ``run_experiment.py`` for the generative branch. It
 rebuilds a finished run from its Hydra config and checkpoint, then produces the
-three things a concept bottleneck generative model is *for*:
+things a concept bottleneck generative model is *for*:
 
-``generation.png``
-    Images decoded from ``z`` drawn from the **prior**. Nothing is conditioned
-    on: the ancestral engine resolves the root through its own ``FixedPrior``,
-    and the guide is not consulted at all.
+``overview.png``
+    Three rows: real images, their reconstructions through ``q(z | x)``, and
+    images decoded from ``z`` drawn from the **prior**. The third row is
+    unconditional — nothing lines up with the columns above it — and that is the
+    point: sharp reconstructions beside incoherent samples is the signature of a
+    posterior that has drifted off the prior.
 
-``steering.png``
-    One row per concept: a single ``z``, held fixed, decoded once per state of
-    that concept. This is the model's headline claim — that intervening on a
-    concept steers the generated output — which nothing else in the repository
-    exercises.
-
-``counterfactual.png``
-    A real image, its reconstruction through ``q(z | x)``, and the
-    reconstruction of the *same* ``z`` with one concept forced to a different
-    state. Reading the third row against the second isolates the edit from the
-    reconstruction error.
+``steering_<concept>.png``
+    One figure per concept. A generated sample on the first row, then that same
+    sample decoded once per state of the concept — its own ``z`` and its own
+    drawn values for every *other* concept replayed as evidence, so the states
+    are the only thing that differs. This is the model's headline claim, that
+    intervening on a concept steers the generated output, and nothing else in
+    the repository exercises it.
 
 ``generative_metrics.csv``
     Per-concept test accuracy and the reconstruction NLL.
@@ -150,12 +148,18 @@ def observation_of(model, out, name: str = "input") -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
-def save_grid(rows: List[torch.Tensor], shape, path: Path, row_labels=None) -> None:
+def save_grid(
+    rows: List[torch.Tensor], shape, path: Path, row_labels=None, col_labels=None
+) -> None:
     """Write a grid of images, one supplied tensor batch per row.
 
     Generalises the helper in ``examples/utilization/2_model/15_*.py``: the image
     shape is passed in rather than hard-coded, and the backend is forced to Agg
-    so this runs on a headless GPU box.
+    so this runs on a headless GPU box. Rows may be of different lengths — the
+    grid is as wide as the longest and short rows leave their tail blank.
+
+    ``col_labels`` is one list per row (``None`` for an unlabelled row), titling
+    the cells of that row — the state names above a steering sweep, say.
     """
     try:
         import matplotlib
@@ -180,6 +184,9 @@ def save_grid(rows: List[torch.Tensor], shape, path: Path, row_labels=None) -> N
             img = images[c]
             # (C, H, W) -> (H, W, C); a single channel drops to greyscale.
             ax.imshow(img.permute(1, 2, 0).squeeze().numpy().clip(0, 1))
+            titles = col_labels[r] if col_labels is not None else None
+            if titles is not None and c < len(titles):
+                ax.set_title(titles[c], fontsize=6)
         if row_labels is not None:
             # Re-enable the axis only to carry the label, without drawing a box
             # around the first image of the row.
@@ -196,59 +203,77 @@ def save_grid(rows: List[torch.Tensor], shape, path: Path, row_labels=None) -> N
     logger.info("wrote %s", path)
 
 
-def figure_generation(model, engine, query, shape, n_samples, out_dir) -> None:
-    """Decode ``n_samples`` draws from the prior — no evidence, no guide."""
+def generate(model, engine, query, n_samples):
+    """Draw ``n_samples`` from the prior ancestrally.
+
+    Returns ``(images, samples)`` where ``samples`` maps a variable name to its
+    *drawn* value — notably ``z`` and each concept — which the steering figures
+    replay so that only the intervened concept changes. Unwrapped to plain
+    tensors, because that is what an engine accepts back as evidence.
+    """
     with torch.no_grad():
         out = engine.query(query=query, evidence={}, n_samples=n_samples)
-    save_grid([observation_of(model, out)], shape, out_dir / "generation.png")
+    samples = {
+        name: getattr(out.samples[name], "tensor", out.samples[name])
+        for name in out.samples.annotation.labels
+    }
+    return observation_of(model, out), samples
 
 
-def figure_steering(model, engine, query, shape, concepts, out_dir) -> None:
-    """One row per concept: the same ``z``, swept across that concept's states."""
-    rows, labels = [], []
-    for variable in concepts:
-        states = concept_states(variable)
-        # One z for the whole row: the only thing that varies is the concept.
-        z = torch.randn(1, model.latent_size).expand(len(states), -1)
-        forced = torch.cat([value for _, value in states], dim=0)
-        forced_query = {**{name: None for name in query}, variable.name: forced}
-        with torch.no_grad():
-            out = engine.query(
-                query=forced_query, evidence={"z": z}
-            )
-        rows.append(observation_of(model, out))
-        labels.append(variable.name)
-    if rows:
-        save_grid(rows, shape, out_dir / "steering.png", row_labels=labels)
+def figure_overview(model, engine, query, shape, images, generated, out_dir) -> None:
+    """Originals, their reconstructions, and unconditional prior samples.
 
-
-def figure_counterfactual(
-    model, engine, query, vi_query, shape, images, variable, state, out_dir
-) -> None:
-    """Original, its reconstruction, and the same ``z`` with one concept forced."""
+    The generations are *not* reconstructions of the originals above them — they
+    are independent draws from ``p(z)``. The three rows sit together because a
+    generative model is judged on both at once: sharp reconstructions with
+    incoherent samples means the posterior has drifted off the prior.
+    """
     with torch.no_grad():
         # The guide is the only route from an image to a posterior z, so the
         # encode step needs the variational engine (the model's own eval one),
-        # which in turn requires every variable in its query.
-        encoded = model(query=vi_query, input=images)
-        # Unwrapped: evidence must be a plain Tensor, and every quantity comes
-        # back annotated. The posterior mean, not a sample, so the two decodes
-        # differ only by the intervention.
+        # which in turn requires every variable in its query. The posterior
+        # *mean*, not a draw, so the row shows the model's best reconstruction.
+        encoded = model(query=list(model.pgm.variables), input=images)
         z = encoded.guide_params["loc"]["z"].tensor
-
         recon = observation_of(model, engine.query(query=query, evidence={"z": z}))
 
-        forced = state.expand(images.shape[0], -1)
-        edited = observation_of(model, engine.query(
-            query={**{name: None for name in query}, variable.name: forced},
-            evidence={"z": z},
-        ))
+    save_grid(
+        [images, recon, generated],
+        shape,
+        out_dir / "overview.png",
+        row_labels=["original", "reconstruction", "generation"],
+    )
+
+
+def figure_steering(
+    model, engine, shape, generated, samples, concepts, variable, out_dir
+) -> None:
+    """One figure per concept: a generated image, then that image at every state.
+
+    Replays that sample's own ``z`` and its own drawn values for *every other*
+    concept as evidence, so the only thing differing across the second row is the
+    intervened concept. Clamping the others matters: left free they would be
+    redrawn per state, confounding the intervention with fresh sampling noise.
+    """
+    states = concept_states(variable)
+    n = len(states)
+    # Column 0 of the generation is "the originally sampled image"; every
+    # variation below is that same draw with one concept moved.
+    evidence = {"z": samples["z"][:1].expand(n, -1)}
+    for other in concepts:
+        if other.name != variable.name:
+            evidence[other.name] = samples[other.name][:1].expand(n, -1)
+    evidence[variable.name] = torch.cat([value for _, value in states], dim=0)
+
+    with torch.no_grad():
+        out = engine.query(query=["input"], evidence=evidence)
 
     save_grid(
-        [images, recon, edited],
+        [generated[:1], observation_of(model, out)],
         shape,
-        out_dir / "counterfactual.png",
-        row_labels=["original", "reconstruction", f"do({variable.name})"],
+        out_dir / f"steering_{variable.name}.png",
+        row_labels=["generated", f"do({variable.name})"],
+        col_labels=[None, [label for label, _ in states]],
     )
 
 
@@ -303,48 +328,61 @@ def main(cfg: DictConfig) -> None:
 
     shape = tuple(datamodule.n_features)
     concepts = concept_variables(model)
-    # A decoding pass reports only the image and the concepts: the embedding and
-    # bottleneck variables have multi-dimensional events of *differing* widths,
-    # which cannot be concatenated into one annotated tensor. They are ancestors
-    # of `input`, so they are still computed — just not reported.
-    query = ["input", *(v.name for v in concepts)]
+    # A decoding pass reports only the image, `z` and the concepts: the embedding
+    # and bottleneck variables have multi-dimensional events of *differing*
+    # widths, which cannot be concatenated into one annotated tensor. They are
+    # ancestors of `input`, so they are still computed — just not reported.
+    query = ["input", "z", *(v.name for v in concepts)]
     # VariationalInference's contract wants every variable in the query.
     vi_query = list(model.pgm.variables)
 
     # Decoding engine: ancestral sampling resolves every root through its own
-    # prior, so an unconditioned query really does draw z ~ p(z). p_int=1.0
-    # makes a query value a hard do-intervention, which is what steers.
+    # prior, so an unconditioned query really does draw z ~ p(z).
+    #
     # `hard` must match how the model was TRAINED: the bottleneck mixes state
-    # embeddings by the concept score, so decoding a blend the training path
-    # never produced (or a hard assignment when training only ever saw blends)
-    # is equally out of distribution. Defaults to the model's own soft_mixing.
+    # embeddings by the concept score, so decoding a hard assignment when
+    # training only ever saw soft blends (or vice versa) is out of distribution.
+    # Under `soft_mixing` the training engine samples soft, so this does too.
     hard = cfg.get("hard_sampling")
     if hard is None:
         hard = not getattr(model, "soft_mixing", False)
-    engine = AncestralSamplingInference(model.pgm, p_int=1.0, hard=bool(hard))
+    # ...and so must the temperature: the relaxation is annealed during
+    # training, so decoding at the default 1.0 would sample far softer codes
+    # than the trained decoder ever saw. The checkpoint restores the training
+    # engine's temperature buffer, so this reads the value training ended on.
+    temperature = float(model.train_inference.temperature)
+    engine = AncestralSamplingInference(
+        model.pgm, p_int=1.0, hard=bool(hard),
+        initial_temperature=temperature, annealing="constant",
+    )
+    logger.info(
+        "decoding with %s discrete samples at temperature %.4f "
+        "(model.soft_mixing=%s, train engine hard=%s)",
+        "hard" if hard else "soft", temperature,
+        getattr(model, "soft_mixing", None),
+        getattr(model.train_inference, "hard", None),
+    )
 
     out_dir = Path(job_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    n = int(cfg.get("n_samples", 8))
+    n = int(cfg.get("n_samples", 10))
 
-    figure_generation(model, engine, query, shape, n, out_dir)
+    batch = next(iter(datamodule.test_dataloader() or datamodule.val_dataloader()))
+    images = batch["inputs"]["x"][:n]
+
+    # One generation pass feeds both figures: the third row of the overview, and
+    # the `z`/concept draws the steering figures replay.
+    generated, samples = generate(model, engine, query, n)
+    figure_overview(model, engine, query, shape, images, generated, out_dir)
 
     wanted = cfg.get("steer_concepts")
     to_steer = (
         [v for v in concepts if v.name in set(wanted)] if wanted else concepts
     )
-    figure_steering(model, engine, query, shape, to_steer, out_dir)
-
-    batch = next(iter(datamodule.test_dataloader() or datamodule.val_dataloader()))
-    images = batch["inputs"]["x"][:n]
-    cf_name = cfg.get("counterfactual_concept") or concepts[0].name
-    cf_var = next(v for v in concepts if v.name == cf_name)
-    states = concept_states(cf_var)
-    which = cfg.get("counterfactual_state")
-    cf_state = dict(states).get(str(which), states[-1][1])
-    figure_counterfactual(
-        model, engine, query, vi_query, shape, images, cf_var, cf_state, out_dir
-    )
+    for variable in to_steer:
+        figure_steering(
+            model, engine, shape, generated, samples, concepts, variable, out_dir
+        )
 
     rows = evaluate(model, datamodule, vi_query)
     csv_out = out_dir / "generative_metrics.csv"

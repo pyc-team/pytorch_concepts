@@ -13,11 +13,9 @@
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
 #
-# CelebA has 40 concepts, so steering.png would be 40 rows — pick a
-# few:
+# CelebA has 40 concepts, hence 40 steering figures — pick a few:
 #   python run_generative_analysis.py \
-#       steer_concepts="[Smiling,Male,Eyeglasses]" \
-#       counterfactual_concept=Smiling
+#       steer_concepts="[Smiling,Male,Eyeglasses]"
 #
 # Requires `pyro-ppl` (VariationalInference), which is not in the
 # conceptarium environment files.

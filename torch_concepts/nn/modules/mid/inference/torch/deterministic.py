@@ -47,12 +47,16 @@ class DeterministicInference(ForwardInference):
             activate_before_propagation: bool = True,
             p_int: float = 0.,
             parallelize_levels: bool = False,
+            **temperature_kwargs,
     ):
+        # Accepted and ignored: this engine never samples, but a config that
+        # sets a schedule must not break when it swaps the engine out.
         super().__init__(
             pgm,
             p_int=p_int,
             parallelize_levels=parallelize_levels,
             activate_before_propagation=activate_before_propagation,
+            **temperature_kwargs,
         )
 
     def _resolve(

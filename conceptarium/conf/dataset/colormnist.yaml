@@ -6,8 +6,8 @@
 # exist and used a `coloring` schema the datamodule never had.
 #
 # NOTE: ConceptDataset reorders concepts by type, so the actual
-# order is ['parity', 'color', 'digit'] regardless of what is
-# requested here. Always read `dm.concept_names`.
+# order follows the type grouping regardless of what is requested
+# here. Always read `dm.concept_names`.
 # =============================================================
 defaults:
   - _commons
@@ -19,6 +19,11 @@ datamodule:
   _target_: torch_concepts.data.datamodules.colormnist.ColorMNISTDataModule
   colors: ['red', 'green']
   coloring: 'random'
+
+  # `parity` is a deterministic function of `digit`, so keeping both gives the
+  # bottleneck a concept carrying no information the others lack -- and makes
+  # steering it incoherent, since no image can have digit=3 and parity=even.
+  concept_subset: [color, digit]
 
 default_task_names: [digit]
 

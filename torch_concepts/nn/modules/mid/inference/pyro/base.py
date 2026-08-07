@@ -67,8 +67,8 @@ class PyroBaseInference(BaseInference):
 
     name = "PyroBaseInference"
 
-    def __init__(self, pgm: BayesianNetwork, hard: bool = True):
-        super().__init__(pgm)
+    def __init__(self, pgm: BayesianNetwork, hard: bool = True, **temperature_kwargs):
+        super().__init__(pgm, **temperature_kwargs)
         self.hard = bool(hard)
 
     # ------------------------------------------------------------------

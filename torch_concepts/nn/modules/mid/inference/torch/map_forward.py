@@ -78,12 +78,13 @@ class MAPForwardInference(ForwardInference):
     #: below and the inherited temperature schedule is never read.
     is_stochastic = True
 
-    def __init__(self, pgm: BayesianNetwork, parallelize_levels: bool = False):
+    def __init__(self, pgm: BayesianNetwork, parallelize_levels: bool = False, **temperature_kwargs):
         # Teacher forcing and the temperature schedule are training-time knobs
         # with no meaning at test time, so neither is exposed: ``p_int`` is
         # pinned to 0 (the model follows its own trajectory) and the
         # temperature, which ``_resolve`` ignores, never advances.
-        super().__init__(pgm, p_int=0.0, parallelize_levels=parallelize_levels)
+        super().__init__(pgm, p_int=0.0, parallelize_levels=parallelize_levels,
+                         **temperature_kwargs)
 
     def __repr__(self) -> str:
         # Only this engine's own knobs — the inherited annealing/teacher-forcing

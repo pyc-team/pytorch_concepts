@@ -57,19 +57,17 @@ class AncestralSamplingInference(ForwardInference):
         self,
         pgm: BayesianNetwork,
         p_int: float = 1.0,
-        initial_temperature: float = 1.0,
-        annealing: Union[str, Callable[[int], float]] = "constant",
-        annealing_rate: float = 0.0,
         parallelize_levels: bool = False,
         hard: bool = False,
+        **temperature_kwargs,
     ):
+        # The temperature schedule is not re-declared here: it belongs to every
+        # engine (see BaseInference), so it passes straight through.
         super().__init__(
             pgm,
             p_int=p_int,
-            initial_temperature=initial_temperature,
-            annealing=annealing,
-            annealing_rate=annealing_rate,
             parallelize_levels=parallelize_levels,
+            **temperature_kwargs,
         )
         self.hard = bool(hard)
 

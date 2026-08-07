@@ -76,9 +76,21 @@ model_cls:
   # Variational inference for BOTH train and eval: the guide q(z | input)
   # is what makes a reconstruction possible. Ancestral sampling (which
   # draws z from the prior instead) is swapped in by the analysis script.
+  #
+  # The relaxation is annealed: soft early, so gradient reaches every state of
+  # every concept (the whole point of `soft_mixing`), then sharpened so training
+  # ENDS on near-discrete codes and the bottleneck actually commits to a state.
+  # 1.0 -> 0.1 in ~2.3k optimiser steps at rate 1e-3; at 0.1 a Concrete draw
+  # puts ~94% of its mass on one state (measured for binary, 4-way and 10-way).
+  # The eval engine shares the training temperature buffer, so evaluation and
+  # the analysis script decode at whatever value training finished on.
   inference:
     _target_: "torch_concepts.nn.VariationalInference"
     _partial_: true
+    initial_temperature: 1.0
+    annealing: exponential
+    annealing_rate: 0.001
+    final_temperature: 0.1
   train_inference: ${model.model_cls.inference}
 
   # Bottleneck (k concept contexts + 1 unsupervised) -> pixels, through

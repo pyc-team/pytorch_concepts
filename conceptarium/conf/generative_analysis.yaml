@@ -6,9 +6,9 @@
 #   python run_generative_analysis.py job_dir=outputs/multirun/.../0
 #
 # Produces, next to the job directory:
-#   generation.png       samples with z drawn from the prior
-#   steering.png         one row per concept, swept across its states
-#   counterfactual.png   original / reconstruction / intervened
+#   overview.png            original / reconstruction / generation
+#   steering_<concept>.png  one generated sample, then that same sample
+#                           at every state of that concept
 #   generative_metrics.csv
 # =============================================================
 hydra:
@@ -31,15 +31,11 @@ filters:
 seed: 42
 accelerator: auto        # auto | cpu | cuda
 
-# Number of images per figure row.
-n_samples: 8
+# Columns in overview.png (originals / reconstructions / generations).
+n_samples: 10
 # Quantise sampled concepts to a hard state before decoding. null follows the
 # model's own `soft_mixing` (soft if it was trained soft), which is what keeps
 # the decoder on the distribution it was trained on. true/false to force it.
 hard_sampling: null
-# Concepts to steer. null = every concept in the model.
+# Concepts to steer, one figure each. null = every concept in the model.
 steer_concepts: null
-# Concept to intervene on for the counterfactual figure, and the state to
-# force it to. null picks the first concept and its last state.
-counterfactual_concept: null
-counterfactual_state: null

@@ -292,8 +292,8 @@ class TestNormalObservation:
     def test_generation_through_ancestral_hard_sampling(self, binary_annotations):
         """The scale head's ``(B, size)`` output must survive an *unconditioned*
         decode of a multi-dimensional observation — the exact path
-        ``run_generative_analysis.py`` uses to produce ``generation.png`` and
-        ``steering.png``. A scale collapsed to ``(1,)``/``()`` would raise deep
+        ``run_generative_analysis.py`` uses to produce ``overview.png`` and the
+        steering figures. A scale collapsed to ``(1,)``/``()`` would raise deep
         inside the relaxed-distribution builder here, not at training time."""
         image_shape = (1, 8, 8)
         model = self._model(binary_annotations, input_size=image_shape)
@@ -415,3 +415,119 @@ class TestSoftMixing:
         annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
         head = self._model(annotations, True).pgm.factors["input"].parametrization["scale"]
         assert sum(p.numel() for p in head.parameters()) == 0
+
+    @pytest.mark.parametrize("soft_mixing", [False, True])
+    def test_concepts_still_report_probs(self, soft_mixing):
+        """Soft draws must not cost the concepts their reported ``probs``.
+
+        A soft engine builds the plain relaxed families rather than their
+        straight-through subclasses. If the parameter harvester only knows the
+        latter, every concept site falls through and reports nothing — which
+        surfaces only far downstream, as metrics raising ``KeyError`` and a
+        concept loss silently reading zero.
+        """
+        annotations = Annotations(
+            labels=["a", "d"], cardinalities=[1, 4], types=["binary", "categorical"]
+        )
+        model = self._model(annotations, soft_mixing=soft_mixing)
+        ground_truth = torch.tensor([[1.0, 2.0]]).expand(4, -1)
+        out = model(
+            query=model.default_query(ground_truth), input=torch.rand(4, INPUT_SIZE)
+        )
+
+        assert "probs" in out.params
+        for name in ("a", "d"):
+            assert name in out.params["probs"], f"no probs reported for {name!r}"
+        assert bool(((out.probs["a"] >= 0) & (out.probs["a"] <= 1)).all())
+        assert torch.allclose(out.probs["d"].sum(-1), torch.ones(4), atol=1e-5)
+
+
+class TestTemperatureAnnealing:
+    """The relaxation temperature must anneal during training and hold at eval.
+
+    A relaxed sample is only useful while its gradient is: soft early so every
+    concept state is trained, then sharp so the bottleneck ends up committing to
+    a state. Evaluation must then read the value training *reached* — decoding at
+    the initial temperature would sample far softer codes than the trained
+    decoder ever saw.
+    """
+
+    SCHEDULE = {
+        "initial_temperature": 1.0,
+        "annealing": "exponential",
+        "annealing_rate": 0.5,
+        "final_temperature": 0.1,
+    }
+
+    def _model(self, annotations, schedule=True):
+        n_contexts = len(annotations.labels) + 1
+        kwargs = (
+            {"inference_kwargs": dict(self.SCHEDULE),
+             "train_inference_kwargs": dict(self.SCHEDULE)}
+            if schedule else {}
+        )
+        return ConceptBottleneckGenerativeModel(
+            input_size=INPUT_SIZE,
+            annotations=annotations,
+            encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
+            decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
+            latent_size=LATENT_SIZE,
+            embedding_size=EMBEDDING_SIZE,
+            observation=Normal,
+            scale_init=0.3,
+            scale_learnable=False,
+            soft_mixing=True,
+            plate=False,
+            lightning=True,  # the temperature hook is a LightningModule hook
+            **kwargs,
+        )
+
+    @staticmethod
+    def _train_batches(model, n):
+        """Lightning calls ``on_train_batch_end`` once per optimiser step."""
+        model.train()
+        for i in range(n):
+            model.on_train_batch_end(None, None, i)
+
+    def test_temperature_decreases_then_settles(self, binary_annotations):
+        model = self._model(binary_annotations)
+        assert float(model.train_inference.temperature) == pytest.approx(1.0)
+        self._train_batches(model, 1)
+        after_one = float(model.train_inference.temperature)
+        assert 0.1 < after_one < 1.0
+        self._train_batches(model, 200)
+        assert float(model.train_inference.temperature) == pytest.approx(0.1)
+
+    def test_eval_engine_reads_the_training_temperature(self, binary_annotations):
+        model = self._model(binary_annotations)
+        self._train_batches(model, 5)
+        assert float(model.eval_inference.temperature) == pytest.approx(
+            float(model.train_inference.temperature)
+        )
+
+    def test_eval_mode_does_not_anneal_further(self, binary_annotations):
+        model = self._model(binary_annotations)
+        self._train_batches(model, 5)
+        settled = float(model.train_inference.temperature)
+        model.eval()
+        model(query=list(model.pgm.variables), input=torch.rand(4, INPUT_SIZE))
+        assert float(model.train_inference.temperature) == pytest.approx(settled)
+
+    def test_temperature_survives_a_checkpoint(self, binary_annotations):
+        """The analysis script rebuilds from a checkpoint, so the annealed value
+        has to travel in ``state_dict`` — otherwise it decodes at the initial
+        temperature."""
+        trained = self._model(binary_annotations)
+        self._train_batches(trained, 200)
+
+        fresh = self._model(binary_annotations)
+        assert float(fresh.train_inference.temperature) == pytest.approx(1.0)
+        fresh.load_state_dict(trained.state_dict())
+        assert float(fresh.train_inference.temperature) == pytest.approx(0.1)
+        assert float(fresh.eval_inference.temperature) == pytest.approx(0.1)
+
+    def test_the_default_schedule_is_still_constant(self, binary_annotations):
+        """Library default unchanged; only conf/model/cbgm.yaml opts in."""
+        model = self._model(binary_annotations, schedule=False)
+        self._train_batches(model, 10)
+        assert float(model.train_inference.temperature) == pytest.approx(1.0)
