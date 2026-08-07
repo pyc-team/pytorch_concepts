@@ -37,9 +37,9 @@ from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
-from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.mix import MixConceptEmbeddingToEmbedding
 from ...low.priors import FixedPrior
+from ...low.scales import GlobalScale
 from ...mid.inference.base import BaseInference
 from ...mid.inference.pyro.variational import VariationalInference
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -71,16 +71,25 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     decoder : nn.Module
         The post-concept-bottleneck network, mapping the flattened bottleneck
         (``embedding_size * (n_concepts + 1)``) to ``input_size`` **raw** values.
-        The observation parameter's activation is composed on top by the model
-        (a sigmoid for a ``Bernoulli``'s ``probs``), so a decoder that squashes
-        its own output would be activated twice.
+        The model composes the observation parameter's activation on top —
+        identity for a ``Normal``'s ``loc``, a sigmoid for a ``Bernoulli``'s
+        ``probs`` — so a decoder that squashes its own output is activated twice.
     latent_size : int, default 64
         Dimensionality of ``z``.
     embedding_size : int, default 16
         Width ``m`` of a single context embedding.
-    observation : type, default ``torch.distributions.Bernoulli``
+    observation : type, default ``torch.distributions.Normal``
         Distribution family of the generated variable. ``Bernoulli`` for images
-        in ``[0, 1]``; ``Normal`` adds a learned scale head.
+        in ``[0, 1]``; ``Normal`` needs a ``scale`` too — see ``global_scale``.
+    global_scale : bool, default True
+        Only consulted when ``observation`` has a ``scale``. ``True``: one
+        learnable sigma shared by every pixel and sample
+        (:class:`~torch_concepts.nn.GlobalScale`). ``False``: ``scale`` gets its
+        own copy of ``decoder``.
+    scale_init : float, default 1.0
+        Standard deviation ``scale`` starts at when ``global_scale=True``. For
+        images in ``[0, 1]`` a smaller value (e.g. ``0.1``) up-weights the
+        reconstruction term relative to the KL.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -104,14 +113,12 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
       prepends the concept probabilities.
     * The reference context generators end in ``BatchNorm1d``;
       :class:`~torch_concepts.nn.LinearEmbeddingEncoder` does not.
-    * The reference concept head is a per-concept ``Linear(bins * m, bins)``;
-      the reused CEM head is a ``Linear(m, 1)`` shared across states.
-    * The reference gives a binary concept ``bins = 2`` — two state embeddings
-      and a 2-way one-hot. A cardinality-1 concept here gets *one* embedding,
-      which
-      :class:`~torch_concepts.nn.MixConceptEmbeddingToEmbedding` splits in two
-      with a learned ``Linear(m, 2m) + LeakyReLU``. Declare such concepts as
-      2-way ``categorical`` to match the reference exactly.
+    * The reference concept head is a per-concept ``Linear(bins * m, bins)``. A
+      **categorical** concept here keeps the reused CEM head — a ``Linear(m, 1)``
+      shared across states — while a **binary** one matches the reference's
+      ``bins=2``: two state embeddings ``w+``, ``w-`` read jointly by a
+      ``Linear(2m, 1)``
+      (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_head`).
     * Under Pyro, concepts sample through a straight-through relaxation rather
       than a plain softmax — Appendix A of the paper endorses Gumbel-Softmax
       here, and the engine's temperature schedule controls it. The mixture
@@ -131,7 +138,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     >>> model = ConceptBottleneckGenerativeModel(
     ...     input_size=784, annotations=ann,
     ...     encoder=MLP(784, 128, 32),
-    ...     # Raw: the Bernoulli's `probs` sigmoid is composed on top for you.
+    ...     # Raw: the observation's activation (identity for `loc`, a sigmoid
+    ...     # for a Bernoulli's `probs`) is composed on top for you.
     ...     decoder=MLP(3 * 8, 128, 784),
     ...     latent_size=32, embedding_size=8, observation=Bernoulli,
     ... )  # doctest: +SKIP
@@ -141,6 +149,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     --------
     torch_concepts.nn.MixConceptEmbeddingToEmbedding : the concept bottleneck layer
     torch_concepts.nn.functional.concept_orthogonality : the orthogonality penalty
+    torch_concepts.nn.GlobalScale : the default ``scale`` head for a Normal observation
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
@@ -164,6 +173,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         latent_size: int = 64,
         embedding_size: int = 16,
         observation: Type = Normal,
+        global_scale: bool = True,
+        scale_init: float = 1.0,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -182,6 +193,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         )
         self.embedding_size = embedding_size
         self.observation = observation
+        self.global_scale = global_scale
+        self.scale_init = scale_init
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
 
@@ -329,26 +342,14 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                 for e in [*embeddings, unknown]
             ],
         )
-        # embeddings -> concepts: decode one score per state embedding (per group).
-        def concept_head():
-            """One raw score per state embedding: ``(B, C, m) -> (B, C)``."""
-            return pyc.nn.Sequential(
-                LinearEmbeddingToConcept(
-                    in_embeddings=self.embedding_size, # (B, C, emb_dim)
-                    out_concepts=1, # (B, C, 1)
-                ),
-                # Collapse the (n_states, 1) score dims -> n_states
-                nn.Flatten(start_dim=-2), # (B, C, 1) -> (B, C)
-            )
-
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
                 parents=[evar],
                 parametrization=self._flexible_parametrization(
                     variable=cvar,
-                    first=concept_head(),
-                    second=concept_head(),
+                    first=self.build_concept_head(cvar, evar),
+                    second=self.build_concept_head(cvar, evar),
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -361,13 +362,25 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                 "embeddings": torch.cat(list(embeddings.values()), dim=-2),
             }
 
+        mixer = MixConceptEmbeddingToEmbedding(
+            in_concepts=reordered_axis, # require Annotations as in_concepts
+            in_embeddings=self.embedding_size,
+            # A binary concept's two state embeddings (w+, w-) already arrive as
+            # two rows from build_concept_embedding_variables — nothing to fabricate.
+            expand_binary_embeddings=False,
+        )
+        # Both sides count a binary concept's rows independently; if they ever
+        # disagree the mixture's own assert fires several calls deep with no context.
+        built, expected = sum(e.shape[0] for e in embeddings), int(mixer.cardinalities_expanded.sum())
+        assert built == expected, (
+            f"{type(self).__name__}: built {built} embedding rows, mixer expects {expected} — "
+            "build_concept_embedding_variables and MixConceptEmbedding disagree on binary rows."
+        )
+
         mixing_cpd = ParametricCPD(
             variable=mixing,
             parents=[*concepts, *embeddings],
-            parametrization={"value": MixConceptEmbeddingToEmbedding(
-                in_concepts=reordered_axis, # require Annotations as in_concepts
-                in_embeddings=self.embedding_size,
-            )},
+            parametrization={"value": mixer},
             aggregate=mix_parents,
         )
 
@@ -377,18 +390,23 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         def decoder_head(decoder):
             return pyc.nn.Sequential(nn.Flatten(start_dim=-2), decoder)
 
-        # A continuous observation needs `loc` and `scale` from *independent*
-        # nets — sharing them through a trunk would make the scale a function of
-        # the location. So the scale gets its own copy of the decoder, which is
-        # only allocated when the observation family actually has a scale.
-        needs_scale = "loc" in observed.param_sizes
+        # `loc` always comes from the decoder. A `scale` — only allocated when the
+        # family has one — is either a single learnable sigma (homoscedastic, the
+        # default) or its OWN copy of the decoder: sharing a trunk with `loc` would
+        # make the spread a fixed function of the mean.
+        if "loc" not in observed.param_sizes:
+            scale_head = None
+        elif self.global_scale:
+            scale_head = GlobalScale(observed.size, init=self.scale_init)
+        else:
+            scale_head = decoder_head(copy.deepcopy(self.decoder))
         decoder_cpd = ParametricCPD(
             variable=observed,
             parents=[mixing, unknown],
             parametrization=self._flexible_parametrization(
                 variable=observed,
                 first=decoder_head(self.decoder),
-                second=decoder_head(copy.deepcopy(self.decoder)) if needs_scale else None,
+                second=scale_head,
             ),
             aggregate=cat_embeddings,
         )

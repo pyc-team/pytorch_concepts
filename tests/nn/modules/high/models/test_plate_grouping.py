@@ -124,7 +124,9 @@ def test_concept_grouping_counts(case, plate):
 @pytest.mark.parametrize('plate', [None, True, False])
 def test_embeddings_align_with_concepts(case, plate):
     """CEM concept embeddings are grouped identically to the concepts and sized
-    (n_states, embedding_size) per group."""
+    (n_states, embedding_size) per group — except a binary concept, which
+    contributes TWO state embeddings (w+, w-) per member rather than one, even
+    though it is a single Bernoulli (see BaseModel._embedding_rows)."""
     ann_fn, task_names = CASES[case]
     ann = ann_fn()
     m = _make('cem', ann, task_names, plate)
@@ -135,7 +137,9 @@ def test_embeddings_align_with_concepts(case, plate):
 
     assert len(evars) == len(cvars)              # aligned 1:1
     for c, e in zip(cvars, evars):
-        assert tuple(e.shape) == (c.size, EMB)   # rows == concept states, width == emb
+        is_binary = m.concept_annotations.concept(c.members[0]).is_binary
+        rows_per_member = 2 if is_binary else c.member_size
+        assert tuple(e.shape) == (len(c.members) * rows_per_member, EMB)
 
 
 # ===========================================================================

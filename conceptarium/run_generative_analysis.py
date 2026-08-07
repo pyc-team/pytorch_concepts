@@ -53,6 +53,7 @@ from conceptarium.utils import (
     update_config_from_data,
 )
 from torch_concepts.nn import AncestralSamplingInference, ReconstructionLoss
+from torch_concepts.nn.modules.mid.distributions import spec_for
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,16 @@ def concept_states(variable) -> List[Tuple[str, torch.Tensor]]:
     ]
 
 
+def observation_of(model, out, name: str = "input") -> torch.Tensor:
+    """The reconstructed observation, whichever quantity its family reports.
+
+    ``probs`` for a Bernoulli, ``loc`` for a Normal, ``value`` for a Delta — read
+    off the variable so the figures below survive a change of observation family.
+    """
+    quantity = spec_for(model.pgm.variables[name].distribution).primary_param
+    return getattr(out, quantity)[name]
+
+
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
@@ -189,7 +200,7 @@ def figure_generation(model, engine, query, shape, n_samples, out_dir) -> None:
     """Decode ``n_samples`` draws from the prior — no evidence, no guide."""
     with torch.no_grad():
         out = engine.query(query=query, evidence={}, n_samples=n_samples)
-    save_grid([out.probs["input"]], shape, out_dir / "generation.png")
+    save_grid([observation_of(model, out)], shape, out_dir / "generation.png")
 
 
 def figure_steering(model, engine, query, shape, concepts, out_dir) -> None:
@@ -205,7 +216,7 @@ def figure_steering(model, engine, query, shape, concepts, out_dir) -> None:
             out = engine.query(
                 query=forced_query, evidence={"z": z}
             )
-        rows.append(out.probs["input"])
+        rows.append(observation_of(model, out))
         labels.append(variable.name)
     if rows:
         save_grid(rows, shape, out_dir / "steering.png", row_labels=labels)
@@ -225,13 +236,13 @@ def figure_counterfactual(
         # differ only by the intervention.
         z = encoded.guide_params["loc"]["z"].tensor
 
-        recon = engine.query(query=query, evidence={"z": z}).probs["input"]
+        recon = observation_of(model, engine.query(query=query, evidence={"z": z}))
 
         forced = state.expand(images.shape[0], -1)
-        edited = engine.query(
+        edited = observation_of(model, engine.query(
             query={**{name: None for name in query}, variable.name: forced},
             evidence={"z": z},
-        ).probs["input"]
+        ))
 
     save_grid(
         [images, recon, edited],
@@ -303,7 +314,11 @@ def main(cfg: DictConfig) -> None:
     # Decoding engine: ancestral sampling resolves every root through its own
     # prior, so an unconditioned query really does draw z ~ p(z). p_int=1.0
     # makes a query value a hard do-intervention, which is what steers.
-    engine = AncestralSamplingInference(model.pgm, p_int=1.0)
+    # hard=True: an un-intervened concept must still resolve to a genuine state
+    # assignment, not a soft blend of every state's embedding — the bottleneck
+    # mixes state embeddings by the concept score, so a soft draw would decode
+    # a code no training sample (teacher-forced, hence hard) ever produced.
+    engine = AncestralSamplingInference(model.pgm, p_int=1.0, hard=True)
 
     out_dir = Path(job_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

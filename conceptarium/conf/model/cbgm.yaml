@@ -22,11 +22,16 @@ model_cls:
   embedding_size: 16   # m, width of one concept context
   plate: false         # one variable per concept (the reference layout)
 
-  # Bernoulli over pixel intensities: the standard VAE reconstruction
-  # likelihood, equivalent to a binary cross-entropy on [0, 1] images.
+  # Gaussian likelihood over pixel intensities. `loc` is the decoder's raw
+  # output (identity-activated, so it must NOT squash its own output —
+  # unbounded is correct here, the network learns to land in [0, 1]).
+  # `scale` is ONE learnable global sigma (`global_scale: true`), not a
+  # second copy of the decoder.
   observation:
     _target_: hydra.utils.get_class
-    path: torch.distributions.Bernoulli
+    path: torch.distributions.Normal
+  global_scale: true
+  scale_init: 0.1   # small: up-weights reconstruction vs KL for [0, 1] images
 
   # Base families, restoring CBGM's own class defaults over the relaxed ones
   # `_commons` sets for the discriminative models. The Pyro engine applies its
@@ -61,9 +66,9 @@ model_cls:
   # The depth comes from the dataset (it must divide the image side);
   # `base_size` is then derived, so this needs no per-dataset override.
   #
-  # Raw: the model composes the observation parameter's activation on top
-  # (a sigmoid, for a Bernoulli's `probs`), so this stack must NOT squash
-  # its own output or it would be activated twice.
+  # Raw: the model composes the observation parameter's activation on top —
+  # the IDENTITY on a Normal's `loc`, so this stack's output already IS the
+  # mean. Squashing it here would only shrink the range, not "activate" it.
   decoder:
     _target_: "torch_concepts.nn.ConvDecoder"
     in_features: ${math:"(${data_dims.n_concepts} + 1) * ${model.model_cls.embedding_size}"}

@@ -31,10 +31,8 @@ from torch.distributions import Bernoulli, OneHotCategorical, Normal
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
-from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.mix import MixConceptEmbeddingToConcept
 from ...low.priors import LearnablePrior
-from ...low.sequential import Sequential
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -195,17 +193,6 @@ class ConceptEmbeddingModel(BipartiteModel):
                 for e in embeddings
             ],
         )
-        # embeddings → concepts: decode one score per state embedding (per group).
-        def concept_head():
-            return Sequential(
-                LinearEmbeddingToConcept(
-                    in_embeddings=self.embedding_size,
-                    out_concepts=1,
-                ),
-                # Collapse the (n_concepts, 1) score dims -> n_concepts
-                nn.Flatten(start_dim=-2),
-            )
-
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
@@ -214,8 +201,8 @@ class ConceptEmbeddingModel(BipartiteModel):
                     variable=cvar,
                     # Two independent heads: `second` is only consulted for a
                     # continuous concept, which needs its own scale head.
-                    first=concept_head(),
-                    second=concept_head(),
+                    first=self.build_concept_head(cvar, evar),
+                    second=self.build_concept_head(cvar, evar),
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -241,6 +228,9 @@ class ConceptEmbeddingModel(BipartiteModel):
                 in_concepts=reordered_axis,
                 in_embeddings=self.embedding_size,
                 out_concepts=tvar.size,
+                # A binary concept's two state embeddings (w+, w-) already arrive as
+                # two rows from build_concept_embedding_variables — nothing to fabricate.
+                expand_binary_embeddings=False,
             )
 
         predictors = ParametricCPD(

@@ -9,8 +9,9 @@
 #   orthogonality   pushes the unsupervised context away from the
 #                   supervised ones, so concepts stay steerable
 #
-# The weights follow the reference implementation: ALPHA=5 on the
-# concept term, BETA=1 on the orthogonality one.
+# The weights below are the defaults; `weights` here is OVERRIDDEN by
+# conf/cbgm.yaml, which exposes each entry as a named, sweepable key
+# (recon/kl/alpha/beta) — edit the numbers there, not here.
 #
 # CBGM sets `param_for_discrete_var = "probs"`, so the concept
 # term must read `probs` — hence NLLProbLoss / BCELoss rather than

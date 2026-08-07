@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
@@ -14,11 +13,22 @@ class MixConceptEmbedding(BaseConceptLayer):
     of "Concept Embedding Models" (Espinosa Zarlenga et al., NeurIPS 2022) and
     nothing else: subclasses add whatever head consumes the mixed embeddings.
 
+    A binary concept scores one Bernoulli probability but always mixes **two**
+    state embeddings, :math:`w^+` and :math:`w^-`. ``expand_binary_embeddings``
+    only decides where the second row comes from: ``True`` (default) takes one
+    row per binary concept and fabricates the other with a learned
+    ``Linear(m, 2m) + LeakyReLU``; ``False`` expects both rows from the caller —
+    what
+    :meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_embedding_variables`
+    now supplies. The score axis is expanded to ``[c, 1-c]`` either way.
+
     Args:
         in_concepts: Annotations of the input concepts (their cardinalities and
             types drive the grouping).
         in_embeddings: Number of embedding features per state.
         out_concepts: Output width, interpreted by the subclass.
+        expand_binary_embeddings: Fabricate a binary concept's second state
+            embedding from its first. Default ``True`` (the historical contract).
     """
 
     def __init__(
@@ -26,6 +36,7 @@ class MixConceptEmbedding(BaseConceptLayer):
         in_concepts: Annotations,
         in_embeddings: Union[int, Annotations],
         out_concepts: Union[int, Annotations],
+        expand_binary_embeddings: bool = True,
         **kwargs,
     ):
         super().__init__(
@@ -33,20 +44,30 @@ class MixConceptEmbedding(BaseConceptLayer):
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
         )
-        # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
-        self.cardinalities_expanded = torch.tensor(in_concepts.cardinalities)
-        self.binary_mask = torch.from_numpy(np.array(in_concepts.types) != 'continuous')
-        cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
-        start_positions = cumsum - self.cardinalities_expanded
-        bernoulli_mask = self.cardinalities_expanded == 1 & self.binary_mask
-        self.mask_cardinality_1 = start_positions[bernoulli_mask]
-        self.cardinalities_expanded[bernoulli_mask] = 2
+        self.expand_binary_embeddings = bool(expand_binary_embeddings)
 
-        self.bernoulli_to_categorical_embedding_splitter = torch.nn.Sequential(
-            torch.nn.Linear(self.in_embeddings_shape, self.in_embeddings_shape*2),
-            torch.nn.LeakyReLU(),
-            torch.nn.Unflatten(-1, (-1, self.in_embeddings_shape)),
-        )
+        # `cardinalities_expanded`: embedding-row group sizes for
+        # `grouped_concept_exogenous_mixture` (2 for binary, cardinality otherwise).
+        # `binary_concept_columns`: those concepts' offsets in the unexpanded score
+        # axis. Non-persistent buffers so they follow `.to(device)` without adding
+        # state_dict keys older checkpoints would be missing.
+        cardinalities = torch.tensor(in_concepts.cardinalities)
+        binary_mask = torch.tensor([t == 'binary' for t in in_concepts.types], dtype=torch.bool)
+        start_positions = torch.cumsum(cardinalities, dim=0) - cardinalities
+        cardinalities_expanded = cardinalities.clone()
+        cardinalities_expanded[binary_mask] = 2
+        self.register_buffer("cardinalities_expanded", cardinalities_expanded, persistent=False)
+        self.register_buffer("binary_concept_columns", start_positions[binary_mask], persistent=False)
+
+        # Allocated only when used, so an all-categorical annotation (or
+        # `expand_binary_embeddings=False`) carries no dead parameters.
+        self.bernoulli_to_categorical_embedding_splitter = None
+        if self.expand_binary_embeddings and len(self.binary_concept_columns) > 0:
+            self.bernoulli_to_categorical_embedding_splitter = torch.nn.Sequential(
+                torch.nn.Linear(self.in_embeddings_shape, self.in_embeddings_shape*2),
+                torch.nn.LeakyReLU(),
+                torch.nn.Unflatten(-1, (-1, self.in_embeddings_shape)),
+            )
 
     def _mix(
         self,
@@ -55,22 +76,23 @@ class MixConceptEmbedding(BaseConceptLayer):
     ) -> torch.Tensor:
         """Preprocess inputs and compute per-group mixed embeddings.
 
-        Handles the Bernoulli→Categorical expansion for cardinality-1 concepts
-        and returns ``c_mix`` of shape ``(batch, n_groups, in_embeddings)``.
-        Subclasses can call this and only vary the final aggregation step.
+        Expands a binary concept's score to ``[c, 1-c]`` and — if
+        :attr:`expand_binary_embeddings` — its embedding row to two. Returns
+        ``c_mix`` of shape ``(batch, n_groups, in_embeddings)``; subclasses vary
+        only the final aggregation.
         """
-        if len(self.mask_cardinality_1) > 0:
-            embeddings_split = self.bernoulli_to_categorical_embedding_splitter(embeddings[:, self.mask_cardinality_1])
-            concepts_split = torch.cat([
-                concepts[:, self.mask_cardinality_1[:, None]],
-                1 - concepts[:, self.mask_cardinality_1[:, None]],
-            ], dim=-1)
-            embeddings = replace_expand_cols(embeddings, self.mask_cardinality_1, embeddings_split)
-            concepts  = replace_expand_cols(concepts,  self.mask_cardinality_1, concepts_split)
+        idx = self.binary_concept_columns
+        if len(idx) > 0:
+            c = concepts[:, idx[:, None]]                       # (B, n_binary, 1)
+            concepts_split = torch.cat([c, 1 - c], dim=-1)       # (B, n_binary, 2)
+            if self.expand_binary_embeddings:
+                embeddings_split = self.bernoulli_to_categorical_embedding_splitter(embeddings[:, idx])
+                embeddings = replace_expand_cols(embeddings, idx, embeddings_split)
+            concepts = replace_expand_cols(concepts, idx, concepts_split)
         return grouped_concept_exogenous_mixture(
             embeddings,
             concepts,
-            groups=list(self.cardinalities_expanded),
+            groups=self.cardinalities_expanded.tolist(),
         )
 
 
@@ -130,12 +152,14 @@ class MixConceptEmbeddingToConcept(MixConceptEmbedding):
         in_concepts: Annotations,
         in_embeddings: Union[int, Annotations],
         out_concepts: Union[int, Annotations],
+        expand_binary_embeddings: bool = True,
         **kwargs,
     ):
         super().__init__(
             in_concepts=in_concepts,
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
+            expand_binary_embeddings=expand_binary_embeddings,
         )
         self.predictor = torch.nn.Linear(
             self.in_embeddings_shape * len(in_concepts.cardinalities),
@@ -226,12 +250,14 @@ class MixConceptEmbeddingToEmbedding(MixConceptEmbedding):
         self,
         in_concepts: Annotations,
         in_embeddings: int,
+        expand_binary_embeddings: bool = True,
         **kwargs,
     ):
         super().__init__(
             in_concepts=in_concepts,
             in_embeddings=in_embeddings,
             out_concepts=in_embeddings * (len(in_concepts.cardinalities) + 1),
+            expand_binary_embeddings=expand_binary_embeddings,
         )
 
     def forward(

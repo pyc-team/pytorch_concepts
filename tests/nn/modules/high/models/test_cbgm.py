@@ -11,10 +11,15 @@ import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Bernoulli
+from torch.distributions import Bernoulli, Normal
 
 from torch_concepts.annotations import Annotations
-from torch_concepts.nn import ConceptBottleneckGenerativeModel, MLP
+from torch_concepts.nn import (
+    AncestralSamplingInference,
+    ConceptBottleneckGenerativeModel,
+    MLP,
+    ReconstructionLoss,
+)
 
 pytest.importorskip("pyro", reason="CBGM's default inference engine needs pyro-ppl")
 
@@ -170,6 +175,138 @@ class TestGuideSharesOneBackbonePass:
         assert not torch.allclose(
             a.guide_params["scale"]["z"], b.guide_params["scale"]["z"]
         )
+
+
+class TestBinaryStateEmbeddings:
+    """A binary concept is scored by one Bernoulli probability but mixed from
+    TWO independent context embeddings (w+, w-), matching the CEM/CBGM papers
+    (Espinosa Zarlenga et al., NeurIPS 2022; Ismail et al., ICLR 2024, Sec 3.1)
+    instead of fabricating the second state with a learned splitter.
+    """
+
+    def test_binary_embedding_variable_has_two_rows(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False)
+        for name in ("a_embedding", "b_embedding"):
+            assert tuple(model.pgm.variables[name].shape) == (2, EMBEDDING_SIZE)
+
+    def test_binary_plate_gets_two_rows_per_member(self):
+        annotations = Annotations(
+            labels=["b0", "b1"], cardinalities=[1, 1], types=["binary", "binary"],
+        )
+        model = build_model(annotations, plate=True)
+        # A single plate: both binary concepts homogeneous -> one embedding
+        # variable holding both members' rows, member-major.
+        assert tuple(model.pgm.variables["embeddings"].shape) == (4, EMBEDDING_SIZE)
+
+    def test_concept_probability_shape_is_unaffected(self, binary_annotations):
+        """The concept variable itself stays a single Bernoulli — only its
+        embedding grew, not its output width."""
+        model = build_model(binary_annotations, plate=False)
+        out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
+        for name in ("a", "b"):
+            assert out.probs[name].shape == (6, 1)
+
+    def test_mixing_and_bottleneck_width_are_unaffected(self):
+        """The bottleneck stays (k+1)*m regardless of how many embedding rows
+        a binary concept contributes internally."""
+        annotations = Annotations(
+            labels=["a", "digit"], cardinalities=[1, 3], types=["binary", "categorical"],
+        )
+        model = build_model(annotations, plate=False)
+        n_concepts = len(annotations.labels)
+        assert tuple(model.pgm.variables["mixing"].shape) == (n_concepts, EMBEDDING_SIZE)
+        # The decoder was sized for (k+1)*m at construction (see `build_model`);
+        # a forward pass only succeeds if the bottleneck the model actually
+        # assembles still matches that width.
+        model(query=list(model.pgm.variables), input=torch.rand(3, INPUT_SIZE))
+
+    def test_no_learned_splitter_anywhere_in_the_model(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False)
+        names = [n for n, _ in model.named_parameters()]
+        assert not any("splitter" in n for n in names)
+
+    def test_backward_reaches_the_binary_embedding_encoder(self, binary_annotations):
+        """Both w+ and w- must be trainable: the reconstruction gradient has to
+        reach the encoder that produces them, not just the concept head."""
+        model = build_model(binary_annotations, plate=False)
+        out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
+        out.probs["input"].sum().backward()
+
+        emb_cpd = model.pgm.factors["a_embedding"]
+        grads = [p.grad for p in emb_cpd.parameters()]
+        assert grads and all(g is not None for g in grads)
+        assert any(g.abs().sum() > 0 for g in grads)
+
+
+class TestNormalObservation:
+    """``observation=Normal`` with ``global_scale=True`` (the default): ``loc``
+    from the decoder, ``scale`` a single learnable value shared by every pixel
+    and every sample, instead of a whole second copy of the decoder.
+    """
+
+    def _model(self, binary_annotations, global_scale=True, input_size=INPUT_SIZE):
+        n_contexts = len(binary_annotations.labels) + 1
+        flat_size = input_size if isinstance(input_size, int) else 1
+        if not isinstance(input_size, int):
+            for d in input_size:
+                flat_size *= d
+        return ConceptBottleneckGenerativeModel(
+            input_size=input_size,
+            annotations=binary_annotations,
+            encoder=MLP(flat_size, 16, LATENT_SIZE),
+            decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, flat_size),
+            latent_size=LATENT_SIZE,
+            embedding_size=EMBEDDING_SIZE,
+            observation=Normal,
+            global_scale=global_scale,
+            plate=False,
+        )
+
+    def test_reports_loc_and_positive_scale(self, binary_annotations):
+        model = self._model(binary_annotations)
+        out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
+        assert out.loc["input"].shape == (6, INPUT_SIZE)
+        assert bool((out.scale["input"] > 0).all())
+
+    def test_global_scale_has_exactly_one_parameter(self, binary_annotations):
+        model = self._model(binary_annotations, global_scale=True)
+        scale_head = model.pgm.factors["input"].parametrization["scale"]
+        assert sum(p.numel() for p in scale_head.parameters()) == 1
+
+    def test_global_scale_false_reproduces_the_decoder_copy(self, binary_annotations):
+        model = self._model(binary_annotations, global_scale=False)
+        scale_head = model.pgm.factors["input"].parametrization["scale"]
+        assert sum(p.numel() for p in scale_head.parameters()) > 1
+        decoder_params = sum(p.numel() for p in model.decoder.parameters())
+        scale_params = sum(p.numel() for p in scale_head.parameters())
+        assert scale_params >= decoder_params  # a full independent copy
+
+    def test_reconstruction_loss_is_finite(self, binary_annotations):
+        model = self._model(binary_annotations)
+        x = torch.rand(6, INPUT_SIZE)
+        out = model(query=list(model.pgm.variables), input=x)
+        out.extra = {"evidence": {"input": x}}
+        loss = ReconstructionLoss(variable="input")(out)
+        assert torch.isfinite(loss)
+
+    def test_generation_through_ancestral_hard_sampling(self, binary_annotations):
+        """The scale head's ``(B, size)`` output must survive an *unconditioned*
+        decode of a multi-dimensional observation — the exact path
+        ``run_generative_analysis.py`` uses to produce ``generation.png`` and
+        ``steering.png``. A scale collapsed to ``(1,)``/``()`` would raise deep
+        inside the relaxed-distribution builder here, not at training time."""
+        image_shape = (1, 8, 8)
+        model = self._model(binary_annotations, input_size=image_shape)
+        model.eval()
+
+        concepts = [v for v in model.pgm.variables.values() if v.variable_type == "concept"]
+        query = ["input", *(v.name for v in concepts)]
+        engine = AncestralSamplingInference(model.pgm, p_int=1.0, hard=True)
+
+        out = engine.query(query=query, evidence={}, n_samples=3)
+        flat_size = image_shape[0] * image_shape[1] * image_shape[2]
+        assert out.loc["input"].shape == (3, flat_size)
+        assert bool((out.scale["input"] > 0).all())
 
 
 class TestContinuousConcepts:

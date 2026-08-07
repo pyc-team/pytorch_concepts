@@ -24,7 +24,7 @@ from .modules.low.sequential import Sequential
 from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
 # Activations (raw layer output -> distribution-parameter domain)
-from .modules.low.scales import TrilActivation
+from .modules.low.scales import TrilActivation, GlobalScale
 from .modules.mid.activations import DefaultActivation
 
 # Encoders
@@ -134,6 +134,7 @@ __all__ = [
 
     # Activations
     "TrilActivation",
+    "GlobalScale",
     "DefaultActivation",
 
     # Encoder classes

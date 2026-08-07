@@ -15,6 +15,9 @@
 #
 # Requires `pyro-ppl` (VariationalInference), which is not in the
 # conceptarium environment files.
+#
+# Checkpoints predating the binary two-embedding fix or the Gaussian
+# observation below will NOT load — those shapes changed. Retrain.
 # =============================================================
 defaults:
   - _default
@@ -31,6 +34,21 @@ hydra:
       dataset: colormnist, celeba_generative
 
 seed: 42
+
+# Loss weights as named keys, sweepable without restating the whole
+# `loss.weights` list -- e.g. `-m alpha=1,5,10 kl=0.5,1`. Order is fixed
+# by conf/loss/cbgm.yaml's `terms`; the numbers match its defaults.
+recon: 1.0    # -log p(input | bottleneck)
+kl: 1.0       # KL( q(z|input) || p(z) )
+alpha: 5.0    # concept supervision  (reference ALPHA)
+beta: 1.0     # orthogonality        (reference BETA)
+
+loss:
+  weights:   # block style: `[${recon}, ...]` is a YAML flow-sequence parse error
+    - ${recon}
+    - ${kl}
+    - ${alpha}
+    - ${beta}
 
 # MUST stay false: precomputing embeddings replaces the pixels in the
 # dataset with backbone features, which destroys the reconstruction
